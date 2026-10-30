@@ -40,6 +40,7 @@ impl Document {
     }
 
     pub(super) fn note_tree_change(&mut self, node: usize) {
+        self.note_base_url_change();
         self.note_stylesheet_change();
         self.note_named_element_change();
         if let Some(parent) = self.parent_of(node) {

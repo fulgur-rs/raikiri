@@ -20,6 +20,9 @@ use super::interfaces::{HTML_NS, Members, wrap};
 use super::node::{js_str, mark_dirty, write_attribute};
 use super::webidl::{guard_node_budget, this_element, usv_string, with_state};
 
+mod base_cache;
+pub(super) use base_cache::BaseUrlCache;
+
 /// Whether `index` is an HTML `<img>` element.
 pub(crate) fn is_html_image(document: &raikiri_dom::Document, index: usize) -> bool {
     document.get_node(index).is_some_and(|node| {
@@ -33,24 +36,10 @@ pub(crate) fn is_html_image(document: &raikiri_dom::Document, index: usize) -> b
 /// URL"); `None` when it does not parse, which HTML treats as a failed
 /// request.
 fn resolve_source(context: &mut Context, src: &str) -> JsResult<Option<String>> {
-    // Computed from the live tree so a script-changed `<base href>` is seen;
-    // a host with no document URL falls back to the base the parser recorded.
-    let base = with_state(context, |s| {
-        let document = s.host.document();
-        match s
-            .host
-            .document_url()
-            .and_then(|url| url::Url::parse(&url).ok())
-        {
-            Some(url) => document.live_base_url(Some(&url)),
-            None => document.base_url().cloned(),
-        }
-    })?;
-    Ok(url::Url::options()
-        .base_url(base.as_ref())
-        .parse(src)
-        .ok()
-        .map(String::from))
+    with_state(context, |s| {
+        let document_url = s.host.document_url();
+        s.image_base.resolve(s.host.document(), document_url, src)
+    })
 }
 
 /// The root of the tree `index` is in.

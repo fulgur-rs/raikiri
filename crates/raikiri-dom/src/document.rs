@@ -43,11 +43,13 @@ pub(crate) struct OofCoordinate {
 }
 
 pub(crate) mod ancestors;
+mod base_url;
 mod mutation;
 mod named_elements;
 mod parser_snapshot;
 mod stylesheet_source;
 mod tree_changes;
+pub use base_url::BaseUrlVersion;
 pub use mutation::DomMutationError;
 pub use named_elements::NamedElementVersion;
 pub use stylesheet_source::StylesheetVersion;
@@ -228,6 +230,7 @@ struct PreparedImage {
 pub struct Document {
     tree_changes: tree_changes::TreeChanges,
     named_elements: named_elements::Tracker,
+    base_url_inputs: base_url::Tracker,
     stylesheet_revision: stylesheet_source::Tracker,
     stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
@@ -524,6 +527,7 @@ impl Document {
         Self {
             tree_changes: Default::default(),
             named_elements: Default::default(),
+            base_url_inputs: Default::default(),
             stylesheet_revision: Default::default(),
             stylesheet_sources: HashMap::new(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
@@ -1063,6 +1067,9 @@ impl Document {
             (changed, affects_tree_flags, affects_layout)
         };
         if namespace_changed {
+            if self.nodes[id].tag_name() == Some("base") {
+                self.note_base_url_change();
+            }
             self.note_named_element_change();
             self.reset_stylesheet_source(id);
         }
@@ -1087,6 +1094,9 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
         let had_css_type = self.stylesheet_has_css_type(id);
+        if self.nodes[id].tag_name() == Some("base") {
+            self.note_base_url_change();
+        }
         self.note_named_element_change();
         self.page_projection.clear();
         self.inline_svg_cache.clear();
@@ -1211,6 +1221,9 @@ impl Document {
         } else {
             local
         };
+        if local.as_str() == "href" && self.nodes[id].tag_name() == Some("base") {
+            self.note_base_url_change();
+        }
         if local.as_str() == "style" {
             // Keep the storage invariant even if a caller previously populated
             // the full-list setter with a style entry by mistake.
@@ -1297,6 +1310,9 @@ impl Document {
         let position = element.attributes.iter().position(|attribute| {
             attribute.namespace.as_deref() == namespace && attribute.local == local
         })?;
+        if namespace.is_none() && local == "href" && self.nodes[id].tag_name() == Some("base") {
+            self.note_base_url_change();
+        }
         if namespace.is_none() && matches!(local, "id" | "name") {
             self.note_named_element_change();
         }
@@ -1385,6 +1401,12 @@ impl Document {
                 .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
             first_value
         };
+        if first_value.is_some()
+            && local.as_str() == "href"
+            && self.nodes[id].tag_name() == Some("base")
+        {
+            self.note_base_url_change();
+        }
         if first_value.is_some() && matches!(local.as_str(), "id" | "name") {
             self.note_named_element_change();
         }
@@ -1955,6 +1977,7 @@ impl Document {
         let Document {
             tree_changes: _,
             named_elements: _,
+            base_url_inputs: _,
             stylesheet_revision: _,
             stylesheet_sources,
             table_objects: _,
@@ -3025,6 +3048,7 @@ impl Document {
     /// base: the `<base href>` resolved against the caller's base URL.
     pub fn set_base_url(&mut self, base_url: Option<url::Url>) {
         self.base_url = base_url;
+        self.note_base_url_change();
     }
 
     /// The document base URL. `None` for a document parsed without a base
@@ -3043,8 +3067,23 @@ impl Document {
     ///
     /// Spec: <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#document-base-url>
     pub fn live_base_url(&self, document_url: Option<&url::Url>) -> Option<url::Url> {
+        #[cfg(any(test, feature = "base-url-diagnostics"))]
+        if crate::base_url_diagnostics::enabled() {
+            return self.live_base_url_impl::<true>(document_url);
+        }
+        self.live_base_url_impl::<false>(document_url)
+    }
+
+    fn live_base_url_impl<const COUNT: bool>(
+        &self,
+        document_url: Option<&url::Url>,
+    ) -> Option<url::Url> {
+        let mut meter = crate::base_url_diagnostics::Meter::<COUNT>::new();
         let mut stack = vec![self.root];
         while let Some(id) = stack.pop() {
+            if COUNT {
+                meter.work.node_visits += 1;
+            }
             let Some(node) = self.nodes.get(id) else {
                 continue; // cov:ignore: children always hold valid arena indices.
             };
