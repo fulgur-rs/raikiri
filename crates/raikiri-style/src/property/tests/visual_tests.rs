@@ -1302,6 +1302,311 @@ fn background_image_is_case_insensitive() {
     );
 }
 
+// ── background-image: image-set() (CSS Images 4 §2.4) ──
+
+/// The images a parsed `background-image` holds, one per layer.
+fn background_images(source: &str) -> Option<Vec<BackgroundImage>> {
+    match parse(source, "background-image") {
+        Some(PropertyValue::BackgroundImage(images)) => Some(images.to_vec()),
+        Some(_) => panic!("background-image parsed to another property"),
+        None => None,
+    }
+}
+
+/// The one image a parsed `background-image` holds.
+fn background_image(source: &str) -> Option<BackgroundImage> {
+    let mut images = background_images(source)?;
+    assert_eq!(images.len(), 1, "{source}");
+    images.pop()
+}
+
+fn url_image(url: &str) -> Option<BackgroundImage> {
+    Some(BackgroundImage::Url(url.into()))
+}
+
+#[test]
+fn image_set_with_one_option_stands_for_its_image() {
+    assert_eq!(
+        background_image("image-set(url(a.png) 1x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(\"a.png\") 1x)"),
+        url_image("a.png")
+    );
+}
+
+#[test]
+fn image_set_resolution_defaults_to_one_x() {
+    assert_eq!(
+        background_image("image-set(url(a.png), url(b.png) 2x)"),
+        url_image("a.png")
+    );
+    // A lone option is chosen whatever its density.
+    assert_eq!(
+        background_image("image-set(url(a.png) 0.5x)"),
+        url_image("a.png")
+    );
+}
+
+#[test]
+fn image_set_picks_the_smallest_density_at_or_above_one_x() {
+    assert_eq!(
+        background_image("image-set(url(a.png) 1x, url(b.png) 2x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(b.png) 2x, url(a.png) 1x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(c.png) 3x, url(b.png) 2x, url(a.png) 0.5x)"),
+        url_image("b.png")
+    );
+}
+
+#[test]
+fn image_set_without_an_option_at_one_x_picks_the_largest_density() {
+    assert_eq!(
+        background_image("image-set(url(a.png) 0.25x, url(b.png) 0.5x, url(c.png) 0.1x)"),
+        url_image("b.png")
+    );
+}
+
+#[test]
+fn image_set_picks_the_first_written_of_equal_densities() {
+    assert_eq!(
+        background_image("image-set(url(a.png) 1x, url(b.png) 1x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.png) 2x, url(b.png) 2x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.png) 0.5x, url(b.png) 0.5x)"),
+        url_image("a.png")
+    );
+}
+
+#[test]
+fn image_set_resolution_units_convert_to_dppx() {
+    // 96dpi and 1dppx are the same density, as are 192dpi and 2x.
+    assert_eq!(
+        background_image("image-set(url(a.png) 192dpi, url(b.png) 96dpi)"),
+        url_image("b.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.png) 1dppx, url(b.png) 1x)"),
+        url_image("a.png")
+    );
+    // 37dpcm is about 0.98dppx, just under 1x; 40dpcm is about 1.06dppx.
+    assert_eq!(
+        background_image("image-set(url(a.png) 37dpcm, url(b.png) 2x)"),
+        url_image("b.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.png) 40dpcm, url(b.png) 2x)"),
+        url_image("a.png")
+    );
+    // Units are ASCII case-insensitive.
+    assert_eq!(
+        background_image("image-set(url(a.png) 2X, url(b.png) 1DPPX)"),
+        url_image("b.png")
+    );
+}
+
+#[test]
+fn image_set_option_with_zero_resolution_is_never_selected() {
+    assert_eq!(
+        background_image("image-set(url(a.png) 0x, url(b.png) 2x)"),
+        url_image("b.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.png) 0x)"),
+        Some(BackgroundImage::None)
+    );
+}
+
+#[test]
+fn image_set_with_a_negative_resolution_is_invalid() {
+    assert_eq!(background_images("image-set(url(a.png) -1x)"), None);
+    assert_eq!(
+        background_images("image-set(url(a.png) 1x, url(b.png) -2x)"),
+        None
+    );
+}
+
+#[test]
+fn image_set_type_skips_formats_the_engine_does_not_decode() {
+    assert_eq!(
+        background_image("image-set(url(a.png) 1x type(\"image/png\"))"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image(
+            "image-set(url(a.avif) 1x type('image/avif'), url(b.png) 2x type('image/png'))"
+        ),
+        url_image("b.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.avif) 1x type('image/avif'))"),
+        Some(BackgroundImage::None)
+    );
+    for media_type in [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/svg+xml",
+        "IMAGE/PNG",
+    ] {
+        assert_eq!(
+            background_image(&format!("image-set(url(a) type('{media_type}'))")),
+            url_image("a"),
+            "{media_type}"
+        );
+    }
+}
+
+#[test]
+fn image_set_type_and_resolution_come_in_either_order_but_only_once() {
+    assert_eq!(
+        background_image("image-set(url(a.png) type('image/png') 2x, url(b.png) 1x)"),
+        url_image("b.png")
+    );
+    assert_eq!(background_images("image-set(url(a.png) 1x 2x)"), None);
+    assert_eq!(
+        background_images("image-set(url(a.png) type('image/png') type('image/png'))"),
+        None
+    );
+    assert_eq!(
+        background_images("image-set(url(a.png) type(image/png))"),
+        None
+    );
+    assert_eq!(
+        background_images("image-set(url(a.png) type('image/png' 'image/gif'))"),
+        None
+    );
+}
+
+#[test]
+fn image_set_resolution_may_be_a_math_function() {
+    assert_eq!(
+        background_image("image-set(url(a.png) calc(0.5x * 2), url(b.png) 2x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("image-set(url(a.png) calc(0.25x * 2), url(b.png) 2x)"),
+        url_image("b.png")
+    );
+}
+
+#[test]
+fn image_set_accepts_a_bare_string_as_a_url() {
+    assert_eq!(
+        background_image("image-set(\"a.png\" 1x, 'b.png' 2x)"),
+        url_image("a.png")
+    );
+    assert_eq!(background_image("image-set(\"a.png\")"), url_image("a.png"));
+}
+
+#[test]
+fn image_set_option_can_be_a_gradient() {
+    let Some(BackgroundImage::Gradient(gradient)) =
+        background_image("image-set(linear-gradient(red, blue) 1x)")
+    else {
+        panic!("expected a gradient");
+    };
+    assert!(matches!(&*gradient, Gradient::Linear(_)));
+    let Some(BackgroundImage::Gradient(gradient)) =
+        background_image("image-set(url(a.png) 2x, conic-gradient(red, blue) 1x)")
+    else {
+        panic!("expected a gradient");
+    };
+    assert!(matches!(&*gradient, Gradient::Conic(_)));
+}
+
+#[test]
+fn image_set_has_a_webkit_prefixed_alias() {
+    assert_eq!(
+        background_image("-webkit-image-set(url(a.png) 1x, url(b.png) 2x)"),
+        url_image("a.png")
+    );
+    assert_eq!(
+        background_image("IMAGE-SET(url(a.png) 1x)"),
+        url_image("a.png")
+    );
+}
+
+#[test]
+fn image_set_rejects_what_its_grammar_does_not_allow() {
+    for invalid in [
+        "image-set()",
+        "image-set(1x)",
+        "image-set(url(a.png) 1x,)",
+        "image-set(,url(a.png) 1x)",
+        "image-set(url(a.png) 1x url(b.png) 2x)",
+        "image-set(url(a.png) 1px)",
+        "image-set(url(a.png) 1)",
+        "image-set(image-set(url(a.png) 1x) 1x)",
+        "image-set(none)",
+        "image-set(url(a.png) 1x) url(b.png)",
+        "image-sets(url(a.png) 1x)",
+    ] {
+        assert_eq!(background_images(invalid), None, "{invalid}");
+    }
+}
+
+#[test]
+fn image_set_is_one_layer_of_the_background_image_list() {
+    assert_eq!(
+        background_images("image-set(url(a.png) 1x, url(b.png) 2x), url(c.png), none"),
+        Some(vec![
+            BackgroundImage::Url("a.png".into()),
+            BackgroundImage::Url("c.png".into()),
+            BackgroundImage::None,
+        ])
+    );
+}
+
+#[test]
+fn image_set_is_accepted_by_the_other_image_properties() {
+    assert_eq!(
+        parse("image-set(url(a.png) 1x)", "border-image-source"),
+        Some(PropertyValue::BorderImageSource(BackgroundImage::Url(
+            "a.png".into()
+        )))
+    );
+    assert_eq!(
+        parse(
+            "image-set(url(a.png) 1x type('image/avif'))",
+            "border-image-source"
+        ),
+        Some(PropertyValue::BorderImageSource(BackgroundImage::None))
+    );
+    assert_eq!(
+        parse("image-set(url(a.png) 1x)", "mask-image"),
+        Some(PropertyValue::MaskImage(BackgroundImage::Url(
+            "a.png".into()
+        )))
+    );
+}
+
+#[test]
+fn image_set_is_accepted_by_the_background_shorthand() {
+    let Some(PropertyValue::Background(background)) = parse(
+        "image-set(url(a.png) 1x, url(b.png) 2x) no-repeat",
+        "background",
+    ) else {
+        panic!("expected the background shorthand");
+    };
+    assert_eq!(
+        background.layers[0].image,
+        BackgroundImage::Url("a.png".into())
+    );
+}
+
 // ── background-image: <gradient> (CSS Images 4 §3) ──
 
 const RED: CssColor = CssColor {

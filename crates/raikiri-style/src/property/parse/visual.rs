@@ -732,11 +732,12 @@ pub fn parse_position_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> 
 }
 
 /// Parse `background-image: <bg-image>` (see the [`BackgroundImage`] docs for the
-/// grammar: `<image> | none`, with `<image> = <url> | <gradient>`).
+/// grammar: `<image> | none`, with `<image> = <url> | <gradient> | <image-set()>`).
 ///
-/// Try the `none` keyword before a `<gradient>` function.
+/// Try the `none` keyword before a `<gradient>` function, then `image-set()`.
 /// The order does not affect the result: [`parse_url_value`] for `<url>` cannot
-/// match any function token. It does match the order used by sibling parsers
+/// match any function token, and the three function families have disjoint
+/// names. It does match the order used by sibling parsers
 /// with keyword-versus-function alternatives, such as [`parse_position`](super::box_model::parse_position).
 pub(super) fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
@@ -745,7 +746,165 @@ pub(super) fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<Backg
     if let Ok(gradient) = input.try_parse(parse_gradient) {
         return Some(BackgroundImage::Gradient(Arc::new(gradient)));
     }
+    if let Ok(image) = input.try_parse(parse_image_set) {
+        return Some(image);
+    }
     parse_url_value(input).map(|url| BackgroundImage::Url(url.into()))
+}
+
+/// The pixel density, in dppx, `image-set()` selects an option for. A page is
+/// laid out and painted at one device pixel per CSS pixel, so the option
+/// authored for `1x` is the best fit.
+const IMAGE_SET_TARGET_DPPX: f32 = 1.0;
+
+/// The image formats the engine decodes, compared ASCII case-insensitively
+/// with the `type()` of an `image-set()` option.
+const IMAGE_SET_SUPPORTED_TYPES: [&str; 5] = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
+];
+
+/// One `<image-set-option>` of an `image-set()` call.
+struct ImageSetOption {
+    image: BackgroundImage,
+    /// The density the option was authored for, in dppx.
+    dppx: f32,
+    /// Whether the option can be selected: its density is above zero and its
+    /// `type()`, when it has one, names a format the engine decodes.
+    selectable: bool,
+}
+
+/// Parse `image-set()` and its `-webkit-image-set()` alias (CSS Images 4 §2.4
+/// <https://drafts.csswg.org/css-images-4/#image-set-notation>) and resolve it
+/// to the one option it stands for.
+///
+/// Grammar: `image-set( <image-set-option># )`, with `<image-set-option> =
+/// [ <image> | <string> ] [ <resolution> || type(<string>) ]?`. An image is a
+/// `<url>` or a `<gradient>`; a bare `<string>` is a URL. A missing resolution
+/// is `1x`. A negative resolution makes the whole function invalid, so the
+/// declaration is dropped.
+///
+/// The selection happens at parse time because the density it is made for is
+/// a property of the output, not of the document: see [`is_better_image_set_option`].
+/// A function whose options are all unselectable (`0x`, an unsupported
+/// `type()`) is valid and stands for `none`, as it does in browsers.
+///
+/// A math function in the resolution (`calc(0.5x * 2)`) is folded to one
+/// value before this parser runs. Not supported: nested `image-set()` and the
+/// other `<image>` functions (`image()`, `cross-fade()`, `element()`).
+fn parse_image_set<'i>(input: &mut Parser<'i, '_>) -> Result<BackgroundImage, ParseError<'i, ()>> {
+    let name = match input.next()?.clone() {
+        Token::Function(name) => name,
+        token => return Err(input.new_unexpected_token_error(token)),
+    };
+    if !(name.eq_ignore_ascii_case("image-set") || name.eq_ignore_ascii_case("-webkit-image-set")) {
+        return Err(input.new_custom_error(()));
+    }
+    let mut best = None;
+    input.parse_nested_block(|i| {
+        i.parse_comma_separated(|option| {
+            let option = parse_image_set_option(option)?;
+            if option.selectable && is_better_image_set_option(best.as_ref(), &option) {
+                best = Some(option);
+            }
+            Ok(())
+        })
+    })?;
+    Ok(best.map_or(BackgroundImage::None, |option| option.image))
+}
+
+/// Whether `option` beats `best`, the option an `image-set()` stands for so
+/// far: the one with the smallest density that is at least
+/// [`IMAGE_SET_TARGET_DPPX`], or, when every option is below it, the one with
+/// the largest density. Of options with the same density the first written
+/// wins, so `option` has to be strictly better. This is the choice Chromium
+/// makes, which keeps an authored `1x` image from being swapped for a larger
+/// one that is scaled down and a lone `2x` image from being thrown away.
+fn is_better_image_set_option(best: Option<&ImageSetOption>, option: &ImageSetOption) -> bool {
+    match best {
+        None => true,
+        Some(best) if best.dppx >= IMAGE_SET_TARGET_DPPX => {
+            option.dppx >= IMAGE_SET_TARGET_DPPX && option.dppx < best.dppx
+        }
+        Some(best) => option.dppx >= IMAGE_SET_TARGET_DPPX || option.dppx > best.dppx,
+    }
+}
+
+fn parse_image_set_option<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<ImageSetOption, ParseError<'i, ()>> {
+    let image = parse_image_set_image(input)?;
+    let mut dppx = None;
+    let mut type_supported = None;
+    // `<resolution> || type(<string>)`: each at most once, in either order.
+    loop {
+        if dppx.is_none()
+            && let Ok(value) = input.try_parse(parse_image_set_resolution)
+        {
+            dppx = Some(value);
+            continue;
+        }
+        if type_supported.is_none()
+            && let Ok(supported) = input.try_parse(parse_image_set_type)
+        {
+            type_supported = Some(supported);
+            continue;
+        }
+        break;
+    }
+    let dppx = dppx.unwrap_or(1.0);
+    Ok(ImageSetOption {
+        image,
+        dppx,
+        selectable: dppx > 0.0 && type_supported.unwrap_or(true),
+    })
+}
+
+/// `[ <image> | <string> ]` of an `image-set()` option: a `<gradient>`, a
+/// `<url>`, or a bare `<string>` that names a URL.
+fn parse_image_set_image<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BackgroundImage, ParseError<'i, ()>> {
+    if let Ok(url) = input.try_parse(|i| i.expect_string_cloned()) {
+        return Ok(BackgroundImage::Url(url.as_ref().into()));
+    }
+    if let Ok(gradient) = input.try_parse(parse_gradient) {
+        return Ok(BackgroundImage::Gradient(Arc::new(gradient)));
+    }
+    parse_url_value(input)
+        .map(|url| BackgroundImage::Url(url.into()))
+        .ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `<resolution>` of an `image-set()` option, in dppx (`x`, `dppx`, `dpi` and
+/// `dpcm`). Zero parses (the option is then never selected); a negative number
+/// does not.
+fn parse_image_set_resolution<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    match next_numeric_stable(input)? {
+        Token::Dimension { value, unit, .. } if value >= 0.0 => {
+            match crate::cascade::canonical_unit(&unit.to_ascii_lowercase()) {
+                Some(("dppx", dppx_per_unit)) => Ok(value * dppx_per_unit),
+                _ => Err(input.new_custom_error(())),
+            }
+        }
+        token => Err(input.new_unexpected_token_error(token)),
+    }
+}
+
+/// `type(<string>)` of an `image-set()` option: whether the engine decodes the
+/// format named by the string.
+fn parse_image_set_type<'i>(input: &mut Parser<'i, '_>) -> Result<bool, ParseError<'i, ()>> {
+    input.expect_function_matching("type")?;
+    input.parse_nested_block(|i| {
+        let media_type = i.expect_string_cloned()?;
+        i.expect_exhausted()?;
+        Ok(IMAGE_SET_SUPPORTED_TYPES
+            .iter()
+            .any(|supported| supported.eq_ignore_ascii_case(&media_type)))
+    })
 }
 
 /// Parse `mask-image: <mask-reference>` (one layer; see the scope carving

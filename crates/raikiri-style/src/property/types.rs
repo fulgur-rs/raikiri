@@ -8531,6 +8531,15 @@ pub struct CssPosition {
 /// `conic-gradient()` / `repeating-conic-gradient()`, CSS Images 4
 /// §3.1-§3.4) stores its payload in [`Gradient`].
 ///
+/// `image-set()` (and `-webkit-image-set()`) is accepted wherever the
+/// parser for this type is used, except `list-style-image`, and is resolved
+/// while parsing: the one option it selects is stored as a
+/// [`BackgroundImage::Url`] or a [`BackgroundImage::Gradient`], and a function
+/// with no selectable option is stored as [`BackgroundImage::None`]. The stored
+/// value remembers neither the function nor the density the selected option
+/// was authored for, so a selected raster image is drawn at its natural size
+/// even when its option is not `1x`.
+///
 /// Scope carving for `<gradient>` (features intentionally omitted from the
 /// Level 4 grammar; see also the [`GradientColorStop`] docs):
 ///
