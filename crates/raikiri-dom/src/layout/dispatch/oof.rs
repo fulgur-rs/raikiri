@@ -20,7 +20,7 @@ use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Point, Size};
 use raikiri_layout_style::values::{
-    BaselineSet, ContainingBlockClaims, Direction, ExpandedDimension,
+    AlignItems, AlignmentSafety, BaselineSet, ContainingBlockClaims, Direction, ExpandedDimension,
 };
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 
@@ -85,6 +85,17 @@ impl LayoutSession<'_> {
     pub(crate) fn container_is_vertical(&self, node: usize) -> bool {
         self.taffy_parent_of(node)
             .is_some_and(|parent| super::block_right_to_left(self, parent).is_some())
+    }
+
+    /// Whether the library reads the alignment of the out-of-flow box `node`
+    /// along the physical vertical axis from `justify-self` and the one along
+    /// the horizontal axis from `align-self`, rather than the other way round.
+    ///
+    /// The last baseline of the container that holds the box places it on the
+    /// container's axes, so the swap applies only where the container is on
+    /// vertical axes as well as the containing block.
+    pub(crate) fn oof_alignment_swapped(&self, node: usize) -> bool {
+        self.context.oof_axes_vertical && self.container_is_vertical(node)
     }
 
     /// The tracks and areas a grid container reported, which the library
@@ -212,11 +223,12 @@ pub(super) fn layout_candidates(
                     grid_oof::compute_oof_layout(tree, owner, span, area, direction, claims, axes)
                 }
                 None => {
-                    let insets = static_position_insets(tree, owner, candidates, area, claims);
-                    if insets.is_empty() {
+                    let overrides =
+                        static_position_overrides(tree, owner, candidates, area, claims);
+                    if overrides.is_empty() {
                         compute_oof_layout_for_area(tree, owner, span, area, direction, claims)
                     } else {
-                        tree.with_overrides(insets, |tree| {
+                        tree.with_overrides(overrides, |tree| {
                             compute_oof_layout_for_area(tree, owner, span, area, direction, claims)
                         })
                     }
@@ -232,7 +244,7 @@ pub(super) fn layout_candidates(
     result
 }
 
-/// The insets that make Taffy size a `stretch` box from its static position.
+/// The overrides that make Taffy size a `stretch` box from its static position.
 ///
 /// A box whose insets are both `auto` in an axis sits at its static position,
 /// and the room it can fill reaches from that position to the far edge of the
@@ -244,11 +256,18 @@ pub(super) fn layout_candidates(
 /// by the rule, so each qualifying box gets that inset: the left or top one for
 /// a box aligned to the start of its static area, the right or bottom one for
 /// a box aligned to its end. A box that overflows stays anchored to that edge
-/// whatever the overflow position of the alignment says, as in Chromium. A box
-/// centered in its static area keeps its insets. A grid container places its
-/// boxes in the grid area they name, which is not the area the static position
-/// is measured in.
-fn static_position_insets(
+/// whatever the overflow position of the alignment says, as in Chromium.
+///
+/// A box centered in its static area gets both insets instead. They bound the
+/// inset-modified containing block, which is centered on the static position
+/// and reaches no further than the nearer edge of the containing block, and a
+/// center alignment keeps a size cut short by `max-width` centered in it. Only
+/// an overflow position the box asks for itself is kept: that of the container
+/// decides where the static position is, not how the box falls back.
+///
+/// A grid container places its boxes in the grid area they name, which is not
+/// the area the static position is measured in.
+fn static_position_overrides(
     tree: &LayoutSession<'_>,
     owner: NodeId,
     candidates: &OofBatch,
@@ -270,6 +289,17 @@ fn static_position_insets(
             .nodes
             .box_key(idx)
             .expect("an out-of-flow candidate has a box key");
+        let inset_override = |property, value| {
+            (
+                key,
+                OwnedPropertyOverride::length(
+                    property,
+                    raikiri_style::ComputedLengthPercentageOrAuto::Px(value),
+                    false,
+                )
+                .expect("static position inset"),
+            )
+        };
         let axes = [
             (
                 size.width.expand() == ExpandedDimension::Stretch
@@ -294,20 +324,55 @@ fn static_position_insets(
             if !qualifies {
                 continue;
             }
-            let (property, value) = match position.align.keyword {
-                AxisStaticEdge::Start => (start, position.area.start - offset),
-                AxisStaticEdge::End => (end, extent - (position.area.end - offset)),
-                AxisStaticEdge::Center => continue,
-            };
-            entries.push((
-                key,
-                OwnedPropertyOverride::length(
-                    property,
-                    raikiri_style::ComputedLengthPercentageOrAuto::Px(value),
-                    false,
-                )
-                .expect("static position inset"),
-            ));
+            match position.align.keyword {
+                AxisStaticEdge::Start => {
+                    entries.push(inset_override(start, position.area.start - offset));
+                }
+                AxisStaticEdge::End => {
+                    entries.push(inset_override(end, extent - (position.area.end - offset)));
+                }
+                AxisStaticEdge::Center => {
+                    // The library reads the alignment along the physical x
+                    // axis from `justify-self` and the one along y from
+                    // `align-self`, unless the axes are swapped.
+                    let (alignment, own): (fn(_) -> _, _) =
+                        if (start == LengthProperty::Left) != tree.oof_alignment_swapped(idx) {
+                            (
+                                OwnedPropertyOverride::justify_self,
+                                style.bridge_justify_self(),
+                            )
+                        } else {
+                            (OwnedPropertyOverride::align_self, style.bridge_align_self())
+                        };
+                    // Either the box asks for the center itself, or a flex
+                    // container centers it and ignores its `justify-self`
+                    // along the main axis, so the override replaces no
+                    // placement the box needs. Chromium centers a box that
+                    // overflows the room on both sides unless the box asks
+                    // for `safe`, where the library would keep it inside the
+                    // containing block.
+                    let safety = if own.is_some_and(|own| own.safety == AlignmentSafety::Safe) {
+                        AlignmentSafety::Safe
+                    } else {
+                        AlignmentSafety::Unsafe
+                    };
+                    // A static position on or past an edge of the containing
+                    // block leaves no room: the box is centered on it.
+                    let center = (position.area.start + position.area.end) / 2.0 - offset;
+                    let half = center.min(extent - center).max(0.0);
+                    entries.extend([
+                        inset_override(start, center - half),
+                        inset_override(end, extent - (center + half)),
+                        (
+                            key,
+                            alignment(Some(AlignItems {
+                                safety,
+                                ..AlignItems::CENTER
+                            })),
+                        ),
+                    ]);
+                }
+            }
         }
     }
     entries

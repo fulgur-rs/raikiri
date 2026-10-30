@@ -122,6 +122,29 @@ fn physical_sizing_membership_matches_the_accepted_properties() {
 }
 
 #[test]
+fn self_alignment_is_neither_sizing_nor_inset() {
+    use crate::values::AlignItems;
+    let centered = Some(AlignItems::CENTER);
+    for entry in [
+        OwnedPropertyOverride::align_self(centered),
+        OwnedPropertyOverride::justify_self(centered),
+    ] {
+        assert!(entry.is_self_alignment());
+        assert!(!entry.is_physical_sizing());
+        assert!(!entry.is_physical_inset());
+        assert!(
+            entry
+                .apply_physical_sizing(&mut BoxStyle::default())
+                .is_err()
+        );
+    }
+    for property in [LengthProperty::Left, LengthProperty::Width] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(3.0), true).unwrap();
+        assert!(!entry.is_self_alignment(), "{property:?}");
+    }
+}
+
+#[test]
 fn physical_sizing_sets_border_fields_and_ignores_shrink() {
     let mut style = BoxStyle {
         border: Edges {
