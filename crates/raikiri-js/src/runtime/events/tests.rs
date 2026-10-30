@@ -21,7 +21,7 @@ fn body_index(rt: &mut DomRuntime) -> usize {
 
 fn listener_count(rt: &mut DomRuntime, key: Option<usize>) -> usize {
     with_state(rt.context_mut(), |s| {
-        s.with_listeners(key, |list| list.len())
+        s.listeners(key).map_or(0, |list| list.live_len())
     })
     .unwrap()
 }
@@ -187,4 +187,57 @@ fn event_target_is_illegal_to_construct_directly() {
         &mut rt,
         "try { new EventTarget(); false } catch (e) { e instanceof TypeError }",
     );
+}
+
+#[test]
+fn listener_storage_is_lazy_and_pointer_sized() {
+    let mut rt = rt();
+    rt.evaluate("globalThis.t=document.createElement('div');t.onclick;t.onclick=null;t.addEventListener('x',null);t.removeEventListener('x',()=>{});t.dispatchEvent(new Event('x'));").unwrap();
+    let target = rt.evaluate("t").unwrap();
+    let index = node_index(&target).unwrap();
+    assert!(
+        with_state(rt.context_mut(), |s| s.listeners(Some(index)))
+            .unwrap()
+            .is_none()
+    );
+    let sizes = crate::listener_diagnostics::storage_sizes();
+    assert_eq!(sizes.list_field, std::mem::size_of::<usize>());
+    assert!(sizes.node_record > sizes.node_state);
+    assert!(sizes.list_data > 0 && sizes.entry_data > 0);
+    rt.evaluate("function f(){}t.addEventListener('x',f);t.removeEventListener('x',f);")
+        .unwrap();
+    let list = with_state(rt.context_mut(), |s| s.listeners(Some(index)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(list.live_len(), 0);
+    assert!(list.entries.borrow().is_empty());
+}
+
+#[test]
+fn engine_abort_finishes_once_snapshot_and_releases_removed_callback_cycle() {
+    use crate::runtime::{Abort, Limits, RunOptions};
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let target=rt.evaluate("globalThis.t=document.createElement('div');t.addEventListener('x',(()=>{let captured=t;return ()=>{captured;while(true){}}})(),{once:true});t").unwrap();
+    let index = node_index(&target).unwrap();
+    let list = with_state(rt.context_mut(), |s| s.listeners(Some(index)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rt.evaluate("t.dispatchEvent(new Event('x'))"),
+        Err(RuntimeError::Aborted(Abort::LoopIterations))
+    );
+    assert_eq!(list.depth.get(), 0);
+    assert!(!list.dirty.get());
+    assert!(list.entries.borrow().is_empty());
 }
