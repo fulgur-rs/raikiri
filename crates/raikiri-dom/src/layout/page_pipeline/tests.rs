@@ -33,6 +33,7 @@ mod paged_spanning_tests;
 mod sibling_adjacency_tests;
 mod source_walk_tests;
 mod table_follow_tests;
+mod top_edge_tests;
 mod vertical_grid_tests;
 
 fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
