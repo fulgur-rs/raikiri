@@ -3471,10 +3471,16 @@ fn clamp_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32, height:
 
 /// What a `content-box` size needs added to become a border-box size.
 pub(crate) fn box_sizing_adjustment(tree: &LayoutSession<'_>, node: usize, basis: f32) -> f32 {
-    let style = tree.physical_style(node);
-    if style.box_sizing() != BoxSizing::ContentBox {
+    if tree.physical_style(node).box_sizing() != BoxSizing::ContentBox {
         return 0.0;
     }
+    horizontal_padding_border(tree, node, basis)
+}
+
+/// The padding and border of a box across its width, whatever its
+/// `box-sizing`: the narrowest a border box can be.
+pub(crate) fn horizontal_padding_border(tree: &LayoutSession<'_>, node: usize, basis: f32) -> f32 {
+    let style = tree.physical_style(node);
     let padding = style.padding().resolve_or_zero(Some(basis));
     let border = style.border().resolve_or_zero(Some(basis));
     padding.left + padding.right + border.left + border.right

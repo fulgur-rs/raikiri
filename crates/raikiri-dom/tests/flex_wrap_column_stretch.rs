@@ -189,4 +189,35 @@ cases! {
     calc_width_container_keeps_its_width_in_a_float:
         r#"<div id=p style="float:left"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;border:solid;align-content:start;font:20px/1 Ahem;width:calc(40px + 10px)"><div id=a style="height:75px;border:3px solid">a</div><div id=b style="height:75px;border:3px solid">bbb</div></div></div>"# =>
         [("p", (8.0, 8.0, 50.0, 100.0)), ("c", (8.0, 8.0, 50.0, 100.0)), ("a", (11.0, 11.0, 26.0, 75.0)), ("b", (37.0, 11.0, 66.0, 75.0))];
+    percent_height_items_with_ratios_keep_their_widths_in_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><div id=a style="height:50%;aspect-ratio:2"></div><div id=b style="height:50%;aspect-ratio:1"></div></div></div>"# =>
+        [("p", (8.0, 8.0, 100.0, 100.0)), ("c", (8.0, 8.0, 100.0, 100.0)), ("a", (8.0, 8.0, 100.0, 50.0)), ("b", (8.0, 58.0, 100.0, 50.0))];
+    canvas_item_with_a_percent_height_keeps_its_width_in_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><canvas id=a width=20 height=10 style="height:50%"></canvas></div></div>"# =>
+        [("p", (8.0, 8.0, 100.0, 100.0)), ("c", (8.0, 8.0, 100.0, 100.0)), ("a", (8.0, 8.0, 100.0, 50.0))];
+    canvas_item_with_a_percent_min_height_keeps_its_width_in_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><canvas id=a width=20 height=10 style="min-height:50%"></canvas></div></div>"# =>
+        [("p", (8.0, 8.0, 100.0, 100.0)), ("c", (8.0, 8.0, 100.0, 100.0)), ("a", (8.0, 8.0, 100.0, 50.0))];
+    canvas_item_with_a_percent_max_height_keeps_its_width_in_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><canvas id=a width=200 height=100 style="max-height:25%"></canvas></div></div>"# =>
+        [("p", (8.0, 8.0, 50.0, 100.0)), ("c", (8.0, 8.0, 50.0, 100.0)), ("a", (8.0, 8.0, 50.0, 25.0))];
+    flex_basis_percent_item_leaves_a_min_content_parent_at_its_natural_width:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><canvas id=a width=20 height=10 style="flex-basis:50%"></canvas></div></div>"# =>
+        [("p", (8.0, 8.0, 20.0, 100.0)), ("c", (8.0, 8.0, 20.0, 100.0)), ("a", (8.0, 8.0, 100.0, 50.0))];
+    container_with_an_aspect_ratio_is_as_wide_as_its_ratio_says_at_min_content:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem;aspect-ratio:1/2;height:100px"><div id=a style="height:40px;width:30px"></div><div id=b style="height:40px;width:20px"></div><div id=d style="height:40px;width:10px"></div></div></div>"# =>
+        [("p", (8.0, 8.0, 50.0, 100.0)), ("c", (8.0, 8.0, 50.0, 100.0)), ("a", (8.0, 8.0, 30.0, 40.0)), ("b", (8.0, 48.0, 20.0, 40.0)), ("d", (43.0, 8.0, 10.0, 40.0))];
+    stretch_height_item_with_a_ratio_widens_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><div id=a style="height:stretch;aspect-ratio:2"></div></div></div>"# =>
+        [("p", (8.0, 8.0, 200.0, 100.0)), ("c", (8.0, 8.0, 200.0, 100.0)), ("a", (8.0, 8.0, 200.0, 100.0))];
+
+    growing_ratio_item_adds_nothing_to_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><div id=a style="flex:1 1 auto;aspect-ratio:2"></div></div></div>"# =>
+        [("p", (8.0, 8.0, 0.0, 100.0)), ("c", (8.0, 8.0, 0.0, 100.0)), ("a", (8.0, 8.0, 200.0, 100.0))];
+    ratio_item_with_a_length_height_widens_a_min_content_parent:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;font:20px/1 Ahem"><div id=a style="height:40px;aspect-ratio:2"></div><div id=b style="height:40px;width:30px"></div></div></div>"# =>
+        [("p", (8.0, 8.0, 80.0, 100.0)), ("c", (8.0, 8.0, 80.0, 100.0)), ("a", (8.0, 8.0, 80.0, 40.0)), ("b", (8.0, 48.0, 30.0, 40.0))];
+    border_box_max_width_below_the_padding_and_border_keeps_them:
+        r#"<div id=p style="width:min-content"><div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:100px;box-sizing:border-box;max-width:0;padding:10px;border:3px solid;font:20px/1 Ahem"><div id=a style="height:75px;border:3px solid">a</div><div id=b style="height:75px;border:3px solid">b</div></div></div>"# =>
+        [("p", (8.0, 8.0, 26.0, 100.0)), ("c", (8.0, 8.0, 26.0, 100.0)), ("a", (21.0, 21.0, 26.0, 74.0)), ("b", (47.0, 21.0, 26.0, 74.0))];
 }

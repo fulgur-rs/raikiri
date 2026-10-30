@@ -2619,21 +2619,23 @@ fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve
-/// against `parent_width`, the maximum no smaller than the minimum.
+/// against `parent_width`, the maximum no smaller than the minimum and neither
+/// smaller than the padding and border.
 fn border_box_width_bounds(
     tree: &LayoutSession<'_>,
     idx: usize,
     parent_width: Option<f32>,
 ) -> (f32, f32) {
     let style = tree.physical_style(idx);
-    let adjustment =
-        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
+    let basis = parent_width.unwrap_or(0.0);
+    let adjustment = crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, basis);
+    let edges = crate::layout::ifc::boxes::horizontal_padding_border(tree, idx, basis);
     let resolve = |value, auto: f32| {
         crate::layout::resolve_length_percentage_auto(value, parent_width)
             .filter(|resolved| resolved.is_finite())
             .map_or(auto, |resolved| resolved + adjustment)
     };
-    let min = resolve(style.min_size().width, 0.0);
+    let min = resolve(style.min_size().width, 0.0).max(edges);
     let max = resolve(style.max_size().width, f32::INFINITY);
     (min, max.max(min))
 }
