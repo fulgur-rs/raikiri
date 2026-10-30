@@ -5335,13 +5335,26 @@ fn collapsed_margin_start(
 /// margin of `id` and the margins of its first or last in-flow child that
 /// adjoin it, which all collapse into one (CSS 2 §8.3.1).
 fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, start: bool) -> f32 {
+    adjoining_margin_extremes(document, cascade, id, start).0
+}
+
+/// The largest positive margin and the most negative one (zero when there is
+/// none) among the block-start (`start`) or block-end margin of `id` and the
+/// margins of its first or last in-flow child that adjoin it. Their sum is the
+/// one margin they collapse into (CSS 2 §8.3.1).
+fn adjoining_margin_extremes(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    start: bool,
+) -> (f32, f32) {
     let layout = &document.nodes[id].layout;
-    let own = if start {
+    let margin = if start {
         layout.margin.top
     } else {
         layout.margin.bottom
-    }
-    .max(0.0);
+    };
+    let own = (margin.max(0.0), margin.min(0.0));
     let edges = if start {
         layout.border.top + layout.padding.top
     } else {
@@ -5370,10 +5383,19 @@ fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, sta
         && !document.nodes[child].display().is_inline_level()
         && touches
     {
-        own.max(adjoining_margin(document, cascade, child, start))
+        let (positive, negative) = adjoining_margin_extremes(document, cascade, child, start);
+        (own.0.max(positive), own.1.min(negative))
     } else {
         own
     }
+}
+
+/// How much the margins of the first in-flow children of `id` that adjoin its
+/// block-start margin change the margin it keeps at a forced break: the one
+/// margin they collapse into, less the margin of `id` itself.
+fn collapsed_start_margin_gain(document: &Document, cascade: &CascadeResult, id: usize) -> f32 {
+    let (positive, negative) = adjoining_margin_extremes(document, cascade, id, true);
+    positive + negative - document.nodes[id].layout.margin.top
 }
 
 /// Whether the block-start and block-end margins of `id`, a box with block
@@ -7800,6 +7822,26 @@ impl SiblingMargins {
             delta: target_y - at.effective_y,
             underflow: (target_y < target_top).then_some(target_top - target_y),
         })
+    }
+
+    /// Whether a forced break reaches the margin above `node_id`, whose
+    /// unpaginated top is `raw_y`: the margin between it and the sibling
+    /// block before it still adjoins the latest forced break, or the break was
+    /// taken to the new page by a float inside that sibling.
+    fn forced_break_reaches(
+        &self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        node_id: usize,
+        raw_y: f32,
+    ) -> bool {
+        self.gap_after_previous(document, node_id, raw_y)
+            .is_some_and(|(previous, _)| {
+                self.follows_forced_break(document, cascade, previous, node_id)
+                    || self
+                        .break_taken_by_float
+                        .is_some_and(|source| is_descendant_or_self(document, source, previous))
+            })
     }
 
     /// Whether the margin between `previous` and `node_id` still adjoins
