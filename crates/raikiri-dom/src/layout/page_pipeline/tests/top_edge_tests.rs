@@ -466,3 +466,57 @@ fn a_paragraph_that_a_relative_offset_paints_on_a_later_page_stays_in_the_flow()
         (2, 120.0, 100.0)
     );
 }
+
+#[test]
+fn a_block_at_the_top_of_the_page_with_a_relative_offset_stays_when_its_paragraph_moves() {
+    // The offset only paints the block 2px below the page top; in the flow it
+    // starts the page, so moving it gains nothing.
+    let (mut wrapper_id, mut paragraph_id) = (0, 0);
+    let (doc, pages) = paged_body_with_ifc(|doc, body| {
+        wrapper_id = block(
+            doc,
+            body,
+            "display:block;position:relative;top:2px;padding-top:94px",
+        );
+        paragraph_id = paragraph(doc, wrapper_id, 1, "");
+    });
+    assert_eq!(
+        (
+            page_flow_y(&doc, wrapper_id),
+            page_flow_y(&doc, paragraph_id),
+            pages
+        ),
+        (2.0, 102.0, 2)
+    );
+}
+
+#[test]
+fn a_container_is_judged_by_the_normal_flow_place_of_its_items() {
+    // The relative offset paints the item 30px lower; its line ends at 96 in
+    // the flow, where it fits the page, so the container stays.
+    assert_eq!(
+        container_after(80, FLEX, &["position:relative;top:30px"], 1),
+        (80.0, 116.0, 2)
+    );
+}
+
+#[test]
+fn a_block_moves_even_when_its_padding_and_line_do_not_fit_one_page() {
+    // The wrapper's padding runs over a page, and the page still breaks before
+    // the wrapper rather than between that padding and its line, as Chromium
+    // does: the wrapper starts the second page and its line lands on a third.
+    let (mut wrapper_id, mut paragraph_id) = (0, 0);
+    let (doc, pages) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        wrapper_id = block(doc, body, "display:block;padding-top:110px");
+        paragraph_id = paragraph(doc, wrapper_id, 1, "");
+    });
+    assert_eq!(
+        (
+            page_flow_y(&doc, wrapper_id),
+            page_flow_y(&doc, paragraph_id),
+            pages
+        ),
+        (100.0, 210.0, 3)
+    );
+}

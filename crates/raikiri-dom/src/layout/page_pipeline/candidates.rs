@@ -1013,7 +1013,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         DisplayValue::Flex | DisplayValue::Grid
                     )
                     && !document.context.pagination_on_transposed_axes)
-                    .then(|| leading_piece_end(document, cascade, node_id))
+                    .then(|| leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
                 let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)

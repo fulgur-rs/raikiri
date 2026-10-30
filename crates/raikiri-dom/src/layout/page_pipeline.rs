@@ -4791,6 +4791,7 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
 /// `page_start` gains nothing by moving, and stops the walk.
 fn first_box_ancestor_at_start(
     document: &Document,
+    cascade: &CascadeResult,
     block: usize,
     body_id: usize,
     page_start: f32,
@@ -4860,7 +4861,11 @@ fn first_box_ancestor_at_start(
         let layout = &document.nodes[parent].layout;
         let has_edges = layout.border.top != 0.0 || layout.padding.top != 0.0;
         let moves_with_block = if has_edges {
-            is_plain_block_box(document, parent) && parent_top > page_start + 0.001
+            // The page breaks before a relative offset moves the box, so the
+            // ancestor starts the page at its place in the normal flow.
+            is_plain_block_box(document, parent)
+                && parent_top - accumulated_relative_offset_y(document, cascade, body_id, parent)
+                    > page_start + 0.001
         } else {
             (parent_top - child_start).abs() <= 0.01
         };
@@ -6157,6 +6162,7 @@ const FIRST_PIECE_DEPTH: usize = 8;
 fn first_piece_end(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     node_id: usize,
     depth: usize,
 ) -> Option<f32> {
@@ -6226,8 +6232,9 @@ fn first_piece_end(
     let examined = if stacks_every_box { boxes.len() } else { 1 };
     let mut least = f32::INFINITY;
     for &child in &boxes[..examined] {
-        let end = document.nodes[child].layout.location.y
-            + first_piece_end(document, cascade, child, depth + 1)?;
+        // The page breaks before the relative offset moves the box.
+        let end = normal_flow_y(document, cascade, body_id, child)
+            + first_piece_end(document, cascade, body_id, child, depth + 1)?;
         least = least.min(end);
     }
     least.is_finite().then_some(least)
@@ -6236,10 +6243,15 @@ fn first_piece_end(
 /// How far below the border-box top of the flex container or grid `node_id`
 /// the first piece of its content ends, when it has padding or border above
 /// its items (see [`first_piece_end`]).
-fn leading_piece_end(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<f32> {
+fn leading_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
     let layout = &document.nodes[node_id].layout;
     (layout.border.top + layout.padding.top > 0.0)
-        .then(|| first_piece_end(document, cascade, node_id, 0))
+        .then(|| first_piece_end(document, cascade, body_id, node_id, 0))
         .flatten()
 }
 
@@ -8067,7 +8079,7 @@ fn move_line_block(
 ) -> f32 {
     let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
     let moved = if nested {
-        first_box_ancestor_at_start(document, block_id, body_id, page_start)
+        first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start)
     } else {
         block_id
     };

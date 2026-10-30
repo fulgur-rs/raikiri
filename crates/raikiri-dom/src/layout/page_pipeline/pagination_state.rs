@@ -1288,7 +1288,7 @@ impl PaginationState {
                     let holder_top = block_effective_y
                         - if nested {
                             let holder = first_box_ancestor_at_start(
-                                document, block_id, body_id, page_start,
+                                document, cascade, block_id, body_id, page_start,
                             );
                             lead_below_ancestor(document, cascade, body_id, block_id, holder)
                         } else {
