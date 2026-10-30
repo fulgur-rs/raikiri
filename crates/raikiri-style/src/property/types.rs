@@ -12110,7 +12110,7 @@ pub enum PropertyValue {
     /// [`ContainIntrinsicSize`]). `contain-intrinsic-inline-size` is parsed into this
     /// variant, and `contain-intrinsic-block-size` into [`Self::ContainIntrinsicHeight`]:
     /// the cascade moves them to the axis they name under the element's writing mode (see
-    /// `crate::logical`).
+    /// [`crate::logical`]).
     ContainIntrinsicWidth(ContainIntrinsicSize),
     /// `contain-intrinsic-height`; see [`Self::ContainIntrinsicWidth`].
     ContainIntrinsicHeight(ContainIntrinsicSize),
