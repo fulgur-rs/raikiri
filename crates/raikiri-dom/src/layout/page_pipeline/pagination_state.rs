@@ -15,14 +15,15 @@ use super::{
     first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
     follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
     grow_ancestors_for_shift, has_explicit_positioned_block_ancestor, has_fixed_height,
-    has_footnote_ancestor, in_row_flex_container, line_block_parent, lines_between_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, make_room_for_table_header,
-    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
-    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
-    place_first_table_header, place_text_candidate, positioned_text_start_y, reaches_line,
-    record_candidate_pages, reset_inline_x_for_page_transition, shift_text_candidate,
-    straddling_line, text_changes_page_name, text_sets_page_name,
+    has_footnote_ancestor, in_row_flex_container, is_floating_box_for_pagination,
+    line_block_parent, lines_between_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, make_room_for_table_header, margin_box_starts_page, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
+    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
+    place_text_candidate, positioned_text_start_y, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, shift_text_candidate, straddling_line,
+    text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -668,6 +669,7 @@ impl PaginationState {
             && let Some(parent_id) =
                 BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
         {
+            self.sibling_margins.break_taken_by_float = None;
             if !starts_after_forced_break {
                 self.sibling_margins.pass_on_forced_break(
                     document,
@@ -1007,6 +1009,11 @@ impl PaginationState {
             position.starts_after_forced_break = true;
         }
         if pending_break_applies {
+            // A float that takes the break moves to the new page in the place
+            // of the in-flow box that follows it.
+            if is_floating_box_for_pagination(document, cascade, node_id) {
+                self.sibling_margins.break_taken_by_float = self.pending_break.source;
+            }
             self.pending_break.clear();
         }
         Ok(())

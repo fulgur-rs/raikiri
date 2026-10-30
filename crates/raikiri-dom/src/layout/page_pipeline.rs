@@ -7505,6 +7505,10 @@ struct SiblingMargins {
     forced_break_box: Option<usize>,
     /// Whether truncating a margin moved a box.
     moved_boxes: bool,
+    /// The box that forces a break after it, which a float took to the new
+    /// page, until the in-flow box after the float is placed. That box starts
+    /// the new page as well, so the break sits before its margin.
+    break_taken_by_float: Option<usize>,
 }
 
 /// A box that starts on `natural_page`, below a page edge that may fall in the
@@ -7559,6 +7563,10 @@ impl SiblingMargins {
             return None;
         }
         let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
+        let forced_before = at.forced_before
+            || self
+                .break_taken_by_float
+                .is_some_and(|source| is_descendant_or_self(document, source, previous));
         let page_top = page_origins.origin(at.natural_page);
         let previous_bottom = at.effective_y - gap;
         let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
@@ -7577,7 +7585,7 @@ impl SiblingMargins {
         }
         let (target_top, target_y) = page_origins.truncated_margin_target(
             at.natural_page,
-            at.forced_before,
+            forced_before,
             at.margin_top,
             || {
                 collapsed_margin_start(
