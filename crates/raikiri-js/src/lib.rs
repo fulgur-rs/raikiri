@@ -34,3 +34,6 @@ pub mod substring_diagnostics;
 
 #[doc(hidden)]
 pub mod image_adoption_diagnostics;
+
+#[doc(hidden)]
+pub mod listener_diagnostics;

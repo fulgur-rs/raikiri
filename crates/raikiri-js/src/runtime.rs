@@ -123,7 +123,7 @@ pub(crate) struct State {
     pub custom_highlights: HashMap<String, JsObject>,
     /// Listeners belonging to the permanent window root. Node listeners live
     /// in the traced node ownership graph.
-    pub window_listeners: Vec<events::Listener>,
+    window_listeners: Option<boa_gc::Gc<events::ListenerList>>,
     /// Task and microtask queues, timers, and the virtual clock.
     pub event_loop: event_loop::EventLoop,
     /// Set while [`dispatch::report_exception`] is dispatching its own
@@ -381,7 +381,7 @@ impl DomRuntime {
             selection_object: None,
             selection_ranges: Vec::new(),
             custom_highlights: HashMap::new(),
-            window_listeners: Vec::new(),
+            window_listeners: None,
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
             dispatch_depth: 0,
@@ -780,3 +780,14 @@ pub(crate) fn error_message(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "listener-diagnostics"))]
+pub(crate) fn listener_storage_sizes() -> crate::listener_diagnostics::StorageSizes {
+    crate::listener_diagnostics::StorageSizes {
+        node_state: std::mem::size_of::<node_gc::NodeState>(),
+        node_record: std::mem::size_of::<node_gc::NodeRecord>(),
+        list_field: std::mem::size_of::<Option<boa_gc::Gc<events::ListenerList>>>(),
+        list_data: std::mem::size_of::<events::ListenerList>(),
+        entry_data: std::mem::size_of::<events::Listener>(),
+    }
+}

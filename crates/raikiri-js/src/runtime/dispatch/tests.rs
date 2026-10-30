@@ -1049,3 +1049,130 @@ fn silent_enqueue_abort_does_not_change_event_data() {
     );
     assert!(!super::default_prevented(&event));
 }
+
+#[test]
+fn removed_registration_is_not_revived_by_readding_the_same_callback() {
+    for target in ["document.createElement('div')", "window"] {
+        let mut rt = rt();
+        ok(
+            &mut rt,
+            &format!(
+                "(()=>{{let t={target},seen=[];function f(){{seen.push('f')}}t.addEventListener('click',()=>{{seen.push('a');t.removeEventListener('click',f);t.addEventListener('click',f)}});t.addEventListener('click',f);t.dispatchEvent(new Event('click'));return seen.join(',')==='a'}})()"
+            ),
+        );
+    }
+}
+
+#[test]
+fn cleared_handler_is_a_new_registration_when_reassigned() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "(()=>{let t=document.createElement('div'),seen=[];function f(){seen.push('f')}t.addEventListener('click',()=>{seen.push('a');t.onclick=null;t.onclick=f});t.onclick=f;t.dispatchEvent(new Event('click'));return seen.join(',')==='a'})()",
+    );
+}
+
+#[test]
+fn listener_snapshot_work_is_linear_and_once_compacts_once() {
+    for once in [false, true] {
+        let mut rt = rt();
+        rt.evaluate(&format!("globalThis.t=document.createElement('div');globalThis.calls=0;for(let i=0;i<128;i++)t.addEventListener('x',()=>calls++,{{once:{once}}});")).unwrap();
+        crate::listener_diagnostics::begin();
+        let result = rt
+            .evaluate("t.dispatchEvent(new Event('x'));calls")
+            .unwrap();
+        let work = crate::listener_diagnostics::finish();
+        assert_eq!(result.as_number(), Some(128.));
+        assert_eq!(work.lookup_checks, 0);
+        assert_eq!(work.kind_bytes_cloned, 0);
+        assert_eq!(work.snapshot_entries, 128);
+        assert_eq!(work.compactions, u64::from(once));
+        assert_eq!(work.compaction_scans, if once { 128 } else { 0 });
+    }
+}
+
+#[test]
+fn unrelated_long_listener_kinds_are_not_copied() {
+    let mut rt = rt();
+    rt.evaluate("globalThis.t=document.createElement('div');for(let i=0;i<16;i++)t.addEventListener('z'.repeat(65536)+i,()=>{});").unwrap();
+    crate::listener_diagnostics::begin();
+    rt.evaluate("t.dispatchEvent(new Event('x'))").unwrap();
+    let work = crate::listener_diagnostics::finish();
+    assert_eq!(work.snapshot_candidates, 32);
+    assert_eq!(work.snapshot_entries, 0);
+    assert_eq!(work.kind_bytes_cloned, 0);
+}
+
+#[test]
+fn nested_dispatch_keeps_outer_slots_stable_across_reallocation_and_collection() {
+    let mut rt = rt();
+    rt.context_mut()
+        .register_global_builtin_callable(
+            boa_engine::js_string!("collectNow"),
+            0,
+            boa_engine::NativeFunction::from_fn_ptr(|_, _, context| {
+                context.clear_kept_objects();
+                boa_gc::force_collect();
+                Ok(JsValue::undefined())
+            }),
+        )
+        .unwrap();
+    ok(
+        &mut rt,
+        "(()=>{let t=document.createElement('div'),seen=[];function last(){seen.push('last')}t.addEventListener('x',()=>{seen.push('first');t.dispatchEvent(new Event('y'));collectNow()},{once:true});t.addEventListener('x',last);t.addEventListener('y',()=>{for(let i=0;i<100;i++)t.addEventListener('z',()=>{});collectNow()},{once:true});t.dispatchEvent(new Event('x'));return seen.join(',')==='first,last'})()",
+    );
+}
+
+#[test]
+fn once_reregistration_and_nested_dispatch_use_distinct_slots() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "(()=>{let t=document.createElement('div'),seen=[];function f(){seen.push('f');if(seen.length===1){t.addEventListener('x',f,{once:true});t.dispatchEvent(new Event('x'))}}t.addEventListener('x',f,{once:true});t.dispatchEvent(new Event('x'));t.dispatchEvent(new Event('x'));return seen.join(',')==='f,f'})()",
+    );
+}
+
+#[test]
+fn nested_once_invocations_only_compact_at_the_outermost_finish() {
+    let mut rt = rt();
+    rt.evaluate("globalThis.t=document.createElement('div');for(let i=0;i<16;i++)t.addEventListener('x',()=>t.dispatchEvent(new Event('y')),{once:true});").unwrap();
+    crate::listener_diagnostics::begin();
+    rt.evaluate("t.dispatchEvent(new Event('x'))").unwrap();
+    let work = crate::listener_diagnostics::finish();
+    assert_eq!(work.compactions, 1);
+    assert_eq!(work.compaction_scans, 16);
+    assert_eq!(work.snapshot_entries, 16);
+    assert_eq!(work.lookup_checks, 0);
+}
+
+#[test]
+fn capture_addition_is_visible_to_the_later_non_capture_invocation() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "(()=>{let t=document.createElement('div'),seen=[];t.addEventListener('x',()=>{seen.push('capture');t.addEventListener('x',()=>seen.push('late'))},true);t.dispatchEvent(new Event('x'));return seen.join(',')==='capture,late'})()",
+    );
+}
+
+#[test]
+fn listener_cycles_are_collectible_after_removed_snapshots_finish() {
+    let mut rt = rt();
+    rt.context_mut()
+        .register_global_builtin_callable(
+            boa_engine::js_string!("collectNow"),
+            0,
+            boa_engine::NativeFunction::from_fn_ptr(|_, _, context| {
+                context.clear_kept_objects();
+                boa_gc::force_collect();
+                Ok(JsValue::undefined())
+            }),
+        )
+        .unwrap();
+    ok(
+        &mut rt,
+        "globalThis.weak;(()=>{let t=document.createElement('div');let captured=t;let f=()=>captured;weak=new WeakRef(f);t.addEventListener('x',()=>{t.removeEventListener('x',f);collectNow();if(!weak.deref())throw Error('lost snapshot callback')},{once:true});t.addEventListener('x',f);t.dispatchEvent(new Event('x'));return weak.deref()!==undefined})()",
+    );
+    rt.context_mut().clear_kept_objects();
+    boa_gc::force_collect();
+    ok(&mut rt, "weak.deref()===undefined");
+}

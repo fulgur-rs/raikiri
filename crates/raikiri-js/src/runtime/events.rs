@@ -11,15 +11,11 @@ use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
 use super::interfaces::{Members, function};
 use super::webidl::{dom_string, node_index, with_state};
 
-/// One registered listener (DOM §2.7's "an event listener" struct, minus the
-/// touch-target-list field no algorithm here needs). There is no stored
-/// `removed` field: a listener removed by an earlier listener's own
-/// callback, during the same dispatch, is instead detected by
-/// `dispatch::invoke` re-checking that an identical
-/// `(type, callback, capture)` entry is still present in the target's list
-/// right before calling it, rather than flagging entries in place.
+/// One registration, including the DOM removed flag. Its slot is stable
+/// throughout every active invocation on the owning listener list.
 #[derive(Clone, boa_engine::Trace, boa_engine::Finalize)]
 pub(crate) struct Listener {
+    pub removed: bool,
     pub kind: String,
     pub callback: JsObject,
     pub capture: bool,
@@ -31,6 +27,132 @@ pub(crate) struct Listener {
     /// [`super::dispatch::install_window_handlers`] and the matching
     /// `HTMLElement` accessors.
     pub is_handler: bool,
+}
+
+/// Dense registrations with invocation-scoped slot identities.
+///
+/// While any snapshot is active, entries may only be appended or marked
+/// removed. No slot is erased, reordered, or reused until the outermost
+/// invocation finishes. Integer snapshots stay private to their owning list;
+/// the rooted list traces callbacks even after removal during dispatch.
+#[derive(Default, boa_engine::Trace, boa_engine::Finalize)]
+pub(super) struct ListenerList {
+    entries: boa_gc::GcRefCell<Vec<Listener>>,
+    depth: std::cell::Cell<usize>,
+    dirty: std::cell::Cell<bool>,
+}
+impl ListenerList {
+    pub(super) fn add(&self, listener: Listener) {
+        let mut entries = self.entries.borrow_mut();
+        if !entries.iter().any(|l| {
+            !l.removed
+                && !l.is_handler
+                && l.kind == listener.kind
+                && l.capture == listener.capture
+                && JsObject::equals(&l.callback, &listener.callback)
+        }) {
+            entries.push(listener);
+        }
+    }
+    pub(super) fn remove(&self, kind: &str, callback: &JsObject, capture: bool) {
+        for listener in self.entries.borrow_mut().iter_mut() {
+            if !listener.removed
+                && !listener.is_handler
+                && listener.kind == kind
+                && listener.capture == capture
+                && JsObject::equals(&listener.callback, callback)
+            {
+                listener.removed = true;
+                self.dirty.set(true);
+            }
+        }
+        self.compact();
+    }
+    pub(super) fn handler(&self, kind: &str) -> Option<JsObject> {
+        self.entries
+            .borrow()
+            .iter()
+            .find(|l| !l.removed && l.is_handler && l.kind == kind)
+            .map(|l| l.callback.clone())
+    }
+    pub(super) fn set_handler(&self, kind: &str, callback: Option<JsObject>) {
+        let mut entries = self.entries.borrow_mut();
+        let existing = entries
+            .iter_mut()
+            .find(|l| !l.removed && l.is_handler && l.kind == kind);
+        match (existing, callback) {
+            (Some(listener), Some(callback)) => listener.callback = callback,
+            (Some(listener), None) => {
+                listener.removed = true;
+                self.dirty.set(true);
+            }
+            (None, Some(callback)) => entries.push(Listener {
+                removed: false,
+                kind: kind.to_owned(),
+                callback,
+                capture: false,
+                once: false,
+                passive: false,
+                is_handler: true,
+            }),
+            (None, None) => {}
+        }
+        drop(entries);
+        self.compact();
+    }
+    pub(super) fn begin<const COUNT: bool>(
+        &self,
+        kind: &str,
+        capture: Option<bool>,
+        work: &mut crate::listener_diagnostics::Work,
+    ) -> Vec<usize> {
+        self.depth.set(self.depth.get() + 1);
+        let entries = self.entries.borrow();
+        if COUNT {
+            work.snapshot_candidates += entries.len() as u64;
+        }
+        let snapshot: Vec<_> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| !l.removed && l.kind == kind && capture.is_none_or(|c| c == l.capture))
+            .map(|(index, _)| index)
+            .collect();
+        if COUNT {
+            work.snapshot_entries += snapshot.len() as u64;
+        }
+        snapshot
+    }
+    pub(super) fn current(&self, index: usize) -> Option<(JsObject, bool, bool)> {
+        let mut entries = self.entries.borrow_mut();
+        let listener = &mut entries[index];
+        if listener.removed {
+            return None;
+        }
+        if listener.once {
+            listener.removed = true;
+            self.dirty.set(true);
+        }
+        Some((
+            listener.callback.clone(),
+            listener.passive,
+            listener.is_handler,
+        ))
+    }
+    pub(super) fn finish(&self) {
+        self.depth.set(self.depth.get() - 1);
+        self.compact();
+    }
+    fn compact(&self) {
+        if self.depth.get() == 0 && self.dirty.replace(false) {
+            let mut entries = self.entries.borrow_mut();
+            crate::listener_diagnostics::compaction(entries.len());
+            entries.retain(|listener| !listener.removed);
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn live_len(&self) -> usize {
+        self.entries.borrow().iter().filter(|l| !l.removed).count()
+    }
 }
 
 /// `this`'s listener-storage key: `Some(index)` for a `Node` wrapper, or
@@ -147,23 +269,14 @@ pub(crate) fn add_event_listener(
         return Ok(JsValue::undefined());
     };
     with_state(context, |s| {
-        s.with_listeners(key, |list| {
-            let duplicate = list.iter().any(|l| {
-                !l.is_handler
-                    && l.kind == kind
-                    && JsObject::equals(&l.callback, &callback)
-                    && l.capture == capture
-            });
-            if !duplicate {
-                list.push(Listener {
-                    kind,
-                    callback,
-                    capture,
-                    once,
-                    passive,
-                    is_handler: false,
-                });
-            }
+        s.ensure_listeners(key).add(Listener {
+            removed: false,
+            kind,
+            callback,
+            capture,
+            once,
+            passive,
+            is_handler: false,
         })
     })?;
     Ok(JsValue::undefined())
@@ -191,14 +304,9 @@ pub(crate) fn remove_event_listener(
         return Ok(JsValue::undefined());
     };
     with_state(context, |s| {
-        s.with_listeners(key, |list| {
-            list.retain(|l| {
-                l.is_handler
-                    || !(l.kind == kind
-                        && JsObject::equals(&l.callback, &callback)
-                        && l.capture == capture)
-            });
-        })
+        if let Some(list) = s.listeners(key) {
+            list.remove(&kind, &callback, capture);
+        }
     })?;
     Ok(JsValue::undefined())
 }

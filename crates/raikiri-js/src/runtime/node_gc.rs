@@ -25,7 +25,7 @@ pub(super) enum NodeObject {
 pub(super) struct NodeState {
     pub(super) wrapper: Option<JsObject>,
     objects: HashMap<NodeObject, JsObject>,
-    listeners: Vec<super::events::Listener>,
+    listeners: Option<Gc<super::events::ListenerList>>,
     pub(super) css_owner: Option<Gc<super::stylesheet::CssOwner>>,
     parent: Option<Gc<NodeRecord>>,
     children: HashMap<usize, Gc<NodeRecord>>,
@@ -190,16 +190,31 @@ impl NodeGraph {
 }
 
 impl State {
-    pub(super) fn with_listeners<T>(
+    pub(super) fn listeners(
         &mut self,
         key: Option<usize>,
-        f: impl FnOnce(&mut Vec<super::events::Listener>) -> T,
-    ) -> T {
+    ) -> Option<Gc<super::events::ListenerList>> {
         if let Some(index) = key {
-            let record = self.node_record(index);
-            f(&mut record.state.borrow_mut().listeners)
+            self.node_record(index).state.borrow().listeners.clone()
         } else {
-            f(&mut self.window_listeners)
+            self.window_listeners.clone()
+        }
+    }
+    pub(super) fn ensure_listeners(
+        &mut self,
+        key: Option<usize>,
+    ) -> Gc<super::events::ListenerList> {
+        if let Some(index) = key {
+            self.node_record(index)
+                .state
+                .borrow_mut()
+                .listeners
+                .get_or_insert_with(|| Gc::new(super::events::ListenerList::default()))
+                .clone()
+        } else {
+            self.window_listeners
+                .get_or_insert_with(|| Gc::new(super::events::ListenerList::default()))
+                .clone()
         }
     }
 

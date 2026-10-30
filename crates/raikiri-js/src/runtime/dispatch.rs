@@ -26,7 +26,7 @@ use boa_engine::{
 use raikiri_dom::NodeKind;
 
 use super::event_loop;
-use super::events::{self, Listener};
+use super::events;
 use super::interfaces::{self, Members, protos, wrap};
 use super::node::js_str;
 use super::webidl::{guard_active, throw_dom_exception, with_state};
@@ -797,52 +797,6 @@ fn handle_generic_handler_return_value(event: &JsObject, result: &JsResult<JsVal
     }
 }
 
-/// The live counterpart of `listener` (from the dispatch-start snapshot)
-/// right now, or `None` if it is no longer registered -- DOM §2.9 inner
-/// invoke's "listener whose removed is false" check, applied to a listener
-/// a prior one (at the same node, in the same [`invoke`] call) may have
-/// removed via `removeEventListener`, or an event handler IDL attribute a
-/// prior one may have reassigned or cleared, in the meantime.
-///
-/// An event handler IDL attribute's listener is matched by `(type,
-/// is_handler)` alone, never by callback identity: its callback can be
-/// replaced in place (`el.onclick = g` after `el.onclick = f`) without
-/// changing *which* listener it is, and HTML's "get the current value of
-/// the event handler" reads that value fresh at invocation time, so the
-/// *current* (possibly-replaced) callback is what comes back here, not the
-/// snapshot's. An ordinary `addEventListener` registration is still
-/// matched by `(type, callback, capture)` identity, same as before, but
-/// only against other ordinary registrations (`!l.is_handler`) -- without
-/// that, a handler slot and an ordinary registration that happen to share
-/// the very same callback function would alias each other in this check.
-///
-/// There is no stored `removed` flag; this re-derives it against the live
-/// list instead (see [`events::Listener`]'s own doc comment).
-fn current_listener(
-    context: &mut Context,
-    node: Option<usize>,
-    listener: &Listener,
-) -> JsResult<Option<Listener>> {
-    with_state(context, |s| {
-        s.with_listeners(node, |list| {
-            if listener.is_handler {
-                list.iter()
-                    .find(|l| l.is_handler && l.kind == listener.kind)
-                    .cloned()
-            } else {
-                list.iter()
-                    .find(|l| {
-                        !l.is_handler
-                            && l.kind == listener.kind
-                            && JsObject::equals(&l.callback, &listener.callback)
-                            && l.capture == listener.capture
-                    })
-                    .cloned()
-            }
-        })
-    })
-}
-
 /// Invoke every listener in `node`'s snapshot whose type matches and whose
 /// capture flag passes `capture_filter` (`Some(true)`: capturing phase;
 /// `Some(false)`: the forward pass -- target and bubbling ancestors --
@@ -856,72 +810,80 @@ fn invoke(
     node: Option<usize>,
     capture_filter: Option<bool>,
 ) -> JsResult<()> {
-    let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
-    let snapshot: Vec<Listener> =
-        with_state(context, |s| s.with_listeners(node, |list| list.clone()))?;
-    let this_value = target_this_value(context, node)?;
-    for listener in snapshot {
-        if listener.kind != kind {
-            continue;
-        }
-        match capture_filter {
-            Some(true) if !listener.capture => continue,
-            Some(false) if listener.capture => continue,
-            _ => {}
-        }
-        let Some(listener) = current_listener(context, node, &listener)? else {
-            continue;
-        };
-        if listener.once {
-            // `node`'s entry necessarily already exists (the check just
-            // above confirmed it), but `entry(...).or_default()` -- rather
-            // than a defensive `get_mut` -- keeps that invariant from
-            // needing its own untestable "what if it doesn't" branch. A
-            // handler slot is never `once` (`event_handler_set` never sets
-            // it), but `!l.is_handler` keeps this removal from ever
-            // touching one regardless.
-            let _ = with_state(context, |s| {
-                s.with_listeners(node, |list| {
-                    list.retain(|l| {
-                        l.is_handler
-                            || !(l.kind == listener.kind
-                                && JsObject::equals(&l.callback, &listener.callback)
-                                && l.capture == listener.capture)
-                    });
-                })
-            });
-        }
-        if listener.passive {
-            let _ = event_data(event, |d| d.in_passive_listener.set(true));
-        }
-        let result = if listener.is_handler
-            && node.is_none()
-            && kind == "error"
-            && is_error_event(context, event)
-        {
-            call_window_on_error(context, &listener.callback, event)
-        } else {
-            let result = call_callback(context, &listener.callback, event, &this_value);
-            if listener.is_handler {
-                handle_generic_handler_return_value(event, &result);
-            }
-            result
-        };
-        if listener.passive {
-            let _ = event_data(event, |d| d.in_passive_listener.set(false));
-        }
-        if let Err(error) = result {
-            if let Some(reason) = event_loop::abort_for(&error) {
-                let _ = event_loop::abort(context, reason);
-                return Err(error);
-            }
-            report_exception(context, &error, None)?;
-        }
-        if immediate_stopped(event) {
-            break;
-        }
+    if crate::listener_diagnostics::enabled() {
+        invoke_counted::<true>(context, event, node, capture_filter)
+    } else {
+        invoke_counted::<false>(context, event, node, capture_filter)
     }
-    Ok(())
+}
+
+fn invoke_counted<const COUNT: bool>(
+    context: &mut Context,
+    event: &JsObject,
+    node: Option<usize>,
+    capture_filter: Option<bool>,
+) -> JsResult<()> {
+    let mut work = crate::listener_diagnostics::Work::default();
+    if COUNT {
+        work.invocations = 1;
+    }
+    let result = (|| {
+        let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
+        let list = with_state(context, |s| s.listeners(node))?;
+        let this_value = target_this_value(context, node)?;
+        let Some(list) = list else {
+            return Ok(());
+        };
+        let snapshot = list.begin::<COUNT>(&kind, capture_filter, &mut work);
+        let result = (|| {
+            for index in snapshot {
+                guard_active(context)?;
+                if COUNT {
+                    work.liveness_checks += 1;
+                }
+                let Some((callback, passive, is_handler)) = list.current(index) else {
+                    continue;
+                };
+                if passive {
+                    let _ = event_data(event, |d| d.in_passive_listener.set(true));
+                }
+                let result = if is_handler
+                    && node.is_none()
+                    && kind == "error"
+                    && is_error_event(context, event)
+                {
+                    call_window_on_error(context, &callback, event)
+                } else {
+                    let result = call_callback(context, &callback, event, &this_value);
+                    if is_handler {
+                        handle_generic_handler_return_value(event, &result);
+                    }
+                    result
+                };
+                if passive {
+                    let _ = event_data(event, |d| d.in_passive_listener.set(false));
+                }
+                if let Err(error) = result {
+                    if let Some(reason) = event_loop::abort_for(&error) {
+                        let _ = event_loop::abort(context, reason);
+                        return Err(error);
+                    }
+                    report_exception(context, &error, None)?;
+                }
+                if immediate_stopped(event) {
+                    break;
+                }
+            }
+            Ok(())
+        })();
+        // Cleanup must also run after an engine abort, without checked State access.
+        list.finish();
+        result
+    })();
+    if COUNT {
+        crate::listener_diagnostics::record(work);
+    }
+    result
 }
 
 /// DOM §2.9's phases, current spec: the capturing pass walks the whole path
@@ -1194,11 +1156,7 @@ fn event_handler_get(this: &JsValue, kind: &str, context: &mut Context) -> JsRes
     let key = events::this_event_target(this, context)?;
     let key = resolve_handler_key(context, key, kind)?;
     let callback = with_state(context, |s| {
-        s.with_listeners(key, |list| {
-            list.iter()
-                .find(|l| l.kind == kind && l.is_handler)
-                .map(|l| l.callback.clone())
-        })
+        s.listeners(key).and_then(|list| list.handler(kind))
     })?;
     Ok(callback.map_or_else(JsValue::null, JsValue::from))
 }
@@ -1232,22 +1190,11 @@ fn set_handler_callback(
     callback: Option<JsObject>,
 ) -> JsResult<()> {
     with_state(context, |s| {
-        s.with_listeners(key, |list| {
-            let existing = list.iter_mut().find(|l| l.kind == kind && l.is_handler);
-            match (existing, callback) {
-                (Some(listener), Some(callback)) => listener.callback = callback,
-                (Some(_), None) => list.retain(|l| !(l.kind == kind && l.is_handler)),
-                (None, Some(callback)) => list.push(Listener {
-                    kind: kind.to_owned(),
-                    callback,
-                    capture: false,
-                    once: false,
-                    passive: false,
-                    is_handler: true,
-                }),
-                (None, None) => {}
-            }
-        })
+        if callback.is_some() {
+            s.ensure_listeners(key).set_handler(kind, callback);
+        } else if let Some(list) = s.listeners(key) {
+            list.set_handler(kind, None);
+        }
     })
 }
 
