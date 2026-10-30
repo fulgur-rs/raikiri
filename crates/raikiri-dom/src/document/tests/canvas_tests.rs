@@ -1,6 +1,6 @@
 use super::*;
 
-fn canvas_in_body() -> (Document, usize) {
+pub(super) fn canvas_in_body() -> (Document, usize) {
     let mut doc = Document::new();
     let root = doc.root_index();
     let html = doc.create_detached_element("html").unwrap();
@@ -563,12 +563,12 @@ fn canvas_noop_writes_preserve_shared_storage_and_success() {
 }
 
 #[test]
-fn canvas_document_clone_and_extract_keep_independent_pixel_storage() {
+fn canvas_document_clone_and_extract_share_until_writes() {
     let (mut doc, id) = canvas_in_body();
     assert!(doc.canvas_fill_rect(id, 0, 0, 1, 1, [9, 8, 7, 255]));
     let snapshot = doc.canvas_bitmap_snapshot(id).unwrap();
     let mut cloned = doc.clone();
-    assert_ne!(
+    assert_eq!(
         snapshot.rgba.as_ptr(),
         cloned.canvas_bitmap_ref(id).unwrap().rgba.as_ptr()
     );
@@ -579,7 +579,7 @@ fn canvas_document_clone_and_extract_keep_independent_pixel_storage() {
     assert_eq!(bitmaps.len(), 1);
     assert_eq!(&bitmaps[0].rgba[..4], &[9, 8, 7, 255]);
     let extracted_id = extracted.canvas_ids_in_tree_order()[0];
-    assert_ne!(
+    assert_eq!(
         snapshot.rgba.as_ptr(),
         extracted
             .canvas_bitmap_ref(extracted_id)

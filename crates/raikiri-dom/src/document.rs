@@ -196,7 +196,8 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
         .any(|tag| tag_name.eq_ignore_ascii_case(tag))
 }
 
-// Cloning invalidates this cache because cloned Vec capacities can change.
+// Each document rebuilds its own capacity cache after cloning. Shared buffers
+// are charged in full, and a copy-on-write can change only the writer's capacity.
 #[derive(Debug)]
 struct CanvasBitmapByteCount(Option<usize>);
 
@@ -2402,8 +2403,10 @@ impl Document {
     ///
     /// Later writes, replacement, and resizing preserve the snapshot. Keeping
     /// snapshots alive can retain old pixel buffers beyond the current canvas
-    /// storage charged to this document's bitmap budget. Cloning a document
-    /// still copies its pixels independently.
+    /// storage charged to this document's bitmap budget. Cloned documents share
+    /// immutable pixels until a write separates them. Each document charges
+    /// the full retained capacity, including shared spare capacity, to its
+    /// own bitmap budget.
     pub fn canvas_bitmap_snapshot(&self, id: usize) -> Option<Arc<CanvasBitmap>> {
         let NodeData::Element(element) = &self.nodes.get(id)?.data else {
             return None;
@@ -2767,8 +2770,8 @@ impl Document {
 
     /// Remove and return materialized canvas bitmaps in tree order.
     ///
-    /// Unique pixel storage is moved; storage retained by a snapshot is
-    /// copied to preserve that snapshot. This is intended for
+    /// Unique pixel storage is moved; storage retained by another document or
+    /// snapshot is copied to preserve those readers. This is intended for
     /// consumers that serialize a live document and then discard or replace
     /// it, such as the WPT reftest paint path.
     pub fn take_canvases_in_tree_order(&mut self) -> Vec<crate::node::CanvasBitmap> {
