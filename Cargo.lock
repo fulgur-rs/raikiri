@@ -2677,6 +2677,7 @@ dependencies = [
  "raikiri-dom",
  "raikiri-style",
  "raikiri-traits",
+ "smol_str",
  "stacker",
  "url",
 ]

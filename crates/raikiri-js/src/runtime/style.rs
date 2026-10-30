@@ -1,5 +1,7 @@
 //! Inline style, computed style, `CSS.supports`, and geometry members.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use boa_engine::object::builtins::JsFunction;
@@ -10,6 +12,7 @@ use boa_engine::{
 };
 use cssparser::{Parser, ParserInput};
 use raikiri_dom::NodeKind;
+use smol_str::SmolStr;
 
 use super::indexed::{IndexedSource, indexed_object_with_retention, this_indexed};
 use super::interfaces::{Members, closure_function, function, protos};
@@ -243,11 +246,34 @@ fn validated_inline_declarations(
     style_attr: Option<&str>,
     page: bool,
 ) -> Vec<ValidatedDeclaration> {
+    #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+    if crate::css_declaration_diagnostics::enabled() {
+        return validated_inline_declarations_impl::<true>(style_attr, page);
+    }
+    validated_inline_declarations_impl::<false>(style_attr, page)
+}
+
+fn validated_inline_declarations_impl<const COUNT: bool>(
+    style_attr: Option<&str>,
+    page: bool,
+) -> Vec<ValidatedDeclaration> {
     let Some(style) = style_attr else {
         return Vec::new();
     };
-    let mut out: Vec<ValidatedDeclaration> = Vec::new();
+    #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+    let mut work = crate::css_declaration_diagnostics::Work {
+        validation_calls: 1,
+        ..Default::default()
+    };
+    // Canonical normal names and case-sensitive custom names share this index.
+    // Slots preserve last-occurrence order; replacements drop old values now.
+    let mut slots: Vec<Option<ValidatedDeclaration>> = Vec::new();
+    let mut by_name: HashMap<String, usize> = HashMap::new();
     for raw in parse_inline_style(style) {
+        #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+        if COUNT {
+            work.raw_declarations += 1;
+        }
         let Some(name) = validated_property_name(&raw.name, page) else {
             continue;
         };
@@ -262,18 +288,43 @@ fn validated_inline_declarations(
             continue;
         }
         if let Some(longhands) = shorthand::longhands_of(&name) {
-            out.retain(|d| !same_property(&d.name, &name) && !longhands.contains(&d.name.as_str()));
+            for removed in std::iter::once(name.as_str()).chain(longhands.iter().copied()) {
+                #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+                if COUNT {
+                    work.index_removals += 1;
+                }
+                if let Some(old) = by_name.remove(removed) {
+                    slots[old] = None;
+                }
+            }
         }
         let declarations =
             shorthand::expand(&name, &stored, page).unwrap_or_else(|| vec![(name, stored)]);
         for (name, value) in declarations {
-            out.retain(|d| !same_property(&d.name, &name));
-            out.push(ValidatedDeclaration {
+            #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+            if COUNT {
+                work.index_insertions += 1;
+            }
+            if let Some(old) = by_name.insert(name.clone(), slots.len()) {
+                slots[old] = None;
+            }
+            slots.push(Some(ValidatedDeclaration {
                 name,
                 value,
                 important,
-            });
+            }));
         }
+    }
+    // Do not let a duplicate-heavy input retain its temporary tombstone slots.
+    let mut out = Vec::with_capacity(by_name.len());
+    drop(by_name);
+    for declaration in slots.into_iter().flatten() {
+        out.push(declaration);
+    }
+
+    #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+    if COUNT {
+        crate::css_declaration_diagnostics::record(work);
     }
     out
 }
@@ -377,27 +428,16 @@ pub(crate) fn computed_longhand_names() -> Vec<&'static str> {
         .collect()
 }
 
-/// The last declared value of `property` in a `style` attribute, without `!important`.
-/// Reads through the validated view ([`validated_inline_declarations`]), so
-/// an unsupported name or an unparseable value reads as `""` rather than
-/// the raw text.
-/// `page` is as for [`validated_inline_declarations`].
-pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str, page: bool) -> String {
+fn declaration_lookup_name(property: &str) -> Option<String> {
     let trimmed = property.trim();
-    if trimmed.is_empty() {
-        return String::new();
+    if trimmed.is_empty() || (trimmed.starts_with("--") && trimmed.len() <= 2) {
+        return None;
     }
-    let lookup = if trimmed.starts_with("--") {
-        if trimmed.len() <= 2 {
-            return String::new();
-        }
+    Some(if trimmed.starts_with("--") {
         trimmed.to_owned()
     } else {
         trimmed.to_ascii_lowercase()
-    };
-    find_declaration(&validated_inline_declarations(style_attr, page), &lookup)
-        .map(|(value, _)| value)
-        .unwrap_or_default()
+    })
 }
 
 /// Serializes `declarations` back to `style` attribute text (`"prop:
@@ -666,20 +706,8 @@ fn split_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str, 
 /// validated declaration for `property` carries `!important`, otherwise
 /// `""` -- including when `property` is not declared at all, is unsupported,
 /// or holds an unparseable value (all dropped from the validated view).
-fn property_priority(style_attr: Option<&str>, property: &str, page: bool) -> &'static str {
-    let trimmed = property.trim();
-    if trimmed.is_empty() {
-        return "";
-    }
-    let lookup = if trimmed.starts_with("--") {
-        if trimmed.len() <= 2 {
-            return "";
-        }
-        trimmed.to_owned()
-    } else {
-        trimmed.to_ascii_lowercase()
-    };
-    match find_declaration(&validated_inline_declarations(style_attr, page), &lookup) {
+fn property_priority(declarations: &[ValidatedDeclaration], property: &str) -> &'static str {
+    match find_declaration(declarations, property) {
         Some((_, true)) => "important",
         _ => "",
     }
@@ -754,6 +782,27 @@ fn client_border_box(
 
 // ---- CSSStyleDeclaration ---------------------------------------------------
 
+/// The current declaration source, compared before reusing a validated view.
+#[derive(PartialEq, Eq)]
+enum DeclarationText {
+    Inline(Option<SmolStr>),
+    Rule { body: Option<String>, page: bool },
+}
+
+impl DeclarationText {
+    fn parts(&self) -> (Option<&str>, bool) {
+        match self {
+            Self::Inline(text) => (text.as_deref(), false),
+            Self::Rule { body, page } => (body.as_deref(), *page),
+        }
+    }
+}
+
+struct DeclarationCache {
+    text: DeclarationText,
+    declarations: Box<[ValidatedDeclaration]>,
+}
+
 /// Native data behind one `CSSStyleDeclaration` instance: the arena index
 /// of the element it reads/writes, and whether it is `getComputedStyle`'s
 /// read-only view or an element's own (writable) inline `style`.
@@ -763,9 +812,57 @@ struct StyleSource {
     /// The rule (or margin rule) whose block this object reads and writes;
     /// `None` for an element's `style` attribute.
     rule: Option<Rc<RuleSlot>>,
+    // Retain only the last read source and its compact validated survivors.
+    declarations: RefCell<Option<DeclarationCache>>,
 }
 
 impl StyleSource {
+    fn with_declarations<R>(
+        &self,
+        state: &mut super::State,
+        read: impl FnOnce(&[ValidatedDeclaration]) -> R,
+    ) -> R {
+        let text = if self.rule.is_none() {
+            DeclarationText::Inline(
+                state
+                    .host
+                    .document()
+                    .element_inline_style_snapshot(self.index),
+            )
+        } else {
+            // Synchronization and rule detachment must precede cache comparison.
+            let (body, page) = declared_text(state, self);
+            DeclarationText::Rule { body, page }
+        };
+        let mut cache = self.declarations.borrow_mut();
+        if let Some(entry) = cache.as_mut()
+            && entry.text == text
+        {
+            // Adopt the latest snapshot even for an equal-content replacement,
+            // so subsequent inline reads use SmolStr's shared-pointer fast path.
+            entry.text = text;
+            #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+            crate::css_declaration_diagnostics::record(crate::css_declaration_diagnostics::Work {
+                cache_hits: 1,
+                max_cached_declarations: entry.declarations.len(),
+                max_cached_source_bytes: entry.text.parts().0.map_or(0, str::len),
+                ..Default::default()
+            });
+            return read(&entry.declarations);
+        }
+        let (source, page) = text.parts();
+        let declarations = validated_inline_declarations(source, page).into_boxed_slice();
+        #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+        crate::css_declaration_diagnostics::record(crate::css_declaration_diagnostics::Work {
+            cache_misses: 1,
+            max_cached_declarations: declarations.len(),
+            max_cached_source_bytes: source.map_or(0, str::len),
+            ..Default::default()
+        });
+        let entry = cache.insert(DeclarationCache { text, declarations });
+        read(&entry.declarations)
+    }
+
     /// Whether this declaration object belongs to an `@page` rule.
     fn is_page_rule(&self, context: &mut Context) -> JsResult<bool> {
         let Some(slot) = &self.rule else {
@@ -800,11 +897,9 @@ impl StyleSource {
                 .map(|name| (*name).to_owned()));
         }
         with_state(context, |s| {
-            let (text, page) = declared_text(s, self);
-            validated_inline_declarations(text.as_deref(), page)
-                .into_iter()
-                .nth(index)
-                .map(|d| d.name)
+            self.with_declarations(s, |declarations| {
+                declarations.get(index).map(|d| d.name.clone())
+            })
         })
     }
 
@@ -813,8 +908,7 @@ impl StyleSource {
             return Ok(computed_longhand_names().len());
         }
         with_state(context, |s| {
-            let (text, page) = declared_text(s, self);
-            validated_inline_declarations(text.as_deref(), page).len()
+            self.with_declarations(s, |declarations| declarations.len())
         })
     }
 }
@@ -837,9 +931,15 @@ fn this_style(this: &JsValue, context: &mut Context) -> JsResult<Rc<StyleSource>
 }
 
 fn read_declared(context: &mut Context, source: &StyleSource, property: &str) -> JsResult<String> {
+    let Some(lookup) = declaration_lookup_name(property) else {
+        return Ok(String::new());
+    };
     with_state(context, |s| {
-        let (text, page) = declared_text(s, source);
-        inline_style_value(text.as_deref(), property, page)
+        source.with_declarations(s, |declarations| {
+            find_declaration(declarations, &lookup)
+                .map(|(value, _)| value)
+                .unwrap_or_default()
+        })
     })
 }
 
@@ -1191,11 +1291,14 @@ fn style_get_property_priority(
     let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let priority = if source.computed {
         String::new()
-    } else {
+    } else if let Some(lookup) = declaration_lookup_name(&name) {
         with_state(context, |s| {
-            let (text, page) = declared_text(s, &source);
-            property_priority(text.as_deref(), &name, page).to_owned()
+            source.with_declarations(s, |declarations| {
+                property_priority(declarations, &lookup).to_owned()
+            })
         })?
+    } else {
+        String::new()
     };
     Ok(JsValue::from(JsString::from(priority)))
 }
@@ -1320,8 +1423,7 @@ fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
         return Ok(JsValue::from(JsString::from("")));
     }
     let text = with_state(context, |s| {
-        let (style_text, page) = declared_text(s, &source);
-        serialize_validated(&validated_inline_declarations(style_text.as_deref(), page))
+        source.with_declarations(s, serialize_validated)
     })?;
     Ok(JsValue::from(JsString::from(text)))
 }
@@ -1525,6 +1627,7 @@ fn style_object(
             index,
             computed,
             rule,
+            declarations: RefCell::new(None),
         },
         parent_rule.into_iter().collect(),
         owners,

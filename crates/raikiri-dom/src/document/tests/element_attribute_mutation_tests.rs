@@ -182,3 +182,35 @@ fn set_and_remove_element_attribute_preserve_order_and_route_style_separately() 
     };
     assert_eq!(element.inline_style, None);
 }
+
+#[test]
+fn inline_style_snapshots_share_immutable_source_and_follow_native_mutations() {
+    let mut document = Document::new();
+    assert!(document.element_inline_style_snapshot(usize::MAX).is_none());
+    assert!(document.element_inline_style_snapshot(0).is_none());
+    let id = document.append_element(Some(0), "div", None::<&str>);
+    assert!(document.element_inline_style_snapshot(id).is_none());
+    document.set_element_inline_style(id, Some("".into()));
+    assert_eq!(
+        document.element_inline_style_snapshot(id).as_deref(),
+        Some("")
+    );
+    document.set_element_inline_style(id, Some("--x:1;".into()));
+    assert_eq!(
+        document.element_inline_style_snapshot(id).as_deref(),
+        Some("--x:1;")
+    );
+    let text = "--long-property:abcdefghijklmnopqrstuvwxyz0123456789;";
+    document.set_element_attribute(id, "style", text).unwrap();
+    let old = document.element_inline_style_snapshot(id).unwrap();
+    let same = document.element_inline_style_snapshot(id).unwrap();
+    assert_eq!(old.as_ptr(), same.as_ptr());
+    document.set_element_inline_style(id, Some("--new:2;".into()));
+    assert_eq!(old.as_str(), text);
+    assert_eq!(
+        document.element_inline_style_snapshot(id).as_deref(),
+        Some("--new:2;")
+    );
+    document.remove_element_attribute(id, "style").unwrap();
+    assert!(document.element_inline_style_snapshot(id).is_none());
+}
