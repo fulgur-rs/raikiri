@@ -5476,3 +5476,8 @@ css/css-multicol/multicol-span-float-002.html
 # --- Outline of a grid or a table in columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
 # The columns cut the content of a grid or a table child of a multicol container to its box, but not its outline, which reaches beyond the box (CSS UI 4 section 3, an outline does not affect layout and is not clipped by the box). The outline of the grid and the table spanners lost its top and sides before the change, and KEEP in two audit-vacuous-passes runs.
 css/css-multicol/multicol-span-all-005.html
+
+# --- Block-level boxes in ruby content (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A block-level box in ruby content, or in a ruby-internal box, is inlinized: it is an atomic inline-level box in the line it sits in, so a block, a table or a flex container in `rb` or `rt` no longer breaks the line around itself (CSS Ruby 1 section 2.2). Both tests were FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-ruby/ruby-inlinize-blocks-002.html
+css/css-ruby/ruby-line-breaking-002.html
