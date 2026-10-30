@@ -3043,8 +3043,23 @@ impl Document {
     ///
     /// Spec: <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#document-base-url>
     pub fn live_base_url(&self, document_url: Option<&url::Url>) -> Option<url::Url> {
+        #[cfg(any(test, feature = "base-url-diagnostics"))]
+        if crate::base_url_diagnostics::enabled() {
+            return self.live_base_url_impl::<true>(document_url);
+        }
+        self.live_base_url_impl::<false>(document_url)
+    }
+
+    fn live_base_url_impl<const COUNT: bool>(
+        &self,
+        document_url: Option<&url::Url>,
+    ) -> Option<url::Url> {
+        let mut meter = crate::base_url_diagnostics::Meter::<COUNT>::new();
         let mut stack = vec![self.root];
         while let Some(id) = stack.pop() {
+            if COUNT {
+                meter.work.node_visits += 1;
+            }
             let Some(node) = self.nodes.get(id) else {
                 continue; // cov:ignore: children always hold valid arena indices.
             };

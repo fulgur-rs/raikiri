@@ -32,6 +32,8 @@ stacker = { workspace = true }
 raikiri-dom = { workspace = true, features = ["logical-snapshot"] }
 
 [features]
+# Optional native work counters for the image base-URL benchmark.
+image-base-diagnostics = ["raikiri-dom/base-url-diagnostics"]
 # Optional logical work counters for declaration parsing and cached reads.
 css-declaration-diagnostics = []
 # Off by default: native builds and tests never need it. Exists so the
@@ -49,3 +51,8 @@ required-features = ["css-declaration-diagnostics"]
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "image_base"
+harness = false
+required-features = ["image-base-diagnostics"]

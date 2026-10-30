@@ -11,6 +11,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+base-url-diagnostics = []
 insertion-diagnostics = []
 continuation-diagnostics = []
 table-reservation-diagnostics = []

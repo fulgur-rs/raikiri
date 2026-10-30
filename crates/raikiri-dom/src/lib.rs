@@ -182,3 +182,11 @@ mod insertion_diagnostics;
 pub use insertion_diagnostics::{
     InsertionWork, begin_insertion_diagnostics, finish_insertion_diagnostics,
 };
+
+mod base_url_diagnostics;
+#[cfg(feature = "base-url-diagnostics")]
+#[doc(hidden)]
+// cov:ignore: public re-exports have no executable coverage mapping.
+pub use base_url_diagnostics::{
+    BaseUrlWork, begin_base_url_diagnostics, finish_base_url_diagnostics,
+};
