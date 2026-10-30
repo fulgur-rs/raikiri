@@ -54,6 +54,7 @@ pub struct LayoutOptions<'r, 'a> {
     consumer_properties: &'r [ConsumerPropertyRegistration],
     property_observer: Option<&'r mut dyn ConsumerPropertyObserver>,
     preload_background_images: bool,
+    max_running_layout_entries: usize,
     svg: SvgSettings,
 }
 
@@ -64,6 +65,7 @@ impl Default for LayoutOptions<'_, '_> {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            max_running_layout_entries: 128,
             svg: SvgSettings::default(),
         }
     }
@@ -97,6 +99,18 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
     ) -> Self {
         self.consumer_properties = registrations;
         self.property_observer = Some(observer);
+        self
+    }
+
+    /// Maximum cached running-element layouts across all nodes and widths in
+    /// one document layout. Defaults to 128; zero refuses every new entry.
+    /// A first width counts, so 129 different nodes can also exhaust the default.
+    /// Existing hits remain usable. New entries beyond the limit return
+    /// [`RenderError::LimitExceeded`]; in-progress constructions reserve entries.
+    /// This bounds entries, not bytes or RSS. Owned margin-box layouts are
+    /// independent and do not consume this cache budget.
+    pub fn max_running_layout_entries(mut self, limit: usize) -> Self {
+        self.max_running_layout_entries = limit;
         self
     }
 
@@ -193,6 +207,7 @@ pub(crate) fn layout_resumed<'r>(
         consumer_properties,
         property_observer,
         preload_background_images,
+        max_running_layout_entries,
         svg,
     } = options;
     let signal = config.signal.clone();
@@ -260,7 +275,8 @@ pub(crate) fn layout_resumed<'r>(
     // One set of SVG text faces for the whole layout: its continuations and
     // running elements hand out the faces of the pages around them.
     let svg_faces = std::sync::Arc::<crate::svg_fonts::FaceCache>::default();
-    let running_layouts = running::LayoutCache::new(&running, svg_faces.clone());
+    let running_layouts =
+        running::LayoutCache::new(&running, svg_faces.clone(), max_running_layout_entries);
     let caches = (0..=out.continuations.len())
         .map(|_| DocumentCaches::new(svg_faces.clone(), running.clone()))
         .collect();
@@ -381,6 +397,10 @@ impl DocumentLayout {
     /// The layout of an element depends only on the element and the width,
     /// so it is made once and kept: a margin box that shows the same element
     /// on many pages gets the same layout back for each page.
+    ///
+    /// New entries may return [`RenderError::LimitExceeded`] according to
+    /// [`LayoutOptions::max_running_layout_entries`]. Existing references and
+    /// exact-width hits remain valid after the budget is exhausted.
     pub fn layout_running_element(
         &self,
         node: raikiri_traits::NodeId,

@@ -43,8 +43,7 @@ pub enum RenderError {
     /// Boxed for the same reason as `NetworkError::PolicyViolation`
     /// (`PolicyViolation` is large).
     Policy(Box<PolicyViolation>),
-    /// Exceeded a `RenderLimits` limit (fail-fast; round 4 review #1
-    /// subsumed the former `PageLimitExceeded` under `kind: Pages`).
+    /// Exceeded a configured rendering or layout-cache limit.
     LimitExceeded {
         /// Which limit was exceeded.
         kind: LimitKind,
@@ -230,6 +229,8 @@ impl From<LayoutError> for RenderError {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitKind {
+    /// Exceeded the running-layout entry limit of a document layout.
+    RunningLayoutEntries,
     /// Exceeded the maximum width or height of one raster buffer.
     RasterEdge,
     /// Exceeded the RGBA8 byte budget for one page.

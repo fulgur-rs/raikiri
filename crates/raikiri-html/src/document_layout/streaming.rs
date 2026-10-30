@@ -346,6 +346,7 @@ struct Settings<'r, 'a> {
     config: LayoutConfig,
     consumer_properties: &'r [ConsumerPropertyRegistration],
     preload_background_images: bool,
+    max_running_layout_entries: usize,
     svg: SvgSettings,
     /// The network every cascade fetches style sheets through.
     network: Option<StreamNetwork<'r>>,
@@ -713,7 +714,8 @@ impl Settings<'_, '_> {
         };
         let mut layout_options = LayoutOptions::new()
             .resources(self.resources)
-            .preload_background_images(self.preload_background_images);
+            .preload_background_images(self.preload_background_images)
+            .max_running_layout_entries(self.max_running_layout_entries);
         layout_options.svg = self.svg;
         if !self.consumer_properties.is_empty() {
             layout_options =
@@ -882,6 +884,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 config,
                 consumer_properties: &[],
                 preload_background_images: true,
+                max_running_layout_entries: 128,
                 svg: SvgSettings::default(),
                 network: resources.network_adapter().map(StreamNetwork::new),
                 last_resumed: std::cell::Cell::new(false),
@@ -912,6 +915,14 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         registrations: &'r [ConsumerPropertyRegistration],
     ) -> Self {
         self.settings.consumer_properties = registrations;
+        self
+    }
+
+    /// Set [`LayoutOptions::max_running_layout_entries`] for each backing
+    /// document layout/window, not cumulatively for the stream lifetime.
+    /// Defaults to 128. Owned layouts in the stream summary are independent.
+    pub fn max_running_layout_entries(mut self, limit: usize) -> Self {
+        self.settings.max_running_layout_entries = limit;
         self
     }
 

@@ -142,3 +142,11 @@ mod document_tests;
 mod tests;
 
 pub use parse::refresh_stylesheets;
+
+mod running_cache_diagnostics;
+#[cfg(feature = "running-cache-diagnostics")]
+#[doc(hidden)]
+// cov:ignore: public re-exports have no executable coverage mapping.
+pub use running_cache_diagnostics::{
+    RunningCacheWork, begin_running_cache_diagnostics, finish_running_cache_diagnostics,
+};

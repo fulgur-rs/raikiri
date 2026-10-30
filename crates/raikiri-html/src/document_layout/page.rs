@@ -1072,6 +1072,9 @@ impl<'a> Page<'a> {
     /// of [`MarginBox::text`], clipped by [`MarginBox::overflow_clip`] when
     /// the box has one; with `overflow: visible` the element may overflow
     /// the box.
+    ///
+    /// New cache entries can return [`RenderError::LimitExceeded`], as set by
+    /// [`super::LayoutOptions::max_running_layout_entries`].
     pub fn margin_box_running_element(
         &self,
         margin_box: &MarginBox,
