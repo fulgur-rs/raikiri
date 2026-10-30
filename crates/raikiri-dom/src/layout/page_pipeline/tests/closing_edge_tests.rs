@@ -2123,3 +2123,139 @@ fn a_last_box_with_a_forced_break_or_a_page_name_inside_keeps_its_place() {
         assert_eq!(&ys[..2], &[70.0, 70.0], "{label}: {ys:?}");
     }
 }
+
+/// `body > [div(lead), div(padding-bottom:40px) > paragraph]` where the
+/// paragraph is `lines` lines of 10px Ahem text, 30px wide, styled with
+/// `paragraph_css`. Returns the page-flow y of the div and of the paragraph.
+fn paragraph_alone_after(lead: u32, lines: usize, paragraph_css: &str) -> (f32, f32) {
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{lead}px"));
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        paragraph = block(
+            doc,
+            parent,
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
+        );
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
+    });
+    (page_flow_y(&doc, parent), page_flow_y(&doc, paragraph))
+}
+
+#[test]
+fn a_paragraph_that_avoids_breaks_alone_in_its_parent_moves_whole_with_the_edges() {
+    // The lines end at 70 and the padding below them does not fit. The
+    // paragraph cannot move some of its lines, and no box before it in the div
+    // is there to break from: the page breaks before the div.
+    for (lead, lines) in [(50, 2), (30, 4), (10, 6)] {
+        for avoid in ["break-inside:avoid", "break-inside:avoid-page"] {
+            assert_eq!(
+                paragraph_alone_after(lead, lines, avoid),
+                (100.0, 100.0),
+                "{lead} {lines} {avoid}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_paragraph_that_avoids_breaks_alone_in_its_parent_stays_when_the_edges_fit() {
+    assert_eq!(
+        paragraph_alone_after(30, 2, "break-inside:avoid"),
+        (30.0, 30.0)
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_alone_in_its_parent_moves_whole_with_the_edges() {
+    // The boxes end at 90 and the padding below them does not fit. The block
+    // that holds them cannot be broken, so the page breaks before the div, even
+    // with a wrapper between the two.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let avoided = block(doc, parent, "display:block;break-inside:avoid");
+            block(doc, avoided, "display:block;height:10px");
+            block(doc, avoided, "display:block;height:20px");
+        }),
+        100.0
+    );
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let wrapper = block(doc, parent, "display:block");
+            let avoided = block(doc, wrapper, "display:block;break-inside:avoid");
+            block(doc, avoided, "display:block;height:10px");
+            block(doc, avoided, "display:block;height:20px");
+        }),
+        100.0
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_stays_with_its_parent_when_the_edges_fit() {
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let avoided = block(doc, parent, "display:block;break-inside:avoid");
+            block(doc, avoided, "display:block;height:5px");
+            block(doc, avoided, "display:block;height:5px");
+        }),
+        60.0
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_but_does_not_fit_the_page_leaves_its_parent_in_place() {
+    // The avoiding block runs past the page end on its own, so it moves alone
+    // and the padding below it follows it.
+    let (mut parent, mut avoided) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, "display:block;padding-bottom:30px");
+        avoided = block(doc, parent, "display:block;break-inside:avoid");
+        block(doc, avoided, "display:block;height:30px");
+        block(doc, avoided, "display:block;height:40px");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, parent), page_flow_y(&doc, avoided)),
+        (60.0, 100.0)
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_but_holds_a_forced_break_leaves_its_parent_in_place() {
+    // A forced break goes through `break-inside:avoid`: the page breaks inside
+    // the block where the break asks it to, whichever page the block starts. The
+    // last part of the block opens the next page with the padding below it, so
+    // moving the parent whole would only add a page.
+    type Shape = fn(&mut Document, usize);
+    let shapes: [(&str, Shape); 4] = [
+        ("break before the second box", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px");
+            block(doc, avoided, "display:block;height:20px;break-before:page");
+        }),
+        ("break after the first box", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px;break-after:always");
+            block(doc, avoided, "display:block;height:20px");
+        }),
+        ("break deeper down", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px");
+            let inner = block(doc, avoided, "display:block");
+            block(doc, inner, "display:block;height:20px;break-before:page");
+        }),
+        ("another page name", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px");
+            block(doc, avoided, "display:block;height:20px;page:foo");
+        }),
+    ];
+    for (label, build) in shapes {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                let avoided = block(doc, parent, "display:block;break-inside:avoid");
+                build(doc, avoided);
+            }),
+            60.0,
+            "{label}"
+        );
+    }
+}
