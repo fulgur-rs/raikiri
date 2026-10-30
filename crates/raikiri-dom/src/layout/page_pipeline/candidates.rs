@@ -13,9 +13,9 @@ use super::{
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
     page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
-    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    takes_no_block_space, unplaced_line_end,
+    pagination_child_order, pagination_child_parent_y, paragraph_lines_keep_together,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -960,10 +960,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // it. A paragraph with lines enough to break between moves
                 // some of them instead (see `lines_closing_edges`).
                 // The first box of a tied run was found to move whole when the
-                // run was.
+                // run was. So does a paragraph after a box to break from whose
+                // lines are too few for its orphans and widows: the break
+                // before it is the one between boxes, which beats one between
+                // lines that leaves too few at either end.
                 let unbreakable = lines_shape
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
-                        || breaks_only_around(document, cascade, node_id, self.has_named_pages));
+                        || breaks_only_around(document, cascade, node_id, self.has_named_pages)
+                        || (closing_edges_shape
+                            && node.is_ifc_root()
+                            && paragraph_lines_keep_together(document, cascade, node_id)));
                 let closing_edges_base = closing_edges_shape && unbreakable;
                 // A block that holds one box moves whole with the edges that
                 // would break away from it, its own and those of the blocks
