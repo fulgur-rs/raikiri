@@ -1008,12 +1008,44 @@ fn substring_units(
     offset: usize,
     count: usize,
 ) -> JsResult<Vec<u16>> {
-    let units = data_units(context, index)?;
-    if offset > units.len() {
-        return Err(offset_error(context));
+    if crate::substring_diagnostics::enabled() {
+        substring_units_counted::<true>(context, index, offset, count)
+    } else {
+        substring_units_counted::<false>(context, index, offset, count)
     }
-    let end = offset.saturating_add(count).min(units.len());
-    Ok(units[offset..end].to_vec())
+}
+
+fn substring_units_counted<const COUNT: bool>(
+    context: &mut Context,
+    index: usize,
+    offset: usize,
+    count: usize,
+) -> JsResult<Vec<u16>> {
+    let mut work = crate::substring_diagnostics::Work::default();
+    let result = with_state(context, |s| {
+        let mut units = s
+            .host
+            .document()
+            .character_data(index)
+            .unwrap_or_default()
+            .encode_utf16()
+            .inspect(|_| {
+                if COUNT {
+                    work.units_visited += 1;
+                }
+            });
+        if units.by_ref().take(offset).count() != offset {
+            None
+        } else {
+            Some(units.take(count).collect::<Vec<u16>>())
+        }
+    })?;
+    if COUNT {
+        work.calls = 1;
+        work.result_units = result.as_ref().map_or(0, |units| units.len() as u64);
+        crate::substring_diagnostics::record(work);
+    }
+    result.ok_or_else(|| offset_error(context))
 }
 
 fn substring_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

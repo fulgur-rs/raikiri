@@ -32,6 +32,12 @@ stacker = { workspace = true }
 raikiri-dom = { workspace = true, features = ["logical-snapshot"] }
 
 [features]
+# Optional logical work counts for UTF-16 substring reads.
+substring-diagnostics = []
+# Optional logical work counts for class token reads.
+token-list-diagnostics = []
+# Optional counts of full URLSearchParams snapshots.
+url-params-diagnostics = []
 # Optional native work counters for the image base-URL benchmark.
 image-base-diagnostics = ["raikiri-dom/base-url-diagnostics"]
 # Optional logical work counters for declaration parsing and cached reads.
@@ -56,3 +62,18 @@ workspace = true
 name = "image_base"
 harness = false
 required-features = ["image-base-diagnostics"]
+
+[[bench]]
+name = "url_params"
+harness = false
+required-features = ["url-params-diagnostics"]
+
+[[bench]]
+name = "token_contains"
+harness = false
+required-features = ["token-list-diagnostics"]
+
+[[bench]]
+name = "substring_data"
+harness = false
+required-features = ["substring-diagnostics"]

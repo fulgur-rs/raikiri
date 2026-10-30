@@ -8,6 +8,7 @@ use crate::runtime::{DomRuntime, RuntimeError};
 
 mod element_child_tests;
 mod sibling_order_tests;
+mod substring_tests;
 mod tree_walker_tests;
 
 fn rt() -> DomRuntime {
