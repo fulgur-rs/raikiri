@@ -6471,11 +6471,11 @@ fn lone_box_tail(
             // print it.
             let computed = &cascade.computed[current];
             let together = if ancestor_edges_follow {
-                (computed.orphans.max(1) as usize + computed.widows.max(1) as usize - 1).max(1)
+                lines_keep_together(lines.lines.len(), computed.orphans, computed.widows)
             } else {
-                1
+                lines.lines.len() <= 1
             };
-            if !lines.block_line_starts.is_empty() || lines.lines.len() > together {
+            if !lines.block_line_starts.is_empty() || !together {
                 return None;
             }
             break;
@@ -6924,6 +6924,33 @@ fn container_moves_whole(
         }
         _ => true,
     }
+}
+
+/// Whether `line_count` lines are too few for any break between them to leave
+/// `orphans` lines before it and `widows` lines after it: three lines with the
+/// initial two and two. Browsers do not split such lines where a break between
+/// boxes is there to take instead.
+fn lines_keep_together(line_count: usize, orphans: i32, widows: i32) -> bool {
+    line_count < orphans.max(1) as usize + widows.max(1) as usize
+}
+
+/// Whether the lines of the paragraph `node_id` are too few to be split by
+/// [`lines_keep_together`]. A block box between the lines is a place to break
+/// at, so a paragraph with one is not.
+fn paragraph_lines_keep_together(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let computed = &cascade.computed[node_id];
+    document
+        .ifc_layout_node(node_id)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            lines.block_line_starts.is_empty()
+                && lines_keep_together(lines.lines.len(), computed.orphans, computed.widows)
+        })
 }
 
 /// Whether the page cannot break inside the block `node_id` at a better place

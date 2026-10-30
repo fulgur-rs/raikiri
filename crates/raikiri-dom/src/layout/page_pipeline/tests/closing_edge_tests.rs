@@ -1149,12 +1149,54 @@ fn lines_that_orphans_and_widows_keep_together_move_with_the_edges() {
 }
 
 #[test]
-fn a_paragraph_too_short_for_both_constraints_keeps_its_orphans_before_the_edges() {
-    // Three lines cannot have two orphans and two widows. The first two stay,
-    // and the last one moves with the padding, as Chromium prints it.
-    assert_eq!(closed_paragraph(3, ""), (40.0, 150.0));
-    // Orphans of three leave no line to move, so the paragraph moves whole.
-    assert_eq!(closed_paragraph(3, "orphans:3"), (100.0, 170.0));
+fn a_paragraph_too_short_for_both_constraints_moves_whole_with_the_edges() {
+    // Three lines cannot have two orphans and two widows. The break before
+    // the paragraph is the one between boxes, so all three lines move with
+    // the padding, as Chromium prints it.
+    assert_eq!(closed_paragraph(3, ""), (100.0, 170.0));
+    // So do lines that one of the two leaves no break for: orphans of three,
+    // widows of three, and four lines with three of either.
+    for css in ["orphans:3", "orphans:2;widows:3", "orphans:1;widows:3"] {
+        assert_eq!(closed_paragraph(3, css), (100.0, 170.0), "{css}");
+    }
+    for css in ["orphans:3", "widows:3", "orphans:2;widows:3"] {
+        assert_eq!(closed_paragraph(4, css), (100.0, 180.0), "{css}");
+    }
+}
+
+#[test]
+fn a_paragraph_whose_own_padding_runs_past_the_page_is_split_between_its_lines() {
+    // The lines end at 70, and 40px of padding of the paragraph itself end at
+    // 110: its box does not fit the page, so it cannot move whole to a better
+    // break. The last line goes to the next page with that padding and the
+    // padding of the div, as Chromium prints three lines and 80px of padding
+    // of their own on a page of 200px. Before the last line moves, the
+    // paragraph spans its lines and the 40px of padding; moving the line adds
+    // the 40px between the page end and the top of the next page.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        block(doc, parent, "display:block;height:40px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;\
+             padding-bottom:40px",
+        );
+        doc.append_text(paragraph, "aaa aaa aaa");
+    });
+    assert_eq!(page_flow_y(&doc, paragraph), 40.0);
+    assert_eq!(doc.nodes[paragraph].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 190.0);
+}
+
+#[test]
+fn lines_enough_for_both_constraints_are_split_between_them_after_a_box() {
+    // Orphans plus widows is as many lines as there are: one break is left, and
+    // it keeps its lines apart.
+    assert_eq!(closed_paragraph(3, "orphans:2;widows:1"), (40.0, 150.0));
+    assert_eq!(closed_paragraph(3, "orphans:1;widows:2"), (40.0, 160.0));
+    assert_eq!(closed_paragraph(5, "orphans:3;widows:2"), (20.0, 160.0));
 }
 
 #[test]
@@ -1743,11 +1785,22 @@ fn wrapper_after_a_box_with(
     paragraph_css: &str,
     text: &str,
 ) -> (f32, f32, f32) {
+    wrapper_after_a_lead(outer_css, "", wrapper_css, paragraph_css, text)
+}
+
+/// [`wrapper_after_a_box_with`] with `lead_css` on the box before the wrapper.
+fn wrapper_after_a_lead(
+    outer_css: &str,
+    lead_css: &str,
+    wrapper_css: &str,
+    paragraph_css: &str,
+    text: &str,
+) -> (f32, f32, f32) {
     let (mut paragraph, mut wrapper, mut after) = (0, 0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         block(doc, body, "display:block;height:20px");
         let outer = block(doc, body, &format!("display:block;{outer_css}"));
-        block(doc, outer, "display:block;height:30px");
+        block(doc, outer, &format!("display:block;height:30px;{lead_css}"));
         wrapper = block(doc, outer, &format!("display:block;{wrapper_css}"));
         paragraph = block(
             doc,
@@ -1821,6 +1874,26 @@ fn a_wrapper_of_lines_that_can_be_split_keeps_its_place() {
         "aaa aaa aaa aaa",
     );
     assert_eq!(paragraph, 70.0);
+}
+
+#[test]
+fn a_wrapper_of_lines_after_a_box_that_ties_it_is_split_between_the_lines() {
+    // The box before the wrapper avoids a break after it, so the break between
+    // the two is not there to take. The break falls between the lines, though
+    // three of them have too few for two orphans and two widows: the last one
+    // goes to the next page with the padding, as browsers print it. The
+    // paragraph spans its 30px of lines and the 30px that the page end cuts
+    // out.
+    assert_eq!(
+        wrapper_after_a_lead(
+            "padding-bottom:40px",
+            "break-after:avoid",
+            "padding-bottom:10px",
+            "",
+            "aaa aaa aaa"
+        ),
+        (60.0, 70.0, 160.0)
+    );
 }
 
 #[test]
