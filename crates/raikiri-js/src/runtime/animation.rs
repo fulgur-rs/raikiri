@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+mod effects;
+pub(crate) use effects::AnimationEffects;
 
 use boa_engine::builtins::object::OrdinaryObject;
 use boa_engine::job::NativeJob;
@@ -60,7 +61,7 @@ pub(crate) struct KeyframePair {
 /// is the stable ID exposed through the native `Animation` object.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AnimationEffect {
-    pub(crate) target: usize,
+    target: usize,
     /// The sampled keyframes, or `None` for keyframes outside the static
     /// sampler: such an effect keeps its timing but never styles its target.
     pub(crate) keyframes: Option<KeyframePair>,
@@ -864,7 +865,6 @@ pub(crate) fn element_animate(
     let target = this_element(this, context)?;
     let (keyframes, timing, animation_id) = parse_effect(args, context)?;
     let id = with_state(context, |state| {
-        let id = state.animations.len();
         let start_time_ms = state.event_loop.now;
         state.animations.push(AnimationEffect {
             target,
@@ -875,10 +875,9 @@ pub(crate) fn element_animate(
             paused: false,
             detached: timing.detached,
             finish_task: None,
-        });
-        id
+        })
     })?;
-    refresh_animation_styles(context)?;
+    refresh_animation_styles(target, context)?;
     let prototype = protos(context).animation.clone();
     let target_owner = with_state(context, |state| state.node_record(target))?;
     let data = AnimationData {
@@ -984,7 +983,11 @@ fn schedule_finish(animation: &JsObject, context: &mut Context) -> JsResult<()> 
                 let token = state
                     .event_loop
                     .queue_cancellable_native_task(remaining, job)?;
-                state.animations[id].finish_task = Some(token);
+                state
+                    .animations
+                    .get_mut(id)
+                    .expect("the animation remains registered while its finishing task is queued")
+                    .finish_task = Some(token);
                 Ok::<_, boa_engine::JsError>(())
             })??;
         }
@@ -1022,17 +1025,17 @@ fn update_sampled_effect(
     let found = with_state(context, |state| {
         let effect = state.animations.get_mut(id)?;
         if effect.keyframes.is_none() {
-            return Some(false);
+            return Some(Err(()));
         }
         update(effect);
-        Some(true)
+        Some(Ok(effect.target))
     })?;
     match found {
         None => Err(type_error("Animation is no longer available")),
-        Some(false) => Err(type_error(
+        Some(Err(())) => Err(type_error(
             "only single-property pixel animations can be paused or seeked",
         )),
-        Some(true) => refresh_animation_styles(context),
+        Some(Ok(target)) => refresh_animation_styles(target, context),
     }
 }
 
@@ -1097,15 +1100,12 @@ fn animation_id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     Ok(JsValue::undefined())
 }
 
-fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
+fn refresh_animation_styles(target: usize, context: &mut Context) -> JsResult<()> {
     with_state(context, |state| {
-        let mut target_order = Vec::new();
-        let mut targets = HashSet::new();
-        let mut declarations = HashMap::<usize, String>::new();
-        for effect in &state.animations {
-            if targets.insert(effect.target) {
-                target_order.push(effect.target);
-            }
+        let mut declarations = String::new();
+        for effect in state.animations.for_target(target) {
+            #[cfg(test)]
+            tests::record_composition_work(0);
             if !effect.paused {
                 continue;
             }
@@ -1116,7 +1116,8 @@ fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
             let Some(value) = keyframes.sample(current_time) else {
                 continue;
             };
-            let declarations = declarations.entry(effect.target).or_default();
+            #[cfg(test)]
+            tests::record_composition_work(1);
             if !declarations.is_empty() {
                 declarations.push(' ');
             }
@@ -1126,11 +1127,17 @@ fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
             declarations.push_str("px;");
         }
 
-        let document = state.host.document_mut();
-        for target in target_order {
-            let style = declarations.remove(&target).map(Into::into);
-            document.set_element_animation_style(target, style);
-        }
+        let style = if declarations.is_empty() {
+            None
+        } else {
+            Some(declarations.into())
+        };
+        #[cfg(test)]
+        tests::record_composition_work(2);
+        state
+            .host
+            .document_mut()
+            .set_element_animation_style(target, style);
         state.dirty = true;
     })?;
     Ok(())

@@ -310,7 +310,7 @@ fn paused_effect_without_a_current_time_has_no_sample() {
     })
     .unwrap();
 
-    refresh_animation_styles(runtime.context_mut()).unwrap();
+    refresh_animation_styles(target, runtime.context_mut()).unwrap();
     assert_eq!(animation_style(&mut runtime, target), None);
 }
 
@@ -1107,4 +1107,18 @@ fn silent_enqueue_abort_during_animation_id_conversion_preserves_native_data() {
         Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
     );
     assert_eq!(super::animation_data(&animation).animation_id, before);
+}
+
+mod target_composition_tests;
+
+thread_local! {
+    static COMPOSITION_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+pub(super) fn record_composition_work(kind: usize) {
+    COMPOSITION_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
 }
