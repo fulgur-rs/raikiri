@@ -10,6 +10,9 @@ use crate::Document;
 use raikiri_style::property::DisplayValue;
 use raikiri_traits::LayoutError;
 
+#[cfg(test)]
+mod tests;
+
 fn row_group(doc: &Document, table: usize, marker: usize) -> usize {
     doc.inclusive_ancestors(doc.ifc_source_owner(marker))
         .take_while(|&source| source != table)
@@ -30,6 +33,23 @@ pub(super) fn reserve_columns(
     rows: &[usize],
     cells: &mut [CellPlacement],
 ) -> Result<u16, LayoutError> {
+    #[cfg(any(test, feature = "table-reservation-diagnostics"))]
+    if crate::table_reservation_diagnostics::enabled() {
+        return reserve_columns_counted::<true>(doc, table, rows, cells);
+    }
+    reserve_columns_counted::<false>(doc, table, rows, cells)
+}
+
+fn reserve_columns_counted<const COUNT: bool>(
+    doc: &Document,
+    table: usize,
+    rows: &[usize],
+    cells: &mut [CellPlacement],
+) -> Result<u16, LayoutError> {
+    #[cfg(any(test, feature = "table-reservation-diagnostics"))]
+    if COUNT {
+        crate::table_reservation_diagnostics::record(|work| work.passes += 1);
+    }
     let groups: Vec<_> = rows.iter().map(|&row| row_group(doc, table, row)).collect();
     let mut group_ends = vec![rows.len(); rows.len()];
     let mut end = rows.len();
@@ -55,6 +75,10 @@ pub(super) fn reserve_columns(
             .get(usize::from(column))
             .is_some_and(|&end| end > row)
         {
+            #[cfg(any(test, feature = "table-reservation-diagnostics"))]
+            if COUNT {
+                crate::table_reservation_diagnostics::record(|work| work.occupied_slots += 1);
+            }
             column = next_table_column(column, 1)?;
         }
         let next = next_table_column(column, cell.col_span)?;
@@ -62,6 +86,10 @@ pub(super) fn reserve_columns(
         cell.row_span = usize::from(cell.row_span).min(group_ends[row] - row) as u16;
         occupied_until.resize(occupied_until.len().max(usize::from(next)), 0);
         for slot in &mut occupied_until[usize::from(column)..usize::from(next)] {
+            #[cfg(any(test, feature = "table-reservation-diagnostics"))]
+            if COUNT {
+                crate::table_reservation_diagnostics::record(|work| work.slot_updates += 1);
+            }
             // Invalid overlapping spans must not erase an older reservation.
             *slot = (*slot).max(row + usize::from(cell.row_span));
         }

@@ -157,6 +157,9 @@ mod scene_geometry;
 pub use scene_geometry::{SceneGeometry, SceneGeometryNode};
 
 mod continuation_diagnostics;
+#[cfg(any(test, feature = "table-reservation-diagnostics"))]
+#[doc(hidden)]
+pub mod table_reservation_diagnostics; // cov:ignore: module declaration has no executable coverage mapping.
 #[cfg(feature = "continuation-diagnostics")]
 #[doc(hidden)]
 // cov:ignore: public re-exports have no executable coverage mapping.

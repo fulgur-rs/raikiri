@@ -12,6 +12,7 @@ repository.workspace = true
 
 [features]
 continuation-diagnostics = []
+table-reservation-diagnostics = []
 logical-snapshot = []
 snapshot-serde = ["logical-snapshot", "dep:serde"]
 
