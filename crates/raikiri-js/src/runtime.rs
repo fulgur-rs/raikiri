@@ -780,3 +780,14 @@ pub(crate) fn error_message(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "listener-diagnostics"))]
+pub(crate) fn listener_storage_sizes() -> crate::listener_diagnostics::StorageSizes {
+    crate::listener_diagnostics::StorageSizes {
+        node_state: std::mem::size_of::<node_gc::NodeState>(),
+        node_record: std::mem::size_of::<node_gc::NodeRecord>(),
+        list_field: std::mem::size_of::<Vec<events::Listener>>(),
+        list_data: 0,
+        entry_data: std::mem::size_of::<events::Listener>(),
+    }
+}

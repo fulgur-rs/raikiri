@@ -818,20 +818,32 @@ fn handle_generic_handler_return_value(event: &JsObject, result: &JsResult<JsVal
 ///
 /// There is no stored `removed` flag; this re-derives it against the live
 /// list instead (see [`events::Listener`]'s own doc comment).
-fn current_listener(
+fn current_listener<const COUNT: bool>(
     context: &mut Context,
     node: Option<usize>,
     listener: &Listener,
+    work: &mut crate::listener_diagnostics::Work,
 ) -> JsResult<Option<Listener>> {
-    with_state(context, |s| {
+    if COUNT {
+        work.liveness_checks += 1;
+    }
+    let found = with_state(context, |s| {
         s.with_listeners(node, |list| {
             if listener.is_handler {
                 list.iter()
-                    .find(|l| l.is_handler && l.kind == listener.kind)
+                    .find(|l| {
+                        if COUNT {
+                            work.lookup_checks += 1;
+                        }
+                        l.is_handler && l.kind == listener.kind
+                    })
                     .cloned()
             } else {
                 list.iter()
                     .find(|l| {
+                        if COUNT {
+                            work.lookup_checks += 1;
+                        }
                         !l.is_handler
                             && l.kind == listener.kind
                             && JsObject::equals(&l.callback, &listener.callback)
@@ -840,7 +852,13 @@ fn current_listener(
                     .cloned()
             }
         })
-    })
+    })?;
+    if COUNT {
+        work.kind_bytes_cloned += found
+            .as_ref()
+            .map_or(0, |listener| listener.kind.len() as u64);
+    }
+    Ok(found)
 }
 
 /// Invoke every listener in `node`'s snapshot whose type matches and whose
@@ -856,72 +874,111 @@ fn invoke(
     node: Option<usize>,
     capture_filter: Option<bool>,
 ) -> JsResult<()> {
-    let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
-    let snapshot: Vec<Listener> =
-        with_state(context, |s| s.with_listeners(node, |list| list.clone()))?;
-    let this_value = target_this_value(context, node)?;
-    for listener in snapshot {
-        if listener.kind != kind {
-            continue;
-        }
-        match capture_filter {
-            Some(true) if !listener.capture => continue,
-            Some(false) if listener.capture => continue,
-            _ => {}
-        }
-        let Some(listener) = current_listener(context, node, &listener)? else {
-            continue;
-        };
-        if listener.once {
-            // `node`'s entry necessarily already exists (the check just
-            // above confirmed it), but `entry(...).or_default()` -- rather
-            // than a defensive `get_mut` -- keeps that invariant from
-            // needing its own untestable "what if it doesn't" branch. A
-            // handler slot is never `once` (`event_handler_set` never sets
-            // it), but `!l.is_handler` keeps this removal from ever
-            // touching one regardless.
-            let _ = with_state(context, |s| {
-                s.with_listeners(node, |list| {
-                    list.retain(|l| {
-                        l.is_handler
-                            || !(l.kind == listener.kind
-                                && JsObject::equals(&l.callback, &listener.callback)
-                                && l.capture == listener.capture)
-                    });
-                })
-            });
-        }
-        if listener.passive {
-            let _ = event_data(event, |d| d.in_passive_listener.set(true));
-        }
-        let result = if listener.is_handler
-            && node.is_none()
-            && kind == "error"
-            && is_error_event(context, event)
-        {
-            call_window_on_error(context, &listener.callback, event)
-        } else {
-            let result = call_callback(context, &listener.callback, event, &this_value);
-            if listener.is_handler {
-                handle_generic_handler_return_value(event, &result);
-            }
-            result
-        };
-        if listener.passive {
-            let _ = event_data(event, |d| d.in_passive_listener.set(false));
-        }
-        if let Err(error) = result {
-            if let Some(reason) = event_loop::abort_for(&error) {
-                let _ = event_loop::abort(context, reason);
-                return Err(error);
-            }
-            report_exception(context, &error, None)?;
-        }
-        if immediate_stopped(event) {
-            break;
-        }
+    if crate::listener_diagnostics::enabled() {
+        invoke_counted::<true>(context, event, node, capture_filter)
+    } else {
+        invoke_counted::<false>(context, event, node, capture_filter)
     }
-    Ok(())
+}
+
+fn invoke_counted<const COUNT: bool>(
+    context: &mut Context,
+    event: &JsObject,
+    node: Option<usize>,
+    capture_filter: Option<bool>,
+) -> JsResult<()> {
+    let mut work = crate::listener_diagnostics::Work::default();
+    if COUNT {
+        work.invocations = 1;
+    }
+    let result = (|| {
+        let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
+        let snapshot: Vec<Listener> = with_state(context, |s| {
+            s.with_listeners(node, |list| {
+                if COUNT {
+                    work.snapshot_candidates += list.len() as u64;
+                    work.snapshot_entries += list.len() as u64;
+                    work.kind_bytes_cloned += list
+                        .iter()
+                        .map(|listener| listener.kind.len() as u64)
+                        .sum::<u64>();
+                }
+                list.clone()
+            })
+        })?;
+        let this_value = target_this_value(context, node)?;
+        for listener in snapshot {
+            if listener.kind != kind {
+                continue;
+            }
+            match capture_filter {
+                Some(true) if !listener.capture => continue,
+                Some(false) if listener.capture => continue,
+                _ => {}
+            }
+            let Some(listener) = current_listener::<COUNT>(context, node, &listener, &mut work)?
+            else {
+                continue;
+            };
+            if listener.once {
+                // `node`'s entry necessarily already exists (the check just
+                // above confirmed it), but `entry(...).or_default()` -- rather
+                // than a defensive `get_mut` -- keeps that invariant from
+                // needing its own untestable "what if it doesn't" branch. A
+                // handler slot is never `once` (`event_handler_set` never sets
+                // it), but `!l.is_handler` keeps this removal from ever
+                // touching one regardless.
+                let _ = with_state(context, |s| {
+                    s.with_listeners(node, |list| {
+                        if COUNT {
+                            work.compactions += 1;
+                            work.compaction_scans += list.len() as u64;
+                        }
+                        list.retain(|l| {
+                            l.is_handler
+                                || !(l.kind == listener.kind
+                                    && JsObject::equals(&l.callback, &listener.callback)
+                                    && l.capture == listener.capture)
+                        });
+                    })
+                });
+            }
+            if listener.passive {
+                let _ = event_data(event, |d| d.in_passive_listener.set(true));
+            }
+            let result = if listener.is_handler
+                && node.is_none()
+                && kind == "error"
+                && is_error_event(context, event)
+            {
+                call_window_on_error(context, &listener.callback, event)
+            } else {
+                let result = call_callback(context, &listener.callback, event, &this_value);
+                if listener.is_handler {
+                    handle_generic_handler_return_value(event, &result);
+                }
+                result
+            };
+            if listener.passive {
+                let _ = event_data(event, |d| d.in_passive_listener.set(false));
+            }
+            if let Err(error) = result {
+                if let Some(reason) = event_loop::abort_for(&error) {
+                    let _ = event_loop::abort(context, reason);
+                    return Err(error);
+                }
+                report_exception(context, &error, None)?;
+            }
+            if immediate_stopped(event) {
+                break;
+            }
+        }
+        Ok(())
+    })();
+    if COUNT {
+        crate::listener_diagnostics::record(work);
+    }
+    result
 }
 
 /// DOM §2.9's phases, current spec: the capturing pass walks the whole path
