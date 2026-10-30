@@ -32,6 +32,8 @@ stacker = { workspace = true }
 raikiri-dom = { workspace = true, features = ["logical-snapshot"] }
 
 [features]
+# Optional counts of image topology membership checks.
+image-adoption-diagnostics = []
 # Optional logical work counts for UTF-16 substring reads.
 substring-diagnostics = []
 # Optional logical work counts for class token reads.
@@ -77,3 +79,8 @@ required-features = ["token-list-diagnostics"]
 name = "substring_data"
 harness = false
 required-features = ["substring-diagnostics"]
+
+[[bench]]
+name = "image_adoption"
+harness = false
+required-features = ["image-adoption-diagnostics"]
