@@ -598,7 +598,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
     }
     // In-flow generated content before the first box takes the body's page,
     // like text, and so does not leave the first box to name the first page.
-    if crate::generated_content::is_line_making_generated_text(
+    if crate::generated_content::is_page_flow_generated_text(
         cascade,
         body_id,
         raikiri_style::PseudoElem::Before,
@@ -1530,7 +1530,7 @@ fn propagated_start_page_name_with_order<'name>(
         let used_page_name = explicit_page_name.or(inherited_page_name);
         // Generated content before the children is the first content of the
         // box, and takes its page value.
-        if crate::generated_content::is_line_making_generated_text(
+        if crate::generated_content::is_page_flow_generated_text(
             cascade,
             node_id,
             raikiri_style::PseudoElem::Before,
