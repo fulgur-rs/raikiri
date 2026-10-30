@@ -1219,6 +1219,85 @@ pub fn insert_positioned_frame<F>(
     frames.insert(at, frame);
 }
 
+/// Whether the overflow clip of element `owner` leaves the box `node_id`
+/// inside it alone: an absolutely or fixed positioned box whose containing
+/// block lies outside `owner`.
+///
+/// An overflow clip cuts the content of its element, but not the descendants
+/// whose containing block is the viewport or an ancestor of the element (CSS
+/// 2.1 §11.1.1). The containing block is the nearest ancestor that
+/// establishes one, so `owner` itself cuts the box when it is that ancestor.
+pub fn escapes_overflow_clip(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    node_id: usize,
+) -> bool {
+    let fixed = match cascade.computed.get(node_id).map(|cv| &cv.position) {
+        Some(PositionValue::Absolute) => false,
+        Some(PositionValue::Fixed) => true,
+        _ => return false,
+    };
+    let establishes = |id: usize| {
+        let node = &document.nodes[id];
+        if fixed {
+            node.claims_fixed_oof
+        } else {
+            node.claims_absolute_oof
+        }
+    };
+    !document
+        .ancestors(node_id)
+        .take_while(|&id| id != owner)
+        .chain(std::iter::once(owner))
+        .any(establishes)
+}
+
+/// The frames a layer hands to the enclosing one for the clipping block
+/// `owner`: `frames`, a list in tree order, with the clip of `owner` opened by
+/// `open` and closed by `close` around the runs it covers, and not around the
+/// boxes it leaves alone (see [`escapes_overflow_clip`]).
+///
+/// The frames a clip opened inside the layer hold boxes whose containing
+/// block is inside that clip, so the clip of `owner` covers them too.
+pub fn clip_contained_frames<F>(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    frames: Vec<F>,
+    kind: impl Fn(&F) -> PositionedFrame,
+    open: impl Fn() -> F,
+    close: impl Fn() -> F,
+) -> Vec<F> {
+    let mut clipped_frames = Vec::with_capacity(frames.len());
+    let (mut depth, mut inside) = (0usize, false);
+    for frame in frames {
+        let clipped = match kind(&frame) {
+            PositionedFrame::Open(_) => {
+                depth += 1;
+                true
+            }
+            PositionedFrame::Close => {
+                debug_assert!(depth > 0, "a clip closes that no frame opened");
+                depth = depth.saturating_sub(1);
+                true
+            }
+            PositionedFrame::Box(id) => {
+                depth > 0 || !escapes_overflow_clip(document, cascade, owner, id)
+            }
+        };
+        if clipped != inside {
+            clipped_frames.push(if inside { close() } else { open() });
+            inside = clipped;
+        }
+        clipped_frames.push(frame);
+    }
+    if inside {
+        clipped_frames.push(close());
+    }
+    clipped_frames
+}
+
 /// Whether a box hands the positioned boxes it holds to the enclosing layer.
 ///
 /// Positioned descendants belong to the nearest stacking context, where they

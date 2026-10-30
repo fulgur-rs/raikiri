@@ -829,6 +829,88 @@ fn positioned_boxes_in_z_auto_positioned_boxes_interleave_by_stack_level() {
     assert_eq!(steps[step_at(&result, Step::Box(z)) - 1], Step::PushClip);
 }
 
+/// How many clips are open around `step` in the walker's sequence of the
+/// first page.
+fn clip_depth_at(result: &DocumentLayout, step: Step) -> usize {
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = step_at(result, step);
+    steps[..at].iter().fold(0, |depth, step| match step {
+        Step::PushClip => depth + 1,
+        Step::PopClip => depth - 1,
+        _ => depth,
+    })
+}
+
+/// An overflow clip does not cut an absolutely positioned box whose
+/// containing block is outside the clipping block (CSS 2.1 §11.1.1), however
+/// many clips lie between, but cuts one whose containing block is the block
+/// or a box inside it.
+#[test]
+fn an_absolute_box_with_its_containing_block_outside_a_clip_leaves_it() {
+    let clipped = |style: &str, id: &str| {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 30px\">\
+             <div style=\"overflow: hidden; height: 10px; {style}\">\
+             <div style=\"overflow: hidden; height: 5px\">\
+             <div id=a style=\"position: absolute; width: 20px; height: 20px; background: red\"></div>\
+             </div></div></div>"
+        ));
+        clip_depth_at(&result, Step::Box(by_id(&result, id)))
+    };
+    // The containing block is above both clips.
+    assert_eq!(clipped("", "a"), 0);
+    // The block between the clips is the containing block, so only the
+    // inner clip is left behind.
+    assert_eq!(clipped("position: relative", "a"), 1);
+}
+
+/// The block whose clip it is can itself be the containing block, and a
+/// fixed box belongs to the page unless a transform or a filter makes a box
+/// its containing block.
+#[test]
+fn a_clip_cuts_the_boxes_it_contains_and_leaves_those_of_the_page() {
+    let depth = |style: &str, position: &str| {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 30px\">\
+             <div style=\"overflow: hidden; height: 10px; {style}\">\
+             <div id=a style=\"position: {position}; width: 20px; height: 20px; background: red\"></div>\
+             </div></div>"
+        ));
+        clip_depth_at(&result, Step::Box(by_id(&result, "a")))
+    };
+    assert_eq!(depth("position: relative", "absolute"), 1);
+    assert_eq!(depth("transform: translate(0)", "absolute"), 1);
+    assert_eq!(depth("", "absolute"), 0);
+    assert_eq!(depth("", "fixed"), 0);
+    // A relative box stays in the flow its ancestors clip.
+    assert_eq!(depth("", "relative"), 1);
+    // A transform is the containing block of the fixed box too.
+    assert_eq!(depth("transform: translate(0)", "fixed"), 1);
+}
+
+/// The boxes that leave a clip and those it keeps can sit side by side, and
+/// the clip of a flex or grid container leaves them alone just as a block's
+/// does.
+#[test]
+fn a_clip_opens_again_around_the_boxes_it_keeps_between_those_it_leaves() {
+    for display in ["block", "flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 30px\">\
+             <div style=\"display: {display}; overflow: hidden; height: 10px\">\
+             <div id=a style=\"position: absolute; width: 20px; height: 20px\"></div>\
+             <div id=b style=\"position: relative; width: 20px; height: 20px\"></div>\
+             <div id=c style=\"position: absolute; width: 20px; height: 20px\"></div>\
+             </div></div>"
+        ));
+        let depths =
+            ["a", "b", "c"].map(|id| clip_depth_at(&result, Step::Box(by_id(&result, id))));
+        assert_eq!(depths, [0, 1, 0], "{display}");
+        let order = ["a", "b", "c"].map(|id| step_at(&result, Step::Box(by_id(&result, id))));
+        assert!(order[0] < order[1] && order[1] < order[2], "{display}");
+    }
+}
+
 /// An inline element with an opacity below one forms a stacking context, so
 /// the positioned boxes of an inline-block inside it paint in its group,
 /// below those of a later inline-block with a lower stack level. Both
