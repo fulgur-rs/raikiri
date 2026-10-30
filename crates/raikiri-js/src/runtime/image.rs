@@ -215,13 +215,30 @@ pub(crate) fn remember_inert_images(context: &mut Context, root: usize) -> JsRes
 /// removing one from template contents does not adopt it, so a detached one
 /// keeps waiting.
 pub(crate) fn settle_moved_images(context: &mut Context) -> JsResult<()> {
+    if crate::image_adoption_diagnostics::enabled() {
+        settle_moved_images_counted::<true>(context)
+    } else {
+        settle_moved_images_counted::<false>(context)
+    }
+}
+
+fn settle_moved_images_counted<const COUNT: bool>(context: &mut Context) -> JsResult<()> {
+    let mut work = crate::image_adoption_diagnostics::Work::default();
+    if COUNT {
+        work.settlements = 1;
+    }
     let adopted = with_state(context, |s| {
         let document = s.host.document();
         let moved_in = s
             .active_images
             .iter()
             .copied()
-            .filter(|&index| in_template_contents(document, index))
+            .filter(|&index| {
+                if COUNT {
+                    work.active_checks += 1;
+                }
+                in_template_contents(document, index)
+            })
             .collect::<Vec<_>>();
         for index in moved_in {
             s.active_images.remove(&index);
@@ -233,9 +250,17 @@ pub(crate) fn settle_moved_images(context: &mut Context) -> JsResult<()> {
         s.inert_images
             .iter()
             .copied()
-            .filter(|&index| tree_root(document, index) == root)
+            .filter(|&index| {
+                if COUNT {
+                    work.inert_checks += 1;
+                }
+                tree_root(document, index) == root
+            })
             .collect::<Vec<_>>()
     })?;
+    if COUNT {
+        crate::image_adoption_diagnostics::record(work);
+    }
     for index in adopted {
         update_image_data(context, index)?;
     }

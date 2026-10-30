@@ -59,6 +59,9 @@ pub(crate) struct State {
     node_graph: node_gc::NodeGraph,
     /// Set by every DOM mutation; cleared by a successful host flush.
     pub dirty: bool,
+    /// Native topology changes observed by ownership synchronization, retained
+    /// until image adoption consumes them, even across read-only bindings.
+    pub image_topology_changed: bool,
     /// Monotonic DOM mutation generation, bumped by every mutation alongside
     /// `dirty`. Live collections cache against this, not `dirty`: a
     /// successful host flush clears `dirty` while the DOM stays changed, so
@@ -350,6 +353,7 @@ impl DomRuntime {
             host: Box::new(host),
             node_graph,
             dirty: true,
+            image_topology_changed: false,
             generation: 0,
             window_named_cache: Default::default(),
             sibling_order: Default::default(),
