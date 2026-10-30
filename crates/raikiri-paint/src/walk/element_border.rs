@@ -298,9 +298,10 @@ struct Dashes {
 /// A dash is twice the thickness and a gap once from 3px on, three and two times
 /// below it; a dot is as long as it is thick and a gap the same. The gap is then
 /// stretched or shrunk so that the pattern starts and ends with a dash, whichever
-/// of the two nearest dash counts leaves it closest to its natural length. These
-/// are the lengths Chromium draws, which matter when a page is compared with
-/// its render.
+/// of the two nearest dash counts leaves it closest to its natural length. A side
+/// that holds just two shrinks the dashes with the gap, and only the gap between
+/// two dots. These are the lengths Chromium draws, which matter when a page is
+/// compared with its render.
 fn dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
     let (dash, gap) = match (dotted, thickness >= 3.0) {
         (true, _) => (thickness, thickness),
@@ -311,7 +312,16 @@ fn dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
         return None;
     }
     if length <= 2.0 * dash + gap {
-        // Exactly two dashes, in proportion.
+        // Exactly two. Dots keep their size and only the gap between them
+        // shrinks, so they never reach past the ends of the side; dashes shrink
+        // with the gap, in proportion.
+        if dotted {
+            return Some(Dashes {
+                dash,
+                gap: length - 2.0 * dash,
+                count: 2,
+            });
+        }
         let scale = length / (2.0 * dash + gap);
         return Some(Dashes {
             dash: dash * scale,

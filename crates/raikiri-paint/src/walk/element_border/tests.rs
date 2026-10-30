@@ -317,6 +317,74 @@ fn a_side_that_cannot_hold_two_dashes_has_none() {
 }
 
 #[test]
+fn two_dots_keep_their_size_and_only_the_gap_between_them_shrinks() {
+    // Chromium draws a 4px dot at each end of a 9px side, 1px apart, and 10px
+    // dots on a 25px one, 5px apart.
+    for (length, thickness, gap) in [(9.0, 4.0, 1.0), (25.0, 10.0, 5.0), (5.0, 2.0, 1.0)] {
+        let dots = dash_lengths(length, thickness, true).expect("two dots");
+        assert_eq!(
+            dots,
+            Dashes {
+                dash: thickness,
+                gap,
+                count: 2
+            }
+        );
+    }
+}
+
+#[test]
+fn the_dots_of_a_short_dotted_side_stay_inside_the_box() {
+    // The 25px top and bottom sides of the border-box hold two 10px dots.
+    let box_edges = Rect::new(10.0, 20.0, 35.0, 100.0);
+    let mut scene = Scene::new();
+    ElementBorder::new(
+        25.0,
+        80.0,
+        10.0,
+        20.0,
+        &all_sides(10.0, BorderStyle::Dotted),
+        TEXT,
+        true,
+    )
+    .expect("a box with a border")
+    .paint(&mut scene);
+    let dots = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(pieces(&fill.shape)),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert!(!dots.is_empty());
+    for dot in &dots {
+        assert!(
+            dot.x0 >= box_edges.x0 - 1e-6
+                && dot.x1 <= box_edges.x1 + 1e-6
+                && dot.y0 >= box_edges.y0 - 1e-6
+                && dot.y1 <= box_edges.y1 + 1e-6,
+            "{dot:?} sticks out of {box_edges:?}"
+        );
+    }
+    // Two dots along the top, the first at the left edge and the last at the
+    // right one.
+    for (dot, expected) in dots.iter().zip([
+        Rect::new(10.0, 20.0, 20.0, 30.0),
+        Rect::new(25.0, 20.0, 35.0, 30.0),
+    ]) {
+        assert!(
+            close(dot.x0, expected.x0)
+                && close(dot.y0, expected.y0)
+                && close(dot.x1, expected.x1)
+                && close(dot.y1, expected.y1),
+            "{dot:?} is not {expected:?}"
+        );
+    }
+}
+
+#[test]
 fn a_dashed_border_draws_dashes_from_corner_to_corner_of_each_side() {
     let rects = shapes(&all_sides(4.0, BorderStyle::Dashed));
     // Top and bottom: nine dashes of 8px each, 3.5px apart, the first at the
