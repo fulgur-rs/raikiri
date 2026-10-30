@@ -2688,7 +2688,7 @@ fn del_s_strike_and_abbr_acronym_ua_rules_survive_real_parse_and_cascade() {
                 .as_element()
                 .is_some_and(|el| el.tag_name() == "abbr" && el.attr("title").is_some())
         })
-        .expect("<abbr title> should exist") as usize;
+        .expect("<abbr title> should exist");
 
     // del, s, strike { text-decoration: line-through; }
     for (name, id) in [("del", del_id), ("s", s_id), ("strike", strike_id)] {

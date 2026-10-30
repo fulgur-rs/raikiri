@@ -13789,11 +13789,9 @@ fn parser_contains_deferred_function<'i>(
                 }
             }
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
-                if input.parse_nested_block(|nested| {
+                found |= input.parse_nested_block(|nested| {
                     parser_contains_deferred_function(nested, source_start, depth.saturating_add(1))
-                })? {
-                    found = true;
-                }
+                })?;
             }
             _ => {}
         }

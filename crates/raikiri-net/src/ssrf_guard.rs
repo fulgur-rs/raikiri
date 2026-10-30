@@ -59,7 +59,7 @@ fn is_this_network(ip: Ipv4Addr) -> bool {
 /// 100.64.0.0/10 (RFC 6598, "Shared Address Space" / CGNAT). Not covered by
 /// any stable `Ipv4Addr` method — `is_shared` is still feature-gated `ip`
 /// (rust-lang/rust#27709) as of this crate's pinned stable toolchain
-/// (1.91.0). Alibaba Cloud's metadata endpoint (100.100.100.200) lives here.
+/// (1.95.0). Alibaba Cloud's metadata endpoint (100.100.100.200) lives here.
 fn is_shared_address_space(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
     o[0] == 100 && (o[1] & 0b1100_0000) == 0b0100_0000

@@ -406,6 +406,9 @@ fn documents_are_laid_out_on_an_800_by_600_page_unless_they_say_otherwise() {
 }
 
 #[test]
+// `cfg!` is a constant for the lint, but the cfg comes from build.rs, so the
+// assert is what fails the run when the probe stops finding the reader.
+#[allow(clippy::assertions_on_constants)]
 fn the_tree_the_tool_is_tested_in_has_a_style_reader() {
     // `build.rs` finds the reader by reading the sources of `raikiri-dom`. A
     // tree that loses it writes no style getters, and so would a tree that the

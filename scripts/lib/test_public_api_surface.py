@@ -75,7 +75,7 @@ class Doc:
         return self._add(key, name, {"variant": {"kind": "plain", "discriminant": None}}, attrs, None)
 
     def extern_crate(self, key: int, crate: str, as_name: str | None = None, visibility: str = "public") -> int:
-        # rustdoc 1.91 writes the name it is published under to `name` and the crate to `rename`.
+        # rustdoc 1.95 writes the name it is published under to `name` and the crate to `rename`.
         body = {"name": as_name, "rename": crate} if as_name else {"name": crate, "rename": None}
         self._add(key, body["name"], {"extern_crate": body}, None, None)
         self.index[str(key)]["visibility"] = visibility

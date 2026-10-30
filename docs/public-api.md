@@ -477,8 +477,8 @@ soundness is theirs.
   stack, on the top one) and shows the findings in its summary and as a
   warning. It does not fail the job while the crates are at 0.0.x, and a fault
   of the tooling itself is a warning too, so no report is not a clean report:
-  look for the job. cargo-semver-checks is pinned to 0.49.0, the last release
-  that reads the rustdoc JSON format of the pinned toolchain; move
+  look for the job. cargo-semver-checks is pinned to 0.49.0, which
+  reads the rustdoc JSON format of the pinned toolchain; move
   `SEMVER_CHECKS_VERSION` together with `KNOWN_FORMAT_VERSIONS` when the
   toolchain moves (a test keeps the script and the workflow in step).
 

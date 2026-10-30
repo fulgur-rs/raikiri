@@ -122,7 +122,7 @@ CSS / UA stylesheet ──┴──► raikiri-style (cascade)
 
 Requirements:
 
-- Rust **1.91.0** (pinned by `rust-toolchain.toml`; `mise.toml` pins the same version for `mise` users)
+- Rust **1.95.0** (pinned by `rust-toolchain.toml`; `mise.toml` pins the same version for `mise` users)
 - rustup
 - On Linux, `libfontconfig1-dev` and `pkg-config`
 
