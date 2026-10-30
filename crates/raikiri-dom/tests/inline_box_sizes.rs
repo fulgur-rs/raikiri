@@ -260,6 +260,23 @@ fn a_last_line_of_inline_boxes_with_only_vertical_edges_makes_no_line() {
             ("c", (8.0, 18.0, 784.0, 10.0)),
         ],
     );
+    // An edge along the line counts on its own: a negative margin on the
+    // other side leaves the line as wide as nothing, and it is still a line.
+    for style in [
+        "padding-left:5px;margin-right:-5px",
+        "margin-left:5px;margin-right:-5px",
+        "border-right:5px solid;margin-left:-5px",
+    ] {
+        check(
+            &format!(
+                r#"<div id=o style="width:100px">x<br><span style="{style}"></span></div><div id=c style="height:10px"></div>"#
+            ),
+            &[
+                ("o", (8.0, 8.0, 100.0, 20.0)),
+                ("c", (8.0, 28.0, 784.0, 10.0)),
+            ],
+        );
+    }
     // A line that ends in a break is a line whatever its boxes hold.
     check(
         r#"<div id=o style="width:100px">x<br><span style="padding-top:20px"></span><br>y</div><div id=c style="height:10px"></div>"#,

@@ -904,7 +904,7 @@ fn run_boxes_segment(
                     continue;
                 }
                 let height = line.block_size();
-                if is_empty_closure(&line) {
+                if is_empty_closure(tree, root, &line, width) {
                     // Empty inline closures around a block do not separate
                     // its adjoining margins or add a line box (CSS 2.2 9.4.2).
                     token = line.break_token();
@@ -1535,7 +1535,7 @@ fn generated_block_lines_height(
             match result {
                 Some(LineResult::Line(line)) => {
                     token = line.break_token();
-                    if !is_empty_closure(&line) {
+                    if !is_empty_closure(tree, root, &line, width) {
                         height += line.block_size();
                         count += 1;
                     }
@@ -1589,22 +1589,54 @@ fn with_group_align(mut line_options: LineOptions, options: &LineOptions) -> Lin
 
 /// Whether `line` is the empty line around an inline closure that sits next
 /// to a block: it has no content, no height, and does not end in a forced
-/// break. A line of inline boxes with no inline extent is empty as well, even
-/// when the boxes have vertical padding or border: shodo counts those edges as
-/// painted content, while only an edge along the line makes a line box in
-/// Chromium.
-fn is_empty_closure(line: &shodo::Line) -> bool {
+/// break. In a horizontal root a line of inline boxes none of which has a
+/// margin, padding or border on its left or right is empty as well, even when
+/// a box has vertical padding or border: shodo counts those edges as painted
+/// content, while only an edge along the line makes a line box in Chromium.
+fn is_empty_closure(
+    tree: &LayoutSession<'_>,
+    root: &IfcRoot,
+    line: &shodo::Line,
+    basis: f32,
+) -> bool {
     if line.break_reason() == shodo::BreakReason::Forced {
         return false;
     }
     if line.is_empty() && line.block_size() == 0.0 {
         return true;
     }
-    line.inline_size() == 0.0
+    root.writing_mode == WritingMode::HorizontalTb
         && line.fragments().next().is_some()
-        && line
-            .fragments()
-            .all(|fragment| matches!(fragment, shodo::Fragment::InlineBox(_)))
+        && line.fragments().all(|fragment| match fragment {
+            shodo::Fragment::InlineBox(piece) => {
+                !has_edge_along_the_line(tree, piece.node.0 as usize, basis)
+            }
+            _ => false,
+        })
+}
+
+/// Whether the inline box `node` has a margin, padding or border on its left
+/// or right side, each one on its own: negative margins can cancel a padding
+/// or border along the line, so their sum would not say. A box generated for
+/// a pseudo-element counts as having one.
+fn has_edge_along_the_line(tree: &LayoutSession<'_>, node: usize, basis: f32) -> bool {
+    if crate::generated_content::generated_origin(node).is_some() {
+        return true;
+    }
+    let style = tree.physical_style(node);
+    let margin = resolved_margins(tree, node, basis);
+    let padding = style.padding().resolve_or_zero(Some(basis));
+    let border = style.border().resolve_or_zero(Some(basis));
+    [
+        margin.left,
+        margin.right,
+        padding.left,
+        padding.right,
+        border.left,
+        border.right,
+    ]
+    .iter()
+    .any(|&edge| edge != 0.0)
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left
