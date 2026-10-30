@@ -96,12 +96,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyrender"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1755d0ef8e00e87b6b825dfbe5a35d34d3b302e97e80a48e93f9cd361fbada06"
+dependencies = [
+ "kurbo",
+ "peniko",
+ "raw-window-handle",
+ "smallvec",
+]
+
+[[package]]
 name = "anyrender_svg"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9a06a9cab20563ae5b392239db09d42222820fd3706fe483db7d3cb25546c24"
 dependencies = [
- "anyrender",
+ "anyrender 0.13.0",
  "image",
  "kurbo",
  "peniko",
@@ -114,7 +126,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfcae178cb9738b1e74d21db66c0e269f6d9c146d6e45bde66674cb1b8dcd062"
 dependencies = [
- "anyrender",
+ "anyrender 0.13.0",
  "debug_timer",
  "glifo",
  "kurbo",
@@ -226,7 +238,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71df97b78e3dbfd863358644e55b7b694902c187048fa0952e5e14788fdc1add"
 dependencies = [
  "accesskit",
- "anyrender",
+ "anyrender 0.13.0",
  "app_units",
  "atomic_refcell",
  "bitflags",
@@ -283,7 +295,7 @@ version = "0.3.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0563058329a06eb1f6d08e6ccd9ec139bac23ff9fd6598a19269e1faacda5f16"
 dependencies = [
- "anyrender",
+ "anyrender 0.13.0",
  "anyrender_svg",
  "blitz-dom",
  "blitz-traits",
@@ -2572,7 +2584,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "raikiri"
 version = "0.0.4"
 dependencies = [
- "anyrender",
+ "anyrender 0.14.0",
  "anyrender_vello_cpu",
  "bytes",
  "cssparser",
@@ -2594,7 +2606,7 @@ dependencies = [
 name = "raikiri-bench"
 version = "0.0.4"
 dependencies = [
- "anyrender",
+ "anyrender 0.14.0",
  "criterion",
  "raikiri",
  "raikiri-dom",
@@ -2758,7 +2770,7 @@ dependencies = [
 name = "raikiri-paint"
 version = "0.0.4"
 dependencies = [
- "anyrender",
+ "anyrender 0.14.0",
  "anyrender_vello_cpu",
  "criterion",
  "cssparser",
@@ -2821,7 +2833,7 @@ dependencies = [
 name = "raikiri-vrt"
 version = "0.0.4"
 dependencies = [
- "anyrender",
+ "anyrender 0.14.0",
  "anyrender_vello_cpu",
  "kurbo",
  "peniko",
@@ -2835,7 +2847,7 @@ dependencies = [
 name = "raikiri-wpt"
 version = "0.0.4"
 dependencies = [
- "anyrender",
+ "anyrender 0.14.0",
  "anyrender_vello_cpu",
  "assert_cmd",
  "blitz-dom",
