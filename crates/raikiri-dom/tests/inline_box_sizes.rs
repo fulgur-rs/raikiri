@@ -235,6 +235,29 @@ fn a_percentage_width_in_an_inline_box_resolves_against_the_block_around_it() {
 }
 
 #[test]
+fn an_absolute_box_in_a_relative_inline_box_keeps_the_padding_box_with_its_vertical_border() {
+    // The padding box of the inline box is its border box less the border it
+    // has, although the border takes no part in the height of the line, and
+    // the out-of-flow box takes no room on the line after the block.
+    check(
+        r#"<div id=o style="width:100px"><span style="position:relative;border-top:6px solid;padding-top:4px">x<div id=b style="height:10px"></div><div id=a style="position:absolute;top:0;left:0;width:10px;height:10px"></div></span></div>"#,
+        &[
+            ("o", (8.0, 8.0, 100.0, 20.0)),
+            ("b", (8.0, 18.0, 100.0, 10.0)),
+            ("a", (8.0, 4.0, 10.0, 10.0)),
+        ],
+    );
+    check(
+        r#"<div id=o style="width:100px"><span style="position:relative;border-bottom:6px solid;padding-bottom:4px">x<div id=b style="height:10px"></div><div id=a style="position:absolute;bottom:0;left:0;width:10px;height:10px"></div></span></div>"#,
+        &[
+            ("o", (8.0, 8.0, 100.0, 20.0)),
+            ("b", (8.0, 18.0, 100.0, 10.0)),
+            ("a", (8.0, 12.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
 fn a_last_line_of_inline_boxes_with_only_vertical_edges_makes_no_line() {
     for style in [
         "padding-top:20px",

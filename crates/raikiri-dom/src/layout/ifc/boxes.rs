@@ -1399,8 +1399,9 @@ fn positioned_inline_ancestor(
 
 /// The padding box of the inline element `inline`, in the coordinates of the
 /// paragraph's content box: the bounding box of the padding boxes of its
-/// `pieces` on the lines (CSS 2.1 10.1). `basis` resolves its borders, and
-/// `line_shift` gives the move pagination made to the lines. An element with
+/// `pieces` on the lines (CSS 2.1 10.1). Its borders are the authored ones,
+/// which the pieces carry, whatever its style view reads. `line_shift` gives
+/// the move pagination made to the lines. An element with
 /// no piece of its own, such as a ruby base container, which has no box and
 /// holds its bases, spans the pieces of the elements in it. `None` when
 /// there is none.
@@ -1408,13 +1409,15 @@ fn inline_padding_box(
     tree: &LayoutSession<'_>,
     pieces: &[super::inline_boxes::InlineBoxPiece],
     inline: usize,
-    basis: f32,
     line_shift: impl Fn(usize) -> (f32, f32),
 ) -> Option<PaddingBox> {
-    let mut border = tree
-        .physical_style(inline)
-        .border()
-        .resolve_or_zero(Some(basis));
+    let computed = &tree.style_views.cascade().computed[inline].border;
+    let mut border = Edges {
+        top: computed.top.width().px(),
+        right: computed.right.width().px(),
+        bottom: computed.bottom.width().px(),
+        left: computed.left.width().px(),
+    };
     let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
     if spanned.is_empty() {
         border = Edges::ZERO;
@@ -1611,6 +1614,8 @@ fn is_empty_closure(
             shodo::Fragment::InlineBox(piece) => {
                 !has_edge_along_the_line(tree, piece.node.0 as usize, basis)
             }
+            // An out-of-flow box takes no room on the line.
+            shodo::Fragment::OutOfFlowAnchor(_) => true,
             _ => false,
         })
 }
@@ -4212,7 +4217,7 @@ pub(crate) fn place_out_of_flow(
                         |_| None,
                     )
                 });
-                inline_padding_box(tree, pieces, inline, border_box.width, |line| {
+                inline_padding_box(tree, pieces, inline, |line| {
                     super::positioned_runs::block_shift(writing_mode, lines.shift_of(line))
                 })
             })
