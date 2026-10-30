@@ -16,7 +16,7 @@ use raikiri_traits::{
     DecodedImage, FetchedResource, ImageIntrinsicSize, ImageRasterSize, NetworkProvider, Request,
     ResolverError, policy::ResourceKind,
 };
-use url::Url;
+use url::{Position, Url};
 
 use crate::image_decoder::ImageDecoder;
 
@@ -45,10 +45,64 @@ fn cache_limit_error() -> ResolverError {
     ResolverError::Decode("image cache resource limit exceeded".to_owned())
 }
 
+/// A conservative source identity for HTTP raster images. Structured and
+/// encoded fragments retain their display identity, including media fragments.
+fn raster_source_key(url: &Url) -> Option<&str> {
+    if !matches!(url.scheme(), "http" | "https")
+        || !url
+            .fragment()
+            .unwrap_or_default()
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-'))
+    {
+        return None;
+    }
+    Some(&url[..Position::AfterQuery])
+}
+
+#[derive(Default)]
+struct SourceCache {
+    // Separate namespaces prevent a fragmentless SVG from being overwritten
+    // when another response at a fragment alias turns out to be a raster.
+    exact: HashMap<String, Arc<ImageSource>>,
+    rasters: HashMap<String, Arc<ImageSource>>,
+}
+
+impl SourceCache {
+    fn get(&self, url: &Url) -> Option<&Arc<ImageSource>> {
+        self.exact
+            .get(url.as_str())
+            .or_else(|| self.rasters.get(raster_source_key(url)?))
+    }
+
+    fn len(&self) -> usize {
+        self.exact.len() + self.rasters.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.exact.reserve(additional);
+        self.rasters.reserve(additional);
+    }
+
+    fn insert(&mut self, key: String, source: Arc<ImageSource>, shared: bool) {
+        let cache = if shared {
+            &mut self.rasters
+        } else {
+            &mut self.exact
+        };
+        cache.insert(key, source);
+    }
+}
+
 #[derive(Default)]
 struct LoadState {
-    cache: HashMap<Url, Arc<ImageSource>>,
-    loading: HashSet<Url>,
+    cache: SourceCache,
+    loading: HashSet<String>,
 }
 
 enum Admission<'a> {
@@ -60,7 +114,7 @@ struct PendingSource<'a> {
     state: &'a Mutex<LoadState>,
     budget: &'a Mutex<CacheBudget>,
     changed: &'a Condvar,
-    url: &'a Url,
+    url: &'a str,
     key_bytes: u64,
     active: bool,
 }
@@ -365,6 +419,9 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         if let Some(cached) = self.cached_source(url) {
             return Ok(Admission::Cached(cached));
         }
+        // The eventual format is unknown: reserve enough for an exact SVG
+        // key, even when the pending key is a borrowed fragmentless prefix.
+        let pending_key = raster_source_key(url).unwrap_or(url.as_str());
         let key_bytes = url.as_str().len() as u64;
         loop {
             // Budget precedes State everywhere they are held together. Cache
@@ -376,7 +433,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
             }
             // A duplicate waits for its owner even when that reservation fills
             // the entry or byte budget. It consumes no additional permit/key.
-            if state.loading.contains(url) {
+            if state.loading.contains(pending_key) {
                 drop(budget);
                 self.wait_for_change(state)?;
                 continue;
@@ -396,7 +453,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
             }
             // Prepare allocations before charging the key. Reserve room for
             // every pending source's eventual cache insertion, too.
-            let key = url.clone();
+            let key = pending_key.to_owned();
             let pending = state.loading.len();
             state.cache.reserve(pending + 1);
             state.loading.reserve(1);
@@ -406,7 +463,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                 state: &self.state,
                 budget: &self.budget,
                 changed: &self.changed,
-                url,
+                url: pending_key,
                 key_bytes,
                 active: true,
             }));
@@ -430,7 +487,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         };
         // Keep the permit until decode and publication finish, bounding the
         // number of fetched buffers waiting for the serialized decoder.
-        let (bytes, is_data_url, is_svg) = self.fetch_bytes(url)?;
+        let (bytes, is_data_url, is_svg, final_url_shareable) = self.fetch_bytes(url)?;
         let source_bytes = if is_svg { bytes.len() as u64 } else { 0 };
         let mut budget = self.budget.lock().map_err(|_| cache_limit_error())?;
         let available = budget
@@ -452,19 +509,33 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         let charge = source_bytes
             .checked_add(source.decoded_byte_len().unwrap_or(0))
             .ok_or_else(cache_limit_error)?;
+        let shared = final_url_shareable
+            && raster_source_key(url).is_some()
+            && matches!(source.kind, ImageSourceKind::Raster(_));
+        let retained_key_bytes = if shared {
+            admission.url.len()
+        } else {
+            url.as_str().len()
+        } as u64;
+        let refund = admission.key_bytes - retained_key_bytes;
         let used = budget
             .used
-            .checked_add(charge)
+            .checked_sub(refund)
+            .and_then(|used| used.checked_add(charge))
             .filter(|&used| used <= budget.limit)
             .ok_or_else(cache_limit_error)?;
         let mut state = self.state.lock().map_err(|_| cache_limit_error())?;
-        // The entry and its capacity were reserved before fetching. Move the
-        // charged key directly into the cache and disarm cleanup atomically.
-        let key = state
+        // Move the one owned pending key into its final namespace. An exact
+        // source needs the original suffix, whose bytes were reserved up front.
+        let mut key = state
             .loading
-            .take(url)
+            .take(admission.url)
             .expect("pending source owns its key");
-        state.cache.insert(key, source.clone());
+        if !shared {
+            key.reserve_exact(url.as_str().len() - key.len());
+            key.push_str(&url.as_str()[key.len()..]);
+        }
+        state.cache.insert(key, source.clone(), shared);
         budget.used = used;
         admission.active = false;
         drop(state);
@@ -473,10 +544,10 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         Ok(source)
     }
 
-    fn fetch_bytes(&self, url: &Url) -> Result<(Vec<u8>, bool, bool), ResolverError> {
+    fn fetch_bytes(&self, url: &Url) -> Result<(Vec<u8>, bool, bool, bool), ResolverError> {
         let result = if url.scheme() == "data" {
             let is_svg = data_url_media_type(url.as_str()).is_some_and(is_svg_media_type);
-            (decode_data_url(url.as_str())?, true, is_svg)
+            (decode_data_url(url.as_str())?, true, is_svg, false)
         } else {
             let fetched = self.fetch(url)?;
             if fetched.bytes.len() > MAX_SVG_BYTES {
@@ -489,7 +560,12 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                 .as_deref()
                 .is_some_and(is_svg_media_type)
                 || url.path().to_ascii_lowercase().ends_with(".svg");
-            (fetched.bytes.to_vec(), false, is_svg)
+            (
+                fetched.bytes.to_vec(),
+                false,
+                is_svg,
+                raster_source_key(&fetched.final_url).is_some(),
+            )
         };
         if result.0.len() > MAX_SVG_BYTES {
             return Err(ResolverError::Decode(
