@@ -4,10 +4,14 @@
 use super::*;
 use kurbo::{Circle, Shape};
 
+mod bevel;
+
 /// The square border of one box. A `double` side draws its outer and inner
 /// thirds and leaves the middle one transparent (§5.6); a `dashed` or `dotted`
-/// side draws dashes or dots along its strip (§5.2); every other style that has
-/// a color fills the whole strip.
+/// side draws dashes or dots along its strip (§5.2); a `groove` or `ridge` side
+/// is two bands of a lighter and a darker shade, and an `inset` or `outset`
+/// one a single band of either (§3.2); every other style that has a color fills
+/// the whole strip.
 pub(super) struct ElementBorder<'a> {
     border: &'a Sides<raikiri_style::resolve::ComputedBorder>,
     current_color: CssColor,
@@ -56,15 +60,54 @@ impl<'a> ElementBorder<'a> {
         })
     }
 
-    /// Paints the strips of the sides: top, bottom, left and right.
+    /// Paints the strips of the sides: top, bottom, left and right. A `groove`
+    /// or `ridge` side has a second, inner band, which is painted as a second
+    /// ring of strips inside the first.
     pub(super) fn paint(&self, scene: &mut impl PaintScene) {
-        let Rect { x0, y0, x1, y1 } = self.edges;
+        let outer = self.ring_widths(0);
+        self.paint_ring(scene, 0, self.edges, outer);
+        let inner = self.ring_widths(1);
+        if inner.top > 0.0 || inner.right > 0.0 || inner.bottom > 0.0 || inner.left > 0.0 {
+            let Rect { x0, y0, x1, y1 } = self.edges;
+            let top = if self.paint_top { y0 + outer.top } else { y0 };
+            let edges = Rect::new(x0 + outer.left, top, x1 - outer.right, y1 - outer.bottom);
+            // Bands wider than the box have no room for an inner ring.
+            if edges.x1 >= edges.x0 && edges.y1 >= edges.y0 {
+                self.paint_ring(scene, 1, edges, inner);
+            }
+        }
+    }
+
+    /// The width of the band of each side that is in ring `ring`, the outer ring
+    /// being 0.
+    fn ring_widths(&self, ring: usize) -> Sides<f64> {
+        let band = |side: &raikiri_style::resolve::ComputedBorder, width: f64| {
+            band_widths(side.style(), width)[ring]
+        };
+        Sides {
+            top: band(&self.border.top, self.widths.top),
+            right: band(&self.border.right, self.widths.right),
+            bottom: band(&self.border.bottom, self.widths.bottom),
+            left: band(&self.border.left, self.widths.left),
+        }
+    }
+
+    /// Paints the strips of ring `ring` of the sides, `widths` thick, around
+    /// `edges`.
+    fn paint_ring(
+        &self,
+        scene: &mut impl PaintScene,
+        ring: usize,
+        edges: Rect,
+        widths: Sides<f64>,
+    ) {
+        let Rect { x0, y0, x1, y1 } = edges;
         let Sides {
             top: bt,
             right: br,
             bottom: bb,
             left: bl,
-        } = self.widths;
+        } = widths;
         let inner_y0 = if self.paint_top {
             (y0 + bt).round()
         } else {
@@ -79,44 +122,97 @@ impl<'a> ElementBorder<'a> {
         let inner_height_valid = inner_y1 > inner_y0;
         if self.paint_top && bt > 0.0 {
             let strip = Strip::horizontal(Rect::new(x0, y0, x1, y0 + bt));
-            self.paint_side(scene, &self.border.top, strip);
+            self.paint_side(scene, &self.border.top, strip, ring, true);
         }
         if bb > 0.0 {
             let strip = Strip::horizontal(Rect::new(x0, y1 - bb, x1, y1));
-            self.paint_side(scene, &self.border.bottom, strip);
+            self.paint_side(scene, &self.border.bottom, strip, ring, false);
         }
         if bl > 0.0 && inner_height_valid {
             let strip = Strip::vertical(Rect::new(x0, inner_y0, x0 + bl, inner_y1), (y0, y1));
-            self.paint_side(scene, &self.border.left, strip);
+            self.paint_side(scene, &self.border.left, strip, ring, true);
         }
         if br > 0.0 && inner_height_valid {
             let strip = Strip::vertical(Rect::new(x1 - br, inner_y0, x1, inner_y1), (y0, y1));
-            self.paint_side(scene, &self.border.right, strip);
+            self.paint_side(scene, &self.border.right, strip, ring, false);
         }
     }
 
     /// Paints one side in its style, unless its color is transparent.
+    /// `top_left` tells the top and left sides, which face the light, from the
+    /// bottom and right ones.
     fn paint_side(
         &self,
         scene: &mut impl PaintScene,
         side: &raikiri_style::resolve::ComputedBorder,
         strip: Strip,
+        ring: usize,
+        top_left: bool,
     ) {
-        if let Some(color) = self.color(side) {
+        if let Some(color) = self.color(side, ring, top_left) {
             fill_strip(scene, strip, color, side.style());
         }
     }
 
-    /// The color a side is painted with, or `None` for a transparent one.
-    /// `currentcolor` takes the text color. A side without a style has no
-    /// width, so `paint` never asks for its color.
-    fn color(&self, side: &raikiri_style::resolve::ComputedBorder) -> Option<Color> {
+    /// The color a side is painted with in ring `ring`, or `None` for a
+    /// transparent one. `currentcolor` takes the text color. A side without a
+    /// style has no width, so `paint` never asks for its color.
+    fn color(
+        &self,
+        side: &raikiri_style::resolve::ComputedBorder,
+        ring: usize,
+        top_left: bool,
+    ) -> Option<Color> {
         let color = match side.color {
             raikiri_style::property::BorderColor::Resolved(color) => color,
             _ => self.current_color,
         };
-        (color.a != 0).then(|| Color::from_rgba8(color.r, color.g, color.b, color.a))
+        if color.a == 0 {
+            return None;
+        }
+        let width = side.width().px() as f64;
+        let color = match bevel_dark(side.style(), width, ring, top_left) {
+            Some(dark) => bevel::shade(color, dark),
+            None => color,
+        };
+        Some(Color::from_rgba8(color.r, color.g, color.b, color.a))
     }
+}
+
+/// The widths of the two bands of a side `width` thick, the outer one first. A
+/// `groove` or `ridge` is cut in two halves, the outer one the larger when the
+/// width is odd; every other style, and a one pixel `groove` or `ridge`, is a
+/// single band.
+fn band_widths(style: BorderStyle, width: f64) -> [f64; 2] {
+    if has_two_bands(style, width) {
+        let outer = (width / 2.0).ceil();
+        [outer, width - outer]
+    } else {
+        [width, 0.0]
+    }
+}
+
+/// Whether a side in `style` that is `width` thick is drawn as two bands: a
+/// `groove` or `ridge` of at least two pixels.
+fn has_two_bands(style: BorderStyle, width: f64) -> bool {
+    matches!(style, BorderStyle::Groove | BorderStyle::Ridge) && width >= 2.0
+}
+
+/// Whether band `ring` of a side in `style` is the dark shade, or `None` when
+/// the style is not drawn in shades. An `inset` is dark on the top and left
+/// sides and light on the others, and an `outset` the other way round; the outer
+/// band of a `groove` is an `inset` and its inner band an `outset`, and a
+/// `ridge` the reverse (§3.2).
+fn bevel_dark(style: BorderStyle, width: f64, ring: usize, top_left: bool) -> Option<bool> {
+    let sunken = match style {
+        BorderStyle::Inset => true,
+        BorderStyle::Outset => false,
+        BorderStyle::Groove | BorderStyle::Ridge if has_two_bands(style, width) => {
+            (style == BorderStyle::Groove) == (ring == 0)
+        }
+        _ => return None,
+    };
+    Some(sunken == top_left)
 }
 
 /// The strip of one side: the rectangle that is painted, and the extent of the

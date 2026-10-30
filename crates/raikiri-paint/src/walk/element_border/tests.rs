@@ -562,3 +562,249 @@ fn each_side_keeps_its_own_style() {
     assert_eq!(rects[9], Rect::new(10.0, 66.0, 110.0, 70.0));
     assert_eq!(rects[15], Rect::new(106.0, 24.0, 110.0, 66.0));
 }
+
+const GRAY: CssColor = CssColor {
+    r: 128,
+    g: 128,
+    b: 128,
+    a: 255,
+};
+
+fn rgb(r: u8, g: u8, b: u8) -> CssColor {
+    CssColor { r, g, b, a: 255 }
+}
+
+fn color(color: CssColor) -> Color {
+    Color::from_rgba8(color.r, color.g, color.b, color.a)
+}
+
+/// All four sides `width` thick in `style` and `color`.
+fn colored_sides(
+    width: f32,
+    style: BorderStyle,
+    color: CssColor,
+) -> Sides<raikiri_style::resolve::ComputedBorder> {
+    let border = side(width, style, BorderColor::Resolved(color));
+    Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    }
+}
+
+#[test]
+fn a_bevel_shades_a_color_the_way_chromium_does() {
+    // (color, dark side, light side), as Chromium draws `inset` and `outset`.
+    let table = [
+        (rgb(128, 128, 128), rgb(44, 44, 44), rgb(212, 212, 212)),
+        (rgb(255, 255, 255), rgb(171, 171, 171), rgb(255, 255, 255)),
+        (rgb(255, 0, 0), rgb(171, 0, 0), rgb(255, 0, 0)),
+        (rgb(0, 128, 0), rgb(0, 44, 0), rgb(0, 212, 0)),
+        (rgb(10, 20, 30), rgb(38, 76, 114), rgb(66, 132, 198)),
+        // Black cannot get darker, so its dark side is lightened.
+        (rgb(0, 0, 0), rgb(84, 84, 84), rgb(168, 168, 168)),
+        // A gray at the dark limit is still too dark to darken...
+        (rgb(32, 32, 32), rgb(116, 116, 116), rgb(200, 200, 200)),
+        // ...and one just above it darkens to black.
+        (rgb(33, 33, 33), rgb(0, 0, 0), rgb(117, 117, 117)),
+        // A gray at the light limit still lightens to white, and one above it
+        // keeps its light side.
+        (rgb(235, 235, 235), rgb(151, 151, 151), rgb(255, 255, 255)),
+        (rgb(240, 240, 240), rgb(156, 156, 156), rgb(240, 240, 240)),
+    ];
+    for (input, dark, light) in table {
+        assert_eq!(bevel::shade(input, true), dark, "dark side of {input:?}");
+        assert_eq!(bevel::shade(input, false), light, "light side of {input:?}");
+    }
+}
+
+#[test]
+fn a_shade_keeps_the_alpha_of_its_color() {
+    let translucent = CssColor { a: 99, ..GRAY };
+    assert_eq!(bevel::shade(translucent, true).a, 99);
+    assert_eq!(bevel::shade(translucent, false).a, 99);
+    let black = CssColor {
+        a: 7,
+        ..rgb(0, 0, 0)
+    };
+    assert_eq!(bevel::shade(black, true).a, 7);
+}
+
+#[test]
+fn an_outset_border_is_light_on_its_top_and_left_and_dark_on_its_bottom_and_right() {
+    let light = color(rgb(212, 212, 212));
+    let dark = color(rgb(44, 44, 44));
+    assert_eq!(
+        fills(&colored_sides(4.0, BorderStyle::Outset, GRAY), true),
+        [
+            (Rect::new(10.0, 20.0, 110.0, 24.0), light),
+            (Rect::new(10.0, 66.0, 110.0, 70.0), dark),
+            (Rect::new(10.0, 24.0, 14.0, 66.0), light),
+            (Rect::new(106.0, 24.0, 110.0, 66.0), dark),
+        ]
+    );
+}
+
+#[test]
+fn an_inset_border_is_dark_on_its_top_and_left_and_light_on_its_bottom_and_right() {
+    let light = color(rgb(212, 212, 212));
+    let dark = color(rgb(44, 44, 44));
+    assert_eq!(
+        fills(&colored_sides(4.0, BorderStyle::Inset, GRAY), true),
+        [
+            (Rect::new(10.0, 20.0, 110.0, 24.0), dark),
+            (Rect::new(10.0, 66.0, 110.0, 70.0), light),
+            (Rect::new(10.0, 24.0, 14.0, 66.0), dark),
+            (Rect::new(106.0, 24.0, 110.0, 66.0), light),
+        ]
+    );
+}
+
+#[test]
+fn a_groove_is_an_inset_band_around_an_outset_one() {
+    let light = color(rgb(212, 212, 212));
+    let dark = color(rgb(44, 44, 44));
+    assert_eq!(
+        fills(&colored_sides(4.0, BorderStyle::Groove, GRAY), true),
+        [
+            (Rect::new(10.0, 20.0, 110.0, 22.0), dark),
+            (Rect::new(10.0, 68.0, 110.0, 70.0), light),
+            (Rect::new(10.0, 22.0, 12.0, 68.0), dark),
+            (Rect::new(108.0, 22.0, 110.0, 68.0), light),
+            (Rect::new(12.0, 22.0, 108.0, 24.0), light),
+            (Rect::new(12.0, 66.0, 108.0, 68.0), dark),
+            (Rect::new(12.0, 24.0, 14.0, 66.0), light),
+            (Rect::new(106.0, 24.0, 108.0, 66.0), dark),
+        ]
+    );
+}
+
+#[test]
+fn a_ridge_is_an_outset_band_around_an_inset_one() {
+    let light = color(rgb(212, 212, 212));
+    let dark = color(rgb(44, 44, 44));
+    assert_eq!(
+        fills(&colored_sides(4.0, BorderStyle::Ridge, GRAY), true),
+        [
+            (Rect::new(10.0, 20.0, 110.0, 22.0), light),
+            (Rect::new(10.0, 68.0, 110.0, 70.0), dark),
+            (Rect::new(10.0, 22.0, 12.0, 68.0), light),
+            (Rect::new(108.0, 22.0, 110.0, 68.0), dark),
+            (Rect::new(12.0, 22.0, 108.0, 24.0), dark),
+            (Rect::new(12.0, 66.0, 108.0, 68.0), light),
+            (Rect::new(12.0, 24.0, 14.0, 66.0), dark),
+            (Rect::new(106.0, 24.0, 108.0, 66.0), light),
+        ]
+    );
+}
+
+#[test]
+fn an_odd_groove_gives_its_outer_band_the_larger_half() {
+    let rects = shapes(&colored_sides(3.0, BorderStyle::Groove, GRAY));
+    assert_eq!(rects[0], Rect::new(10.0, 20.0, 110.0, 22.0), "outer top");
+    assert_eq!(rects[4], Rect::new(12.0, 22.0, 108.0, 23.0), "inner top");
+    assert_eq!(rects[7], Rect::new(107.0, 23.0, 108.0, 67.0), "inner right");
+}
+
+#[test]
+fn a_one_pixel_groove_or_ridge_is_a_single_band_in_the_plain_color() {
+    for style in [BorderStyle::Groove, BorderStyle::Ridge] {
+        let fills = fills(&colored_sides(1.0, style, GRAY), true);
+        assert_eq!(fills.len(), 4, "{style:?}");
+        assert!(
+            fills.iter().all(|(_, fill)| *fill == color(GRAY)),
+            "{style:?}"
+        );
+    }
+}
+
+#[test]
+fn the_bands_of_a_continuation_leave_out_the_top_of_the_box() {
+    let light = color(rgb(212, 212, 212));
+    let dark = color(rgb(44, 44, 44));
+    assert_eq!(
+        fills(&colored_sides(4.0, BorderStyle::Groove, GRAY), false),
+        [
+            (Rect::new(10.0, 68.0, 110.0, 70.0), light),
+            (Rect::new(10.0, 20.0, 12.0, 68.0), dark),
+            (Rect::new(108.0, 20.0, 110.0, 68.0), light),
+            (Rect::new(12.0, 66.0, 108.0, 68.0), dark),
+            (Rect::new(12.0, 20.0, 14.0, 66.0), light),
+            (Rect::new(106.0, 20.0, 108.0, 66.0), dark),
+        ]
+    );
+}
+
+#[test]
+fn the_inner_band_of_a_groove_sits_inside_the_full_width_of_the_other_sides() {
+    let solid = side(4.0, BorderStyle::Solid, BorderColor::Resolved(GRAY));
+    let groove = side(4.0, BorderStyle::Groove, BorderColor::Resolved(GRAY));
+    let borders = Sides {
+        top: solid,
+        right: solid,
+        bottom: solid,
+        left: groove,
+    };
+    assert_eq!(
+        fills(&borders, true),
+        [
+            (Rect::new(10.0, 20.0, 110.0, 24.0), color(GRAY)),
+            (Rect::new(10.0, 66.0, 110.0, 70.0), color(GRAY)),
+            (Rect::new(10.0, 24.0, 12.0, 66.0), color(rgb(44, 44, 44))),
+            (Rect::new(106.0, 24.0, 110.0, 66.0), color(GRAY)),
+            (Rect::new(12.0, 24.0, 14.0, 66.0), color(rgb(212, 212, 212))),
+        ]
+    );
+}
+
+#[test]
+fn a_groove_wider_than_its_box_has_no_inner_band() {
+    // Layout never makes a box narrower than its borders, but the painter must
+    // not draw outside the box if it is handed one: 21px sides leave no room
+    // for the bands inside the outer ones, 11px each way on a 20px span.
+    for (width, height) in [(20.0, 20.0), (100.0, 20.0)] {
+        let border = colored_sides(21.0, BorderStyle::Groove, GRAY);
+        let mut scene = Scene::new();
+        ElementBorder::new(width, height, 0.0, 0.0, &border, TEXT, true)
+            .expect("a box with a border")
+            .paint(&mut scene);
+        assert_eq!(
+            scene.commands.len(),
+            2,
+            "{width} x {height}: top and bottom"
+        );
+    }
+}
+
+#[test]
+fn a_bevel_with_a_transparent_color_paints_nothing() {
+    let clear = CssColor { a: 0, ..GRAY };
+    for style in [
+        BorderStyle::Inset,
+        BorderStyle::Outset,
+        BorderStyle::Groove,
+        BorderStyle::Ridge,
+    ] {
+        assert_eq!(
+            fills(&colored_sides(4.0, style, clear), true),
+            [],
+            "{style:?}"
+        );
+    }
+}
+
+#[test]
+fn a_bevel_without_a_color_takes_its_shades_from_the_text_color() {
+    let border = side(4.0, BorderStyle::Outset, BorderColor::CurrentColor);
+    let borders = Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    };
+    let fills = fills(&borders, true);
+    // TEXT is (10, 20, 30).
+    assert_eq!(fills[0].1, color(rgb(66, 132, 198)));
+    assert_eq!(fills[1].1, color(rgb(38, 76, 114)));
+}
