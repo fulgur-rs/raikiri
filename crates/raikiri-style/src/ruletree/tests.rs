@@ -3330,6 +3330,7 @@ fn escaped_newlines_continue_strings_in_text_passes() {
 
 mod descriptor_rule_tests;
 mod group_rule_tests;
+mod shared_body_tests;
 mod supports_condition_tests;
 
 mod nesting_tests;
