@@ -466,3 +466,5 @@ fn clone_node_gives_a_template_copy_its_own_contents() {
     assert_eq!(d.clone_node(root, true), None);
     assert_eq!(d.clone_node(usize::MAX, false), None);
 }
+
+mod insertion_cycle_tests;

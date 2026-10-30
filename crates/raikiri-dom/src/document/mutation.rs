@@ -498,7 +498,10 @@ impl Document {
         siblings.get(position + 1).copied()
     }
 
-    /// Iterative DFS over `node`'s subtree (`node` included) checking
+    /// Finish immediately for self or an ordinary-parentless Element
+    /// destination. With the arena's parent/children invariant, a distinct
+    /// node cannot reach that Element: template host edges end at fragments.
+    /// Otherwise, use iterative DFS over `node`'s subtree (including `node`), checking
     /// whether `parent` is reachable -- the direction-reversed form of
     /// "`node` is a host-including inclusive ancestor of `parent`" (walk
     /// `node`'s descendants instead of `parent`'s ancestors and their
@@ -522,6 +525,20 @@ impl Document {
 
     fn is_inclusive_ancestor_impl<const COUNT: bool>(&self, node: usize, parent: usize) -> bool {
         let mut meter = crate::insertion_diagnostics::Meter::<COUNT>::new();
+        if node == parent {
+            return true;
+        }
+        if self.is_element(parent) {
+            if COUNT {
+                meter.work.parent_reads += 1;
+            }
+            if self.parent_of(parent).is_none() {
+                if COUNT {
+                    meter.work.fast_paths += 1;
+                }
+                return false;
+            }
+        }
         if COUNT {
             meter.work.dfs_searches += 1;
             meter.work.scratch_growths += 1;
