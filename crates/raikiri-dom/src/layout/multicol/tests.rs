@@ -4005,7 +4005,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
     crate::layout::test_support::with_ahem(&mut doc);
     let body = doc.append_element(Some(0), "body", Some("width:400px"));
     let contents = doc.append_element(Some(body), "div", Some("display:contents;width:80px"));
-    let half = doc.append_element(Some(contents), "div", Some("width:50%"));
+    let half = doc.append_element(Some(contents), "div", Some("display:block;width:50%"));
     let intrinsic = doc.append_element(Some(half), "div", Some("display:block;width:min-content"));
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -4073,6 +4073,33 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
         assert!(!widths.in_intrinsic_width(contents));
         assert!(!widths.in_intrinsic_width(text));
     }
+}
+
+#[test]
+fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(Some(0), "body", Some("width:400px"));
+    // The block around the inline box is the containing block of the block
+    // inside it, whatever the `width` of the inline box says (CSS 2.1 10.3.1).
+    let outer = doc.append_element(Some(body), "span", Some("display:inline;width:50px"));
+    let inner = doc.append_element(Some(outer), "span", Some("display:inline;width:30px"));
+    let block = doc.append_element(Some(inner), "div", Some("display:block"));
+    let text = doc.append_text(block, "test");
+    // An inline box without a block keeps the width it is given.
+    let plain = doc.append_element(Some(body), "span", Some("display:inline;width:50px"));
+    let plain_text = doc.append_text(plain, "test");
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    assert_eq!(widths.content_width[outer], 400.0);
+    assert_eq!(widths.content_width[inner], 400.0);
+    assert_eq!(widths.authored_containing_width(block), Some(400.0));
+    assert_eq!(widths.authored_containing_width(text), Some(400.0));
+    assert_eq!(widths.content_width[plain], 50.0);
+    assert_eq!(widths.authored_containing_width(plain_text), Some(50.0));
 }
 
 #[test]

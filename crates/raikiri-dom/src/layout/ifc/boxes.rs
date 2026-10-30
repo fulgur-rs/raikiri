@@ -904,7 +904,7 @@ fn run_boxes_segment(
                     continue;
                 }
                 let height = line.block_size();
-                if is_empty_closure(&line) {
+                if is_empty_closure(tree, root, &line, width) {
                     // Empty inline closures around a block do not separate
                     // its adjoining margins or add a line box (CSS 2.2 9.4.2).
                     token = line.break_token();
@@ -1399,8 +1399,9 @@ fn positioned_inline_ancestor(
 
 /// The padding box of the inline element `inline`, in the coordinates of the
 /// paragraph's content box: the bounding box of the padding boxes of its
-/// `pieces` on the lines (CSS 2.1 10.1). `basis` resolves its borders, and
-/// `line_shift` gives the move pagination made to the lines. An element with
+/// `pieces` on the lines (CSS 2.1 10.1). Its borders are the authored ones,
+/// which the pieces carry, whatever its style view reads. `line_shift` gives
+/// the move pagination made to the lines. An element with
 /// no piece of its own, such as a ruby base container, which has no box and
 /// holds its bases, spans the pieces of the elements in it. `None` when
 /// there is none.
@@ -1408,13 +1409,15 @@ fn inline_padding_box(
     tree: &LayoutSession<'_>,
     pieces: &[super::inline_boxes::InlineBoxPiece],
     inline: usize,
-    basis: f32,
     line_shift: impl Fn(usize) -> (f32, f32),
 ) -> Option<PaddingBox> {
-    let mut border = tree
-        .physical_style(inline)
-        .border()
-        .resolve_or_zero(Some(basis));
+    let computed = &tree.style_views.cascade().computed[inline].border;
+    let mut border = Edges {
+        top: computed.top.width().px(),
+        right: computed.right.width().px(),
+        bottom: computed.bottom.width().px(),
+        left: computed.left.width().px(),
+    };
     let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
     if spanned.is_empty() {
         border = Edges::ZERO;
@@ -1535,7 +1538,7 @@ fn generated_block_lines_height(
             match result {
                 Some(LineResult::Line(line)) => {
                     token = line.break_token();
-                    if !is_empty_closure(&line) {
+                    if !is_empty_closure(tree, root, &line, width) {
                         height += line.block_size();
                         count += 1;
                     }
@@ -1589,9 +1592,78 @@ fn with_group_align(mut line_options: LineOptions, options: &LineOptions) -> Lin
 
 /// Whether `line` is the empty line around an inline closure that sits next
 /// to a block: it has no content, no height, and does not end in a forced
-/// break.
-fn is_empty_closure(line: &shodo::Line) -> bool {
-    line.is_empty() && line.block_size() == 0.0 && line.break_reason() != shodo::BreakReason::Forced
+/// break. In a horizontal root a line of inline boxes none of which has a
+/// margin, padding or border on its left or right is empty as well when shodo
+/// keeps it only for the vertical padding or border of a box on it: shodo
+/// counts those edges as painted content, while only an edge along the line
+/// makes a line box in Chromium. Text without a visible glyph, such as a hidden
+/// soft hyphen, keeps its line.
+fn is_empty_closure(
+    tree: &LayoutSession<'_>,
+    root: &IfcRoot,
+    line: &shodo::Line,
+    basis: f32,
+) -> bool {
+    if line.break_reason() == shodo::BreakReason::Forced {
+        return false;
+    }
+    if line.is_empty() && line.block_size() == 0.0 {
+        return true;
+    }
+    if root.writing_mode != WritingMode::HorizontalTb {
+        return false;
+    }
+    let mut vertical_edge = false;
+    let only_boxes = line.fragments().all(|fragment| match fragment {
+        shodo::Fragment::InlineBox(piece) => {
+            let node = piece.node.0 as usize;
+            vertical_edge |= has_edge_across_the_line(tree, node);
+            !has_edge_along_the_line(tree, node, basis)
+        }
+        // An out-of-flow box takes no room on the line.
+        shodo::Fragment::OutOfFlowAnchor(_) => true,
+        _ => false,
+    });
+    only_boxes && vertical_edge
+}
+
+/// Whether the inline box `node` has a padding or border on its top or bottom
+/// side, as authored: the style view of an inline box that holds a block reads
+/// none.
+fn has_edge_across_the_line(tree: &LayoutSession<'_>, node: usize) -> bool {
+    if crate::generated_content::generated_origin(node).is_some() {
+        return false;
+    }
+    let cv = &tree.style_views.cascade().computed[node];
+    let padded = |padding: raikiri_style::ComputedLengthPercentageOrCalc| !matches!(padding, raikiri_style::ComputedLengthPercentageOrCalc::Px(px) if px == 0.0);
+    padded(cv.padding.top)
+        || padded(cv.padding.bottom)
+        || cv.border.top.width().px() != 0.0
+        || cv.border.bottom.width().px() != 0.0
+}
+
+/// Whether the inline box `node` has a margin, padding or border on its left
+/// or right side, each one on its own: negative margins can cancel a padding
+/// or border along the line, so their sum would not say. A box generated for
+/// a pseudo-element counts as having one.
+fn has_edge_along_the_line(tree: &LayoutSession<'_>, node: usize, basis: f32) -> bool {
+    if crate::generated_content::generated_origin(node).is_some() {
+        return true;
+    }
+    let style = tree.physical_style(node);
+    let margin = resolved_margins(tree, node, basis);
+    let padding = style.padding().resolve_or_zero(Some(basis));
+    let border = style.border().resolve_or_zero(Some(basis));
+    [
+        margin.left,
+        margin.right,
+        padding.left,
+        padding.right,
+        border.left,
+        border.right,
+    ]
+    .iter()
+    .any(|&edge| edge != 0.0)
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left
@@ -4167,7 +4239,7 @@ pub(crate) fn place_out_of_flow(
                         |_| None,
                     )
                 });
-                inline_padding_box(tree, pieces, inline, border_box.width, |line| {
+                inline_padding_box(tree, pieces, inline, |line| {
                     super::positioned_runs::block_shift(writing_mode, lines.shift_of(line))
                 })
             })
