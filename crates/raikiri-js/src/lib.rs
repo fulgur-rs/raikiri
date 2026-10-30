@@ -17,3 +17,7 @@
 //! anything else.
 
 pub mod runtime;
+
+#[cfg(any(test, feature = "css-declaration-diagnostics"))]
+#[doc(hidden)]
+pub mod css_declaration_diagnostics;

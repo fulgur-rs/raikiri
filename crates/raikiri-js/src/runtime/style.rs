@@ -243,11 +243,31 @@ fn validated_inline_declarations(
     style_attr: Option<&str>,
     page: bool,
 ) -> Vec<ValidatedDeclaration> {
+    #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+    if crate::css_declaration_diagnostics::enabled() {
+        return validated_inline_declarations_impl::<true>(style_attr, page);
+    }
+    validated_inline_declarations_impl::<false>(style_attr, page)
+}
+
+fn validated_inline_declarations_impl<const COUNT: bool>(
+    style_attr: Option<&str>,
+    page: bool,
+) -> Vec<ValidatedDeclaration> {
     let Some(style) = style_attr else {
         return Vec::new();
     };
+    #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+    let mut work = crate::css_declaration_diagnostics::Work {
+        validation_calls: 1,
+        ..Default::default()
+    };
     let mut out: Vec<ValidatedDeclaration> = Vec::new();
     for raw in parse_inline_style(style) {
+        #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+        if COUNT {
+            work.raw_declarations += 1;
+        }
         let Some(name) = validated_property_name(&raw.name, page) else {
             continue;
         };
@@ -262,18 +282,34 @@ fn validated_inline_declarations(
             continue;
         }
         if let Some(longhands) = shorthand::longhands_of(&name) {
-            out.retain(|d| !same_property(&d.name, &name) && !longhands.contains(&d.name.as_str()));
+            out.retain(|d| {
+                #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+                if COUNT {
+                    work.linear_name_comparisons += 1;
+                }
+                !same_property(&d.name, &name) && !longhands.contains(&d.name.as_str())
+            });
         }
         let declarations =
             shorthand::expand(&name, &stored, page).unwrap_or_else(|| vec![(name, stored)]);
         for (name, value) in declarations {
-            out.retain(|d| !same_property(&d.name, &name));
+            out.retain(|d| {
+                #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+                if COUNT {
+                    work.linear_name_comparisons += 1;
+                }
+                !same_property(&d.name, &name)
+            });
             out.push(ValidatedDeclaration {
                 name,
                 value,
                 important,
             });
         }
+    }
+    #[cfg(any(test, feature = "css-declaration-diagnostics"))]
+    if COUNT {
+        crate::css_declaration_diagnostics::record(work);
     }
     out
 }
