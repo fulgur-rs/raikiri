@@ -101,6 +101,47 @@ fn captioned_table(style: &str, caption: &str) -> String {
 }
 
 #[test]
+fn stretch_distributes_the_resolved_height_to_rows_and_cells() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/table-stretch-height.json"))
+            .expect("Chromium measurements");
+    let source = oracle["cases"].as_array().expect("cases");
+    let expected: Vec<Vec<_>> = source
+        .iter()
+        .map(|case| {
+            case["expected"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .map(|entry| {
+                    let values = entry.as_array().expect("box");
+                    let number = |index: usize| values[index].as_f64().expect("coordinate") as f32;
+                    (
+                        values[0].as_str().expect("id"),
+                        number(1),
+                        number(2),
+                        number(3),
+                        number(4),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let cases: Vec<Case<'_>> = source
+        .iter()
+        .zip(&expected)
+        .map(|(case, expected)| {
+            (
+                case["label"].as_str().expect("label"),
+                case["html"].as_str().expect("markup"),
+                expected.as_slice(),
+            )
+        })
+        .collect();
+    check_boxes(&cases);
+}
+
+#[test]
 fn a_height_is_the_height_of_the_grid_box_and_the_caption_comes_on_top() {
     check_boxes(&[
         (

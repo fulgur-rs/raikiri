@@ -675,12 +675,43 @@ fn compute_table_layout_checked(
         // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
         let table_size = doc.table_style(table_idx).size();
+
         // The size of the content of a flex column item (the measure behind its
         // automatic minimum size, CSS Flexbox 1 §4.5) is that of its rows and
         // caption, not the height it states: the flex algorithm weighs the two
         // against each other, and a `flex-basis` or a lower container can take
         // the item under the height.
         let states_height = !(flex_column_parent && inputs.sizing_mode == SizingMode::ContentSize);
+        // Keep the unclamped wrapper room separate from a numeric grid height.
+        // In particular, a caption is removed before the grid's min/max limits.
+        let stretch_room = if !vertical_writing
+            && matches!(table_size.height.expand(), ExpandedDimension::Stretch)
+            && (states_height || inputs.known_dimensions.height.is_some())
+        {
+            if absolute_table {
+                inputs.parent_size.height.map(|height| {
+                    let style = doc.table_style(table_idx);
+                    let inset = style.inset();
+                    let insets = super::used_style_length_percentage_auto(inset.top, height)
+                        .unwrap_or(0.0)
+                        + super::used_style_length_percentage_auto(inset.bottom, height)
+                            .unwrap_or(0.0);
+                    let margin = style.margin();
+                    let basis = inputs.parent_size.width.unwrap_or(0.0);
+                    let margins = super::used_style_length_percentage_auto(margin.top, basis)
+                        .unwrap_or(0.0)
+                        + super::used_style_length_percentage_auto(margin.bottom, basis)
+                            .unwrap_or(0.0);
+                    (height - insets.max(0.0) - margins).max(0.0)
+                })
+            } else {
+                crate::layout::dispatch::content_limits::stretch_fit_height(doc, table_idx, &inputs)
+            }
+        } else {
+            None
+        };
+        let stretch_wrapper_room =
+            stretch_room.filter(|_| absolute_table || !parent_is_flex_or_grid);
         let effective_known = Size {
             width: inputs.known_dimensions.width,
             height: inputs.known_dimensions.height.or_else(|| {
@@ -1378,16 +1409,26 @@ fn compute_table_layout_checked(
         // not hold for an authored height, which sizes the grid box alone (the
         // wrapper is that much and the caption), unless the height is the
         // wrapper's that a flex column gave a table it grew or shrank.
-        let assigned_grid_height = effective_known
-            .height
-            .filter(|_| {
-                wrapper_height_is_assigned
-                    && !vertical_writing
-                    && (specified_height.is_none() || known_is_wrapper_height)
-            })
-            .map(|wrapper_height| {
-                grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
+        let stretch_grid_height = stretch_wrapper_room.map(|wrapper| {
+            let grid_height =
+                grid_height_in_wrapper(doc, table_idx, wrapper, early_caption.as_ref());
+            let capped = max_h_outer.map_or(grid_height, |maximum| {
+                grid_height.min(maximum.max(padding_border_size.height))
             });
+            min_h_outer.map_or(capped, |minimum| capped.max(minimum))
+        });
+        let assigned_grid_height = stretch_grid_height.or_else(|| {
+            effective_known
+                .height
+                .filter(|_| {
+                    wrapper_height_is_assigned
+                        && !vertical_writing
+                        && (specified_height.is_none() || known_is_wrapper_height)
+                })
+                .map(|wrapper_height| {
+                    grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
+                })
+        });
 
         // Row heights
         let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
@@ -1415,7 +1456,12 @@ fn compute_table_layout_checked(
         let parent_sizes_rows = parent_is_flex_or_grid && !vertical_writing;
         let known_target = assigned_grid_height
             .or(effective_known.height)
-            .filter(|_| grid.rows.len() > 1 || specified_height.is_some() || parent_sizes_rows)
+            .filter(|_| {
+                grid.rows.len() > 1
+                    || specified_height.is_some()
+                    || parent_sizes_rows
+                    || stretch_room.is_some()
+            })
             .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
         // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer
@@ -1438,12 +1484,13 @@ fn compute_table_layout_checked(
             // may come from fragmentation, does not make it definite. They are
             // also left alone in vertical writing modes, which this pass does
             // not adjust.
-            let percents =
-                if !vertical_writing && (specified_height.is_some() || min_h_outer.is_some()) {
-                    percent_height_rows(doc, &grid)
-                } else {
-                    vec![None; grid.rows.len()]
-                };
+            let percents = if !vertical_writing
+                && (specified_height.is_some() || min_h_outer.is_some() || stretch_room.is_some())
+            {
+                percent_height_rows(doc, &grid)
+            } else {
+                vec![None; grid.rows.len()]
+            };
             distribute_extra_to_groups(
                 &mut row_heights,
                 &hidden_rows,
@@ -1589,6 +1636,7 @@ fn compute_table_layout_checked(
                 row_spacing: border_spacing.1,
                 vertical_writing,
                 height_is_definite: vertical_writing || specified_height.is_some(),
+                stretch_height_is_resolved: stretch_room.is_some(),
             },
             &mut oof_candidates,
         )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
@@ -3973,6 +4021,9 @@ struct CellPlacementTracks<'a> {
     /// for the percentage heights of the cell's children. A vertical table
     /// keeps the height definite whatever it states.
     height_is_definite: bool,
+    /// A resolved stretch reflows percentage descendants only in a cell
+    /// whose final block size grew beyond its measured natural size.
+    stretch_height_is_resolved: bool,
 }
 
 fn place_cells(
@@ -3993,6 +4044,7 @@ fn place_cells(
         row_spacing,
         vertical_writing,
         height_is_definite,
+        stretch_height_is_resolved,
     } = tracks;
     // A cell belongs to the row it starts in. One starting in a collapsed row
     // has no block extent, so it sets no baseline for the rows it spans.
@@ -4071,7 +4123,9 @@ fn place_cells(
             // percentage heights of its children only when the table or the
             // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
             // as in the pass that measured the row.
-            let cell_height_is_definite = height_is_definite
+            let table_height_is_definite = height_is_definite
+                || (stretch_height_is_resolved && cell_height > cell.natural_height);
+            let cell_height_is_definite = table_height_is_definite
                 || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
             // Only the layout of this pass may leave the height the content
             // has: a cached one, or a cell that is not a block container,
@@ -4089,7 +4143,7 @@ fn place_cells(
                     },
                     parent_size: Size {
                         width: Some(cell_width),
-                        height: height_is_definite.then_some(cell_height),
+                        height: table_height_is_definite.then_some(cell_height),
                     },
                     available_space: Size {
                         width: AvailableSpace::Definite(cell_width),

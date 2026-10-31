@@ -142,6 +142,7 @@ fn place_cells_in_session(
                 row_spacing: spacing.1,
                 vertical_writing,
                 height_is_definite: true,
+                stretch_height_is_resolved: false,
             },
             &mut oof_candidates,
         )
