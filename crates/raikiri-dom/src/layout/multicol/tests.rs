@@ -7872,6 +7872,146 @@ fn a_clear_of_the_other_side_does_not_end_the_line_and_the_margins_count_in_it()
 }
 
 #[test]
+fn a_float_that_clears_one_side_goes_beside_the_taller_floats_of_the_other() {
+    // Clearing the right side takes the third float below the 20px right float
+    // only, not below the 100px left one it fits beside (CSS 2, 9.5.1 rules 5
+    // and 6; Chromium puts it at (200, 20)). With every float 20px high there
+    // is no difference.
+    for (left_height, container_height) in [(100, 100.0), (20, 40.0)] {
+        let left = format!("float:left;width:100px;height:{left_height}px");
+        let (doc, container, floats) = floats_in_columns(
+            1,
+            "",
+            &[
+                left.as_str(),
+                "float:right;width:100px",
+                "float:right;width:100px;clear:right",
+            ],
+        );
+        assert_eq!(
+            locations(&doc, &floats),
+            [(0.0, 0.0), (200.0, 0.0), (200.0, 20.0)]
+        );
+        assert_eq!(doc.nodes[container].layout.size.height, container_height);
+    }
+    // The left clear goes below the left float and beside the taller right one.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:right;width:100px;height:60px",
+            "float:left;width:100px;clear:left",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (200.0, 0.0), (0.0, 20.0)]
+    );
+}
+
+#[test]
+fn a_float_that_clears_both_sides_goes_below_the_lowest_float() {
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:100px",
+            "float:right;width:100px",
+            "float:right;width:100px;clear:both",
+        ],
+    );
+    assert_eq!(locations(&doc, &floats)[2], (200.0, 100.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 120.0);
+}
+
+#[test]
+fn a_float_that_does_not_fit_moves_down_to_the_next_bottom_of_a_float_before_it() {
+    // The wide left float has no room beside the right one, and goes down to its
+    // bottom, which is above the bottom of the taller left float.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:100px",
+            "float:right;width:100px",
+            "float:left;width:200px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (200.0, 0.0), (100.0, 20.0)]
+    );
+    // It goes below the first float that is in its way when that is the lowest.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:100px",
+            "float:left;width:100px",
+            "float:right;width:150px",
+            "float:left;width:100px;clear:left",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (100.0, 0.0), (150.0, 20.0), (0.0, 100.0)]
+    );
+}
+
+#[test]
+fn the_margin_box_of_a_float_that_clears_starts_at_the_bottom_of_the_floats() {
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:50px",
+            "float:right;width:100px;height:10px",
+            "float:right;width:100px;height:10px;clear:right;margin:5px 0",
+        ],
+    );
+    assert_eq!(locations(&doc, &floats)[2], (200.0, 15.0));
+}
+
+#[test]
+fn a_float_with_no_height_goes_beside_the_floats_that_reach_its_top() {
+    // Chromium puts it beside the float, and the float after it too.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:left;width:100px;height:0",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (100.0, 0.0), (100.0, 0.0)]
+    );
+}
+
+#[test]
+fn a_float_with_no_height_that_goes_down_holds_the_top_of_the_floats_after_it() {
+    // The empty float has no room beside the first one and goes below it, and
+    // the last float does not go up beside the first one (CSS 2, 9.5.1 rule 5).
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:200px",
+            "float:left;width:200px;height:0",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (0.0, 20.0), (0.0, 20.0)]
+    );
+    assert_eq!(doc.nodes[container].layout.size.height, 40.0);
+}
+
+#[test]
 fn balanced_columns_count_floats_that_share_a_line_once() {
     // Four floats make two lines of two, so the columns are 20px high, not
     // 40px, and the second line stands in the second column.
