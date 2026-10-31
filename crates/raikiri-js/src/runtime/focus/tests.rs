@@ -15,6 +15,162 @@ fn ok(rt: &mut DomRuntime, src: &str) {
     );
 }
 
+thread_local! {
+    static MAP_WORK: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+pub(super) fn record_map_work(kind: usize) {
+    let mut work = MAP_WORK.get();
+    work[kind] += 1;
+    MAP_WORK.set(work);
+}
+
+fn take_map_work() -> [usize; 2] {
+    MAP_WORK.replace([0; 2])
+}
+
+#[test]
+fn missing_image_map_names_do_not_rescan_the_elements_for_each_image() {
+    for size in [100, 500, 2_000, 8_000] {
+        for distinct in [false, true] {
+            let (mut host, _, _, body) = StubHost::page();
+            for image in 0..size {
+                let node = host
+                    .document
+                    .append_element(Some(body), "img", None::<&str>);
+                let usemap = if distinct {
+                    format!("#missing{image}")
+                } else {
+                    "#missing".into()
+                };
+                host.document
+                    .set_element_attribute(node, "usemap", usemap)
+                    .unwrap();
+            }
+            let map = host
+                .document
+                .append_element(Some(body), "map", None::<&str>);
+            host.document
+                .set_element_attribute(map, "name", "target")
+                .unwrap();
+            let area = host
+                .document
+                .append_element(Some(map), "area", None::<&str>);
+            host.document
+                .set_element_attribute(area, "id", "subject")
+                .unwrap();
+            host.document
+                .set_element_attribute(area, "href", "#")
+                .unwrap();
+            host.fail_flush = true;
+            host.fail_geometry = true;
+            let flushes = host.flushes.clone();
+            let mut rt = DomRuntime::new(host).unwrap();
+            rt.evaluate(
+                "var area=document.getElementById('subject');var previous=document.activeElement;",
+            )
+            .unwrap();
+            take_map_work();
+            ok(
+                &mut rt,
+                "for(let i=0;i<3;i++)area.focus();document.activeElement===previous",
+            );
+            assert_eq!(
+                take_map_work(),
+                [3 * (size + 5), 3 * size],
+                "size={size}, distinct={distinct}"
+            );
+            assert_eq!(flushes.get(), 0);
+        }
+    }
+}
+
+#[test]
+fn image_map_index_keeps_the_first_html_id_or_name_match_and_image_order() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let foreign = document.append_element(Some(body), "map", None::<&str>);
+    document.set_element_namespace(foreign, Some("http://www.w3.org/2000/svg".into()));
+    document
+        .set_element_attribute(foreign, "id", "shared")
+        .unwrap();
+    let first = document.append_element(Some(body), "map", None::<&str>);
+    document
+        .set_element_attribute(first, "id", "shared")
+        .unwrap();
+    document
+        .set_element_attribute(first, "name", "alias")
+        .unwrap();
+    let span = document.append_element(Some(first), "span", None::<&str>);
+    let first_area = document.append_element(Some(span), "area", None::<&str>);
+    let second = document.append_element(Some(body), "map", None::<&str>);
+    document
+        .set_element_attribute(second, "name", "shared")
+        .unwrap();
+    document
+        .set_element_attribute(second, "id", "alias")
+        .unwrap();
+    let second_area = document.append_element(Some(second), "area", None::<&str>);
+    let mut images = Vec::new();
+    for reference in ["#shared", "file#alias", "#", "shared", "#missing"] {
+        let image = document.append_element(Some(body), "img", None::<&str>);
+        document
+            .set_element_attribute(image, "usemap", reference)
+            .unwrap();
+        images.push(image);
+    }
+    assert_eq!(super::image_map_images(document, first_area), images[..2]);
+    assert!(super::image_map_images(document, second_area).is_empty());
+    document.pre_insert(body, second, Some(first)).unwrap();
+    assert!(super::image_map_images(document, first_area).is_empty());
+    assert_eq!(super::image_map_images(document, second_area), images[..2]);
+    document
+        .set_element_attribute(second, "id", "other")
+        .unwrap();
+    document
+        .set_element_attribute(second, "name", "elsewhere")
+        .unwrap();
+    assert_eq!(super::image_map_images(document, first_area), images[..2]);
+    document.detach_from_parent(first);
+    assert!(super::image_map_images(document, first_area).is_empty());
+}
+
+#[test]
+fn image_map_reordering_and_attribute_changes_refresh_focus_and_fixup_events() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        r#"
+        var first=document.createElement('map');first.id='shared';first.setAttribute('name','alias');
+        var map=document.createElement('map');map.id='alias';map.setAttribute('name','shared');
+        var area=document.createElement('area');area.setAttribute('href','#');map.appendChild(area);
+        var images=[document.createElement('img'),document.createElement('img')];
+        images[0].setAttribute('usemap','#shared');images[1].setAttribute('usemap','#alias');
+        document.body.append(first,map,...images);
+        var log=[];for(const type of ['focus','focusin','blur','focusout'])area.addEventListener(type,()=>log.push(type));
+        area.focus();document.activeElement===document.body && log.length===0
+    "#,
+    );
+    ok(
+        &mut rt,
+        "document.body.appendChild(first);area.focus();document.activeElement===area && log.join(',')==='focus,focusin'",
+    );
+    ok(
+        &mut rt,
+        "map.removeAttribute('id');area.focus();document.activeElement===area && log.length===2",
+    );
+    rt.evaluate("map.removeAttribute('name');").unwrap();
+    super::fix_up_focus(rt.context_mut(), true).unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement===document.body && log.join(',')==='focus,focusin,blur,focusout'",
+    );
+    ok(
+        &mut rt,
+        "map.id='shared';area.focus();document.activeElement===area && log.join(',')==='focus,focusin,blur,focusout,focus,focusin'",
+    );
+}
+
 #[test]
 fn integers_parse_by_the_html_rules() {
     for (value, expected) in [
