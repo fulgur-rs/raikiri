@@ -356,3 +356,82 @@ fn a_float_after_text_that_cannot_wrap_goes_below_the_line() {
     assert_eq!(laid.rect("o"), (0.0, 0.0, 60.0, 10.0));
     assert_eq!(laid.rect("i"), (0.0, 10.0, 25.0, 10.0));
 }
+
+// Vertical paragraphs and the two-glyph repro. The geometry of these cases is
+// what Chromium lays out for the same documents too (Ahem 10px, body margin
+// 0). The text sits in a `<span id=t>`, so that where it starts and how far it
+// runs can be checked beside the float's box. The across-the-line position of
+// an inline box in vertical text is left out: it is 3px off Chromium's, with
+// or without a float.
+
+impl Laid {
+    /// The start and the length of the box with this id along the vertical
+    /// inline axis.
+    fn span(&self, id: &str) -> (f32, f32) {
+        let (_, y, _, height) = self.rect(id);
+        (y, height)
+    }
+}
+
+/// A 100px wide, 60px high vertical paragraph with the given writing mode,
+/// holding the text `aa`, a float and then the given tail.
+fn vertical(mode: &str, side: &str, float_height: u32, tail: &str) -> String {
+    format!(
+        "<div id=r style='writing-mode:{mode};width:100px;height:60px'>\
+         <span id=t>aa</span>\
+         <div id=f style='float:{side};width:20px;height:{float_height}px'></div>{tail}</div>"
+    )
+}
+
+#[test]
+fn a_float_that_does_not_fit_beside_text_in_a_vertical_rl_line_goes_to_the_next_column() {
+    let laid = lay_out(&vertical("vertical-rl", "left", 50, ""));
+    assert_eq!(laid.rect("r"), (0.0, 0.0, 100.0, 60.0));
+    assert_eq!(laid.span("t"), (0.0, 20.0));
+    assert_eq!(laid.rect("f"), (70.0, 0.0, 20.0, 50.0));
+}
+
+#[test]
+fn a_float_that_does_not_fit_beside_text_in_a_vertical_lr_line_goes_to_the_next_column() {
+    let laid = lay_out(&vertical("vertical-lr", "left", 50, ""));
+    assert_eq!(laid.rect("r"), (0.0, 0.0, 100.0, 60.0));
+    assert_eq!(laid.span("t"), (0.0, 20.0));
+    assert_eq!(laid.rect("f"), (10.0, 0.0, 20.0, 50.0));
+}
+
+#[test]
+fn text_after_a_float_in_a_vertical_line_stays_in_the_column_of_the_text_before_it() {
+    let laid = lay_out(&vertical("vertical-rl", "left", 50, "<span id=u>cc</span>"));
+    assert_eq!(laid.span("t"), (0.0, 20.0));
+    assert_eq!(laid.span("u"), (20.0, 20.0));
+    assert_eq!(laid.rect("f"), (70.0, 0.0, 20.0, 50.0));
+}
+
+#[test]
+fn a_float_that_fits_beside_text_in_a_vertical_line_stays_beside_it() {
+    // The float takes the start of the column and the text follows it.
+    let laid = lay_out(&vertical("vertical-rl", "left", 40, ""));
+    assert_eq!(laid.span("t"), (40.0, 20.0));
+    assert_eq!(laid.rect("f"), (80.0, 0.0, 20.0, 40.0));
+}
+
+#[test]
+fn an_end_float_that_does_not_fit_beside_text_in_a_vertical_line_goes_to_the_next_column() {
+    let laid = lay_out(&vertical("vertical-rl", "right", 50, ""));
+    assert_eq!(laid.span("t"), (0.0, 20.0));
+    assert_eq!(laid.rect("f"), (70.0, 10.0, 20.0, 50.0));
+}
+
+#[test]
+fn a_float_wider_than_the_room_after_two_glyphs_goes_below_their_line() {
+    let laid = lay_out(&paragraph(
+        "",
+        &format!(
+            "<span id=t>aa</span>{}",
+            float("f", "left", 50, "AAAA BBBB")
+        ),
+    ));
+    assert_eq!(laid.rect("o"), (0.0, 0.0, 60.0, 10.0));
+    assert_eq!(laid.rect("t"), (0.0, 0.0, 20.0, 10.0));
+    assert_eq!(laid.rect("f"), (0.0, 10.0, 50.0, 20.0));
+}
