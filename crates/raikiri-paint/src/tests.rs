@@ -3264,8 +3264,8 @@ fn visible_fill_bounds(scene: &Scene, rgb: (u8, u8, u8)) -> Vec<(kurbo::Rect, ku
     fills
 }
 
-/// The columns cut the content of a grid or a table in them, not its outline,
-/// which reaches beyond the box on every side.
+/// The columns cut a grid or a table in them off at the bottom, not at the
+/// sides or at the top, so its outline and what overflows it show there.
 #[test]
 fn the_outline_of_a_grid_or_a_table_in_columns_is_not_cut_by_them() {
     for (child, outline) in [
@@ -3283,7 +3283,7 @@ fn the_outline_of_a_grid_or_a_table_in_columns_is_not_cut_by_them() {
         ),
     ] {
         let html = format!(
-            "<html><head><style>body{{margin:0}} article{{column-count:3;width:400px}} article>:nth-child(2){{{outline}}}</style></head><body><article><div>block1</div>{child}<div>block2</div></article></body></html>"
+            "<html><head><style>body{{margin:10px}} article{{column-count:3;width:400px}} article>:nth-child(2){{{outline}}}</style></head><body><article><div>block1</div>{child}<div>block2</div></article></body></html>"
         );
         let scene = painted_html(html.as_bytes());
         let fills = visible_fill_bounds(&scene, (0, 0, 255));
@@ -3302,11 +3302,11 @@ fn the_outline_of_a_grid_or_a_table_in_columns_is_not_cut_by_them() {
     }
 }
 
-/// A grid in columns without an outline keeps the clip of its box.
+/// A grid in columns without an outline paints its background whole.
 #[test]
-fn a_grid_in_columns_without_an_outline_is_clipped_to_its_box() {
+fn a_grid_in_columns_without_an_outline_paints_its_background_whole() {
     let scene = painted_html(
-        br#"<html><head><style>body{margin:0} article{column-count:3;width:400px} article>:nth-child(2){display:grid;background:blue}</style></head><body><article><div>block1</div><div>grid</div><div>block2</div></article></body></html>"#,
+        br#"<html><head><style>body{margin:10px} article{column-count:3;width:400px} article>:nth-child(2){display:grid;background:blue}</style></head><body><article><div>block1</div><div>grid</div><div>block2</div></article></body></html>"#,
     );
     let fills = visible_fill_bounds(&scene, (0, 0, 255));
     assert_eq!(fills.len(), 1, "{fills:?}");
@@ -3318,7 +3318,7 @@ fn a_grid_in_columns_without_an_outline_is_clipped_to_its_box() {
 #[test]
 fn a_grid_cut_off_by_the_columns_loses_its_bottom_outline() {
     let scene = painted_html(
-        br#"<html><head><style>body{margin:0} article{column-count:3;width:400px;height:20px} article>div{display:grid;height:50px;outline:3px solid blue}</style></head><body><article><div>grid</div></article></body></html>"#,
+        br#"<html><head><style>body{margin:10px} article{column-count:3;width:400px;height:20px} article>div{display:grid;height:50px;outline:3px solid blue}</style></head><body><article><div>grid</div></article></body></html>"#,
     );
     let mut fills = visible_fill_bounds(&scene, (0, 0, 255));
     fills.sort_by(|a, b| a.1.y0.total_cmp(&b.1.y0));
@@ -3326,6 +3326,46 @@ fn a_grid_cut_off_by_the_columns_loses_its_bottom_outline() {
     let (top, bottom) = (fills[0], fills[3]);
     assert_eq!(top.0, top.1, "{fills:?}");
     assert!(bottom.0.height() == 0.0, "{fills:?}");
+}
+
+/// What overflows a grid or a table in columns shows beside it and above it
+/// whether the box has an outline or not (CSS Multi-column 1, section 8): the
+/// columns cut the box off at the bottom only.
+#[test]
+fn what_overflows_a_grid_or_a_table_in_columns_shows_at_the_sides_and_at_the_top() {
+    let green = "background:#0f0;height:20px";
+    for (name, child) in [
+        // Wider than the grid.
+        (
+            "sideways",
+            r#"<div style="display:grid;width:10px;STYLE"><div style="width:20px;GREEN"></div></div>"#,
+        ),
+        // Above the box of the grid, and of the table.
+        (
+            "above the grid",
+            r#"<div style="display:grid;STYLE"><div style="position:relative;top:-6px;GREEN"></div></div>"#,
+        ),
+        (
+            "above the table",
+            r#"<table style="STYLE"><tr><td style="padding:0"><div style="position:relative;top:-6px;width:20px;GREEN"></div></td></tr></table>"#,
+        ),
+    ] {
+        for style in [
+            "",
+            "outline:3px solid blue",
+            "column-span:all",
+            "column-span:all;outline:3px solid blue",
+        ] {
+            let child = child.replace("STYLE", style).replace("GREEN", green);
+            let html = format!(
+                "<html><head><style>body{{margin:10px}} article{{column-count:3;width:400px}}</style></head><body><article><div>block1</div>{child}<div>block2</div></article></body></html>"
+            );
+            let scene = painted_html(html.as_bytes());
+            let fills = visible_fill_bounds(&scene, (0, 255, 0));
+            assert_eq!(fills.len(), 1, "{name} {style}: {fills:?}");
+            assert_eq!(fills[0].0, fills[0].1, "{name} {style}: {fills:?}");
+        }
+    }
 }
 
 #[test]

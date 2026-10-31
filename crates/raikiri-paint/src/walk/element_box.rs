@@ -5,8 +5,9 @@ use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
     OpenBlockEdges, box_intersects_page, element_transform, fixed_position_px,
-    generated_flow_height, outline_outset, paintable_border_radius, snap_column_clip_outward,
-    transform_translation, translation_only, used_padding_for_paint, vertical_align_shift_px,
+    generated_flow_height, outline_outset, page_bounds_in_scene, paintable_border_radius,
+    snap_column_clip_outward, transform_translation, translation_only, used_padding_for_paint,
+    vertical_align_shift_px,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
@@ -548,9 +549,14 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_height = paint_height.min(clip_height);
             paint_background_height = paint_background_height.min(clip_height);
             let clip_origin_y = paint_y.floor();
-            // The columns cut the content of the box, not its outline, which
-            // reaches beyond the edges of the box. The clip grows by as much,
-            // so content of the box that overflows it by that much shows too.
+            // Layout does not break the box across the columns, so they cut it
+            // off at the bottom, where the container ends. They clip nothing
+            // else: what of the box, its descendants, its outline and its
+            // shadows overflows it at the top and at the sides shows, as the
+            // overflow of any box in a column does (CSS Multi-column 1,
+            // section 8). The clip is as open there as the clip of a box whose
+            // overflow is visible on that axis.
+            //
             // A box they cut off at the bottom has no bottom edge for the
             // outline to follow, and a box with no area paints no outline.
             let cv = &self.cascade.computed[node_id];
@@ -565,13 +571,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             } else {
                 0.0
             };
+            let page = page_bounds_in_scene(scene.transform, &self.page_box);
+            // A box that ends above the page has nothing to show on it.
+            let bottom = ((clip_origin_y + clip_height) as f64 + bottom_outset).max(page.y0);
+            let clip = Rect::new(page.x0, page.y0, page.x1, bottom);
             let clip = snap_column_clip_outward(
-                Rect::new(
-                    paint_x as f64 - outset,
-                    clip_origin_y as f64 - outset,
-                    (paint_x + layout.size.width) as f64 + outset,
-                    (clip_origin_y + clip_height) as f64 + bottom_outset,
-                ),
+                clip,
                 image_cache.device_grid(scene.transform),
                 // The column clip of a box that fills the columns: its
                 // block edges are the column's.

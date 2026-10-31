@@ -4516,6 +4516,23 @@ fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBloc
     Rect::new(near.min(far), top, near.max(far), bottom)
 }
 
+/// The page as a rectangle in the local coordinates of a scene whose transform
+/// is `transform`, which bounds a clip that is open on an axis; empty when the
+/// transform has no inverse.
+fn page_bounds_in_scene(transform: Affine, page_box: &PageBox) -> Rect {
+    let determinant = transform.determinant();
+    if determinant.is_finite() && determinant != 0.0 {
+        transform.inverse().transform_rect_bbox(Rect::new(
+            0.0,
+            0.0,
+            page_box.width as f64,
+            page_box.height as f64,
+        ))
+    } else {
+        Rect::ZERO
+    }
+}
+
 fn push_overflow_clip(
     scene: &mut crate::transform::TransformScene<'_, impl PaintScene>,
     resolved: raikiri_traits::PaintClip,
@@ -4530,17 +4547,7 @@ fn push_overflow_clip(
     if !resolved.clip_x || !resolved.clip_y {
         // Bound an open axis by the page in the clip's local
         // coordinate system, including transformed ancestors.
-        let determinant = scene.transform.determinant();
-        let bounds = if determinant.is_finite() && determinant != 0.0 {
-            scene.transform.inverse().transform_rect_bbox(Rect::new(
-                0.0,
-                0.0,
-                page_box.width as f64,
-                page_box.height as f64,
-            ))
-        } else {
-            Rect::ZERO
-        };
+        let bounds = page_bounds_in_scene(scene.transform, page_box);
         if !resolved.clip_x {
             clip.x0 = bounds.x0;
             clip.x1 = bounds.x1;
