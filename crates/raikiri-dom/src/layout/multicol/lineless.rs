@@ -2082,6 +2082,15 @@ pub(super) fn layout(
         .saturating_sub(tree.fragment_tree.fragments.len())
         .saturating_sub(1);
     let column_height = match definite_height {
+        // Columns that balance are as tall as their content needs, up to the
+        // height of the container (CSS Multi-column 1, 8.1); the container
+        // keeps its own height. Content that needs more than the container
+        // gives fills it, and continues in overflow columns.
+        Some(height) if context.column_fill != ColumnFillValue::Auto => balanced_below(
+            balanced_height(&items, context.column_count, max_pieces),
+            height,
+        )
+        .unwrap_or(height),
         Some(height) => height,
         None if context.column_fill == ColumnFillValue::Auto => {
             // A single unbounded column cuts nothing, so only the number of

@@ -42,7 +42,7 @@ pub(super) fn balance(
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, has_empty, mut high) =
+    let (paragraphs, paragraph_count, has_empty, high) =
         collect(tree, entries, true, BlockEdges::Refused, false)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
@@ -51,15 +51,28 @@ pub(super) fn balance(
     {
         return None;
     }
-    let divided = divided_height(&paragraphs, context, FlowCursor::default(), high)?;
+    let (group, height) = balanced(&paragraphs, context, high)?;
+    Some(finish_group(group.placements, height))
+}
+
+/// The paragraphs placed in the columns of `context` at the height that
+/// balances them, with that height. `ceiling` is a height that holds them in
+/// one column.
+fn balanced(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    ceiling: f32,
+) -> Option<(Group, f32)> {
+    let divided = divided_height(paragraphs, context, FlowCursor::default(), ceiling)?;
     // Trial work and storage depend on shaped lines, never the declared count.
     let mut low = 0.0;
+    let mut high = ceiling;
     for _ in 0..32 {
         if high - low <= 0.001 {
             break;
         }
         let trial = (low + high) * 0.5;
-        if fill(&paragraphs, context, trial, false).is_some() {
+        if fill(paragraphs, context, trial, false).is_some() {
             high = trial;
         } else {
             low = trial;
@@ -69,9 +82,9 @@ pub(super) fn balance(
     // or, when the breaks between the boxes leave no room for that, as the
     // least height that holds them. The margin below the last box does not
     // have to fit in the columns, but counts in what is divided.
-    let group = fill(&paragraphs, context, divided.max(high), false)?;
+    let group = fill(paragraphs, context, divided.max(high), false)?;
     let height = divided.max(group.height);
-    Some(finish_group(group.placements, height))
+    Some((group, height))
 }
 
 /// The height of the paragraphs from `resume` in one column, with the margins
@@ -102,10 +115,31 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) =
+    let (paragraphs, paragraph_count, _, ceiling) =
         collect(tree, entries, true, BlockEdges::Sliced, true)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
+    }
+    // Columns that balance are as tall as their content needs, up to the
+    // height of the container (CSS Multi-column 1, 8.1). Content that needs
+    // more fills the container's height, and continues in overflow columns
+    // below, so only content that fits is balanced.
+    if context.column_fill != ColumnFillValue::Auto
+        && context.column_count > 0
+        && fill(&paragraphs, context, height, false).is_some()
+    {
+        // The padding and border of the paragraphs are part of what one
+        // column holds.
+        let edges: f32 = paragraphs
+            .iter()
+            .flatten()
+            .map(|paragraph| paragraph.edge_start + paragraph.edge_end)
+            .sum();
+        if let Some((group, balanced)) = balanced(&paragraphs, context, ceiling + edges)
+            && let Some(balanced) = balanced_below(balanced, height)
+        {
+            return Some(finish_group(group.placements, balanced));
+        }
     }
     let unbounded = FragmentationContext {
         column_count: usize::MAX,

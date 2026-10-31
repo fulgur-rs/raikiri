@@ -3674,6 +3674,20 @@ fn an_inherited_vertical_writing_mode_keeps_blocks_without_lines_whole() {
     assert!(fragment_rects(&doc, child).len() <= 1);
 }
 
+/// The pieces of a 200px box in two columns of a container that is 200px
+/// high. `column-fill: auto` fills the first column with the whole box, and
+/// the default balances it into one half per column; Chromium gives both.
+fn stretched_box_pieces(fill: &str) -> Vec<(usize, f32, f32, f32)> {
+    if fill == "column-fill:auto" {
+        vec![(0, 0.0, 0.0, 200.0)]
+    } else {
+        vec![(0, 0.0, 0.0, 100.0), (1, 50.0, 0.0, 100.0)]
+    }
+}
+
+/// The values of `column-fill` that [`stretched_box_pieces`] answers for.
+const COLUMN_FILLS: [&str; 2] = ["column-fill:auto", "column-fill:balance"];
+
 #[test]
 fn blocks_without_lines_fill_the_used_height_of_the_container() {
     // A maximum below the authored height limits the columns.
@@ -3687,19 +3701,22 @@ fn blocks_without_lines_fill_the_used_height_of_the_container() {
         vec![(0, 0.0, 0.0, 100.0), (1, 50.0, 0.0, 50.0)]
     );
     // A flex item stretched by its container keeps the stretched height.
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("margin:0"));
-    let flex = doc.append_element(Some(body), "div", Some("display:flex;height:200px"));
-    let parent = doc.append_element(
-        Some(flex),
-        "div",
-        Some("display:block;width:100px;columns:2;column-gap:0"),
-    );
-    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
-    layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
-    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+    for fill in COLUMN_FILLS {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let flex = doc.append_element(Some(body), "div", Some("display:flex;height:200px"));
+        let css = format!("display:block;width:100px;columns:2;column-gap:0;{fill}");
+        let parent = doc.append_element(Some(flex), "div", Some(&css));
+        let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(doc.nodes[parent].layout.size.height, 200.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, child),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
@@ -3770,36 +3787,42 @@ fn a_decorated_block_that_stays_whole_does_not_hide_an_exhausted_budget() {
 
 #[test]
 fn a_grid_stretched_multicol_keeps_its_area_height() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("margin:0"));
-    let grid = doc.append_element(
-        Some(body),
-        "div",
-        Some("display:grid;grid-template-rows:200px;grid-template-columns:100px"),
-    );
-    let parent = doc.append_element(
-        Some(grid),
-        "div",
-        Some("display:block;columns:2;column-gap:0"),
-    );
-    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
-    layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
-    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+    for fill in COLUMN_FILLS {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:grid;grid-template-rows:200px;grid-template-columns:100px"),
+        );
+        let css = format!("display:block;columns:2;column-gap:0;{fill}");
+        let parent = doc.append_element(Some(grid), "div", Some(&css));
+        let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(doc.nodes[parent].layout.size.height, 200.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, child),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
 fn an_inset_positioned_multicol_keeps_its_containing_block_height() {
-    let (doc, parent, children) = lineless_fixture(
-        "display:block;position:absolute;top:0;bottom:0;width:100px;columns:2;column-gap:0",
-        &["display:block;height:200px"],
-    );
-    assert_eq!(doc.nodes[parent].layout.size.height, 600.0);
-    assert_eq!(
-        fragment_rects(&doc, children[0]),
-        vec![(0, 0.0, 0.0, 200.0)]
-    );
+    for fill in COLUMN_FILLS {
+        let css = format!(
+            "display:block;position:absolute;top:0;bottom:0;width:100px;columns:2;column-gap:0;{fill}"
+        );
+        let (doc, parent, children) = lineless_fixture(&css, &["display:block;height:200px"]);
+        assert_eq!(doc.nodes[parent].layout.size.height, 600.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, children[0]),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
@@ -3825,23 +3848,26 @@ fn a_maximum_height_only_bounds_balanced_columns_of_blocks_without_lines() {
 
 #[test]
 fn a_column_flex_item_keeps_its_flexed_height() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("margin:0"));
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        Some("display:flex;flex-direction:column;height:200px"),
-    );
-    let parent = doc.append_element(
-        Some(flex),
-        "div",
-        Some("display:block;flex:1;width:100px;columns:2;column-gap:0"),
-    );
-    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
-    layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
-    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+    for fill in COLUMN_FILLS {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:flex;flex-direction:column;height:200px"),
+        );
+        let css = format!("display:block;flex:1;width:100px;columns:2;column-gap:0;{fill}");
+        let parent = doc.append_element(Some(flex), "div", Some(&css));
+        let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(doc.nodes[parent].layout.size.height, 200.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, child),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
@@ -4875,7 +4901,7 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         doc.append_text(second, "B");
         layout_nested_flex_float_fixture(&mut doc);
         with_bridged_session(&mut doc, |session| {
-            multicol_has_only_paragraph_children(session, parent)
+            multicol_has_only_paragraph_children(session, parent, false)
         })
     };
     assert!(paragraphs("display:block;margin:0"));
@@ -6451,7 +6477,30 @@ fn a_single_paragraph_enters_the_stream_only_with_padding_or_border() {
         let (mut doc, container, _) = padded_paragraph_columns(css, 4);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
+            }),
+            enters,
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
+    // The planner gives the columns that balance their height, which a lone
+    // paragraph needs as well; one with block edges it cannot slice stays
+    // out, and one without block edges goes in whatever it paints.
+    for (css, enters) in [
+        ("background:green", true),
+        ("padding-left:4px", true),
+        ("padding-left:4px;box-shadow:0 0 2px", true),
+        ("padding-top:4px;box-decoration-break:clone", false),
+        ("padding-bottom:4px;box-shadow:0 0 2px", false),
+    ] {
+        let (mut doc, container, _) = padded_paragraph_columns(css, 4);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container, true)
             }),
             enters,
             "{css}"
@@ -6997,7 +7046,7 @@ fn a_sized_box_enters_the_stream_only_beside_a_paragraph() {
         let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{leaf} {paragraph:?}"
@@ -7116,7 +7165,7 @@ fn a_paragraph_with_a_margin_that_is_not_auto_enters_the_stream() {
             boxes_and_paragraphs_in_columns(&[(css, 3), ("background:green", 3)]);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{css}"
@@ -7549,7 +7598,7 @@ fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() 
         let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{spacer} {paragraph:?}"

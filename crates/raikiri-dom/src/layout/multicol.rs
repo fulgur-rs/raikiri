@@ -198,7 +198,11 @@ pub(crate) fn compute_multicol_layout(
         && style.horizontal
         && available_height.is_some_and(|height| height > 0.0)
         && multicol_has_direct_block_child(tree, index)
-        && multicol_has_only_paragraph_children(tree, index)
+        && multicol_has_only_paragraph_children(
+            tree,
+            index,
+            context.column_fill != ColumnFillValue::Auto,
+        )
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
     // nested container as well as an outermost one. Only an outermost
@@ -873,7 +877,15 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // nothing inside it may stand among them, if one of the others holds lines: one
 // with a block size of its own, which the planner places whole in a column, or
 // one with no room of its own, whose margins collapse through it.
-fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize) -> bool {
+//
+// One undecorated paragraph also counts when `balances` is set: the columns of
+// a definite-height container that balance take their height from the planner,
+// which the lines of a single paragraph need as well.
+fn multicol_has_only_paragraph_children(
+    tree: &LayoutSession<'_>,
+    node_id: usize,
+    balances: bool,
+) -> bool {
     let mut children = tree
         .children_through_contents(node_id)
         .into_iter()
@@ -922,7 +934,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
             && style.min_size().height.is_auto()
             && style.max_size().height.is_auto()
     });
-    plain && paragraphs > 0 && (several || decorated)
+    plain && paragraphs > 0 && (several || decorated || balances)
 }
 
 /// Whether the insets of `child` can be left to the painter once the columns
@@ -1439,7 +1451,11 @@ fn layout_column_group(
     // so that a paragraph broken between columns hands its end to the next.
     let definite_paragraphs = fragment_height.is_some()
         && tree.context.fragmentation_stack.len() <= 1
-        && multicol_has_only_paragraph_children(tree, index)
+        && multicol_has_only_paragraph_children(
+            tree,
+            index,
+            context.column_fill != ColumnFillValue::Auto,
+        )
         && !multicol_has_nested_descendant(tree, index);
     let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
         && fragment_height.is_none()
@@ -3264,6 +3280,10 @@ fn line_ranges_in_columns(
 /// Find the smallest column height that fits `extents` within the available
 /// columns. The returned height is then used to fill each column in source
 /// order, including a partially filled final column.
+///
+/// A definite `available_height` caps the columns: lines that do not fit
+/// within it fill it and go on in overflow columns (CSS Multi-column 1, 8.2),
+/// so there is nothing to balance and the answer is `None`.
 fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext) -> Option<f32> {
     let available_columns = context.column_count.saturating_sub(context.column_index);
     if extents.is_empty() || available_columns == 0 {
@@ -3277,30 +3297,51 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     if !low.is_finite() || !high.is_finite() || high < low {
         return None;
     }
+    // The lines fit when the column of the last one exists and no column is
+    // taller than `height`.
+    let fits = |height: f32| {
+        let trial_context = FragmentationContext {
+            available_height: Some(height),
+            ..context
+        };
+        let ranges = line_ranges_in_columns(extents, trial_context, false);
+        ranges
+            .last()
+            .is_some_and(|&(_, _, column)| column < context.column_count)
+            && ranges.iter().all(|&(start, end, _)| {
+                extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
+            })
+    };
+    if let Some(cap) = context.available_height.filter(|height| *height > 0.0)
+        && cap < high
+    {
+        if !fits(cap) {
+            return None;
+        }
+        high = cap;
+    }
 
     for _ in 0..32 {
         if high - low <= 0.001 {
             break;
         }
         let height = (low + high) * 0.5;
-        let trial_context = FragmentationContext {
-            available_height: Some(height),
-            ..context
-        };
-        let ranges = line_ranges_in_columns(extents, trial_context, false);
-        let fits = ranges
-            .last()
-            .is_some_and(|&(_, _, column)| column < context.column_count)
-            && ranges.iter().all(|&(start, end, _)| {
-                extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
-            });
-        if fits {
+        if fits(height) {
             high = height;
         } else {
             low = height;
         }
     }
     Some(high)
+}
+
+/// The height of columns that balance in a container with the definite
+/// `height`, given the `balanced` height their content needs: columns are as
+/// tall as the content needs, up to that height (CSS Multi-column 1, 8.1).
+/// `None` when the content needs all of `height` or more, and the columns
+/// take it and go on in overflow columns.
+fn balanced_below(balanced: f32, height: f32) -> Option<f32> {
+    (balanced > 0.0 && balanced < height).then_some(balanced)
 }
 
 // cov:ignore: nested text fragment refresh is exercised by ignored multicol WPT reftests.
@@ -3818,15 +3859,16 @@ pub(crate) fn group_column_fragments(
     if extents.is_empty() {
         return (Vec::new(), 0.0);
     }
-    let balanced_context =
-        if context.available_height.is_none() && context.column_fill != ColumnFillValue::Auto {
-            balanced_column_height(&extents, context).map(|height| FragmentationContext {
-                available_height: Some(height),
-                ..context
-            })
-        } else {
-            None
-        };
+    // Columns that balance are as tall as the lines need, up to the definite
+    // height of the container if it has one.
+    let balanced_context = if context.column_fill != ColumnFillValue::Auto {
+        balanced_column_height(&extents, context).map(|height| FragmentationContext {
+            available_height: Some(height),
+            ..context
+        })
+    } else {
+        None
+    };
     let layout_context = balanced_context.unwrap_or_else(|| {
         if context.available_height.is_none() && context.column_fill == ColumnFillValue::Auto {
             FragmentationContext {
