@@ -135,9 +135,9 @@ pub(crate) fn clips_element_overflow(
 /// normalized again after an opposite edge crops them. Open axes impose no
 /// bound and do not form rounded corners.
 ///
-/// The clip origin is floored to include pixel-snapped descendants. An
-/// `overflow: clip` far edge is floored too. Viewport-propagated overflow and
-/// ordinary inline boxes do not produce a local clip.
+/// Each edge of a clipping axis is rounded to the nearest pixel, the way
+/// Chromium snaps a clip rectangle. Viewport-propagated overflow and ordinary
+/// inline boxes do not produce a local clip.
 pub fn overflow_clip(
     document: &Document,
     cascade: &CascadeResult,
@@ -242,7 +242,7 @@ pub(crate) fn lays_out_as_replaced(document: &Document, node_id: usize) -> bool 
 /// box under the UA default `overflow-clip-margin: content-box`; a visible
 /// axis lets the content paint outside its box (CSS Overflow 3 §3.1). The
 /// edges snap like [`overflow_clip`], whose clip the page paint order puts
-/// around the same content.
+/// around the same content: each to the nearest pixel.
 pub fn replaced_content_clip(
     cv: &ComputedValues,
     border_box: PaintRect,
@@ -343,21 +343,26 @@ impl OverflowClipGeometry {
     }
 
     /// Snap edges only after translating the whole border box to its page.
+    ///
+    /// Every edge of a clipping axis moves to the nearest pixel, so a box whose
+    /// edge lies on a half pixel covers the pixel after it. This is how
+    /// Chromium pixel-snaps a clip rectangle, for `overflow: clip`, a scroll
+    /// container and the content of a replaced element alike. An open axis
+    /// keeps its far edge as it is, since it imposes no bound.
     pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
-        let x0 = (border_box.x + self.edges.left).floor();
-        let y0 = (border_box.y + self.edges.top).floor();
+        let left = border_box.x + self.edges.left;
+        let top = border_box.y + self.edges.top;
         let right = border_box.x + border_box.width - self.edges.right;
         let bottom = border_box.y + border_box.height - self.edges.bottom;
-        let x1 = if self.overflow.x == OverflowValue::Clip {
-            right.floor()
-        } else {
-            right
+        let axis = |overflow, start, end| {
+            if overflow == OverflowValue::Visible {
+                (snap_to_pixel(start), end)
+            } else {
+                snap_clip_span(start, end)
+            }
         };
-        let y1 = if self.overflow.y == OverflowValue::Clip {
-            bottom.floor()
-        } else {
-            bottom
-        };
+        let (x0, x1) = axis(self.overflow.x, left, right);
+        let (y0, y1) = axis(self.overflow.y, top, bottom);
         let mut clip = PaintClip::new(PaintRect::new(
             x0,
             y0,
@@ -369,6 +374,30 @@ impl OverflowClipGeometry {
         clip.corner_radii = self.corner_radii;
         clip
     }
+}
+
+/// The nearest pixel, with a half rounding up (0.5 gives 1, -0.5 gives 0) as
+/// Chromium's `LayoutUnit` does, where `f32::round` rounds a half away from
+/// zero.
+fn snap_to_pixel(value: f32) -> f32 {
+    (value + 0.5).floor()
+}
+
+/// The thinnest clip that still paints in Chromium; a narrower span is empty.
+const MIN_PAINTED_CLIP_SPAN: f32 = 1.0 / 16.0;
+
+/// Snap the clip span `start..end` of one axis to whole pixels, each edge to
+/// the nearest pixel. A span that rounds to nothing keeps the pixel its far
+/// edge reaches into, as in Chromium: a clip of 0.3px from 10.1px still shows
+/// the row at 10, while one from 10.6px shows none because it ends before
+/// the row it would start in.
+fn snap_clip_span(start: f32, end: f32) -> (f32, f32) {
+    let first = snap_to_pixel(start);
+    let last = snap_to_pixel(end);
+    if last <= first && end > first && end - start >= MIN_PAINTED_CLIP_SPAN {
+        return (first, first + 1.0);
+    }
+    (first, last)
 }
 
 fn resolve_overflow_clip_edges(

@@ -77,6 +77,74 @@ fn img_element_loads_and_paints_at_css_specified_size() {
     );
 }
 
+/// Solid blue 16x8 RGBA8 PNG, encoded on the fly.
+fn solid_blue_png() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, 16, 8);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().expect("PNG header");
+    writer
+        .write_image_data(&[0, 0, 255, 255].repeat(16 * 8))
+        .expect("PNG data");
+    writer.finish().expect("PNG end");
+    bytes
+}
+
+/// The columns and rows that hold a pure blue pixel, as (first, last) pairs.
+fn blue_extent(image: &DecodedForAssertion) -> ((u32, u32), (u32, u32)) {
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+    for y in 0..image.height {
+        for x in 0..image.width {
+            if pixel_at(image, x, y) == [0, 0, 255, 255] {
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            }
+        }
+    }
+    ((x0, x1), (y0, y1))
+}
+
+#[test]
+fn img_at_a_fractional_position_covers_the_pixels_chromium_covers() {
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".png").unwrap();
+    tmp.write_all(&solid_blue_png()).unwrap();
+    let url = url::Url::from_file_path(tmp.path()).unwrap();
+    let resolver = ImageResolver::new(FileNetworkProvider);
+    // Measured in Chromium at a device scale of 1: the clip of the image
+    // content rounds each of its four edges to the nearest pixel, so a box on
+    // half pixels covers the pixel after its far edge (x = 51..70, y = 11..20
+    // for the first box) and not one pixel less.
+    for (style, columns, rows) in [
+        (
+            "left:50.5px;top:10.5px;width:20px;height:10px",
+            (51, 70),
+            (11, 20),
+        ),
+        (
+            "left:10.4px;top:10.6px;width:20.3px;height:10.2px",
+            (10, 30),
+            (11, 20),
+        ),
+        (
+            "left:100.25px;top:40.75px;width:19.5px;height:9.5px",
+            (100, 119),
+            (41, 49),
+        ),
+    ] {
+        let html = format!(
+            r#"<html><head><style>@page {{ size: 200px 80px }} body {{ margin: 0 }} img {{ position: absolute; {style} }}</style></head><body><img src="{url}"></body></html>"#
+        );
+        let png = html_to_png_with_resolver(html.as_bytes(), &resolver, &resolver)
+            .expect("should render the <img> end to end");
+        let decoded = decode_png_for_assertion(&png);
+        assert_eq!(
+            blue_extent(&decoded),
+            (columns, rows),
+            "blue pixels of {style}"
+        );
+    }
+}
+
 struct DecodedForAssertion {
     width: u32,
     height: u32,

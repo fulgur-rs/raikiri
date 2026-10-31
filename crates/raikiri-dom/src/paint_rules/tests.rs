@@ -546,6 +546,15 @@ fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_gro
 }
 
 fn clip_of(style: &str, border: f32, padding: f32) -> Option<PaintClip> {
+    clip_in(
+        style,
+        PaintRect::new(10.0, 20.0, 100.0, 50.0),
+        border,
+        padding,
+    )
+}
+
+fn clip_in(style: &str, border_box: PaintRect, border: f32, padding: f32) -> Option<PaintClip> {
     let mut doc = Document::new();
     let node = doc.append_element(Some(doc.root_index()), "div", Some(style));
     doc.mark_in_document_flags();
@@ -560,7 +569,7 @@ fn clip_of(style: &str, border: f32, padding: f32) -> Option<PaintClip> {
         &doc,
         &cascade,
         node,
-        PaintRect::new(10.0, 20.0, 100.0, 50.0),
+        border_box,
         PaintInsets::new(border, border, border, border),
     )
 }
@@ -659,11 +668,118 @@ fn replaced_content_clip_follows_overflow_per_axis() {
     );
     let clip =
         replaced_content_clip(&cascade.computed[clipped], border_box, border, padding).unwrap();
-    // The origin and the far edges of the clipping axes snap down.
-    assert_eq!(clip.rect, PaintRect::new(3.0, 3.0, 34.0, 24.0));
+    // Every edge of the clipping axes snaps to the nearest pixel: 3.5 to 4,
+    // 37.5 to 38, 3.25 to 3 and 27.25 to 27.
+    assert_eq!(clip.rect, PaintRect::new(4.0, 3.0, 34.0, 24.0));
     assert!(clip.clip_x && clip.clip_y);
     let clip =
         replaced_content_clip(&cascade.computed[block_only], border_box, border, padding).unwrap();
+    assert!(!clip.clip_x && clip.clip_y);
+}
+
+#[test]
+fn every_clip_edge_snaps_to_the_nearest_pixel() {
+    // Chromium pixel-snaps the clip of `overflow: clip`, of a scroll container
+    // and of the content of a replaced element alike: each edge goes to the
+    // nearest pixel. The expected rectangles are what Chromium paints: a box
+    // of 20x10 at (50.5, 10.5) covers x = 51..70 and y = 11..20; a box of
+    // 20.3x10.2 at (10.4, 10.6) covers x = 10..30 and y = 11..20; a box of
+    // 19.5x9.5 at (100.25, 40.75) covers x = 100..119 and y = 41..49.
+    let boxes = [
+        (
+            PaintRect::new(50.5, 10.5, 20.0, 10.0),
+            PaintRect::new(51.0, 11.0, 20.0, 10.0),
+        ),
+        (
+            PaintRect::new(10.4, 10.6, 20.3, 10.2),
+            PaintRect::new(10.0, 11.0, 21.0, 10.0),
+        ),
+        (
+            PaintRect::new(100.25, 40.75, 19.5, 9.5),
+            PaintRect::new(100.0, 41.0, 20.0, 9.0),
+        ),
+    ];
+    let mut doc = Document::new();
+    let image = doc.append_element(
+        Some(doc.root_index()),
+        "img",
+        Some("overflow:clip;overflow-clip-margin:content-box"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    for (border_box, expected) in boxes {
+        for style in [
+            "display:block;overflow:clip",
+            "display:block;overflow:hidden",
+            "display:block;overflow:scroll",
+        ] {
+            let clip = clip_in(style, border_box, 0.0, 0.0).unwrap();
+            assert_eq!(clip.rect, expected, "{style} in {border_box:?}");
+        }
+        let clip = replaced_content_clip(
+            &cascade.computed[image],
+            border_box,
+            PaintInsets::default(),
+            PaintInsets::default(),
+        )
+        .unwrap();
+        assert_eq!(clip.rect, expected, "img in {border_box:?}");
+    }
+}
+
+#[test]
+fn a_clip_edge_on_a_negative_half_pixel_rounds_up() {
+    // A half rounds up on both sides of zero, as in Chromium: 0.5 gives 1 and
+    // -0.5 gives 0, so the box keeps its size however far it lies from zero.
+    let clip = clip_in(
+        "display:block;overflow:hidden",
+        PaintRect::new(-10.5, -0.5, 20.0, 10.0),
+        0.0,
+        0.0,
+    )
+    .unwrap();
+    assert_eq!(clip.rect, PaintRect::new(-10.0, 0.0, 20.0, 10.0));
+}
+
+#[test]
+fn a_clip_thinner_than_a_pixel_keeps_the_pixel_chromium_paints() {
+    // Rows that a 20px wide clip of the given height shows in Chromium, from
+    // the top given: a clip that rounds to nothing still paints the pixel its
+    // far edge reaches into, and none when it ends before the pixel it would
+    // start in.
+    let rows = |top: f32, height: f32| {
+        let clip = clip_in(
+            "display:block;overflow:hidden",
+            PaintRect::new(20.0, top, 20.0, height),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        (clip.rect.y, clip.rect.height)
+    };
+    assert_eq!(rows(10.25, 0.125), (10.0, 1.0));
+    assert_eq!(rows(10.0, 0.25), (10.0, 1.0));
+    assert_eq!(rows(10.75, 0.5), (11.0, 1.0));
+    assert_eq!(rows(10.75, 0.25), (11.0, 0.0));
+    assert_eq!(rows(10.5, 0.5), (11.0, 0.0));
+    assert_eq!(rows(10.5, 0.625), (11.0, 1.0));
+    // A clip with no height, or too thin to paint, shows nothing.
+    assert_eq!(rows(10.25, 0.0), (10.0, 0.0));
+    assert_eq!(rows(10.25, 0.03125), (10.0, 0.0));
+}
+
+#[test]
+fn an_open_axis_keeps_its_far_edge_when_the_clip_edges_snap() {
+    // The clipping block axis snaps both edges. The open inline axis snaps
+    // only its origin, and its far edge stays where it is.
+    let clip = clip_in(
+        "display:block;overflow:visible clip",
+        PaintRect::new(50.5, 10.5, 20.25, 10.0),
+        0.0,
+        0.0,
+    )
+    .unwrap();
+    assert_eq!(clip.rect, PaintRect::new(51.0, 11.0, 19.75, 10.0));
     assert!(!clip.clip_x && clip.clip_y);
 }
 
