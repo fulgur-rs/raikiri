@@ -27,7 +27,7 @@ on:
           - judge
           - calibrate
       per_outcome:
-        description: Calibrate mode only; reftests sampled per pixel outcome (PASS, FAIL)
+        description: Calibrate mode only; reftests sampled per pixel outcome (PASS from the baseline, FAIL)
         default: "100"
       limit:
         description: Maximum number of new (uncached) model requests
@@ -38,7 +38,8 @@ on:
         default: css/CSS2 (1993)
         # Every directory with judgeable tests at the pinned WPT revision. The
         # count in parentheses is the number of judgeable tests not yet in a
-        # baseline when the list was made; the List step strips it.
+        # baseline when the list was made (calibrate mode lists reftests and
+        # ignores it); the List step strips it.
         options:
           - css (2733)
           - css/CSS2 (1993)
@@ -172,8 +173,12 @@ jobs:
             --baseline calibration-candidates.txt \
             --jobs "$(nproc)" \
             --output target/meta-assert-review/calibration-report.tsv
+          # PASS ground truth comes only from the baseline, since a sweep PASS
+          # can be vacuous.
           uv run --script scripts/wpt/haiku-judge-meta-assert.py calibration-sample \
             --report target/meta-assert-review/calibration-report.tsv \
+            --candidates calibration-candidates.txt \
+            --pass-from expectations/raikiri-baseline.txt \
             --per-outcome "$PER_OUTCOME" \
             --output judge-tests.txt
 
@@ -232,7 +237,8 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Score against pixel outcomes
-        if: always() && inputs.mode == 'calibrate'
+        # Judge writes the verdicts it got even when some requests failed.
+        if: always() && inputs.mode == 'calibrate' && hashFiles('target/meta-assert-review/reviews.jsonl') != ''
         env:
           MODEL: ${{ inputs.model }}
         run: |

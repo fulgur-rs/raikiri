@@ -35,7 +35,8 @@ Usage:
     # truth, judge a sample of each outcome, and score the verdicts
     scripts/wpt/haiku-judge-meta-assert.py list-tests --reftests --path-prefix css/CSS2 --output candidates.txt
     run-baseline-report --baseline candidates.txt --output report.tsv
-    scripts/wpt/haiku-judge-meta-assert.py calibration-sample --report report.tsv --output judge-tests.txt
+    scripts/wpt/haiku-judge-meta-assert.py calibration-sample --report report.tsv \
+        --candidates candidates.txt --pass-from expectations/raikiri-baseline.txt --output judge-tests.txt
     scripts/wpt/haiku-judge-meta-assert.py score --report report.tsv --review-dir target/meta-assert-review
 
     # write the exact prompt per row without calling the API
@@ -498,11 +499,7 @@ def command_list_tests(args) -> int:
     # would only spend requests.
     excluded = set()
     for path in args.exclude:
-        excluded.update(
-            line.strip()
-            for line in path.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-        )
+        excluded.update(read_ids(path))
     ids = []
     for path in sorted((root / args.path_prefix.strip("/")).rglob("*")):
         if path.suffix not in TEST_SUFFIXES or not path.is_file():
@@ -551,8 +548,26 @@ def sample_order(test_id: str) -> str:
     return hashlib.sha256(test_id.encode()).hexdigest()
 
 
+def read_ids(path: Path) -> set[str]:
+    return {
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
 def command_calibration_sample(args) -> int:
     outcomes = read_report(args.report)
+    if args.candidates:
+        # The report also runs every recorded expected failure, most of which
+        # the judge cannot decide.
+        listed = read_ids(args.candidates)
+        outcomes = {t: o for t, o in outcomes.items() if t in listed}
+    if args.pass_from:
+        # A sweep PASS can be vacuous (test and reference equally wrong), so
+        # PASS ground truth is limited to tests a baseline already accepted.
+        accepted = read_ids(args.pass_from)
+        outcomes = {t: o for t, o in outcomes.items() if o == "FAIL" or t in accepted}
     picked = []
     for outcome in ("PASS", "FAIL"):
         ids = sorted((t for t, o in outcomes.items() if o == outcome), key=sample_order)
@@ -697,6 +712,16 @@ def main() -> int:
     )
     sampling.add_argument("--report", type=Path, required=True, help="run-baseline-report TSV")
     sampling.add_argument("--per-outcome", type=non_negative_int, default=100)
+    sampling.add_argument(
+        "--candidates",
+        type=Path,
+        help="list-tests --reftests output; report rows outside it are ignored",
+    )
+    sampling.add_argument(
+        "--pass-from",
+        type=Path,
+        help="baseline file; PASS rows outside it are not used as ground truth",
+    )
     sampling.add_argument("--output", type=Path, default=Path("judge-tests.txt"))
     scoring = sub.add_parser("score", help="compare verdicts with reftest pixel outcomes")
     scoring.add_argument("--report", type=Path, required=True, help="run-baseline-report TSV")

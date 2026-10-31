@@ -83,7 +83,9 @@ class CalibrationTests(unittest.TestCase):
 
         def sample() -> list[str]:
             output = self.dir / "tests.txt"
-            args = type("Args", (), {"report": report, "per_outcome": 2, "output": output})
+            args = type(
+                "Args", (), {"report": report, "per_outcome": 2, "output": output, "pass_from": None, "candidates": None}
+            )
             with redirect_stdout(io.StringIO()):
                 judge.command_calibration_sample(args)
             return output.read_text().split()
@@ -92,6 +94,32 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(len([t for t in first if t.startswith("p")]), 2)
         self.assertEqual(len([t for t in first if t.startswith("f")]), 2)
         self.assertEqual(first, sample())
+
+    def test_sample_takes_pass_rows_only_from_the_accepted_baseline(self) -> None:
+        report = self.write_report(["kept.xht\tPASS\t", "sweep.xht\tPASS\t", "f.xht\tFAIL\t"])
+        baseline = self.dir / "baseline.txt"
+        baseline.write_text("# header\nkept.xht\n")
+        output = self.dir / "tests.txt"
+        args = type(
+            "Args", (), {"report": report, "per_outcome": 5, "output": output, "pass_from": baseline, "candidates": None}
+        )
+        with redirect_stdout(io.StringIO()):
+            judge.command_calibration_sample(args)
+        self.assertEqual(output.read_text().split(), ["f.xht", "kept.xht"])
+
+    def test_sample_ignores_report_rows_outside_the_candidates(self) -> None:
+        report = self.write_report(["listed.xht\tFAIL\t", "expected.html\tXFAIL\t"])
+        candidates = self.dir / "candidates.txt"
+        candidates.write_text("listed.xht\n")
+        output = self.dir / "tests.txt"
+        args = type(
+            "Args",
+            (),
+            {"report": report, "per_outcome": 5, "output": output, "pass_from": None, "candidates": candidates},
+        )
+        with redirect_stdout(io.StringIO()):
+            judge.command_calibration_sample(args)
+        self.assertEqual(output.read_text().split(), ["listed.xht"])
 
     def test_score_counts_false_passes_and_precision(self) -> None:
         outcomes = {"a": "PASS", "b": "PASS", "c": "FAIL", "d": "FAIL", "e": "FAIL"}
