@@ -13,6 +13,7 @@ use raikiri_traits::PageBox;
 
 use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentageAuto};
 
+mod absolute_table_width_tests;
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
 mod authored_length_tests;
@@ -2048,36 +2049,6 @@ fn table_colspan_percent_distribution_uses_definite_table_width() {
     assert!((wide_layout.size.width - 110.0).abs() < 1.0);
     assert!((left_layout.size.width - 55.0).abs() < 1.0);
     assert!((right_layout.size.width - 55.0).abs() < 1.0);
-}
-
-#[test]
-fn absolute_auto_table_uses_definite_containing_block_width() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("display:block"));
-    let container = doc.append_element(
-        Some(body),
-        "div",
-        Some("display: block; width: 100px; height: 100px; position: relative"),
-    );
-    let table = doc.append_element(
-        Some(container),
-        "table",
-        Some("display: table; position: absolute; left: -100px; height: 100px"),
-    );
-    let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
-    let cell = doc.append_element(Some(row), "td", Some("display: table-cell"));
-    doc.append_text(cell, "x");
-    doc.mark_in_document_flags();
-    let rules = build_rule_tree(&doc);
-    let cr = cascade(&doc, &rules).unwrap();
-    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let table_layout = doc.nodes[table].layout;
-    assert!(
-        (table_layout.size.width - 100.0).abs() < 1.0,
-        "table width was {}",
-        table_layout.size.width
-    );
 }
 
 // -----------------------------------------------------------------
