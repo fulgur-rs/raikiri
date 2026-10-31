@@ -610,6 +610,109 @@ fn pipeline_applies_page_limit_after_geometry_stabilizes() {
     }
 }
 
+/// The error of laying `html` out under a limit of `pages` pages.
+fn pipeline_error_under_page_limit(html: &str, pages: u32) -> RenderError {
+    let doc = parse(html);
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(pages))
+                .build(),
+        )
+        .build();
+    match run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+            resume: None,
+        },
+    ) {
+        Err(error) => error,
+        Ok(PipelineRun::Completed(output)) => {
+            panic!(
+                "expected rejection, but generated {} pages",
+                output.slices.len()
+            )
+        }
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
+    }
+}
+
+#[test]
+fn pipeline_rejects_excess_pages_of_columns_that_fill_in_turn() {
+    // Two 100px columns on each 100px page hold 200px of the 900px box, which
+    // needs five pages; the columns are filled only as far as the limit lets.
+    let error = pipeline_error_under_page_limit(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;column-fill:auto'><div style='height:900px'></div></div>",
+        2,
+    );
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            actual: 3,
+        }
+    ));
+}
+
+#[test]
+fn pipeline_rejects_columns_that_fill_in_turn_from_a_page_past_the_limit() {
+    // The container starts on the second page, which the limit does not allow.
+    let error = pipeline_error_under_page_limit(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='height:150px'></div>\
+         <div style='columns:2;column-fill:auto'><div style='height:300px'></div></div>",
+        1,
+    );
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn pipeline_rejects_columns_that_fill_in_turn_past_the_fragment_limit() {
+    // The source layout holds the box in one column; filling the columns of
+    // each page cuts it into far more pieces than the limit allows.
+    let mut doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;column-fill:auto'><div style='height:9000px'></div></div>",
+    );
+    let render = |doc: &HtmlDocument| {
+        run_pipeline(
+            doc,
+            PageDefaults::default(),
+            &LayoutConfig::default(),
+            PipelineInputs {
+                resources: None,
+                consumer_properties: &[],
+                property_observer: None,
+                preload_background_images: true,
+                resume: None,
+            },
+        )
+    };
+    assert!(matches!(render(&doc), Ok(PipelineRun::Completed(_))));
+    doc.uncascaded.dom.lower_layout_fragment_limit(32);
+    assert!(matches!(
+        render(&doc),
+        Err(RenderError::Layout(LayoutError::FragmentLimitExceeded {
+            limit: 32
+        }))
+    ));
+}
+
 #[test]
 fn pipeline_discovers_nested_named_page_before_enforcing_page_limit() {
     let doc = parse(
