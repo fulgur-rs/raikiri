@@ -13,7 +13,11 @@
 //!      (`resolve_column_widths` / `distribute_columns`) — no taffy recursion.
 //!    - `fixed`: content is not measured; column widths come from the table
 //!      width plus first-row specified widths
-//!      (`resolve_fixed_column_widths`, CSS 2.1 §17.5.2.1).
+//!      (`resolve_fixed_column_widths`, CSS 2.1 §17.5.2.1). A cell's width is
+//!      its content box, so the column adds the padding and border. When every
+//!      column states a width, the room they leave is shared in proportion to
+//!      those widths, and percentage columns that would not fit beside the
+//!      others are scaled back to the room that is left.
 //! 3. Batch-layout each row's cells with resolved column widths to determine row heights.
 //! 4. Position each cell at (col-origin, row-origin) and write final layouts —
 //!    `border-collapse: collapse` overlaps adjoining cell boxes by the
@@ -132,6 +136,10 @@ struct CellPlacement {
     row_span: u16,
     specified_width: Dimension,
     specified_min_width: Dimension,
+    /// What a fixed layout table adds to the width this first-row cell states
+    /// to get its column: the padding and border of a content-box cell. Set
+    /// by the column pass, zero otherwise.
+    fixed_extra: f32,
     resolved: Option<BoxLayout>,
     natural_height: f32,
     baseline: f32,
@@ -1073,6 +1081,7 @@ fn compute_table_layout_checked(
         };
         let pass = ColumnPass {
             table_layout,
+            vertical_writing,
             specified_width: column_basis_width,
             caption_minimum,
             wrapper_minimum,
@@ -1099,13 +1108,14 @@ fn compute_table_layout_checked(
             + border_spacing.0 * (grid.n_cols as f32 + 1.0);
         let natural_widths = columns_collapse.then(|| {
             measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-                resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
+                resolve_table_columns(doc, &mut grid, &pass, natural_insets_width, false)
             })
         });
         let mut column_widths = if columns_collapse {
             let mut remaining = without_collapsed_columns(&grid, collapsed_cols, false);
             let mut widths =
-                resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
+                resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width, false)
+                    .into_iter();
             collapsed_cols
                 .iter()
                 .map(|collapsed| {
@@ -1117,7 +1127,7 @@ fn compute_table_layout_checked(
                 })
                 .collect()
         } else {
-            resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
+            resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width, true)
         };
 
         // Extra min-width grows columns (mirrors the min-height→rows path
@@ -1978,6 +1988,7 @@ fn build_table_grid(
                     row_span,
                     specified_width,
                     specified_min_width,
+                    fixed_extra: 0.0,
                     resolved: None,
                     natural_height: 0.0,
                     baseline: 0.0,
@@ -2316,6 +2327,7 @@ fn push_row(
             row_span,
             specified_width,
             specified_min_width,
+            fixed_extra: 0.0,
             resolved: None,
             natural_height: 0.0,
             baseline: 0.0,
@@ -2514,6 +2526,7 @@ fn constrain_cell_intrinsic_widths(
 /// What the column pass needs besides the grid and the room the tracks share.
 struct ColumnPass {
     table_layout: TableLayoutValue,
+    vertical_writing: bool,
     specified_width: Option<f32>,
     caption_minimum: f32,
     wrapper_minimum: Option<f32>,
@@ -2549,12 +2562,16 @@ fn apply_wrapper_width_bounds(width: f32, minimum: Option<f32>, maximum: Option<
 
 /// Column widths for `grid` by the automatic or fixed algorithm (CSS 2.1
 /// §17.5.2). `insets_width` is the table width the tracks do not share:
-/// padding, borders and spacing net of collapsed-line overlaps.
+/// padding, borders and spacing net of collapsed-line overlaps. `share_extra`
+/// lets a fixed table's columns share out the room they leave over; a table
+/// with a column collapsed keeps the widths its columns state, since the
+/// collapsed column's room leaves the table with it.
 fn resolve_table_columns(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
     pass: &ColumnPass,
     insets_width: f32,
+    share_extra: bool,
 ) -> Vec<f32> {
     let insets = Size {
         width: insets_width,
@@ -2596,25 +2613,69 @@ fn resolve_table_columns(
             percent_width_cap,
         );
     };
+    // A vertical table takes its columns along the other axis, and keeps the
+    // widths its cells state.
+    let horizontal = !pass.vertical_writing;
     for cell in &mut grid.cells {
         if cell.row != 0 {
             continue;
         }
         let style = doc.table_style(cell.node_id);
-        if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
-            let padding = style.padding().resolve_or_zero(Some(avail));
-            let border = style.border().resolve_or_zero(Some(avail));
-            let cell_insets = padding.left + padding.right + border.left + border.right;
-            let outer = if style.box_sizing() == BoxSizing::ContentBox {
-                minimum + cell_insets
+        let padding = style.padding().resolve_or_zero(Some(avail));
+        let border = style.border().resolve_or_zero(Some(avail));
+        let cell_insets = padding.left + padding.right + border.left + border.right;
+        let content_box = style.box_sizing() == BoxSizing::ContentBox;
+        // A width or minimum width is the content box's unless the cell is
+        // border-box, and the column takes the border box.
+        let outer_of = |size: f32| {
+            if content_box {
+                size + cell_insets
             } else {
-                minimum.max(cell_insets)
-            };
+                size.max(cell_insets)
+            }
+        };
+        // Read from the style each time, since the grid goes through here
+        // once for each pass over the columns.
+        let width = style.size().width;
+        cell.fixed_extra = 0.0;
+        if horizontal && let Some(stated) = fixed_column_width(width, avail) {
+            if !matches!(width.expand(), ExpandedDimension::Percent(_)) {
+                let capped = capped_by_max_width(&style, stated);
+                // A border-box width cannot take the box below its padding
+                // and border.
+                cell.specified_width = Dimension::length(if content_box {
+                    capped
+                } else {
+                    capped.max(cell_insets)
+                });
+            }
+            if content_box {
+                cell.fixed_extra = cell_insets;
+            }
+        }
+        if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
             let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
-            cell.specified_min_width = Dimension::length((outer - gaps).max(0.0));
+            cell.specified_min_width = Dimension::length((outer_of(minimum) - gaps).max(0.0));
         }
     }
-    resolve_fixed_column_widths(grid, avail)
+    let share_extra = share_extra && horizontal;
+    resolve_fixed_column_widths(grid, avail, share_extra)
+}
+
+/// A `width` held to the `max-width` of the box `style` is of, which is in the
+/// same box-sizing as the width.
+fn capped_by_max_width(style: &LayoutStyleView<'_>, width: f32) -> f32 {
+    resolve_dimension(style.max_size().width.into(), None)
+        .map_or(width, |maximum| width.min(maximum))
+}
+
+/// The `width` a cell states, held within its own `min-width` and `max-width`
+/// (the minimum wins).
+fn within_cell_width_limits(doc: &LayoutSession<'_>, cell: usize, width: f32) -> f32 {
+    let style = doc.table_style(cell);
+    let capped = capped_by_max_width(&style, width);
+    resolve_dimension(style.min_size().width.into(), None)
+        .map_or(capped, |minimum| capped.max(minimum))
 }
 
 // ---------------------------------------------------------------------------
@@ -2765,7 +2826,8 @@ fn resolve_column_widths(
             && matches!(cell.specified_width.expand(), ExpandedDimension::Length(_))
             && col_len[c].is_none()
         {
-            col_len[c] = resolve_dimension(cell.specified_width, None);
+            col_len[c] = resolve_dimension(cell.specified_width, None)
+                .map(|width| within_cell_width_limits(doc, cell.node_id, width));
         }
     }
     for c in 0..n {
@@ -4233,8 +4295,9 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
 /// column that no such cell fixed. Specified widths in non-first rows and
 /// `colspan > 1` first-row widths are ignored. Leftover underflow clamps unfixed
 /// columns to zero (the table overflows rather than shrinking fixed
-/// columns).
-fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
+/// columns). When every column is fixed and `share_extra` is set, the room they
+/// leave over is shared out in proportion to their widths.
+fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) -> Vec<f32> {
     let n = grid.n_cols as usize;
     let mut fixed: Vec<Option<f32>> = vec![None; n];
     // A specified `<col>` width takes priority over first-row cell widths
@@ -4259,15 +4322,38 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         }
     }
     // First-row cells set widths only for columns without a specified `<col>` width.
+    let mut percent = vec![false; n];
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span != 1 {
             continue;
         }
         let c = cell.col_start as usize;
         if c < n && fixed[c].is_none() {
-            fixed[c] = fixed_column_width(cell.specified_width, avail);
+            fixed[c] = fixed_column_width(cell.specified_width, avail)
+                .map(|width| width + cell.fixed_extra);
+            percent[c] = fixed[c].is_some()
+                && matches!(cell.specified_width.expand(), ExpandedDimension::Percent(_));
         }
     }
+    // The columns that state a percentage are shares of the table: when they
+    // and the padding and border they take on top come to more than the room
+    // the other columns leave, they are cut back to fit it.
+    let fixed_total: f32 = fixed.iter().flatten().sum();
+    if fixed_total > avail {
+        let percent_total: f32 = (0..n)
+            .filter(|&c| percent[c])
+            .filter_map(|c| fixed[c])
+            .sum();
+        let room = (avail - (fixed_total - percent_total)).max(0.0);
+        if percent_total > room {
+            for c in (0..n).filter(|&c| percent[c]) {
+                fixed[c] = fixed[c].map(|width| width * room / percent_total);
+            }
+        }
+    }
+    // Only a table whose columns all state a width shares the room that is
+    // left over; a `<col>` minimum fixes a column without stating its width.
+    let all_columns_state_a_width = fixed.iter().all(Option::is_some);
     // A `<col>` minimum fixes an otherwise unspecified column.
     for (c, sz) in grid.col_widths.iter().enumerate() {
         if c >= n || fixed[c].is_some() {
@@ -4318,6 +4404,12 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
         .collect();
+    // With no automatic column to take the room that is left, the columns
+    // share it in proportion to their widths (CSS 2.1 section 17.5.2.1: the
+    // extra space is distributed over the columns).
+    if share_extra && all_columns_state_a_width {
+        distribute_extra(&mut widths, None, avail);
+    }
     // The first row's spanning cells, as their columns and minimum width.
     let first_row_spans: Vec<(usize, usize, f32)> = grid
         .cells

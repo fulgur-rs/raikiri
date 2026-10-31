@@ -2195,6 +2195,7 @@ fn fixed_cell(row: u16, col_start: u16, col_span: u16, width: Dimension) -> supe
         row_span: 1,
         specified_width: width,
         specified_min_width: Dimension::auto(),
+        fixed_extra: 0.0,
         resolved: None,
         natural_height: 0.0,
         baseline: 0.0,
@@ -2214,7 +2215,7 @@ fn resolve_fixed_column_widths_first_row_length_fixes_column_remainder_splits() 
         ],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [100.0, 300.0]);
 }
 
@@ -2233,7 +2234,10 @@ fn fixed_auto_columns_keep_free_space_while_respecting_first_row_floors() {
             cells: vec![first, fixed_cell(0, 1, 1, Dimension::auto())],
             col_widths: vec![],
         };
-        assert_eq!(super::resolve_fixed_column_widths(&grid, 50.0), expected);
+        assert_eq!(
+            super::resolve_fixed_column_widths(&grid, 50.0, true),
+            expected
+        );
     }
 }
 
@@ -2248,7 +2252,7 @@ fn fixed_first_row_colspan_minimum_grows_its_columns() {
         col_widths: vec![],
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 40.0),
+        super::resolve_fixed_column_widths(&grid, 40.0, true),
         [30.0, 30.0]
     );
 }
@@ -2406,7 +2410,7 @@ fn resolve_fixed_column_widths_first_row_percent_resolves_against_avail() {
         ],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [100.0, 300.0]);
 }
 
@@ -2423,7 +2427,7 @@ fn resolve_fixed_column_widths_ignores_non_first_row_width() {
         ],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [200.0, 200.0]);
 }
 
@@ -2437,7 +2441,7 @@ fn resolve_fixed_column_widths_ignores_colspan_first_row_width() {
         cells: vec![fixed_cell(0, 0, 2, Dimension::length(300.0))],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [200.0, 200.0]);
 }
 
@@ -2465,7 +2469,7 @@ fn resolve_fixed_column_widths_col_element_length_fixes_unspecified_column() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [60.0, 340.0]);
 }
 
@@ -2493,7 +2497,7 @@ fn resolve_fixed_column_widths_col_element_takes_priority_over_first_row_cell() 
     };
 
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 400.0),
+        super::resolve_fixed_column_widths(&grid, 400.0, true),
         [50.0, 350.0]
     );
 }
@@ -2517,7 +2521,7 @@ fn resolve_fixed_column_widths_col_element_percent_resolves_against_avail() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [200.0, 200.0]);
 }
 
@@ -2542,8 +2546,33 @@ fn resolve_fixed_column_widths_col_element_min_only_floors_column() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [50.0, 350.0]);
+}
+
+#[test]
+fn resolve_fixed_column_widths_col_minimum_does_not_make_a_column_share_the_room() {
+    // The first column is fixed only by its minimum, not by a width it
+    // states, so the room the columns leave is not shared out.
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![],
+        cells: vec![],
+        col_widths: vec![
+            super::ColSizing {
+                width: Dimension::auto(),
+                min_width: Dimension::length(50.0),
+                max_width: Dimension::auto(),
+            },
+            super::ColSizing {
+                width: Dimension::length(100.0),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            },
+        ],
+    };
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    assert_eq!(widths, [50.0, 100.0]);
 }
 
 #[test]
@@ -2565,7 +2594,7 @@ fn resolve_fixed_column_widths_col_element_width_clamped_by_max_width() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [60.0, 340.0]);
 }
 
@@ -2580,7 +2609,7 @@ fn resolve_fixed_column_widths_underflow_clamps_unfixed_columns_to_zero() {
         cells: vec![fixed_cell(0, 0, 1, Dimension::length(500.0))],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
     assert_eq!(widths, [500.0, 0.0]);
 }
 
@@ -2830,6 +2859,7 @@ fn make_cell(
         row_span,
         specified_width: width,
         specified_min_width: Dimension::auto(),
+        fixed_extra: 0.0,
         resolved: None,
         natural_height: 0.0,
         baseline: 0.0,
@@ -3768,7 +3798,10 @@ fn fixed_colspan_minimum_reclaims_only_unconstrained_column_space() {
             cells: vec![span, last],
             col_widths: vec![],
         };
-        assert_eq!(super::resolve_fixed_column_widths(&grid, 90.0), expected);
+        assert_eq!(
+            super::resolve_fixed_column_widths(&grid, 90.0, true),
+            expected
+        );
     }
 }
 
@@ -3785,7 +3818,7 @@ fn fixed_span_redistribution_preserves_another_spans_minimum() {
         col_widths: vec![],
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 100.0),
+        super::resolve_fixed_column_widths(&grid, 100.0, true),
         [15.0, 15.0, 40.0, 40.0]
     );
 }
@@ -3807,7 +3840,7 @@ fn a_satisfied_span_minimum_keeps_all_authored_column_widths() {
             .to_vec(),
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 90.0),
+        super::resolve_fixed_column_widths(&grid, 90.0, true),
         [40.0, 40.0, 10.0]
     );
 }

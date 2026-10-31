@@ -882,8 +882,11 @@ fn a_table_whose_rows_and_columns_all_collapse_has_no_height() {
 #[test]
 fn a_collapsed_column_lays_out_like_a_table_without_it() {
     // Both border models: the table is as wide as one that never had the
-    // column, and the columns that remain sit where they would there.
-    for table_css in [SEPARATE, COLLAPSING, FIXED, MIN_WIDTH] {
+    // column, and the columns that remain sit where they would there. (A
+    // fixed table with a width is left out: Chromium shares its room over all
+    // the columns, collapsed one included, and takes the collapsed column's
+    // share out of the table.)
+    for table_css in [SEPARATE, COLLAPSING, MIN_WIDTH] {
         for cell_css in ["", "border:2px solid black"] {
             let collapsed = table_with(
                 table_css,
@@ -1008,7 +1011,9 @@ fn a_vertical_table_keeps_its_collapsed_columns() {
 #[test]
 fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
     // In a fixed table the two columns of `<colgroup span=2 width=50px>` take
-    // 50px each, not the 10px of their cells.
+    // 50px each, not the 10px of their cells. The third column states 10px,
+    // so every column is fixed and they share the 160px of room in proportion
+    // to those widths (Chromium: 72.72px, 72.72px and 14.56px).
     let fixture = table_with(
         FIXED,
         &[Column::EmptyGroup(
@@ -1021,8 +1026,12 @@ fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
         "",
     );
     let cells = &fixture.cells[0];
-    assert_eq!(column_box(&fixture.doc, cells[0]), (10.0, 50.0));
-    assert_eq!(column_box(&fixture.doc, cells[1]), (70.0, 50.0));
+    let first = column_box(&fixture.doc, cells[0]);
+    let second = column_box(&fixture.doc, cells[1]);
+    assert_eq!(first.0, 10.0);
+    assert!((first.1 - 72.72).abs() < 0.05, "{first:?}");
+    assert!((second.0 - 92.72).abs() < 0.05, "{second:?}");
+    assert!((second.1 - 72.72).abs() < 0.05, "{second:?}");
 }
 
 #[test]
@@ -1083,7 +1092,8 @@ fn a_column_under_display_contents_in_a_group_collapses() {
 #[test]
 fn column_widths_under_display_contents_size_a_fixed_table() {
     // The `<col>` widths reach the fixed table layout through the wrapper:
-    // 50px and 70px, not an even split of 200px.
+    // the 170px of room is shared in proportion to 50px and 70px (Chromium:
+    // 70.83px and 99.17px), not split evenly.
     let fixture = table_with(
         FIXED,
         &[Column::Contents(vec![
@@ -1096,8 +1106,10 @@ fn column_widths_under_display_contents_size_a_fixed_table() {
         "",
     );
     let cells = &fixture.cells[0];
-    assert_eq!(column_box(&fixture.doc, cells[0]).1, 50.0);
-    assert_eq!(column_box(&fixture.doc, cells[1]).1, 70.0);
+    let first = column_box(&fixture.doc, cells[0]).1;
+    let second = column_box(&fixture.doc, cells[1]).1;
+    assert!((first - 70.83).abs() < 0.05, "{first}");
+    assert!((second - 99.17).abs() < 0.05, "{second}");
 }
 
 #[test]
