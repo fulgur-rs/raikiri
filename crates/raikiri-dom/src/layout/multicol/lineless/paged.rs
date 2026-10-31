@@ -33,6 +33,9 @@ pub(in crate::layout::multicol) struct Paged {
     pub(in crate::layout::multicol) end: f32,
 }
 
+/// The block size of the columns past the pages that are planned.
+const UNBOUNDED: f32 = 1.0e30;
+
 /// A page's share of the container: the page, where the columns start on it
 /// and where it ends, in the coordinates of the flow.
 #[derive(Clone, Copy)]
@@ -100,7 +103,20 @@ pub(in crate::layout::multicol) fn paginate(
         .fragment_tree
         .limit
         .saturating_sub(tree.fragment_tree.fragments.len());
-    let height_of = |column: usize| row_at(column / columns).capacity();
+    // Past the first page the control refuses there is nothing to cut, so the
+    // rows after that one have room for all that is left: the placement ends
+    // there instead of planning pages that are not made, which could spend
+    // the fragment budget before the limit is reached.
+    let allowed_rows = work
+        .page_limit()
+        .map(|limit| usize::try_from(limit.saturating_sub(page)).unwrap_or(usize::MAX));
+    let height_of = |column: usize| {
+        let row = column / columns;
+        if allowed_rows.is_some_and(|allowed| row > allowed) {
+            return UNBOUNDED;
+        }
+        row_at(row).capacity()
+    };
     let placement = match place_columns(&items, &height_of, max_pieces, usize::MAX, true) {
         Ok(placement) => placement,
         // A box that must stay whole would be cut by a page.
