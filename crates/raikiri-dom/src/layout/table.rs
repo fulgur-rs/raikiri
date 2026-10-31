@@ -2602,10 +2602,8 @@ fn resolve_table_columns(
             continue;
         }
         let style = doc.table_style(cell.node_id);
-        if cell.col_span > 1
-            && let ExpandedDimension::Length(width) = style.size().width.expand()
-        {
-            // A length sizes the spanning border box. Percentages instead
+        if let ExpandedDimension::Length(width) = style.size().width.expand() {
+            // A length sizes the cell's border box. Percentages instead
             // contribute a share of the net track width, without cell edges.
             let padding = style.padding().resolve_or_zero(Some(avail));
             let border = style.border().resolve_or_zero(Some(avail));
