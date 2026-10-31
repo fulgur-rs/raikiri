@@ -71,3 +71,23 @@ fn both_offsets_leave_the_table_at_its_content_width() {
     assert_eq!(image.pixel(34, 12), WHITE);
     assert_eq!(image.pixel(60, 12), WHITE);
 }
+
+#[test]
+fn the_background_of_a_table_with_a_caption_ends_at_its_rows() {
+    // A 30x10 caption above a 30x10 row. The red table background is covered
+    // by the green cell, so red shows only if the grid box is taller than its
+    // row.
+    let image = render(
+        "<div style=\"position:relative;height:50px\">\
+         <div style=\"display:table;position:absolute;top:0;left:0;background:red\">\
+         <div style=\"display:table-caption;width:30px;height:10px;background:blue\"></div>\
+         <div style=\"display:table-row\"><div style=\"display:table-cell;background:green\">\
+         <div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+    );
+    assert_eq!(image.pixel(5, 5), BLUE);
+    assert_eq!(image.pixel(5, 15), GREEN);
+    assert_eq!(image.pixel(25, 15), GREEN);
+    // Below the 10px row there is nothing, not red.
+    assert_eq!(image.pixel(5, 25), WHITE);
+    assert_eq!(image.pixel(25, 25), WHITE);
+}

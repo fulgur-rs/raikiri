@@ -13,6 +13,7 @@ use raikiri_traits::PageBox;
 
 use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentageAuto};
 
+mod absolute_table_caption_tests;
 mod absolute_table_width_tests;
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
