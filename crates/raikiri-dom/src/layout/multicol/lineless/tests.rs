@@ -76,6 +76,43 @@ fn a_monolithic_box_pushed_out_by_its_margin_starts_the_next_column() {
 }
 
 #[test]
+fn a_monolithic_box_without_height_does_not_collapse_its_margins() {
+    let empty = Item {
+        margin_bottom: 30.0,
+        ..monolithic(0.0, 20.0)
+    };
+    // Its margins stay apart, so what follows starts below both of them.
+    assert_eq!(
+        shape(&[empty, split(10.0)], 100.0),
+        vec![vec![(0, 20.0, 0.0)], vec![(0, 50.0, 10.0)]]
+    );
+    // A self-collapsing box joins the margins around it instead.
+    let collapsing = Item {
+        margin_bottom: 30.0,
+        margin_top: 20.0,
+        ..split(0.0)
+    };
+    assert_eq!(
+        shape(&[collapsing, split(10.0)], 100.0),
+        vec![vec![(0, 20.0, 0.0)], vec![(0, 30.0, 10.0)]]
+    );
+    // It moves to the next column, truncating its margin, when it does not
+    // fit below it.
+    let late = Item {
+        margin_bottom: 5.0,
+        ..monolithic(0.0, 20.0)
+    };
+    assert_eq!(
+        shape(&[split(85.0), late, split(10.0)], 100.0),
+        vec![
+            vec![(0, 0.0, 85.0)],
+            vec![(1, 0.0, 0.0)],
+            vec![(1, 5.0, 10.0)]
+        ]
+    );
+}
+
+#[test]
 fn a_box_that_stays_whole_is_not_pushed_out_by_its_margin() {
     let whole = Item {
         margin_top: 30.0,

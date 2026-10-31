@@ -1015,8 +1015,10 @@ fn place_columns(
     let mut placements = Vec::with_capacity(items.len());
     for item in items {
         // A box with no block size, borders or padding is self-collapsing:
-        // its own margins join the margins around it (CSS 2, 8.3.1).
-        if item.height <= 0.0 {
+        // its own margins join the margins around it (CSS 2, 8.3.1). A scroll
+        // container is not, as it establishes a formatting context, so it is
+        // placed like any other monolithic box, between its own margins.
+        if item.height <= 0.0 && !item.monolithic {
             piece_count += 1;
             if piece_count > max_pieces {
                 return Err(Stop::Exhausted);

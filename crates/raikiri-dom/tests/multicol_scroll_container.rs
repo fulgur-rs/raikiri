@@ -322,6 +322,30 @@ fn a_margin_that_pushes_a_scroll_container_out_of_a_column_moves_it_on() {
     assert_rects(&short, "s", &[(100.0, 0.0, 100.0, 60.0)]);
 }
 
+/// A scroll container with no height has margins that stay apart, as it
+/// establishes a formatting context and cannot collapse through itself.
+#[test]
+fn a_scroll_container_without_height_keeps_its_margins_apart() {
+    let zero = scroller("z", 0, "overflow: hidden; margin: 20px 0 30px");
+    let after = spacer("n", 10, "");
+    let alone = format!("<div {COLUMNS}>{zero}{after}</div>");
+    assert_rects(&alone, "z", &[(0.0, 20.0, 100.0, 0.0)]);
+    assert_rects(&alone, "n", &[(0.0, 50.0, 100.0, 10.0)]);
+    // Below a box that is already there.
+    let below = format!("<div {COLUMNS}>{}{zero}{after}</div>", spacer("a", 10, ""));
+    assert_rects(&below, "z", &[(0.0, 30.0, 100.0, 0.0)]);
+    assert_rects(&below, "n", &[(0.0, 60.0, 100.0, 10.0)]);
+    // It does not fit below its margin, so it starts the next column and the
+    // margin above it is dropped.
+    let late = format!(
+        "<div {COLUMNS}>{}{}{after}</div>",
+        spacer("a", 85, ""),
+        scroller("z", 0, "overflow: hidden; margin: 20px 0 5px")
+    );
+    assert_rects(&late, "z", &[(100.0, 0.0, 100.0, 0.0)]);
+    assert_rects(&late, "n", &[(100.0, 5.0, 100.0, 10.0)]);
+}
+
 /// A scroll container that holds a box that could reach out of it, or a
 /// column container, is left to the other strategies, which keep its height.
 #[test]
