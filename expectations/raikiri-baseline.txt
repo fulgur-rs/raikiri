@@ -5514,3 +5514,7 @@ css/css-page/page-size-008-print.html
 # --- Table header and footer copies beside unbroken content (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
 # A table whose body is in an anonymous row repeats its header group at the top of each page that a box of the body runs onto without breaking, and its footer group at the end of each page the box runs off, over the box. The header and footer groups paint after the body. The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
 css/css-page/monolithic-overflow-016-print.html
+
+# --- A column spanner in an inline box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# An inline box that holds only blocks is split around them and leaves nothing of its own (CSS 2 section 9.2.1.1), so a `column-span: all` block in it spans the columns of the container as it does when it is a child of the container, and the floats around it stay in the columns before and after it (CSS Multi-column 1 section 6.1). The wrapper was laid out as one box, so the spanner went below no float. The test was FAIL before and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-span-float-003.html

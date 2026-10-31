@@ -1,8 +1,9 @@
 //! Column spanners inside block wrappers.
 //!
 //! A `column-span: all` box spans the columns of the multicol container it
-//! sits in, whatever plain blocks lie between them (CSS Multi-column Layout 1,
-//! 6.1): the wrappers are split around the spanner, the content before it
+//! sits in, whatever plain blocks, or inline boxes around blocks, lie between
+//! them (CSS Multi-column Layout 1, 6.1): the wrappers are split around the
+//! spanner, the content before it
 //! flows in columns, the spanner crosses them, and the content after it flows
 //! in columns again. The column strategies place the children of a container
 //! and look for spanners among those children only, so a wrapper holding a
@@ -88,10 +89,11 @@ fn collect_wrappers(
     }
 }
 
-/// Whether the box of `id` has nothing of its own: it is a block in the flow
-/// that is sized by its content, takes no space around it, clips nothing,
-/// draws nothing and starts no stacking context or containing block, and it
-/// does not change how the lines of its content are laid out.
+/// Whether the box of `id` has nothing of its own: it is a block in the flow,
+/// or an inline box around blocks, that is sized by its content, takes no
+/// space around it, clips nothing, draws nothing and starts no stacking
+/// context or containing block, and it does not change how the lines of its
+/// content are laid out.
 fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let node = &doc.nodes[id];
     let cv = &cascade.computed[id];
@@ -119,7 +121,10 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
     };
     let padding_is_zero =
         |padding| matches!(padding, ComputedLengthPercentageOrCalc::Px(px) if px == 0.0);
-    node.display() == DisplayValue::Block
+    // An inline box that holds a block is split around it (CSS 2, 9.2.1.1),
+    // so one with no edges, background or effect leaves nothing of its own
+    // either.
+    matches!(node.display(), DisplayValue::Block | DisplayValue::Inline)
         && node.layout_position() == Position::Static
         && !matches!(cv.float, FloatValue::Left | FloatValue::Right)
         && !matches!(
