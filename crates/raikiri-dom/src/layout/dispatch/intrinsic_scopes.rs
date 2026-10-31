@@ -5,7 +5,10 @@ use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-fn with_saved_probe_caches<R>(
+/// Run `f`, which may take the layout caches of boxes it overrides and push the
+/// overrides, and then leave every override undone and every cache it took put
+/// back, however `f` ends.
+pub(super) fn with_saved_probe_caches<R>(
     tree: &mut LayoutSession<'_>,
     capacity: usize,
     f: impl FnOnce(&mut LayoutSession<'_>, &mut Vec<(usize, SavedLayoutCache)>) -> R,

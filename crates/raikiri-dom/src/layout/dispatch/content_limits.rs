@@ -22,11 +22,12 @@ use std::collections::HashMap;
 
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::fit_content_room;
+use crate::layout::dispatch::intrinsic_scopes::with_saved_probe_caches;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
-use crate::layout::taffy_adapter::LayoutCache;
+use crate::layout::taffy_adapter::{LayoutCache, columns_have_no_content_minimum};
 use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
@@ -829,10 +830,123 @@ pub(super) fn with_item_content_limits(
     with_item_content_limits_for_parent_sizes(tree, node_id, inputs, |_| parent_size, dispatch)
 }
 
+/// The in-flow items of the grid container `node_id` that a measure of the
+/// container's min-content width must not widen past their `min-width`, each
+/// with that `min-width` in the box-sizing box of the item's style.
+///
+/// Sized under a min-content constraint, a track takes the min-content
+/// contribution of an item in place of its minimum contribution (CSS Grid 2
+/// §11.5). Browsers do this only for an item whose `min-width` is `auto`: one
+/// that states a `min-width` contributes no more than that, so a grid of
+/// `min-width: 0` items can be as narrow as `0`. Taffy takes the min-content
+/// contribution of every item that is not a scroll container, so the items
+/// here are measured as if their `width` were their `min-width`, which makes
+/// both contributions the minimum one.
+fn items_held_to_minimum_width(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> Vec<(usize, f32)> {
+    if inputs.run_mode != RunMode::ComputeSize
+        || inputs.known_dimensions.width.is_some()
+        || !matches!(inputs.available_space.width, AvailableSpace::MinContent)
+        || super::grid_oof::right_to_left(tree, usize::from(node_id)).is_some()
+        || !columns_have_no_content_minimum(&tree.physical_style(usize::from(node_id)))
+    {
+        return Vec::new();
+    }
+    tree.child_ids(node_id)
+        .filter_map(|child| {
+            let idx = usize::from(child);
+            if tree.nodes[idx].layout_display() == Display::None
+                || is_oof_box(tree, idx)
+                || tree.context.content_limit_probes.contains(&idx)
+            {
+                return None;
+            }
+            let style = tree.physical_style(idx);
+            // An item with a preferred aspect ratio takes its height from the
+            // width it is held to.
+            if !style.size().width.is_auto()
+                || style.stated_aspect_ratio().is_some()
+                || super::is_scroll_container(style.overflow())
+            {
+                return None;
+            }
+            // A percentage has nothing to resolve against while the container
+            // is sized by its content, so the minimum it states is `0`. A
+            // `calc()` can mix the two, which this leaves as it was.
+            let minimum = match style.min_size().width.expand() {
+                ExpandedLengthPercentageAuto::Length(minimum) => minimum,
+                ExpandedLengthPercentageAuto::Percent(_) => 0.0,
+                _ => return None,
+            };
+            Some((idx, minimum))
+        })
+        .collect()
+}
+
+/// Lay out the grid `node_id` with `dispatch`, measuring its min-content width
+/// with the items [`items_held_to_minimum_width`] names held to their
+/// `min-width`.
+///
+/// The width is measured on its own, without the rows, since an item held to
+/// its minimum is narrower than the track it stands in whenever another item
+/// of the track is wider. Every other measure of the grid then runs at that
+/// width, with the items as the author styled them.
+pub(super) fn with_grid_item_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    parent_size: Size<Option<f32>>,
+    mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let held = items_held_to_minimum_width(tree, node_id, &inputs);
+    if held.is_empty() {
+        return with_resolved_grid_item_limits(tree, node_id, inputs, parent_size, dispatch);
+    }
+
+    let width_inputs = LayoutInput {
+        axis: RequestedAxis::Horizontal,
+        ..inputs
+    };
+    // The override changes the inputs the box inside an item is asked with and
+    // the item's own sizes, so it stays out of the cache generation and the
+    // item's caches are kept apart while it lasts. Moving the generation would
+    // have a chain of nested grids measure the one inside it again at each width
+    // its parent tries.
+    let width_output = scoped(tree, |tree| {
+        with_saved_probe_caches(tree, held.len(), |tree, saved| {
+            for &(idx, minimum) in &held {
+                let key = tree.nodes.box_key(idx).expect("live grid item");
+                let width = OwnedPropertyOverride::length(
+                    LengthProperty::Width,
+                    raikiri_style::ComputedLengthPercentageOrAuto::Px(minimum),
+                    true,
+                )
+                .expect("resolved pixel width");
+                saved.push((idx, tree.take_layout_cache(idx)));
+                tree.push_local_overrides(vec![(key, width)]);
+            }
+            with_resolved_grid_item_limits(tree, node_id, width_inputs, parent_size, &mut dispatch)
+        })
+    });
+    if inputs.axis == RequestedAxis::Horizontal {
+        return width_output;
+    }
+
+    let width = width_output.size.width;
+    let mut inputs = inputs;
+    inputs.known_dimensions.width = Some(width);
+    inputs.known_dimensions_are_definite.width = true;
+    inputs.available_space.width = AvailableSpace::Definite(width);
+    with_resolved_grid_item_limits(tree, node_id, inputs, parent_size, dispatch)
+}
+
 /// Resolve percentage fit-content and `stretch` limits on grid items against
 /// the grid area sizes from a preliminary track layout, then lay out the grid
 /// with those resolved limits installed.
-pub(super) fn with_grid_item_content_limits(
+fn with_resolved_grid_item_limits(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
