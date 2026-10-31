@@ -11,10 +11,24 @@ name: WPT model judge
 # The IDs it needs are repository variables (not secrets):
 #   ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
 #   ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID
+#
+# The calibrate mode judges match reftests below the same directory instead,
+# samples them by their pixel outcome at this commit, and reports how often
+# the model calls a pixel FAIL a pass.
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: judge tests without a reference, or calibrate on reftests
+        type: choice
+        default: judge
+        options:
+          - judge
+          - calibrate
+      per_outcome:
+        description: Calibrate mode only; reftests sampled per pixel outcome (PASS, FAIL)
+        default: "100"
       limit:
         description: Maximum number of new (uncached) model requests
         default: "200"
@@ -115,7 +129,7 @@ jobs:
         run: scripts/wpt/fetch.sh
 
       - name: Build the review renderer
-        run: cargo build --release --locked -p raikiri-wpt --bin prepare-meta-assert-review
+        run: cargo build --release --locked -p raikiri-wpt --bin prepare-meta-assert-review --bin run-baseline-report
 
       - name: Setup mise
         # Installs the uv pinned in mise.toml; uv then installs the judge's
@@ -125,6 +139,7 @@ jobs:
           install_args: uv
 
       - name: List tests without a reference
+        if: inputs.mode == 'judge'
         env:
           PATH_PREFIX: ${{ inputs.path_prefix }}
         run: |
@@ -135,6 +150,31 @@ jobs:
             --path-prefix "$PATH_PREFIX" \
             --exclude expectations/meta-assert-baseline.txt \
             --exclude expectations/raikiri-baseline.txt \
+            --output judge-tests.txt
+
+      - name: Sample reftests by pixel outcome
+        if: inputs.mode == 'calibrate'
+        env:
+          PATH_PREFIX: ${{ inputs.path_prefix }}
+          PER_OUTCOME: ${{ inputs.per_outcome }}
+        run: |
+          PATH_PREFIX="${PATH_PREFIX%% (*}"
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py list-tests \
+            --wpt-root target/wpt \
+            --path-prefix "$PATH_PREFIX" \
+            --reftests \
+            --output calibration-candidates.txt
+          # The pixel comparison at this commit is the ground truth; FAIL rows
+          # are expected and do not fail the step.
+          mkdir -p target/meta-assert-review
+          ./target/release/run-baseline-report \
+            --wpt-root target/wpt \
+            --baseline calibration-candidates.txt \
+            --jobs "$(nproc)" \
+            --output target/meta-assert-review/calibration-report.tsv
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py calibration-sample \
+            --report target/meta-assert-review/calibration-report.tsv \
+            --per-outcome "$PER_OUTCOME" \
             --output judge-tests.txt
 
       - name: Render
@@ -191,6 +231,17 @@ jobs:
             --max-requests "$LIMIT" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Score against pixel outcomes
+        if: always() && inputs.mode == 'calibrate'
+        env:
+          MODEL: ${{ inputs.model }}
+        run: |
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py score \
+            --report target/meta-assert-review/calibration-report.tsv \
+            --review-dir target/meta-assert-review \
+            --model "$MODEL" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Save verdict cache
         # Save even when some requests failed, so paid verdicts are kept.
         if: always()
@@ -203,10 +254,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wpt-judge-review
+          name: wpt-judge-${{ inputs.mode }}
           path: |
             target/meta-assert-review/manifest.jsonl
             target/meta-assert-review/reviews.jsonl
             target/meta-assert-review/reviews.template.jsonl
+            target/meta-assert-review/calibration-report.tsv
+            target/meta-assert-review/calibration.json
             target/meta-assert-review/html/
             target/meta-assert-review/screenshots/
