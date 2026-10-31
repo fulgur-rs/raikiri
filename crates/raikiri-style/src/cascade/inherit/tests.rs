@@ -12484,6 +12484,7 @@ mod column_rule_tests;
 mod column_span_tests;
 mod limit_tests;
 mod logical_tests;
+pub(super) mod paint_inheritance_tests;
 
 /// With no parent, a self-referential `lh` / `rlh` on the root resolves
 /// against the initial font's `normal` line, not the root's own font.
