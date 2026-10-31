@@ -310,7 +310,7 @@ pub enum PseudoClass {
 /// CSSWG bikeshed quote above already establishes that argument is only
 /// ever `ltr`/`rtl`, never a literal `auto` — there is no `:dir(auto)`
 /// syntax), and as the *matched element's* resolved directionality
-/// ([`crate::cascade::resolve_directionality`]'s return type) that argument
+/// (the direction component of [`crate::cascade::resolve_directionality`]) that argument
 /// is compared against. An element with `dir="auto"` still resolves to a
 /// concrete `Ltr`/`Rtl` value for that comparison via the HTML
 /// directionality algorithm's own `Auto`-state arm
