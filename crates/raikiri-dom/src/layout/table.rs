@@ -52,6 +52,7 @@ use crate::layout::protocol::{
     SizingMode,
 };
 use crate::layout::style_views::ReadRole;
+use crate::node::FormattingContext;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 
@@ -184,6 +185,28 @@ fn table_caption(doc: &Document, table: usize) -> Option<usize> {
     doc.children_through_contents(table)
         .into_iter()
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
+}
+
+/// Whether the caption of `table` takes up room around the grid; an absolutely
+/// positioned one does not.
+fn caption_in_flow(doc: &Document, table: usize) -> bool {
+    table_caption(doc, table)
+        .is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute)
+}
+
+/// The height left for the grid box of a horizontal table when a flex or grid
+/// parent assigns `wrapper_height` to the whole wrapper box: the caption above
+/// or below the grid keeps its own share. `caption` is the laid-out caption.
+fn grid_height_in_wrapper(
+    doc: &Document,
+    table: usize,
+    wrapper_height: f32,
+    caption: Option<&(Size<f32>, OofCandidates)>,
+) -> f32 {
+    let caption_height = caption
+        .filter(|_| caption_in_flow(doc, table))
+        .map_or(0.0, |(size, _)| size.height);
+    f32_max_compat(wrapper_height - caption_height, 0.0)
 }
 
 fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
@@ -422,8 +445,7 @@ fn position_table_caption(
 ) -> (Size<f32>, Point<f32>) {
     let caption_id = table_caption(doc, table_idx);
     // Keep the legacy positioned caption layout and ink, but exclude it from flow.
-    let in_flow =
-        caption_id.is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute);
+    let in_flow = caption_in_flow(doc, table_idx);
     let caption_size = if in_flow {
         caption_size.unwrap_or(Size::ZERO)
     } else {
@@ -525,6 +547,21 @@ fn compute_table_layout_checked(
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
+    // The height a flex or grid parent assigns is that of the whole wrapper
+    // box, caption included, except when a definite `flex-basis` sizes the
+    // item along a column: like an authored height, it sizes the grid box
+    // alone, with the caption on top of it.
+    let parent_assigns_wrapper_height = parent_is_flex_or_grid
+        && !doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+            doc.nodes[parent].formatting_context == FormattingContext::Flex
+                && !doc.physical_style(parent).flex_direction_is_row()
+                && matches!(
+                    doc.physical_style(table_idx).flex_basis().expand(),
+                    ExpandedDimension::Length(_)
+                        | ExpandedDimension::Percent(_)
+                        | ExpandedDimension::Calc(_)
+                )
+        });
     let grid = cache::table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -675,6 +712,14 @@ fn compute_table_layout_checked(
             // the table states, and a table with no cells is as wide as the
             // caption it holds (CSS Tables 3 §3, CAPMIN).
             width = width.max(caption_minimum);
+            // The caption of a horizontal table needs only the width, so it is
+            // laid out before the height: a flex or grid parent assigns the
+            // height of the whole wrapper box, which the caption shares.
+            let mut early_caption = if vertical_writing {
+                None
+            } else {
+                layout_table_caption(doc, table_idx, width, inputs.parent_size.height)
+            };
             let stated_h = specified_height.map(|stated| {
                 f32_max_compat(
                     inputs.known_dimensions.height.unwrap_or(stated + lift_h),
@@ -682,10 +727,19 @@ fn compute_table_layout_checked(
                 )
             });
             let mut height = stated_h.unwrap_or_else(|| {
-                effective_known
-                    .height
-                    .unwrap_or(0.0)
-                    .max(padding_border_size.height)
+                let known = effective_known.height.map(|wrapper_height| {
+                    if parent_assigns_wrapper_height && !vertical_writing {
+                        grid_height_in_wrapper(
+                            doc,
+                            table_idx,
+                            wrapper_height,
+                            early_caption.as_ref(),
+                        )
+                    } else {
+                        wrapper_height
+                    }
+                });
+                known.unwrap_or(0.0).max(padding_border_size.height)
             });
             height = clamp_empty_table_size(
                 height,
@@ -696,18 +750,14 @@ fn compute_table_layout_checked(
             if vertical_writing {
                 height = height.max(caption_inline_minimum);
             }
-            let (caption_size, mut caption_candidates) = layout_table_caption(
-                doc,
-                table_idx,
-                width,
-                if vertical_writing {
-                    Some(height)
-                } else {
-                    inputs.parent_size.height
-                },
-            )
-            .map(|(size, candidates)| (Some(size), candidates))
-            .unwrap_or_else(|| (None, OofCandidates::new()));
+            let caption_layout = if vertical_writing {
+                layout_table_caption(doc, table_idx, width, Some(height))
+            } else {
+                early_caption.take()
+            };
+            let (caption_size, mut caption_candidates) = caption_layout
+                .map(|(size, candidates)| (Some(size), candidates))
+                .unwrap_or_else(|| (None, OofCandidates::new()));
             if !vertical_writing && let Some(size) = caption_size {
                 width = width.max(size.width);
             }
@@ -989,6 +1039,111 @@ fn compute_table_layout_checked(
             widths
         });
 
+        // The table's width follows from its columns alone, so it is settled
+        // before the rows are sized: the caption wraps at that width, and a
+        // flex or grid parent's height has to give up the caption's share
+        // before the rows can use the rest.
+        // Content extents net of collapsed-line overlaps, plus the separated
+        // spacing (one of the two is always zero).
+        let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w + spacing.width;
+        // min grows the box; max NEVER shrinks a table below its intrinsic
+        // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
+        // min-max-size-table-content-box and max-height-table check that
+        // max-height/max-width leave sub-intrinsic tables at natural size —
+        // only min-* grow). min still wins over max on direct conflict.
+        let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
+            let mut x = v;
+            if let Some(mn) = mn {
+                x = f32_max_compat(x, mn);
+            }
+            if let Some(mx) = mx
+                && !(mn.is_some_and(|mn| mn > mx))
+                && mx >= v
+            {
+                x = x.min(mx);
+            }
+            x
+        };
+        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
+        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
+        // width keeps the fill basis.
+        let table_width_basis = if abspos_table && specified_width.is_none() {
+            // An auto-width absolutely positioned table uses the containing block's
+            // available width for this table-layout path.  Taffy's shrink-to-fit
+            // probe may report the intrinsic cell width as `known_dimensions.width`,
+            // but CSS Tables 3 caps the available size at (and in this case fills)
+            // the containing block; retaining the probe would leave a narrow strip
+            // missing from the table background.
+            inputs.parent_size.width.or(effective_known.width)
+        } else if parent_is_flex_or_grid {
+            // Flex/grid supplies a used item width even when the table's own
+            // width is auto. Keep that width instead of shrink-wrapping again.
+            effective_known.width
+        } else {
+            match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
+            }
+        };
+        // Vertical tables stack each column's inline track along the physical
+        // height, so the physical spacing applies across that stack: the
+        // vertical gap between and around the stacked tracks, the horizontal gap
+        // on both sides of the single physical column.
+        let vertical_content_width =
+            column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
+        // CSS 2.1 §17.5.2: the used table width is at least the columns plus
+        // the spacing and borders, even when the specified width is smaller.
+        let min_table_width = content_width + padding_border_size.width;
+        let final_width = if vertical_writing {
+            effective_known
+                .width
+                .unwrap_or(vertical_content_width + padding_border_size.width)
+        } else {
+            table_width_basis
+                .map(|w| {
+                    let width = apply_wrapper_width_bounds(w, wrapper_minimum, wrapper_maximum);
+                    clamp_min_max(
+                        f32_max_compat(width, min_table_width),
+                        min_w_outer,
+                        max_w_outer,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    clamp_min_max(
+                        f32_max_compat(
+                            apply_wrapper_width_bounds(
+                                content_width + padding_border_size.width,
+                                wrapper_minimum,
+                                wrapper_maximum,
+                            ),
+                            min_table_width,
+                        ),
+                        min_w_outer,
+                        max_w_outer,
+                    )
+                })
+        };
+        // The caption of a horizontal table sits above or below the grid and
+        // needs only the table's width. A vertical table's caption needs the
+        // grid's height as well, so that one is laid out after the rows.
+        let mut early_caption = if vertical_writing {
+            None
+        } else {
+            layout_table_caption(doc, table_idx, final_width, inputs.parent_size.height)
+        };
+        // A flex or grid parent assigns the table the height of the whole
+        // wrapper box, caption included, and the grid box takes what is left of
+        // it. This does not hold for an authored height, which sizes the grid
+        // box alone (the wrapper is that much and the caption).
+        let assigned_grid_height = effective_known
+            .height
+            .filter(|_| {
+                parent_assigns_wrapper_height && !vertical_writing && specified_height.is_none()
+            })
+            .map(|wrapper_height| {
+                grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
+            });
+
         // Row heights
         let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
         let mut row_heights = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
@@ -1007,8 +1162,8 @@ fn compute_table_layout_checked(
         // impose a definite height on a single-row table without doing so; keep
         // that free space in the wrapper rather than manufacturing a cell
         // fragment in that case.
-        let known_target = effective_known
-            .height
+        let known_target = assigned_grid_height
+            .or(effective_known.height)
             .filter(|_| grid.rows.len() > 1 || specified_height.is_some())
             .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
         // Extra min-height grows rows the same way as a definite height;
@@ -1058,92 +1213,25 @@ fn compute_table_layout_checked(
             distribute_extra(&mut row_heights, Some(&hidden_rows), target);
         }
 
-        // Content extents net of collapsed-line overlaps, plus the separated
-        // spacing (one of the two is always zero).
-        let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w + spacing.width;
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
-        // min grows the box; max NEVER shrinks a table below its intrinsic
-        // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
-        // min-max-size-table-content-box and max-height-table check that
-        // max-height/max-width leave sub-intrinsic tables at natural size —
-        // only min-* grow). min still wins over max on direct conflict.
-        let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
-            let mut x = v;
-            if let Some(mn) = mn {
-                x = f32_max_compat(x, mn);
-            }
-            if let Some(mx) = mx
-                && !(mn.is_some_and(|mn| mn > mx))
-                && mx >= v
-            {
-                x = x.min(mx);
-            }
-            x
-        };
-        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
-        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
-        // width keeps the fill basis.
-        let table_width_basis = if abspos_table && specified_width.is_none() {
-            // An auto-width absolutely positioned table uses the containing block's
-            // available width for this table-layout path.  Taffy's shrink-to-fit
-            // probe may report the intrinsic cell width as `known_dimensions.width`,
-            // but CSS Tables 3 caps the available size at (and in this case fills)
-            // the containing block; retaining the probe would leave a narrow strip
-            // missing from the table background.
-            inputs.parent_size.width.or(effective_known.width)
-        } else if parent_is_flex_or_grid {
-            // Flex/grid supplies a used item width even when the table's own
-            // width is auto. Keep that width instead of shrink-wrapping again.
-            effective_known.width
-        } else {
-            match specified_width {
-                Some(_) => effective_known.width,
-                None => None,
-            }
-        };
         // Vertical tables stack each column's inline track along the physical
         // height, so the physical spacing applies across that stack: the
         // vertical gap between and around the stacked tracks, the horizontal gap
         // on both sides of the single physical column.
         let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
             + border_spacing.1 * (grid.n_cols as f32 + 1.0);
-        let vertical_content_width =
-            column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
-        // CSS 2.1 §17.5.2: the used table width is at least the columns plus
-        // the spacing and borders, even when the specified width is smaller.
-        let min_table_width = content_width + padding_border_size.width;
         let final_size = Size {
-            width: if vertical_writing {
-                effective_known
-                    .width
-                    .unwrap_or(vertical_content_width + padding_border_size.width)
-            } else {
-                table_width_basis
-                    .map(|w| {
-                        let width = apply_wrapper_width_bounds(w, wrapper_minimum, wrapper_maximum);
-                        clamp_min_max(
-                            f32_max_compat(width, min_table_width),
-                            min_w_outer,
-                            max_w_outer,
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        clamp_min_max(
-                            f32_max_compat(
-                                apply_wrapper_width_bounds(
-                                    content_width + padding_border_size.width,
-                                    wrapper_minimum,
-                                    wrapper_maximum,
-                                ),
-                                min_table_width,
-                            ),
-                            min_w_outer,
-                            max_w_outer,
-                        )
-                    })
-            },
+            width: final_width,
             height: if vertical_writing {
                 vertical_content_height + padding_border_size.height
+            } else if let Some(assigned) = assigned_grid_height {
+                // The assigned height is outer already, and the table still
+                // holds its rows (as with an authored height below).
+                clamp_min_max(
+                    f32_max_compat(assigned, content_height + padding_border_size.height),
+                    min_h_outer,
+                    max_h_outer,
+                )
             } else {
                 effective_known
                     .height
@@ -1170,18 +1258,14 @@ fn compute_table_layout_checked(
             },
         };
 
-        let (caption_size, mut caption_candidates) = layout_table_caption(
-            doc,
-            table_idx,
-            final_size.width,
-            if vertical_writing {
-                Some(final_size.height)
-            } else {
-                inputs.parent_size.height
-            },
-        )
-        .map(|(size, candidates)| (Some(size), candidates))
-        .unwrap_or_else(|| (None, OofCandidates::new()));
+        let caption_layout = if vertical_writing {
+            layout_table_caption(doc, table_idx, final_size.width, Some(final_size.height))
+        } else {
+            early_caption.take()
+        };
+        let (caption_size, mut caption_candidates) = caption_layout
+            .map(|(size, candidates)| (Some(size), candidates))
+            .unwrap_or_else(|| (None, OofCandidates::new()));
         let (wrapper_size, grid_origin) =
             position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
         translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
