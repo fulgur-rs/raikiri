@@ -20,11 +20,15 @@ use raikiri_traits::{
 };
 use url::Url;
 
+use super::InlineImageLease;
 use super::{
     CachedBackgroundSource, MAX_BACKGROUND_IMAGE_ATTEMPTS, RenderResources, SharedRenderWarnings,
     push_resource_warning,
 };
 use crate::fetch::{resolve_url, url_without_fragment};
+
+mod pending;
+use pending::{DataFlight, PendingData};
 
 /// The `<image>` pictures of SVG documents, taken from a [`RenderResources`].
 ///
@@ -42,6 +46,12 @@ use crate::fetch::{resolve_url, url_without_fragment};
 /// [`Self::abort_signal`].
 ///
 /// Create one for each document with [`RenderResources::svg_images`].
+/// Data-picture keys, metadata and decoded pixels share the resource set's
+/// 128 MiB image cache budget and the 256 MiB process budget. New pictures
+/// that cannot fit are skipped with a warning; existing memo hits remain
+/// available. Dropping this source releases its reservations, even when a
+/// caller keeps a returned image alive outside the cache.
+/// Concurrent requests for the same checked data picture share its outcome.
 pub struct RenderSvgImages<'r, 'a> {
     resources: &'r RenderResources<'a>,
     base_url: Option<Url>,
@@ -70,9 +80,40 @@ struct DataPicture {
     mime: String,
     bytes: Vec<u8>,
     image: Option<Arc<DecodedImage>>,
+    pending: Option<Arc<DataFlight>>,
+    // Drop owned keys and pixels before returning their cache reservation.
+    _pixels_lease: Option<InlineImageLease>,
+    _lease: InlineImageLease,
+}
+
+// A conservative accounting policy covers initial Vec capacity, later spare
+// slots, and the temporary flight's Arc allocation. This is not a claim about
+// the standard library's growth policy or allocator overhead.
+const DATA_ENTRY_METADATA_BYTES: u64 = (4 * std::mem::size_of::<DataPicture>()
+    + std::mem::size_of::<DataFlight>()
+    + 2 * std::mem::size_of::<usize>()) as u64;
+
+enum DataLookup {
+    Ready(Option<Arc<DecodedImage>>),
+    Pending(Arc<DataFlight>),
+}
+
+impl DataLookup {
+    fn resolve(self) -> Option<Arc<DecodedImage>> {
+        match self {
+            Self::Ready(image) => image,
+            Self::Pending(flight) => flight.wait(),
+        }
+    }
 }
 
 impl DataPicture {
+    fn lookup(&self) -> DataLookup {
+        match &self.pending {
+            Some(flight) => DataLookup::Pending(Arc::clone(flight)),
+            None => DataLookup::Ready(self.image.clone()),
+        }
+    }
     fn matches(&self, mime: &str, bytes: &[u8]) -> bool {
         if self.bytes.len() != bytes.len() || self.mime != mime {
             return false;
@@ -111,14 +152,25 @@ impl State {
         self.data_hash.hash_one((mime, bytes))
     }
 
-    fn remember_data(&mut self, mime: &str, bytes: &[u8], image: Option<Arc<DecodedImage>>) {
+    fn remember_data(
+        &mut self,
+        mime: &str,
+        bytes: &[u8],
+        image: Option<Arc<DecodedImage>>,
+        lease: InlineImageLease,
+    ) -> usize {
+        let index = self.data.len();
         let fingerprint = self.fingerprint(mime, bytes);
         self.data.push(DataPicture {
             fingerprint,
             mime: mime.to_owned(),
             bytes: bytes.to_vec(),
             image,
+            pending: None,
+            _pixels_lease: None,
+            _lease: lease,
         });
+        index
     }
 }
 
@@ -200,7 +252,38 @@ impl RenderSvgImages<'_, '_> {
 
     /// The picture inside a `data:` URL, after the checks that the page makes
     /// of every inline image and of its decoded size.
-    fn decode_data(&self, mime: &str, bytes: &[u8]) -> Option<Arc<DecodedImage>> {
+    fn data_with(
+        &self,
+        mime: &str,
+        bytes: &[u8],
+        decode: impl FnOnce(&Url, Instant, u64) -> Result<Arc<DecodedImage>, Box<RenderWarning>>,
+    ) -> Option<Arc<DecodedImage>> {
+        {
+            let mut state = self.state();
+            if let Some(known) = state.cached_data(mime, bytes) {
+                let found = known.lookup();
+                drop(state);
+                return found.resolve();
+            }
+            if state.attempts >= MAX_BACKGROUND_IMAGE_ATTEMPTS {
+                if state.attempts == MAX_BACKGROUND_IMAGE_ATTEMPTS {
+                    state.attempts += 1;
+                    self.warn(
+                        WarningKind::ResourceLimitExceeded {
+                            kind: ResourceKind::Image,
+                            limit: MAX_BACKGROUND_IMAGE_ATTEMPTS as u64,
+                            actual: MAX_BACKGROUND_IMAGE_ATTEMPTS as u64 + 1,
+                        },
+                        "SVG image request limit was reached",
+                    );
+                }
+                return None;
+            }
+            state.attempts += 1;
+        }
+        if self.signal.as_ref().is_some_and(AbortSignal::is_aborted) {
+            return None;
+        }
         let resources = self.resources;
         let warnings = SharedRenderWarnings::default();
         let stub = Url::parse("data:,").expect("an empty data URL is valid");
@@ -208,19 +291,56 @@ impl RenderSvgImages<'_, '_> {
         let checked = resources
             .check_inline_image_url(&stub, &warnings)
             .and_then(|()| resources.check_inline_image_size(actual, &warnings))
-            .and_then(|()| resources.check_inline_image_mime(&stub, mime, &warnings))
-            .and_then(|()| resources.charge_inline_image_budget(actual, &warnings));
+            .and_then(|()| resources.check_inline_image_mime(&stub, mime, &warnings));
         if checked.is_none() {
             self.keep(&warnings);
             return None;
         }
+        let (index, flight) = {
+            let mut state = self.state();
+            // Policy callbacks ran without State held. Another request may
+            // have registered or completed this key while they ran.
+            if let Some(known) = state.cached_data(mime, bytes) {
+                let found = known.lookup();
+                drop(state);
+                return found.resolve();
+            }
+            let key_bytes = DATA_ENTRY_METADATA_BYTES
+                .saturating_add(mime.len() as u64)
+                .saturating_add(bytes.len() as u64);
+            let lease = match InlineImageLease::new(&resources.image_cache, key_bytes) {
+                Ok(lease) => lease,
+                Err((limit, actual)) => {
+                    drop(state);
+                    self.memo_limit_warning(limit, actual);
+                    return None;
+                }
+            };
+            // This counter update calls no policy/provider code. Holding State
+            // through the charge and append gives one owner for the key.
+            if resources
+                .charge_inline_image_budget(actual, &warnings)
+                .is_none()
+            {
+                drop(state);
+                drop(lease);
+                self.keep(&warnings);
+                return None;
+            }
+            let flight = Arc::new(DataFlight::new());
+            let index = state.remember_data(mime, bytes, None, lease);
+            state.data[index].pending = Some(Arc::clone(&flight));
+            (index, flight)
+        };
+        // The owner guard outlives every State/cache guard, including on unwind.
+        let pending = PendingData::new(self, index, flight);
         let start = Instant::now();
-        let _permit = resources.acquire_decode_permit();
+        let permit = resources.acquire_decode_permit();
         let output_limit = resources
             .image_policy_limit()
             .unwrap_or(u64::MAX)
-            .min(resources.image_cache_effective_remaining(&stub));
-        let image = match resources.decode_raster_image(&stub, bytes, start, output_limit) {
+            .min(resources.inline_image_remaining());
+        let image = match decode(&stub, start, output_limit) {
             Ok(image) => Some(image),
             Err(warning) => {
                 push_resource_warning(&warnings, *warning);
@@ -228,9 +348,52 @@ impl RenderSvgImages<'_, '_> {
             }
         };
         self.keep(&warnings);
-        // The budget has been charged: remember the outcome, so that a second
-        // scene with the same picture neither charges nor decodes again.
-        self.state().remember_data(mime, bytes, image.clone());
+        pending.finish(image, permit)
+    }
+
+    fn memo_limit_warning(&self, limit: u64, actual: u64) {
+        self.warn(
+            WarningKind::ResourceLimitExceeded {
+                kind: ResourceKind::Image,
+                limit,
+                actual,
+            },
+            "SVG data image memo exceeded its cache byte limit",
+        );
+    }
+
+    /// Reserves only fresh decoder output. Memo hits and caller clones reuse
+    /// the original reservation, without charging the same pixels again.
+    fn reserve_data_pixels(
+        &self,
+        image: Option<Arc<DecodedImage>>,
+    ) -> (Option<Arc<DecodedImage>>, Option<InlineImageLease>) {
+        let Some(image) = image else {
+            return (None, None);
+        };
+        match InlineImageLease::new(&self.resources.image_cache, image.rgba.len() as u64) {
+            Ok(lease) => (Some(image), Some(lease)),
+            Err((limit, actual)) => {
+                drop(image);
+                self.memo_limit_warning(limit, actual);
+                (None, None)
+            }
+        }
+    }
+
+    /// Publishes already-reserved pixels without holding a decode permit.
+    /// Failed decodes keep the checked key, so they are not charged again.
+    fn complete_data(
+        &self,
+        index: usize,
+        image: Option<Arc<DecodedImage>>,
+        pixels: Option<InlineImageLease>,
+    ) -> Option<Arc<DecodedImage>> {
+        let mut state = self.state();
+        let entry = &mut state.data[index];
+        entry.image = image.clone();
+        entry._pixels_lease = pixels;
+        entry.pending = None;
         image
     }
 }
@@ -265,31 +428,9 @@ impl SvgImageSource for RenderSvgImages<'_, '_> {
     }
 
     fn data(&self, mime: &str, bytes: &[u8]) -> Option<Arc<DecodedImage>> {
-        {
-            let mut state = self.state();
-            if let Some(known) = state.cached_data(mime, bytes) {
-                return known.image.clone();
-            }
-            if state.attempts >= MAX_BACKGROUND_IMAGE_ATTEMPTS {
-                if state.attempts == MAX_BACKGROUND_IMAGE_ATTEMPTS {
-                    state.attempts += 1;
-                    self.warn(
-                        WarningKind::ResourceLimitExceeded {
-                            kind: ResourceKind::Image,
-                            limit: MAX_BACKGROUND_IMAGE_ATTEMPTS as u64,
-                            actual: MAX_BACKGROUND_IMAGE_ATTEMPTS as u64 + 1,
-                        },
-                        "SVG image request limit was reached",
-                    );
-                }
-                return None;
-            }
-            state.attempts += 1;
-        }
-        if self.signal.as_ref().is_some_and(AbortSignal::is_aborted) {
-            return None;
-        }
-        self.decode_data(mime, bytes)
+        self.data_with(mime, bytes, |url, start, limit| {
+            self.resources.decode_raster_image(url, bytes, start, limit)
+        })
     }
 }
 
