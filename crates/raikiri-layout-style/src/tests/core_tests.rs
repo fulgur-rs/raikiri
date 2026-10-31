@@ -131,6 +131,20 @@ fn all_flex_and_alignment_keywords_have_explicit_results() {
             ContentAlignmentValue::FlexEnd,
             values::AlignContent::FLEX_END,
         ),
+        (
+            ContentAlignmentValue::Safe(ContentPosition::Center),
+            values::AlignContent {
+                safety: values::AlignmentSafety::Safe,
+                ..values::AlignContent::CENTER
+            },
+        ),
+        (
+            ContentAlignmentValue::Unsafe(ContentPosition::FlexEnd),
+            values::AlignContent {
+                safety: values::AlignmentSafety::Unsafe,
+                ..values::AlignContent::FLEX_END
+            },
+        ),
     ] {
         let mut cv = ComputedValues::initial();
         cv.align_content = input;

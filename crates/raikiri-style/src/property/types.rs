@@ -3934,13 +3934,16 @@ pub struct FlexFlow {
 /// `AlignItemsKeyword`/`AlignContentKeyword` types, but applies the same
 /// principle: share a type when the grammars are effectively identical.
 ///
+/// A `<content-position>` written with `safe` or `unsafe` is
+/// [`Self::Safe`] or [`Self::Unsafe`] around the same position (CSS Box
+/// Alignment 3 §4.4 `<overflow-position>`), and one written without either
+/// keyword is one of the plain variants. The computed value keeps the keywords
+/// as written, so `safe center` stays apart from `center`. Only a position takes
+/// an `<overflow-position>`: `safe space-between`, `safe stretch` and
+/// `safe normal` are invalid.
+///
 /// # Scope carving
 ///
-/// - **(b) unsupported**: `<overflow-position>` (`safe`/`unsafe` prefixes, §4.4)
-///   is not implemented. The parser does not accept these prefixes and drops
-///   the entire prefixed declaration (a two-token sequence such as `safe center`
-///   naturally produces `None` because it does not match the single keyword
-///   expected by `parse_content_alignment`).
 /// - **(b) unsupported**: `<baseline-position>` (optional `first`/`last` plus
 ///   `baseline`, a grammar branch only for `align-content`) is not implemented.
 ///   Taffy 0.12's `AlignContent`/`JustifyContent` (both based on
@@ -3950,7 +3953,7 @@ pub struct FlexFlow {
 ///   `left`/`right` extension (`<content-position> | left | right`, keywords
 ///   relative to writing mode) is not implemented; taffy has no matching variant.
 ///
-/// Following this crate's rule against inventing values, all three cases
+/// Following this crate's rule against inventing values, both cases
 /// **silently drop** the entire declaration on parse failure.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3982,20 +3985,98 @@ pub enum ContentAlignmentValue {
     FlexStart,
     /// `flex-end` — `<content-position>`.
     FlexEnd,
+    /// `safe <content-position>`: when the content overflows the alignment
+    /// container, it is aligned to `start` instead of the position, so that
+    /// nothing is lost beyond the start edge (CSS Box Alignment 3 §4.4,
+    /// "Overflow Alignment").
+    Safe(ContentPosition),
+    /// `unsafe <content-position>`: the content is aligned as asked whatever it
+    /// overflows.
+    Unsafe(ContentPosition),
 }
 
-css_keywords!(ContentAlignmentValue {
-    Normal => "normal",
-    Stretch => "stretch",
-    SpaceBetween => "space-between",
-    SpaceEvenly => "space-evenly",
-    SpaceAround => "space-around",
+impl ContentAlignmentValue {
+    /// This value's own keyword spelling, with the `<overflow-position>` keyword
+    /// in front of a position that has one.
+    pub const fn as_css_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Stretch => "stretch",
+            Self::SpaceBetween => "space-between",
+            Self::SpaceEvenly => "space-evenly",
+            Self::SpaceAround => "space-around",
+            Self::Center => ContentPosition::Center.as_css_str(),
+            Self::Start => ContentPosition::Start.as_css_str(),
+            Self::End => ContentPosition::End.as_css_str(),
+            Self::FlexStart => ContentPosition::FlexStart.as_css_str(),
+            Self::FlexEnd => ContentPosition::FlexEnd.as_css_str(),
+            Self::Safe(ContentPosition::Center) => "safe center",
+            Self::Safe(ContentPosition::Start) => "safe start",
+            Self::Safe(ContentPosition::End) => "safe end",
+            Self::Safe(ContentPosition::FlexStart) => "safe flex-start",
+            Self::Safe(ContentPosition::FlexEnd) => "safe flex-end",
+            Self::Unsafe(ContentPosition::Center) => "unsafe center",
+            Self::Unsafe(ContentPosition::Start) => "unsafe start",
+            Self::Unsafe(ContentPosition::End) => "unsafe end",
+            Self::Unsafe(ContentPosition::FlexStart) => "unsafe flex-start",
+            Self::Unsafe(ContentPosition::FlexEnd) => "unsafe flex-end",
+        }
+    }
+
+    /// Parses one keyword that is not qualified by an `<overflow-position>`,
+    /// ASCII case-insensitively.
+    pub(crate) fn from_css_ident(ident: &str) -> Option<Self> {
+        cssparser::match_ignore_ascii_case! { ident,
+            "normal" => Some(Self::Normal),
+            "stretch" => Some(Self::Stretch),
+            "space-between" => Some(Self::SpaceBetween),
+            "space-evenly" => Some(Self::SpaceEvenly),
+            "space-around" => Some(Self::SpaceAround),
+            _ => ContentPosition::from_css_ident(ident).map(ContentPosition::alignment),
+        }
+    }
+}
+
+/// A `<content-position>` keyword (CSS Box Alignment 3 §4.1
+/// <https://www.w3.org/TR/css-align-3/#typedef-content-position>), the position
+/// that an `<overflow-position>` prefix qualifies in [`ContentAlignmentValue`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentPosition {
+    /// `center`.
+    Center,
+    /// `start`.
+    Start,
+    /// `end`.
+    End,
+    /// `flex-start`.
+    FlexStart,
+    /// `flex-end`.
+    FlexEnd,
+}
+
+css_keywords!(ContentPosition {
     Center => "center",
     Start => "start",
     End => "end",
     FlexStart => "flex-start",
     FlexEnd => "flex-end",
 });
+
+impl ContentPosition {
+    /// The alignment that is just this position, with no `<overflow-position>`
+    /// keyword before it.
+    #[must_use]
+    pub fn alignment(self) -> ContentAlignmentValue {
+        match self {
+            Self::Center => ContentAlignmentValue::Center,
+            Self::Start => ContentAlignmentValue::Start,
+            Self::End => ContentAlignmentValue::End,
+            Self::FlexStart => ContentAlignmentValue::FlexStart,
+            Self::FlexEnd => ContentAlignmentValue::FlexEnd,
+        }
+    }
+}
 
 /// A `<self-position>` keyword (CSS Box Alignment 3 §4.1
 /// <https://www.w3.org/TR/css-align-3/#typedef-self-position>), the position
