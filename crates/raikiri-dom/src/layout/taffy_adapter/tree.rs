@@ -10,7 +10,7 @@ use super::GridInfo;
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::TaffyChildIter;
-use crate::layout::protocol::{LayoutInput, NodeId};
+use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
 use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::TaffyStyle;
@@ -77,11 +77,9 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
-        LayoutSession::set_unrounded_layout(
-            self,
-            NodeId::from_taffy(node_id),
-            &BoxLayout::from_taffy(*layout),
-        );
+        let node = NodeId::from_taffy(node_id);
+        LayoutSession::set_unrounded_layout(self, node, &BoxLayout::from_taffy(*layout));
+        self.install_root_static_position_overrides(node);
     }
 
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
@@ -93,12 +91,19 @@ impl LayoutPartialTree for LayoutSession<'_> {
         node_id: taffy::NodeId,
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
-        LayoutSession::compute_child_layout(
-            self,
-            NodeId::from_taffy(node_id),
-            LayoutInput::from_taffy(inputs),
-        )
-        .into_taffy()
+        let node = NodeId::from_taffy(node_id);
+        let inputs = LayoutInput::from_taffy(inputs);
+        let output = LayoutSession::compute_child_layout(self, node, inputs);
+        if inputs.run_mode == RunMode::PerformLayout
+            && let Some(capture) = self
+                .context
+                .root_oof_capture
+                .as_mut()
+                .filter(|capture| capture.root == node)
+        {
+            capture.candidates = output.oof_candidates.clone();
+        }
+        output.into_taffy()
     }
 }
 
@@ -194,9 +199,11 @@ impl LayoutContainingBlock for LayoutSession<'_> {
     }
 
     fn add_hoisted_children(&mut self, node: taffy::NodeId, children: &[taffy::NodeId]) {
+        let node = NodeId::from_taffy(node);
+        self.remove_root_static_position_overrides(node);
         LayoutSession::add_hoisted_children(
             self,
-            NodeId::from_taffy(node),
+            node,
             children.iter().copied().map(NodeId::from_taffy),
         );
     }

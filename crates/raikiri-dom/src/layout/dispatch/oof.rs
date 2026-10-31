@@ -6,7 +6,7 @@
 
 use super::grid_oof;
 use crate::document::OofCoordinate;
-use crate::layout::context::LayoutSession;
+use crate::layout::context::{LayoutSession, RootOofCapture};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutOutput, NodeId, OofCandidate,
     OofCandidates, OofLayoutResult, OofPosition, OofPositioningArea, StaticAlignSafety,
@@ -153,7 +153,17 @@ fn layout_candidates_of(
     area: OofPositioningArea,
     grid: Option<grid_oof::GridAxes>,
 ) -> OofLayoutResult {
-    let batch = OofBatch::collect(candidates.map(|mut candidate| {
+    let batch = oof_batch(tree, candidates);
+    let style = tree.query_style(usize::from(node), ReadRole::CoreContainer);
+    let direction = style.direction();
+    let claims = style.is_containing_block();
+    layout_candidates(tree, node, &batch, area, direction, claims, grid)
+}
+
+/// The `candidates` as a batch, a box that is fixed by its style or by its
+/// containing block counting as fixed.
+fn oof_batch(tree: &LayoutSession<'_>, candidates: impl Iterator<Item = OofCandidate>) -> OofBatch {
+    OofBatch::collect(candidates.map(|mut candidate| {
         let node = usize::from(candidate.node);
         let css_is_fixed =
             tree.nodes[node].position() == &raikiri_style::property::PositionValue::Fixed;
@@ -161,16 +171,22 @@ fn layout_candidates_of(
             candidate.position = OofPosition::Fixed;
         }
         candidate
-    }));
-    let style = tree.query_style(usize::from(node), ReadRole::CoreContainer);
-    let direction = style.direction();
-    let claims = style.is_containing_block();
-    layout_candidates(tree, node, &batch, area, direction, claims, grid)
+    }))
 }
 
 /// Compute the root layout while resolving intrinsic constraints on the
 /// fixed and otherwise unclaimed out-of-flow boxes against the initial
 /// containing block.
+///
+/// The library positions those boxes in a pass of its own once the root is laid
+/// out, so the overrides a box that `stretch` sizes from its static position
+/// needs (see [`static_position_overrides`]) are in place for that pass alone:
+/// [`LayoutSession::install_root_static_position_overrides`] pushes them as the
+/// root layout is stored, and
+/// [`LayoutSession::remove_root_static_position_overrides`] pops them when the
+/// library records the boxes it positioned. The scope here restores whatever
+/// is left, which is all of them when the library reads the root from its
+/// cache and records nothing.
 pub(crate) fn compute_root_layout_with_content_limits(
     tree: &mut LayoutSession<'_>,
     root: NodeId,
@@ -179,9 +195,108 @@ pub(crate) fn compute_root_layout_with_content_limits(
     // The initial containing block takes the writing mode of the root element.
     with_oof_axes(tree, root, |tree| {
         super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
-            compute_root_layout(tree, root, available_space);
+            tree.context.root_oof_capture = Some(RootOofCapture {
+                root,
+                available_space,
+                candidates: OofCandidates::new(),
+                checkpoint: None,
+            });
+            tree.with_overrides(Vec::new(), |tree| {
+                compute_root_layout(tree, root, available_space);
+            });
+            tree.context.root_oof_capture = None;
         });
     });
+}
+
+impl LayoutSession<'_> {
+    /// Push the overrides that give the out-of-flow boxes the library is about
+    /// to position against the initial containing block their static
+    /// positions, when `root` is the root whose candidates are being recorded.
+    ///
+    /// The library lays the root out, stores its layout, and only then positions
+    /// the boxes it handed back, so this runs once its layout is stored.
+    pub(crate) fn install_root_static_position_overrides(&mut self, root: NodeId) {
+        let Some(capture) = self
+            .context
+            .root_oof_capture
+            .as_ref()
+            .filter(|capture| capture.root == root && capture.checkpoint.is_none())
+        else {
+            return;
+        };
+        let overrides = root_static_position_overrides(
+            self,
+            root,
+            &capture.candidates,
+            capture.available_space,
+        );
+        let checkpoint = self.override_checkpoint();
+        self.push_overrides(overrides);
+        if let Some(capture) = self.context.root_oof_capture.as_mut() {
+            capture.checkpoint = Some(checkpoint);
+        }
+    }
+
+    /// Pop the overrides [`LayoutSession::install_root_static_position_overrides`]
+    /// pushed, when `root` is the root they were pushed for.
+    ///
+    /// The library records the boxes it positioned right after the pass, and
+    /// what it records of a box, whether its static position moves it with
+    /// its parent, is read from the style the author gave it.
+    pub(crate) fn remove_root_static_position_overrides(&mut self, root: NodeId) {
+        let checkpoint = self
+            .context
+            .root_oof_capture
+            .as_mut()
+            .filter(|capture| capture.root == root)
+            .and_then(|capture| capture.checkpoint.take());
+        if let Some(checkpoint) = checkpoint {
+            self.restore_overrides_to(checkpoint);
+        }
+    }
+}
+
+/// [`static_position_overrides`] for the `handed` candidates that the root
+/// positions against the initial containing block: the page area, the available
+/// space less the scrollbars of the root, anchored at the origin of the canvas
+/// as the library anchors it. The page area is definite in both axes.
+fn root_static_position_overrides(
+    tree: &LayoutSession<'_>,
+    root: NodeId,
+    handed: &OofCandidates,
+    available_space: Size<AvailableSpace>,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    if handed.is_empty() {
+        return Vec::new();
+    }
+    let layout = tree.nodes[usize::from(root)].layout;
+    let area = available_space
+        .width
+        .into_option()
+        .zip(available_space.height.into_option())
+        .map(|(width, height)| OofPositioningArea {
+            size: Size {
+                width: (width - layout.scrollbar_size.width).max(0.0),
+                height: (height - layout.scrollbar_size.height).max(0.0),
+            },
+            offset: Point {
+                x: -layout.location.x,
+                y: -layout.location.y,
+            },
+        });
+    area.map_or_else(Vec::new, |area| {
+        static_position_overrides(
+            tree,
+            root,
+            &oof_batch(tree, handed.iter()),
+            area,
+            ContainingBlockClaims {
+                absolute: true,
+                fixed: true,
+            },
+        )
+    })
 }
 
 /// Run `layout` with the boxes it positions aligned on the axes of `container`,
