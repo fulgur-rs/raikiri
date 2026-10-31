@@ -71,6 +71,10 @@ pub(crate) struct LayoutContext {
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
+    /// The root whose out-of-flow candidates are being recorded, and the
+    /// candidates it hands to the library's positioning pass for the initial
+    /// containing block (see `compute_root_layout_with_content_limits`).
+    pub(crate) root_oof_capture: Option<RootOofCapture>,
     /// The block extent each vertical paragraph root with an auto block size
     /// settled on, by root and inline size (the bits of the physical height).
     /// It is a first guess for the next layout of the same root, and a wrong
@@ -194,6 +198,14 @@ pub(crate) enum TextGroupScope {
 pub(crate) struct NodeLayoutState {
     pub(crate) box_key: BoxKey,
     pub(crate) taffy_child_walks: Option<Vec<protocol::NodeId>>,
+}
+
+/// The out-of-flow candidates that no box claimed, as the root handed them to
+/// the library's positioning pass for the initial containing block.
+#[derive(Debug)]
+pub(crate) struct RootOofCapture {
+    pub(crate) root: protocol::NodeId,
+    pub(crate) candidates: protocol::OofCandidates,
 }
 
 pub(crate) struct LayoutSession<'doc> {
