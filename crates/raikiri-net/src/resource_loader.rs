@@ -160,12 +160,86 @@ pub(crate) struct ImageSource {
     pub(crate) intrinsic: ImageIntrinsicSize,
     /// SVG rasters by paint size, least recently used first.
     raster_cache: Mutex<Vec<(ImageRasterSize, Arc<DecodedImage>)>>,
-    /// SVG scenes by box size, least recently used first.
-    scene_cache: Mutex<Vec<(ImageRasterSize, Arc<VectorImage>)>>,
+    /// SVG scenes by box size, with retained entries in LRU order and
+    /// temporary slots shared by requests whose scene is still being built.
+    scene_cache: Mutex<SceneCache>,
     /// Set once the scene builder has sent the document to the raster path,
     /// so no other box asks for a scene again.
     raster_only: AtomicBool,
     budget: Arc<Mutex<CacheBudget>>,
+}
+
+#[derive(Default)]
+struct SceneCache {
+    cached: Vec<(ImageRasterSize, Arc<VectorImage>)>,
+    loading: Vec<(ImageRasterSize, Arc<SceneFlight>)>,
+}
+
+enum SceneOutcome {
+    Pending,
+    Complete(Option<Arc<VectorImage>>),
+}
+
+struct SceneFlight {
+    outcome: Mutex<SceneOutcome>,
+    changed: Condvar,
+}
+
+impl SceneFlight {
+    fn new() -> Self {
+        Self {
+            outcome: Mutex::new(SceneOutcome::Pending),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) -> Option<Arc<VectorImage>> {
+        let mut outcome = self.outcome.lock().ok()?;
+        loop {
+            match &*outcome {
+                SceneOutcome::Complete(scene) => return scene.clone(),
+                SceneOutcome::Pending => outcome = self.changed.wait(outcome).ok()?,
+            }
+        }
+    }
+}
+
+/// An owner completes its flight even when construction fails or unwinds.
+/// Created after releasing the cache lock, so cleanup never locks it twice.
+struct PendingScene<'a> {
+    cache: &'a Mutex<SceneCache>,
+    flight: Arc<SceneFlight>,
+    active: bool,
+}
+
+impl PendingScene<'_> {
+    fn complete(&mut self, scene: Option<Arc<VectorImage>>) {
+        // Normal accesses fail closed on poison. Cleanup must still release
+        // waiters and remove this flight, without clearing the poison flag.
+        let mut cache = self.cache.lock().unwrap_or_else(|error| error.into_inner());
+        let mut outcome = self
+            .flight
+            .outcome
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *outcome = SceneOutcome::Complete(scene);
+        // Size equality cannot identify a flight containing NaN dimensions.
+        cache
+            .loading
+            .retain(|(_, flight)| !Arc::ptr_eq(flight, &self.flight));
+        self.active = false;
+        drop(outcome);
+        drop(cache);
+        self.flight.changed.notify_all();
+    }
+}
+
+impl Drop for PendingScene<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.complete(None);
+        }
+    }
 }
 
 enum ImageSourceKind {
@@ -185,7 +259,7 @@ impl ImageSource {
                 (height > 0.0).then_some(width / height),
             ),
             raster_cache: Mutex::new(Vec::new()),
-            scene_cache: Mutex::new(Vec::new()),
+            scene_cache: Mutex::new(SceneCache::default()),
             raster_only: AtomicBool::new(false),
             budget,
         }
@@ -203,7 +277,7 @@ impl ImageSource {
                 intrinsic.aspect_ratio,
             ),
             raster_cache: Mutex::new(Vec::new()),
-            scene_cache: Mutex::new(Vec::new()),
+            scene_cache: Mutex::new(SceneCache::default()),
             raster_only: AtomicBool::new(false),
             budget,
         }
@@ -218,39 +292,77 @@ impl ImageSource {
     /// pixels next. The document is built with the default style and without
     /// fonts, as its raster is.
     pub(crate) fn scene(&self, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
+        self.scene_with(size, |bytes, size| {
+            let document = SvgDocument::parse(bytes).ok()?;
+            match document.scene(
+                SvgViewport {
+                    width: size.width,
+                    height: size.height,
+                },
+                SvgRootStyle::default(),
+            ) {
+                Ok(scene) => Some(scene),
+                Err(error) => {
+                    if error.falls_back_to_raster() {
+                        self.raster_only.store(true, Ordering::Relaxed);
+                    }
+                    None
+                }
+            }
+        })
+    }
+
+    fn scene_with(
+        &self,
+        size: ImageRasterSize,
+        build: impl FnOnce(&[u8], ImageRasterSize) -> Option<VectorImage>,
+    ) -> Option<Arc<VectorImage>> {
         let ImageSourceKind::Svg(bytes) = &self.kind else {
             return None;
         };
         if self.raster_only.load(Ordering::Relaxed) {
             return None;
         }
-        {
-            let mut cached = self.scene_cache.lock().ok()?;
-            if let Some(index) = cached.iter().position(|(cached, _)| *cached == size) {
-                let entry = cached.remove(index);
-                let scene = entry.1.clone();
-                cached.push(entry);
-                return Some(scene);
-            }
-        }
-        let document = SvgDocument::parse(bytes).ok()?;
-        let scene = match document.scene(
-            SvgViewport {
-                width: size.width,
-                height: size.height,
-            },
-            SvgRootStyle::default(),
-        ) {
-            Ok(scene) => Arc::new(scene),
-            Err(error) => {
-                if error.falls_back_to_raster() {
-                    self.raster_only.store(true, Ordering::Relaxed);
-                }
+        let (flight, owner) = {
+            let mut cache = self.scene_cache.lock().ok()?;
+            if self.raster_only.load(Ordering::Relaxed) {
                 return None;
             }
+            if let Some(index) = cache.cached.iter().position(|(cached, _)| *cached == size) {
+                let entry = cache.cached.remove(index);
+                let scene = entry.1.clone();
+                cache.cached.push(entry);
+                return Some(scene);
+            }
+            if let Some((_, flight)) = cache.loading.iter().find(|(pending, _)| *pending == size) {
+                (flight.clone(), false)
+            } else {
+                let flight = Arc::new(SceneFlight::new());
+                cache.loading.push((size, flight.clone()));
+                (flight, true)
+            }
         };
+        if !owner {
+            return flight.wait();
+        }
+        let mut pending = PendingScene {
+            cache: &self.scene_cache,
+            flight,
+            active: true,
+        };
+        // No cache, slot, or budget mutex is held while parsing or building.
+        let scene = Arc::new(build(bytes, size)?);
+        self.retain_scene(size, &scene)?;
+        pending.complete(Some(scene.clone()));
+        Some(scene)
+    }
+
+    /// Publishes only the retained scene, keeping budget and LRU accounting
+    /// scoped separately from the flight owner's cleanup guard.
+    fn retain_scene(&self, size: ImageRasterSize, scene: &Arc<VectorImage>) -> Option<()> {
         let new_bytes = u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX);
-        let mut cached = self.scene_cache.lock().ok()?;
+        let mut cache = self.scene_cache.lock().ok()?;
+        let cached = &mut cache.cached;
         let mut budget = self.budget.lock().ok()?;
         // Make room for the new scene by dropping the least recently used
         // sizes. A scene that cannot fit even then is returned without being
@@ -260,7 +372,7 @@ impl ImageSource {
             .map(|(_, scene)| u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX))
             .fold(0, u64::saturating_add);
         if new_bytes > budget.remaining().saturating_add(reclaimable) {
-            return Some(scene);
+            return Some(());
         }
         let mut excess = new_bytes.saturating_sub(budget.remaining());
         while !cached.is_empty() && (cached.len() >= MAX_RASTER_SIZES || excess > 0) {
@@ -271,7 +383,7 @@ impl ImageSource {
         }
         budget.used = budget.used.saturating_add(new_bytes);
         cached.push((size, scene.clone()));
-        Some(scene)
+        Some(())
     }
 
     pub(crate) fn rasterize(
