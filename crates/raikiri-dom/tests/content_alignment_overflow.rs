@@ -2,8 +2,10 @@
 //! `align-content` (CSS Box Alignment 3 §4.4). Content that overflows its
 //! alignment container is aligned as asked under `unsafe`, and falls back to
 //! `start` under `safe`. A flex or grid container with neither keyword
-//! overflows on both sides. A `safe` position the content fits in is aligned as
-//! written, and `place-content` sets both longhands.
+//! overflows on both sides, while a block container keeps its content at the
+//! start as `safe` does, whatever its `overflow` and writing mode. A `safe`
+//! position the content fits in is aligned as written, and `place-content` sets
+//! both longhands. The floats of a block container move with its content.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
@@ -168,4 +170,61 @@ cases! {
     flex_place_content_safe_center_overflow:
         r#"<div style="display:flex;place-content:safe center;width:50px;height:20px"><div id=t style="width:80px;height:10px;flex-shrink:0"></div></div>"# =>
         [("t", (8.0, 8.0, 80.0, 10.0))];
+    block_plain_center:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:20px"><div id=t style="height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 50.0, 80.0))];
+    block_plain_end:
+        r#"<div style="margin-top:100px;align-content:end;width:50px;height:20px"><div id=t style="height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 50.0, 80.0))];
+    block_plain_center_overflow_auto:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:20px;overflow:auto"><div id=t style="height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 50.0, 80.0))];
+    block_plain_center_overflow_hidden:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:20px;overflow:hidden"><div id=t style="height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 50.0, 80.0))];
+    block_plain_center_flow_root:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:20px;display:flow-root"><div id=t style="height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 50.0, 80.0))];
+    block_plain_center_fits:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:120px"><div id=t style="height:20px"></div></div>"# =>
+        [("t", (8.0, 150.0, 50.0, 20.0))];
+    block_plain_center_float:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:20px;display:flow-root"><div id=t style="float:left;width:10px;height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 10.0, 80.0))];
+    block_plain_flex_end_overflow:
+        r#"<div style="margin-top:100px;align-content:flex-end;width:50px;height:20px"><div id=t style="height:80px"></div></div>"# =>
+        [("t", (8.0, 100.0, 50.0, 80.0))];
+    block_plain_center_vertical_rl:
+        r#"<div style="margin-top:100px;align-content:center;writing-mode:vertical-rl;width:20px;height:50px"><div id=t style="width:80px"></div></div>"# =>
+        [("t", (-52.0, 100.0, 80.0, 50.0))];
+    block_unsafe_center_vertical_rl:
+        r#"<div style="margin-top:100px;align-content:unsafe center;writing-mode:vertical-rl;width:20px;height:50px"><div id=t style="width:80px"></div></div>"# =>
+        [("t", (-22.0, 100.0, 80.0, 50.0))];
+    block_plain_center_abs_child:
+        r#"<div style="margin-top:100px;align-content:center;width:50px;height:20px;position:relative"><div id=t style="position:absolute;width:10px;height:80px"></div></div>"# =>
+        [("t", (8.0, 110.0, 10.0, 80.0))];
+    block_center_moves_a_float_with_the_content:
+        r#"<div style="display:flow-root;align-content:center;height:100px;width:50px"><div id=f style="float:left;width:10px;height:20px"></div><div id=t style="height:20px"></div></div>"# =>
+        [("f", (8.0, 48.0, 10.0, 20.0)), ("t", (8.0, 48.0, 50.0, 20.0))];
+    block_center_moves_a_float_alone:
+        r#"<div style="display:flow-root;align-content:center;height:100px;width:50px"><div id=t style="float:left;width:10px;height:20px"></div></div>"# =>
+        [("t", (8.0, 48.0, 10.0, 20.0))];
+    block_center_centers_the_taller_float_with_the_content:
+        r#"<div style="display:flow-root;align-content:center;height:100px;width:50px"><div id=t style="float:left;width:10px;height:40px"></div><div style="height:20px"></div></div>"# =>
+        [("t", (8.0, 38.0, 10.0, 40.0))];
+    block_end_moves_a_right_float:
+        r#"<div style="display:flow-root;align-content:end;height:100px;width:50px"><div id=t style="float:right;width:10px;height:20px"></div></div>"# =>
+        [("t", (48.0, 88.0, 10.0, 20.0))];
+    block_unsafe_center_moves_an_overflowing_float:
+        r#"<div style="margin-top:100px;display:flow-root;align-content:unsafe center;height:20px;width:50px"><div id=t style="float:left;width:10px;height:60px"></div></div>"# =>
+        [("t", (8.0, 80.0, 10.0, 60.0))];
+    block_center_moves_floats_of_a_plain_block_and_contains_them:
+        r#"<div style="align-content:center;height:100px;width:50px"><div id=t style="float:left;width:10px;height:40px"></div><div id=n style="height:20px"></div></div><div id=s style="height:10px"></div>"# =>
+        [("t", (8.0, 38.0, 10.0, 40.0)), ("n", (8.0, 38.0, 50.0, 20.0)), ("s", (8.0, 108.0, 784.0, 10.0))];
+    block_center_keeps_a_float_taller_than_the_block_at_the_start:
+        r#"<div style="align-content:center;height:30px;width:50px"><div id=t style="float:left;width:10px;height:40px"></div><div id=n style="height:20px"></div></div><div id=s style="height:10px"></div>"# =>
+        [("t", (8.0, 8.0, 10.0, 40.0)), ("n", (8.0, 8.0, 50.0, 20.0)), ("s", (8.0, 38.0, 784.0, 10.0))];
+    block_unsafe_center_moves_floats_of_a_plain_block_up:
+        r#"<div style="margin-top:100px;align-content:unsafe center;height:30px;width:50px"><div id=t style="float:left;width:10px;height:40px"></div><div id=n style="height:20px"></div></div><div id=s style="height:10px"></div>"# =>
+        [("t", (8.0, 95.0, 10.0, 40.0)), ("n", (8.0, 95.0, 50.0, 20.0)), ("s", (8.0, 130.0, 784.0, 10.0))];
 }
