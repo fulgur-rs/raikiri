@@ -91,6 +91,35 @@ fn scoped_overrides_distinguish_absence_and_last_wins() {
 }
 
 #[test]
+fn a_table_that_owns_its_height_hides_the_vertical_sizes_from_the_library() {
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Px(20.0);
+    cv.height = L::Px(40.0);
+    cv.min_height = L::Px(10.0);
+    cv.max_height = L::Px(50.0);
+    cv.top = L::Px(1.0);
+    cv.bottom = L::Px(3.0);
+    let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+    let plain = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+    assert_eq!(plain.size().height, Dimension::length(40.0));
+    assert_eq!(plain.min_size().height, LengthPercentageAuto::length(10.0));
+    assert_eq!(plain.max_size().height, LengthPercentageAuto::length(50.0));
+    let hidden = plain.with_hidden_table_height();
+    assert_eq!(
+        hidden.size(),
+        Size {
+            width: Dimension::length(20.0),
+            height: Dimension::auto()
+        }
+    );
+    assert_eq!(hidden.min_size().height, LengthPercentageAuto::auto());
+    assert_eq!(hidden.max_size().height, LengthPercentageAuto::auto());
+    // The insets and the width limits are read as ever.
+    assert_eq!(hidden.inset(), plain.inset());
+    assert_eq!(hidden.min_size().width, plain.min_size().width);
+}
+
+#[test]
 fn edge_resolution_is_not_repeated_and_axes_are_projected() {
     let mut cv = ComputedValues::initial();
     cv.width = L::Px(20.0);

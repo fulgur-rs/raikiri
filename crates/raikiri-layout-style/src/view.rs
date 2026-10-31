@@ -22,6 +22,9 @@ pub struct LayoutStyleView<'a> {
     /// Whether an out-of-flow box takes its physical vertical alignment from
     /// `justify-self` and its physical horizontal one from `align-self`.
     pub(crate) swapped_oof_alignment: bool,
+    /// Whether the layout library is told nothing of the height of a table
+    /// that owns it (see [`Self::with_hidden_table_height`]).
+    hidden_table_height: bool,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -59,6 +62,7 @@ impl<'a> LayoutStyleView<'a> {
             scoped: OverrideLayer::Borrowed(scoped),
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
+            hidden_table_height: false,
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -77,6 +81,7 @@ impl<'a> LayoutStyleView<'a> {
             scoped: OverrideLayer::Owned(scoped),
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
+            hidden_table_height: false,
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -103,6 +108,32 @@ impl<'a> LayoutStyleView<'a> {
     pub const fn with_swapped_oof_alignment(mut self) -> Self {
         self.swapped_oof_alignment = true;
         self
+    }
+
+    /// Read an absolutely positioned table as the box the layout library
+    /// positions, which is the whole wrapper box: the grid and its caption.
+    ///
+    /// The `height` of a table is the height of its grid box, and the caption
+    /// sits on top of that (CSS Tables 3 section 3), so the library cannot
+    /// derive the wrapper's height from the `height`, `min-height` or
+    /// `max-height` of the table. The view leaves them out. The library then
+    /// measures the wrapper itself and places it by that height, and the
+    /// table's layout, which still reads its own `height` and limits, sizes the
+    /// grid box inside the wrapper.
+    #[inline]
+    pub const fn with_hidden_table_height(mut self) -> Self {
+        self.hidden_table_height = true;
+        self
+    }
+
+    /// The length of the vertical size `property` as the layout library reads
+    /// it.
+    #[inline]
+    pub(crate) fn library_height(&self, property: LengthProperty) -> LengthValue<'a> {
+        if self.hidden_table_height {
+            return self.with_payload(L::Auto, property);
+        }
+        self.length(property)
     }
 
     /// The query-local context used by diagnostics and role-specific adapters.
