@@ -4978,13 +4978,44 @@ fn follow_moved_ifc_text(
         return; // cov:ignore: the paragraph root of an indexed text carries its line records.
     };
     lines.shifts.push(first.line, delta);
-    let boxes: Vec<usize> = ifc.boxes.iter().map(|b| b.node).collect();
-    for b in boxes {
+    let boxes: Vec<(usize, IfcBoxKind)> = ifc.boxes.iter().map(|b| (b.node, b.kind)).collect();
+    // The root holds the lines that moved, as it does when a line moves.
+    document.table_layout_node_mut(root).layout.size.height += delta;
+    for (b, kind) in boxes {
+        // A float before the text in the source is a page candidate of its
+        // own and was placed in the paginated flow before the text was.
+        if kind == IfcBoxKind::Float && precedes_in_tree(document, b, text) {
+            continue;
+        }
         let location = &mut document.nodes[b].layout.location;
         if location.y >= old_top - 0.01 {
             location.y += delta;
         }
     }
+}
+
+/// Whether `a` comes before `b` in tree order. An ancestor comes before its
+/// descendants.
+fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
+    let a_chain: Vec<usize> = document.inclusive_ancestors(a).collect();
+    let mut b_child = None;
+    for id in document.inclusive_ancestors(b) {
+        if let Some(position) = a_chain.iter().position(|&ancestor| ancestor == id) {
+            let Some(b_child) = b_child else {
+                // `b` is `a` or one of its ancestors.
+                return false;
+            };
+            let Some(a_child) = position.checked_sub(1).map(|index| a_chain[index]) else {
+                // `a` is an ancestor of `b`.
+                return true;
+            };
+            let children = &document.nodes[id].children;
+            let index = |child| children.iter().position(|&c| c == child);
+            return index(a_child) < index(b_child);
+        }
+        b_child = Some(id);
+    }
+    false
 }
 
 /// A block child of a paragraph laid out by the inline engine was moved
