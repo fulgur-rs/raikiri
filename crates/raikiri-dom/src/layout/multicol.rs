@@ -3578,8 +3578,8 @@ pub(crate) struct AncestorFacts {
     /// The node or an ancestor has a `min-content`, `max-content` or
     /// `fit-content` width.
     intrinsic_width: Vec<bool>,
-    /// The node is an inline box that holds a block, whose `width` applies to
-    /// neither of them.
+    /// The node is an inline box, whose `width` applies to neither it nor the
+    /// blocks it holds.
     inline_box: Vec<bool>,
 }
 
@@ -3595,7 +3595,7 @@ impl AncestorFacts {
             containing_width_ancestor: vec![None; count],
             projected_auto_width: vec![false; count],
             intrinsic_width: vec![false; count],
-            inline_box: super::style_views::metadata::inline_boxes_holding_blocks(doc, cascade),
+            inline_box: super::style_views::metadata::inline_boxes(doc, cascade),
         };
         visit_top_down(doc, |parent, id| {
             facts.resolve(doc, cascade, parent, id, fallback_width);

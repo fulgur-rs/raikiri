@@ -53,7 +53,7 @@ fn guarded_style_for(inline: &str) -> raikiri_layout_style::BoxStyle {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let p = doc.append_element(Some(body), "p", Some(inline));
+    let p = doc.append_element(Some(body), "p", Some(format!("display:block;{inline}")));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     bridged_style(&mut doc, &cr, p)
@@ -417,7 +417,7 @@ fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<BoxLayout> {
     let mut parent = body;
     let mut ids = Vec::with_capacity(depth);
     for _ in 0..depth {
-        parent = doc.append_element(Some(parent), "div", Some(decl));
+        parent = doc.append_element(Some(parent), "div", Some(format!("display:block;{decl}")));
         ids.push(parent);
     }
     let rules = build_rule_tree(&doc);

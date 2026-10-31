@@ -50,31 +50,20 @@ pub(super) fn prepare_metadata(
     node_metadata(node, flags)
 }
 
-/// For every node, whether it is an inline box that holds a block: a
-/// non-atomic inline box in a horizontal writing mode that stays inline, with a
-/// block-level box in flow inside it, directly or in inline boxes of its own.
-/// The block splits the box around it (CSS 2.1 section 9.2.1.1). The width,
-/// height, minimum and maximum sizes, vertical margins and vertical padding and
-/// border of such a box do not apply to it, whether it holds text or only the
-/// block (sections 8.3, 10.3.1 and 10.6.1).
+/// For every node, whether it is an inline box: a non-atomic inline box in a
+/// horizontal writing mode that stays inline. The width, height, minimum and
+/// maximum sizes, vertical margins and vertical padding and border of such a
+/// box do not apply to it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1), whatever
+/// it holds: text, a block that splits it (section 9.2.1.1), or nothing.
 ///
-/// One pass over the arena, children before their parents.
-pub(in crate::layout) fn inline_boxes_holding_blocks(
-    doc: &Document,
-    cascade: &CascadeResult,
-) -> Vec<bool> {
-    use super::super::ifc::boxes::IfcBoxKind;
-    use super::super::ifc::projection::box_kind;
-    let mut order = Vec::with_capacity(doc.nodes.len());
-    super::super::multicol::visit_top_down(doc, |_, id| order.push(id));
-    let mut holds = vec![false; doc.nodes.len()];
-    for &id in order.iter().rev() {
-        holds[id] = is_plain_inline_box(doc, cascade, id)
-            && doc.nodes[id].children.iter().any(|&child| {
-                holds[child] || box_kind(cascade, doc, child) == Some(IfcBoxKind::Block)
-            });
-    }
-    holds
+/// An inline box with no content that makes a line is laid out as a block in
+/// the block flow around it, so these values would otherwise size it.
+pub(in crate::layout) fn inline_boxes(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
+    let mut boxes = vec![false; doc.nodes.len()];
+    super::super::multicol::visit_top_down(doc, |_, id| {
+        boxes[id] = is_plain_inline_box(doc, cascade, id);
+    });
+    boxes
 }
 
 /// Whether `idx` is an inline box of a horizontal writing mode that stays
