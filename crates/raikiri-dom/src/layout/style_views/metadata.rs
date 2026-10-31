@@ -84,6 +84,11 @@ pub(in crate::layout) fn node_metadata(
     flags: StyleFlags,
 ) -> StyleMetadata {
     use crate::node::FormattingContext as C;
+    let flags = if node.display() == DisplayValue::TableCell {
+        flags.union(StyleFlags::TABLE_CELL)
+    } else {
+        flags
+    };
     let flags = flags.union(match node.formatting_context {
         C::None => StyleFlags::HIDDEN,
         C::Inline => StyleFlags::IFC,

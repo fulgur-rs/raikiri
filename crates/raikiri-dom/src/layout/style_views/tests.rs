@@ -66,6 +66,29 @@ fn synthetic_recipe_matches_the_default_taffy_style() {
     assert_eq!(view.box_sizing(), expected.box_sizing);
 }
 
+#[test]
+fn a_blockified_table_cell_root_keeps_its_minimum_height() {
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "html",
+        Some("display:table-cell;min-height:1000px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    assert_eq!(
+        session.nodes[root].display(),
+        raikiri_style::property::DisplayValue::Block
+    );
+    assert_eq!(
+        session.style_view(root).min_size().height,
+        raikiri_layout_style::values::LengthPercentageAuto::length(1000.0)
+    );
+}
+
 fn width(value: f32) -> Vec<OwnedPropertyOverride> {
     vec![OwnedPropertyOverride::length(LengthProperty::Width, L::Px(value), false).unwrap()]
 }
