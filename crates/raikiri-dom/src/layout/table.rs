@@ -17,7 +17,8 @@
 //! 3. Batch-layout each row's cells with resolved column widths to determine row heights.
 //! 4. Position each cell at (col-origin, row-origin) and write final layouts —
 //!    `border-collapse: collapse` overlaps adjoining cell boxes by the
-//!    collapsed line width (`compute_collapsed_lines`, CSS 2.1 §17.6.2).
+//!    collapsed line width, and the border of a cell at the edge is the
+//!    table's edge (`compute_collapsed_lines`, CSS 2.1 §17.6.2).
 //!
 //! Scope limits (documented, not silent):
 //! - Fixed layout reads cell widths/minimums from the first row and authored
@@ -4836,8 +4837,9 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, overlap: f32) -> Ve
 /// - `col_overlaps[i]` — width absorbed between column `i` and `i + 1`
 ///   (length `n_cols - 1`; empty for ≤1 column).
 /// - `row_overlaps[j]` — same between row `j` and `j + 1`.
-/// - `outer_*` — collapsed outer border on each side (max of the table's
-///   own border and the edge cells' adjoining borders).
+/// - `outer_*` — the space the table keeps outside the cells on each side:
+///   the width its own border has beyond the narrowest border of the edge
+///   cells, which the box of each of those cells already contains.
 ///
 /// Separate model: all overlaps zero and outers equal the table's own
 /// border widths ([`CollapsedLines::separate`]).
@@ -4856,6 +4858,25 @@ impl CollapsedLines {
     /// outer left and right borders, less the overlaps between columns.
     fn inline_border_width(&self) -> f32 {
         self.outer_left + self.outer_right - self.col_overlaps.iter().sum::<f32>()
+    }
+
+    /// Turn the narrowest border of the cells along each edge, which `outer_*`
+    /// holds (infinite where no cell reaches the edge), into the width the
+    /// table's own border reaches beyond it. The border of an edge cell is
+    /// part of the box of the cell, so the table keeps outside the cells only
+    /// what its own border has beyond theirs; counting both would take the
+    /// border of the cells twice. A cell the table's border wins over has none
+    /// of its own, and the narrowest border is what keeps its content from
+    /// reaching under the table's.
+    fn extend_beyond_edge_cells(&mut self, table_border: &Edges<f32>) {
+        let beyond = |table: f32, cells: f32| {
+            let cells = if cells.is_finite() { cells } else { 0.0 };
+            (table - cells).max(0.0)
+        };
+        self.outer_left = beyond(table_border.left, self.outer_left);
+        self.outer_right = beyond(table_border.right, self.outer_right);
+        self.outer_top = beyond(table_border.top, self.outer_top);
+        self.outer_bottom = beyond(table_border.bottom, self.outer_bottom);
     }
 
     fn separate(table_border: &Edges<f32>) -> Self {
@@ -5463,10 +5484,10 @@ fn compute_collapsed_lines(
         let mut lines = CollapsedLines {
             col_overlaps: vec![0.0; n.saturating_sub(1)],
             row_overlaps: vec![0.0; m.saturating_sub(1)],
-            outer_left: table_border.left,
-            outer_right: table_border.right,
-            outer_top: table_border.top,
-            outer_bottom: table_border.bottom,
+            outer_left: f32::INFINITY,
+            outer_right: f32::INFINITY,
+            outer_top: f32::INFINITY,
+            outer_bottom: f32::INFINITY,
         };
         for segment in &segments.vertical {
             let a = segment.leading;
@@ -5475,11 +5496,11 @@ fn compute_collapsed_lines(
             let right = &grid.cells[b];
             if segment.boundary == 0 {
                 if left.col_start == 0 {
-                    lines.outer_left = f32_max_compat(lines.outer_left, borders[a].left);
+                    lines.outer_left = lines.outer_left.min(borders[a].left);
                 }
             } else if segment.boundary == n {
                 if usize::from(left.col_start + left.col_span) == n {
-                    lines.outer_right = f32_max_compat(lines.outer_right, borders[a].right);
+                    lines.outer_right = lines.outer_right.min(borders[a].right);
                 }
             } else if usize::from(left.col_start + left.col_span) == segment.boundary
                 && usize::from(right.col_start) == segment.boundary
@@ -5502,14 +5523,15 @@ fn compute_collapsed_lines(
         // Keep the original placement order and visibility rules at these edges.
         for (pos, cell) in grid.cells.iter().enumerate() {
             if cell.row == 0 {
-                lines.outer_top = f32_max_compat(lines.outer_top, borders[pos].top);
+                lines.outer_top = lines.outer_top.min(borders[pos].top);
             }
         }
         for (pos, cell) in grid.cells.iter().enumerate() {
             if m > 0 && usize::from(cell.row) + usize::from(cell.row_span) == m {
-                lines.outer_bottom = f32_max_compat(lines.outer_bottom, borders[pos].bottom);
+                lines.outer_bottom = lines.outer_bottom.min(borders[pos].bottom);
             }
         }
+        lines.extend_beyond_edge_cells(table_border);
         return lines;
     }
 
@@ -5517,15 +5539,15 @@ fn compute_collapsed_lines(
     // the collapsed line is the max of adjoining borders, and the overlap
     // (absorbed width) is the row-wise max of the pairwise min.
     let mut col_overlaps = vec![0.0f32; n.saturating_sub(1)];
-    let mut outer_left = table_border.left;
-    let mut outer_right = table_border.right;
+    let mut outer_left = f32::INFINITY;
+    let mut outer_right = f32::INFINITY;
     for i in 0..=n {
         if i == 0 {
             for r in 0..m {
                 if let Some((pos, c)) = cell_at(grid, index, r as u16, 0)
                     && c.col_start == 0
                 {
-                    outer_left = f32_max_compat(outer_left, borders[pos].left);
+                    outer_left = outer_left.min(borders[pos].left);
                 }
             }
         } else if i == n {
@@ -5533,7 +5555,7 @@ fn compute_collapsed_lines(
                 if let Some((pos, c)) = cell_at(grid, index, r as u16, (n as u16).saturating_sub(1))
                     && c.col_start + c.col_span == n as u16
                 {
-                    outer_right = f32_max_compat(outer_right, borders[pos].right);
+                    outer_right = outer_right.min(borders[pos].right);
                 }
             }
         } else {
@@ -5554,12 +5576,12 @@ fn compute_collapsed_lines(
 
     // Horizontal boundaries 0..=m, symmetric.
     let mut row_overlaps = vec![0.0f32; m.saturating_sub(1)];
-    let mut outer_top = table_border.top;
-    let mut outer_bottom = table_border.bottom;
+    let mut outer_top = f32::INFINITY;
+    let mut outer_bottom = f32::INFINITY;
     for j in 0..=m {
         if j == 0 {
             for (pos, _) in grid.cells.iter().enumerate().filter(|(_, c)| c.row == 0) {
-                outer_top = f32_max_compat(outer_top, borders[pos].top);
+                outer_top = outer_top.min(borders[pos].top);
             }
         } else if j == m {
             for (pos, _) in grid
@@ -5568,7 +5590,7 @@ fn compute_collapsed_lines(
                 .enumerate()
                 .filter(|(_, c)| c.row as usize + c.row_span as usize == m)
             {
-                outer_bottom = f32_max_compat(outer_bottom, borders[pos].bottom);
+                outer_bottom = outer_bottom.min(borders[pos].bottom);
             }
         } else {
             let mut ov = 0.0f32;
@@ -5586,14 +5608,16 @@ fn compute_collapsed_lines(
         }
     }
 
-    CollapsedLines {
+    let mut lines = CollapsedLines {
         col_overlaps,
         row_overlaps,
         outer_left,
         outer_right,
         outer_top,
         outer_bottom,
-    }
+    };
+    lines.extend_beyond_edge_cells(table_border);
+    lines
 }
 
 #[cfg(test)]

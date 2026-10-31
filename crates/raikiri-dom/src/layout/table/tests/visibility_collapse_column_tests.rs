@@ -460,16 +460,16 @@ fn a_collapsed_edge_column_keeps_its_border_in_the_widths_rows_are_measured_at()
         ("", &[("border-left:20px solid black", "X"), ("", "X")]),
         ("", &[("", wraps), ("", "X")]),
     ];
-    let measured = rows_height(120, &[COLLAPSED_COL, COL], &first);
-    assert_eq!(measured, rows_height(120, &[COL, COL], &first));
+    let measured = rows_height(110, &[COLLAPSED_COL, COL], &first);
+    assert_eq!(measured, rows_height(110, &[COL, COL], &first));
     assert_eq!(measured, 30.0);
     // The same holds at the other edge.
     let last: [Row; 2] = [
         ("", &[("", "X"), ("border-right:20px solid black", "X")]),
         ("", &[("", "X"), ("", wraps)]),
     ];
-    let measured = rows_height(120, &[COL, COLLAPSED_COL], &last);
-    assert_eq!(measured, rows_height(120, &[COL, COL], &last));
+    let measured = rows_height(110, &[COL, COLLAPSED_COL], &last);
+    assert_eq!(measured, rows_height(110, &[COL, COL], &last));
     assert_eq!(measured, 30.0);
 }
 
@@ -484,8 +484,8 @@ fn a_collapsed_column_keeps_its_overlaps_in_the_widths_rows_are_measured_at() {
         "",
         &[(bordered, "X"), (bordered, "X"), (bordered, "X X X X X X")],
     )];
-    let measured = rows_height(231, &[COL, COLLAPSED_COL, COL], &cells);
-    assert_eq!(measured, rows_height(231, &[COL, COL, COL], &cells));
+    let measured = rows_height(118, &[COL, COLLAPSED_COL, COL], &cells);
+    assert_eq!(measured, rows_height(118, &[COL, COL, COL], &cells));
     assert_eq!(measured, 50.0);
 }
 
