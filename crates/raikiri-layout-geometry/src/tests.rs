@@ -110,6 +110,34 @@ fn default_box_layout_is_zero() {
 }
 
 #[test]
+fn content_extents_floor_at_zero_without_losing_the_content_origin() {
+    let layout = BoxLayout {
+        size: Size {
+            width: 0.0,
+            height: 1.0,
+        },
+        padding: Edges {
+            left: 5.0,
+            right: 5.0,
+            top: 5.0,
+            bottom: 5.0,
+        },
+        border: Edges {
+            left: 1.0,
+            right: 1.0,
+            top: 1.0,
+            bottom: 1.0,
+        },
+        ..BoxLayout::default()
+    };
+    assert_eq!(layout.content_box_size(), Size::ZERO);
+    assert_eq!(layout.content_box_x(), 6.0);
+    assert_eq!(layout.content_box_y(), 6.0);
+    assert_eq!(layout.padding.left, 5.0);
+    assert_eq!(layout.border.left, 1.0);
+}
+
+#[test]
 fn sizes_map_zip_and_transpose_per_axis() {
     let size = Size {
         width: 2.0_f32,
