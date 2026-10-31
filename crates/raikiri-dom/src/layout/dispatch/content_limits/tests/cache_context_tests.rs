@@ -375,3 +375,53 @@ fn measure_lengths_keep_calc_identity_and_canonicalize_nan_and_zero() {
     assert_eq!(number(-0.0), number(0.0));
     assert_ne!(number(1.0), number(2.0));
 }
+
+#[test]
+fn ratio_grid_measurements_restore_content_height_after_a_wider_measurement() {
+    let mut grid = 0;
+    let fixture = block_fixture_with_ahem("width:400px", |doc, root| {
+        grid = doc.append_element(Some(root), "div", Some("display:grid;width:min-content"));
+        let child = doc.append_element(Some(grid), "div", Some("min-width:0;aspect-ratio:2/1"));
+        doc.append_text(child, "AAAA BBBB");
+    });
+    let mut doc = fixture.doc;
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.sync_layout_cache_mutations();
+    let sizes = [0.0, 50.0, 0.0].map(|width| {
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(width),
+                height: None,
+            },
+            parent_size: Size {
+                width: Some(400.0),
+                height: None,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::MaxContent,
+            },
+            ..input(width, 0.0)
+        };
+        tree.compute_child_layout_with_block_ctx(NodeId::from(grid), inputs, None)
+            .size
+    });
+    assert_eq!(
+        sizes,
+        [
+            Size {
+                width: 0.0,
+                height: 20.0
+            },
+            Size {
+                width: 50.0,
+                height: 25.0
+            },
+            Size {
+                width: 0.0,
+                height: 20.0
+            }
+        ]
+    );
+}

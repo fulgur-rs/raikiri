@@ -282,6 +282,24 @@ pub enum FlexItemRatio {
     BasisFromCross,
 }
 
+/// How a grid parent reads the preferred aspect ratio of an item.
+#[derive(Clone, Copy, Debug, Default)]
+#[doc(hidden)]
+pub enum GridItemRatio {
+    /// The preferred aspect ratio of the box.
+    #[default]
+    Declared,
+    /// Leave the automatic height to the item's ratio and content at its
+    /// final width. Preserve its resolved alignment when hiding the ratio
+    /// from the parent, whose `normal` alignment would otherwise stretch it.
+    MeasuredByItem {
+        /// The resolved block-axis alignment.
+        align_self: crate::values::AlignSelf,
+        /// The resolved inline-axis alignment, leaving a normal width to the item.
+        justify_self: crate::values::AlignSelf,
+    },
+}
+
 /// The context in which an algorithm reads a box's style.
 #[derive(Clone, Copy, Debug)]
 #[doc(hidden)]
@@ -302,6 +320,8 @@ pub struct ViewContext {
     pub percent_basis: PercentBasis,
     /// The aspect ratio the view reports for a flex item.
     pub flex_item_ratio: FlexItemRatio,
+    /// Whether a grid item's automatic height is measured by the item itself.
+    pub grid_item_ratio: GridItemRatio,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -314,6 +334,7 @@ impl Default for ViewContext {
             align_axis_is_inline: false,
             percent_basis: PercentBasis::Taffy,
             flex_item_ratio: FlexItemRatio::Declared,
+            grid_item_ratio: GridItemRatio::Declared,
         }
     }
 }

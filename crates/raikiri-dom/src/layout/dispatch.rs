@@ -917,6 +917,7 @@ impl LayoutSession<'_> {
         self.sync_layout_cache_mutations();
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
+        let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         if inputs.run_mode == RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
@@ -3334,6 +3335,87 @@ fn flex_layout_sized(
     output
 }
 
+/// Fill a grid item's normal inline alignment at the offered area width,
+/// preserving the width floor transferred from its minimum height and edges
+/// and the ceiling transferred from its maximum height. Content may raise
+/// its height without transferring that height back to the width.
+/// A width-only minimum-contribution probe states a width and is left alone.
+fn with_grid_ratio_width(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.sizing_mode == SizingMode::ContentSize
+        || !tree
+            .taffy_parent_of(idx)
+            .is_some_and(|parent| tree.nodes[parent].layout_display() == Display::Grid)
+        || !matches!(
+            tree.query_style(idx, crate::layout::style_views::ReadRole::GridItem)
+                .context()
+                .grid_item_ratio,
+            raikiri_layout_style::GridItemRatio::MeasuredByItem { .. }
+        )
+    {
+        return inputs;
+    }
+    let style = block_flow::style_input::physical(tree, idx);
+    let item = tree.physical_style(idx);
+    let justify = item.bridge_justify_self().unwrap_or_else(|| {
+        tree.taffy_parent_of(idx)
+            .map_or(raikiri_layout_style::values::AlignSelf::NORMAL, |parent| {
+                tree.physical_style(parent).justify_items()
+            })
+    });
+    if justify.keyword == raikiri_layout_style::values::AlignItemsKeyword::Stretch
+        && inputs.known_dimensions.width.is_some()
+    {
+        return inputs;
+    }
+    let content_ratio = tree.nodes[idx].ratio_in_content_box;
+    let edges = replaced_size::padding_and_border(&style, inputs.parent_size.width);
+    let metrics = block_flow::Metrics::resolve(&style, false, content_ratio, inputs);
+    let floor = metrics.min.height.unwrap_or(0.0).max(edges.height);
+    let insets = replaced_size::ratio_box_insets(&style, edges, content_ratio);
+    let floor = replaced_size::width_for_height(
+        (floor - edges.height).max(0.0),
+        style.aspect_ratio.expect("checked ratio"),
+        insets,
+    ) + edges.width;
+    let floor = floor.maybe_clamp(metrics.min.width, metrics.own_max.width);
+    // A minimum height that exceeds the maximum wins before either is
+    // transferred; an authored maximum width has already capped the floor.
+    let ceiling = metrics.max.width.map(|maximum| maximum.max(floor));
+    let normal_width = justify.keyword == raikiri_layout_style::values::AlignItemsKeyword::Normal;
+    let mut width = inputs.known_dimensions.width.or_else(|| {
+        normal_width
+            .then(|| inputs.available_space.width.into_option())
+            .flatten()
+    });
+    if width.is_none() && (floor > 0.0 || ceiling.is_some()) {
+        // Keep a non-stretched item's natural shrink-to-fit width within
+        // the transferred limits, including an unbounded max-content probe.
+        let probe = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::ContentSize,
+            axis: RequestedAxis::Horizontal,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size::splat(false),
+            ..inputs
+        };
+        width = Some(
+            tree.compute_child_layout(NodeId::from(idx), probe)
+                .size
+                .width,
+        );
+    }
+    if let Some(width) = width {
+        inputs.known_dimensions.width =
+            Some(width.max(floor).maybe_clamp(metrics.min.width, ceiling));
+        inputs.known_dimensions_are_definite.width = true;
+    }
+    inputs
+}
+
 /// Keep the height Taffy settles an absolutely positioned box at from being a
 /// definite height for its children.
 ///
@@ -3677,14 +3759,24 @@ fn laid_out_with_ratio_height(
     if !drop_ratio {
         return sized(tree, node_id, inputs);
     }
-    let key = tree
-        .nodes
-        .box_key(usize::from(node_id))
-        .expect("live container box");
-    tree.with_overrides(
-        vec![(key, OwnedPropertyOverride::aspect_ratio(None))],
-        |tree| sized(tree, node_id, inputs),
-    )
+    without_container_ratio(tree, node_id, |tree| sized(tree, node_id, inputs))
+}
+
+/// Disable only the container's ratio, keeping its cache apart and preserving
+/// descendant caches. Advancing the global override generation here would
+/// repeat each nested ratio container's intrinsic work at every ancestor.
+fn without_container_ratio<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let idx = usize::from(node_id);
+    intrinsic_scopes::with_saved_probe_caches(tree, 1, |tree, saved| {
+        let key = tree.nodes.box_key(idx).expect("live container box");
+        saved.push((idx, tree.take_layout_cache(idx)));
+        tree.push_local_overrides(vec![(key, OwnedPropertyOverride::aspect_ratio(None))]);
+        layout(tree)
+    })
 }
 
 /// The border-box height a flex or grid container takes from its aspect ratio
@@ -3723,15 +3815,7 @@ fn ratio_height(
         },
         ..inputs
     };
-    let key = tree
-        .nodes
-        .box_key(usize::from(node_id))
-        .expect("live container box");
-    let content = tree
-        .with_overrides(
-            vec![(key, OwnedPropertyOverride::aspect_ratio(None))],
-            |tree| sized(tree, node_id, probe),
-        )
+    let content = without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
         .size
         .height;
     Some(ratio_height.max(content.maybe_clamp(None, metrics.own_max.height)))

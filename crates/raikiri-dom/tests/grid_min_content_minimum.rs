@@ -341,3 +341,38 @@ fn a_chain_of_nested_grids_is_laid_out_in_time_linear_in_its_length() {
         &[("g", [8.0, 8.0, 0.0, 20.0]), ("i", [8.0, 8.0, 0.0, 20.0])],
     );
 }
+
+#[test]
+fn ratio_items_contribute_their_minimum_width_and_reflow_at_the_final_track_width() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/grid-minimum-aspect-ratio.json"))
+            .expect("Chromium measurements");
+    for case in oracle["cases"].as_array().expect("cases") {
+        let expected: Vec<_> = case["expected"]
+            .as_array()
+            .expect("boxes")
+            .iter()
+            .map(|entry| {
+                let coordinates = std::array::from_fn(|index| {
+                    entry[index + 1].as_f64().expect("coordinate") as f32
+                });
+                (entry[0].as_str().expect("id"), coordinates)
+            })
+            .collect();
+        assert_boxes(case["html"].as_str().expect("markup"), &expected);
+    }
+}
+
+#[test]
+fn nested_ratio_grids_preserve_content_height_without_repeating_intrinsic_work() {
+    let depth = 24;
+    let nested =
+        "<div style=\"display:grid;width:min-content;min-width:0;aspect-ratio:2/1\">".repeat(depth);
+    let closing = "</div>".repeat(depth);
+    assert_boxes(
+        &format!(
+            "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">{nested}<div style=\"min-width:0\">{TEXT}</div>{closing}</div></div></div>"
+        ),
+        &[("g", [8.0, 8.0, 0.0, 20.0]), ("i", [8.0, 8.0, 0.0, 20.0])],
+    );
+}

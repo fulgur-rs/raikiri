@@ -478,6 +478,9 @@ impl LayoutSession<'_> {
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
         }
+        if matches!(role, ReadRole::GridItem) {
+            context.grid_item_ratio = self.grid_item_ratio(idx);
+        }
         if matches!(role, ReadRole::BlockItem) {
             context.block_item_basis = self
                 .context
@@ -490,6 +493,61 @@ impl LayoutSession<'_> {
                 .and_then(|&(_, basis)| basis);
         }
         view.with_context(context)
+    }
+
+    /// Defer a grid item's automatic ratio height to its own content measure.
+    /// The parent otherwise treats the ratio height as final, skipping the
+    /// content floor when an explicit minimum width lets the track shrink.
+    fn grid_item_ratio(&self, idx: usize) -> raikiri_layout_style::GridItemRatio {
+        use raikiri_layout_style::GridItemRatio;
+        use raikiri_layout_style::values::{
+            AlignItemsKeyword, AlignSelf, ExpandedLengthPercentageAuto,
+        };
+        let item = self.physical_style(idx);
+        if self.container_is_vertical(idx)
+            || self.nodes[idx].used_writing_mode.is_vertical()
+            || crate::paint_rules::is_replaced_element(self.document, idx)
+            || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
+            || item.stated_aspect_ratio().is_none()
+            || !item.size().width.is_auto()
+            || !item.size().height.is_auto()
+            || !matches!(
+                self.nodes[idx].formatting_context,
+                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
+            )
+            || !matches!(
+                item.min_size().width.expand(),
+                ExpandedLengthPercentageAuto::Length(_) | ExpandedLengthPercentageAuto::Percent(_)
+            )
+        {
+            return GridItemRatio::Declared;
+        }
+        let alignment = item.bridge_align_self().unwrap_or_else(|| {
+            self.taffy_parent_of(idx)
+                .map_or(AlignSelf::NORMAL, |parent| {
+                    self.physical_style(parent).align_items()
+                })
+        });
+        let alignment = if alignment.keyword == AlignItemsKeyword::Normal {
+            AlignSelf::START
+        } else {
+            alignment
+        };
+        let justify = item.bridge_justify_self().unwrap_or_else(|| {
+            self.taffy_parent_of(idx)
+                .map_or(AlignSelf::NORMAL, |parent| {
+                    self.physical_style(parent).justify_items()
+                })
+        });
+        let justify = if justify.keyword == AlignItemsKeyword::Normal {
+            AlignSelf::START
+        } else {
+            justify
+        };
+        GridItemRatio::MeasuredByItem {
+            align_self: alignment,
+            justify_self: justify,
+        }
     }
 
     /// The aspect ratio the flex algorithm is told about the flex item `idx`.

@@ -326,3 +326,29 @@ fn physical_edges_and_logical_minimum_are_not_confused() {
         }
     );
 }
+
+#[test]
+fn a_grid_item_defers_ratio_height_without_changing_its_own_ratio_or_alignment() {
+    let mut cv = ComputedValues::initial();
+    cv.aspect_ratio.auto = false;
+    cv.aspect_ratio.ratio = Some((2.0, 1.0));
+    query(&cv, StyleFlags::default(), |own| {
+        assert_eq!(own.aspect_ratio(), Some(2.0));
+        assert_eq!(own.bridge_align_self(), None);
+        for alignment in [values::AlignSelf::START, values::AlignSelf::STRETCH] {
+            let parent = own.with_context(ViewContext {
+                grid_item_ratio: GridItemRatio::MeasuredByItem {
+                    align_self: alignment,
+                    justify_self: values::AlignSelf::START,
+                },
+                ..ViewContext::default()
+            });
+            assert_eq!(parent.aspect_ratio(), None);
+            assert_eq!(parent.stated_aspect_ratio(), Some(2.0));
+            assert_eq!(parent.block_aspect_ratio(), Some(2.0));
+            assert_eq!(parent.bridge_align_self(), Some(alignment));
+        }
+        assert_eq!(own.aspect_ratio(), Some(2.0));
+        assert_eq!(own.bridge_align_self(), None);
+    });
+}
