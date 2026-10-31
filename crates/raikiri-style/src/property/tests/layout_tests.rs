@@ -1286,10 +1286,83 @@ fn content_alignment_rejects_left_right_and_baseline() {
     assert_eq!(parse("baseline", "align-content"), None);
 }
 
+/// `justify-content` and `align-content` parsed from the same text.
+fn content_alignments(css: &str) -> [Option<ContentAlignmentValue>; 2] {
+    let take = |value| match value {
+        Some(PropertyValue::JustifyContent(value) | PropertyValue::AlignContent(value)) => {
+            Some(value)
+        }
+        _ => None,
+    };
+    [
+        take(parse_entire(css, "justify-content")),
+        take(parse_entire(css, "align-content")),
+    ]
+}
+
 #[test]
-fn content_alignment_rejects_overflow_position_prefix() {
-    // Scope boundary: `safe`/`unsafe` prefixes are unsupported.
-    assert_eq!(parse("safe center", "justify-content"), None);
+fn a_content_overflow_position_stays_with_the_position_it_qualifies() {
+    for (position, name) in [
+        (ContentPosition::Center, "center"),
+        (ContentPosition::Start, "start"),
+        (ContentPosition::End, "end"),
+        (ContentPosition::FlexStart, "flex-start"),
+        (ContentPosition::FlexEnd, "flex-end"),
+    ] {
+        for (prefix, expected) in [
+            ("safe", ContentAlignmentValue::Safe(position)),
+            ("unsafe", ContentAlignmentValue::Unsafe(position)),
+            ("SAFE", ContentAlignmentValue::Safe(position)),
+            ("", position.alignment()),
+        ] {
+            let css = format!("{prefix} {name}");
+            assert_eq!(content_alignments(&css), [Some(expected); 2], "{css:?}");
+        }
+    }
+}
+
+#[test]
+fn every_content_alignment_parses_back_from_its_spelling() {
+    let mut values = vec![
+        ContentAlignmentValue::Normal,
+        ContentAlignmentValue::Stretch,
+        ContentAlignmentValue::SpaceBetween,
+        ContentAlignmentValue::SpaceEvenly,
+        ContentAlignmentValue::SpaceAround,
+    ];
+    for &position in ContentPosition::ALL {
+        values.extend([
+            position.alignment(),
+            ContentAlignmentValue::Safe(position),
+            ContentAlignmentValue::Unsafe(position),
+        ]);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for value in values {
+        let css = value.as_css_str();
+        assert!(seen.insert(css), "{css:?} spells two values");
+        assert_eq!(content_alignments(css), [Some(value); 2], "{css:?}");
+    }
+}
+
+#[test]
+fn a_content_overflow_position_qualifies_a_position_only() {
+    for css in [
+        "safe",
+        "unsafe",
+        "safe normal",
+        "safe stretch",
+        "unsafe space-between",
+        "safe space-around",
+        "unsafe space-evenly",
+        "safe left",
+        "safe baseline",
+        "safe safe center",
+        "safe unsafe center",
+        "center safe",
+    ] {
+        assert_eq!(content_alignments(css), [None; 2], "{css:?}");
+    }
 }
 
 // ── align-items (CSS Box Alignment Module Level 3 §7.2) ─────────────
@@ -1898,6 +1971,27 @@ fn place_content_shorthand_two_values() {
             justify: ContentAlignmentValue::SpaceBetween,
         }))
     );
+}
+
+#[test]
+fn place_content_shorthand_keeps_the_overflow_position_of_each_value() {
+    let place = |css| match parse_entire(css, "place-content") {
+        Some(PropertyValue::PlaceContent(shorthand)) => Some((shorthand.align, shorthand.justify)),
+        _ => None,
+    };
+    let safe_center = ContentAlignmentValue::Safe(ContentPosition::Center);
+    let unsafe_end = ContentAlignmentValue::Unsafe(ContentPosition::End);
+    assert_eq!(place("safe center"), Some((safe_center, safe_center)));
+    assert_eq!(
+        place("safe center unsafe end"),
+        Some((safe_center, unsafe_end))
+    );
+    assert_eq!(
+        place("space-between safe center"),
+        Some((ContentAlignmentValue::SpaceBetween, safe_center))
+    );
+    assert_eq!(place("safe center safe"), None);
+    assert_eq!(place("safe space-between"), None);
 }
 
 // ── key() discriminant integrity (mirrors `height_key_maps_to_height_property_key`) ─

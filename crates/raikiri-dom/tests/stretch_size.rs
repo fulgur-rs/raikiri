@@ -18,7 +18,10 @@
 //! side of the static position as the nearer edge of the containing block, and
 //! none at all past an edge. It stays centered in that room when a `max-width`
 //! cuts it short, and falls back to the start of it when it overflows and
-//! asked for `safe` alignment itself.
+//! asked for `safe` alignment itself. A `safe center` of the flex container
+//! (`justify-content` and `align-items`) puts the static position at the center
+//! just as `center` does: the box has no size at that position, so nothing
+//! overflows.
 //!
 //! The room reaches the far edge of the padding box of the containing block,
 //! whatever its padding, border and `box-sizing`, and whether it is a block, a
@@ -856,4 +859,16 @@ cases! {
     abspos_stretch_fills_to_the_padding_box_of_a_right_to_left_containing_block_content_box:
         r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;direction:rtl"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
         [("t", (8.0, 18.0, 170.0, 160.0))];
+    abspos_stretch_in_a_safe_center_flex_container_min_size_overflow:
+        r#"<div style="position:relative;width:100px;height:100px"><div style="display:flex;justify-content:safe center;align-items:safe center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:95px;min-height:95px"></div></div></div>"# =>
+        [("t", (30.5, 20.0, 95.0, 100.0))];
+    abspos_stretch_in_a_center_flex_container_min_size_overflow:
+        r#"<div style="position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:95px;min-height:95px"></div></div></div>"# =>
+        [("t", (30.5, 20.0, 95.0, 100.0))];
+    abspos_fixed_size_in_a_safe_center_flex_container:
+        r#"<div style="display:flex;justify-content:safe center;align-items:safe center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:10px;height:10px"></div></div>"# =>
+        [("t", (73.0, 65.0, 10.0, 10.0))];
+    abspos_stretch_under_max_size_in_a_safe_center_flex_container:
+        r#"<div style="position:relative;display:flex;justify-content:safe center;align-items:safe center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div>"# =>
+        [("t", (53.0, 45.0, 50.0, 50.0))];
 }

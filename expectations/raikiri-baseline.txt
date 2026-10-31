@@ -5482,6 +5482,12 @@ css/css-multicol/multicol-span-all-005.html
 css/css-ruby/ruby-inlinize-blocks-002.html
 css/css-ruby/ruby-line-breaking-002.html
 
+# --- `safe` and `unsafe` before a `<content-position>` of `justify-content` and `align-content` (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# `justify-content`, `align-content` and `place-content` accept an `<overflow-position>` keyword before `center`, `start`, `end`, `flex-start` and `flex-end` (CSS Box Alignment 3 section 4.4): `safe` aligns overflowing content to its start edge instead, and `unsafe` aligns it as written. The whole declaration was dropped before the change, so the content of these flex containers stayed at the default alignment (1044, 1800 and 2000 pixels differ). All three KEEP in two audit-vacuous-passes runs. `flexbox-safe-overflow-position-002`, `-005` and `-006` were already listed above and still pass.
+css/css-flexbox/flexbox-safe-overflow-position-001.html
+css/css-flexbox/flexbox-safe-overflow-position-003.html
+css/css-flexbox/flexbox-safe-overflow-position-004.html
+
 # --- A page name after only a float (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
 # A float is no part of the page flow (CSS Page 3, section 4.1), so a box that names a page after only floats names the first page, and no page changes. Layout took the float for the page before the box and cleared the box below it. The test is a negative one: its subject has no effect, so `audit-vacuous-passes` reports it VACUOUS-UNSTYLED in two runs. It was FAIL before the change and stays as a guard, as the other named-page guards do.
 css/css-page/page-name-float-001-print.html
