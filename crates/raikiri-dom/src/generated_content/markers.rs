@@ -156,12 +156,12 @@ fn list_marker_text_with_ordinal(
                 "circle" => "◦ ".to_string(),
                 "square" => "▪ ".to_string(),
                 "decimal" => suffix(ordinal.to_string()),
-                // The negative sign does not count toward the two-digit pad
-                // (CSS Counter Styles 3 §3.6).
-                "decimal-leading-zero" if ordinal < 0 => {
-                    suffix(format!("-{:02}", ordinal.unsigned_abs()))
-                }
-                "decimal-leading-zero" => suffix(format!("{ordinal:02}")),
+                // The negative sign counts toward the two-symbol pad (CSS
+                // Counter Styles 3, the `pad` descriptor), so `-3` stays `-3`.
+                "decimal-leading-zero" => suffix(raikiri_traits::page::format_predefined_counter(
+                    ordinal,
+                    &CounterStyle::Named("decimal-leading-zero".into()),
+                )),
                 "lower-alpha" | "lower-latin" => in_range(u32::MAX, &alpha_marker),
                 "upper-alpha" | "upper-latin" => {
                     in_range(u32::MAX, &|value| alpha_marker(value).to_uppercase())

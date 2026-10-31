@@ -1130,47 +1130,41 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
     Some(text)
 }
 
-/// `value` in the counter style `style`: the roman styles, a custom
-/// `@counter-style` of `registry`, else decimal.
+/// The name under which `registry` knows the style that `name` asks for.
+///
+/// A predefined name matches without regard to case, so an author style that
+/// redefines one answers to every spelling of it (stored in lower case); the
+/// name of any other style matches exactly. A rule spelled with capitals is
+/// still found by the same spelling.
+pub(crate) fn author_style_name<'a>(
+    registry: &CounterStyleRegistry,
+    name: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    if name.bytes().any(|byte| byte.is_ascii_uppercase())
+        && raikiri_traits::page::is_predefined_counter_style(name)
+    {
+        let lowered = name.to_ascii_lowercase();
+        if registry.get(&lowered).is_some() {
+            return std::borrow::Cow::Owned(lowered);
+        }
+    }
+    std::borrow::Cow::Borrowed(name)
+}
+
+/// `value` in the counter style `style`: an author `@counter-style` of
+/// `registry` first, since it can redefine a predefined name, then the
+/// predefined styles of CSS Counter Styles 3, else decimal.
 #[doc(hidden)]
 pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
-    match style {
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
-            if value <= 0 {
-                return value.to_string();
-            }
-            let mut n = value;
-            let mut result = String::new();
-            for (unit, glyph) in [
-                (1000, "m"),
-                (900, "cm"),
-                (500, "d"),
-                (400, "cd"),
-                (100, "c"),
-                (90, "xc"),
-                (50, "l"),
-                (40, "xl"),
-                (10, "x"),
-                (9, "ix"),
-                (5, "v"),
-                (4, "iv"),
-                (1, "i"),
-            ] {
-                while n >= unit {
-                    result.push_str(glyph);
-                    n -= unit;
-                }
-            }
-            result
+    if let CounterStyle::Named(name) = style {
+        let author_name = author_style_name(registry, name.as_str());
+        if registry.get(&author_name).is_some() {
+            // A value the style and its fallbacks cannot render uses decimal.
+            return resolve_custom_counter(registry, &author_name, value)
+                .unwrap_or_else(|| value.to_string());
         }
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("upper-roman") => {
-            format_counter(value, &CounterStyle::Named("lower-roman".into()), registry)
-                .to_uppercase()
-        }
-        CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
-            .unwrap_or_else(|| value.to_string()),
-        _ => value.to_string(),
     }
+    raikiri_traits::page::format_predefined_counter(value, style)
 }
 
 #[cfg(test)]
