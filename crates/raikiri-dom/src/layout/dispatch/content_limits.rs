@@ -32,7 +32,7 @@ use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
-use raikiri_style::property::PositionValue;
+use raikiri_style::property::{PositionValue, TableLayoutValue};
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
 /// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`)
@@ -539,7 +539,7 @@ pub(super) fn table_max_width_floors(
         .copied()
         .filter_map(|candidate| {
             let idx = usize::from(candidate);
-            if !is_table_content_limits(tree, idx) {
+            if !is_table_content_limits(tree, idx) || ignores_content_for_width(tree, idx) {
                 return None;
             }
             let adjustment = box_sizing_adjustment(tree, idx, containing_width);
@@ -603,6 +603,16 @@ pub(super) fn table_max_width_floors(
             })
             .collect()
     })
+}
+
+/// Whether the table `idx` takes its width from its style alone: a table with
+/// `table-layout: fixed` and a `width` sizes its columns from that width and the
+/// first row, whatever its cells hold (CSS 2.1 §17.5.2.1). Measuring it without
+/// its `width` would use the automatic algorithm instead, so the width of its
+/// content says nothing about the narrowest it can be.
+fn ignores_content_for_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].table_layout == TableLayoutValue::Fixed
+        && !tree.physical_style(idx).size().width.is_auto()
 }
 
 /// Clamp an out-of-flow preliminary width to its installed min/max sizes,

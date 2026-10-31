@@ -293,3 +293,43 @@ fn the_floor_is_the_min_content_width_of_every_column_and_the_caption() {
         ),
     ]);
 }
+
+/// The width of the table box only: the column of a fixed table is still
+/// sized from its `width`, not from the `max-width` that cuts the box.
+#[test]
+fn a_fixed_table_with_a_width_ignores_its_content_for_the_floor() {
+    check_boxes(&[
+        (
+            "a content wider than both limits",
+            &abspos_table(
+                "table-layout: fixed; width: 100px; max-width: 50px",
+                "<div style='width: 200px; height: 10px'></div>",
+            ),
+            &[("t", 0.0, 0.0, 50.0, 10.0)],
+        ),
+        (
+            "a content wider than the width and the limit",
+            &abspos_table(
+                "table-layout: fixed; width: 40px; max-width: 5px",
+                "<div style='width: 200px; height: 10px'></div>",
+            ),
+            &[("t", 0.0, 0.0, 5.0, 10.0)],
+        ),
+        (
+            "borders",
+            &abspos_table(
+                "table-layout: fixed; border: 2px solid #00f; width: 100px; max-width: 50px",
+                "<div style='width: 200px; height: 10px'></div>",
+            ),
+            &[("t", 0.0, 0.0, 54.0, 14.0)],
+        ),
+        (
+            "no width: the automatic algorithm applies",
+            &abspos_table(
+                "table-layout: fixed; max-width: 50px",
+                "<div style='width: 200px; height: 10px'></div>",
+            ),
+            &[("t", 0.0, 0.0, 200.0, 10.0)],
+        ),
+    ]);
+}
