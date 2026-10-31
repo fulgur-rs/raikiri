@@ -144,8 +144,9 @@ impl LayoutSession<'_> {
             assert!(
                 entry.is_physical_sizing()
                     || entry.is_physical_inset()
+                    || entry.is_physical_margin()
                     || entry.is_self_alignment(),
-                "scope entry is a physical sizing, inset or self-alignment override"
+                "scope entry is a physical sizing, inset, margin or self-alignment override"
             );
             *counts.entry(key).or_default() += 1;
             indexed.push((key, index, entry));

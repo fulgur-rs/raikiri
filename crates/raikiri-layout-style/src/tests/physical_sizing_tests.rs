@@ -145,6 +145,23 @@ fn self_alignment_is_neither_sizing_nor_inset() {
 }
 
 #[test]
+fn physical_margin_is_neither_sizing_nor_inset() {
+    use LengthProperty::*;
+    for property in [MarginTop, MarginRight, MarginBottom, MarginLeft] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(0.0), false).unwrap();
+        assert!(entry.is_physical_margin(), "{property:?}");
+        assert!(!entry.is_physical_sizing(), "{property:?}");
+        assert!(!entry.is_physical_inset(), "{property:?}");
+        assert!(!entry.is_self_alignment(), "{property:?}");
+    }
+    for property in [Left, Width, PaddingTop] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(0.0), false).unwrap();
+        assert!(!entry.is_physical_margin(), "{property:?}");
+    }
+    assert!(!OwnedPropertyOverride::align_self(None).is_physical_margin());
+}
+
+#[test]
 fn physical_sizing_sets_border_fields_and_ignores_shrink() {
     let mut style = BoxStyle {
         border: Edges {

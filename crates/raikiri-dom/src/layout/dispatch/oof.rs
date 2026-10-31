@@ -263,7 +263,8 @@ pub(super) fn layout_candidates(
 /// and reaches no further than the nearer edge of the containing block, and a
 /// center alignment keeps a size cut short by `max-width` centered in it. Only
 /// an overflow position the box asks for itself is kept: that of the container
-/// decides where the static position is, not how the box falls back.
+/// decides where the static position is, not how the box falls back. An `auto`
+/// margin stays zero, as it is beside an `auto` inset.
 ///
 /// A grid container places its boxes in the grid area they name, which is not
 /// the area the static position is measured in.
@@ -284,12 +285,12 @@ fn static_position_overrides(
     {
         let idx = usize::from(candidate.node);
         let style = tree.query_style(idx, ReadRole::Oof);
-        let (size, inset) = (style.size(), style.inset());
+        let (size, inset, margin) = (style.size(), style.inset(), style.margin());
         let key = tree
             .nodes
             .box_key(idx)
             .expect("an out-of-flow candidate has a box key");
-        let inset_override = |property, value| {
+        let px_override = |property, value| {
             (
                 key,
                 OwnedPropertyOverride::length(
@@ -297,7 +298,7 @@ fn static_position_overrides(
                     raikiri_style::ComputedLengthPercentageOrAuto::Px(value),
                     false,
                 )
-                .expect("static position inset"),
+                .expect("static position override"),
             )
         };
         let axes = [
@@ -309,6 +310,10 @@ fn static_position_overrides(
                 area.offset.x,
                 area.size.width,
                 (LengthProperty::Left, LengthProperty::Right),
+                [
+                    (LengthProperty::MarginLeft, margin.left.is_auto()),
+                    (LengthProperty::MarginRight, margin.right.is_auto()),
+                ],
             ),
             (
                 size.height.expand() == ExpandedDimension::Stretch
@@ -318,18 +323,22 @@ fn static_position_overrides(
                 area.offset.y,
                 area.size.height,
                 (LengthProperty::Top, LengthProperty::Bottom),
+                [
+                    (LengthProperty::MarginTop, margin.top.is_auto()),
+                    (LengthProperty::MarginBottom, margin.bottom.is_auto()),
+                ],
             ),
         ];
-        for (qualifies, position, offset, extent, (start, end)) in axes {
+        for (qualifies, position, offset, extent, (start, end), margins) in axes {
             if !qualifies {
                 continue;
             }
             match position.align.keyword {
                 AxisStaticEdge::Start => {
-                    entries.push(inset_override(start, position.area.start - offset));
+                    entries.push(px_override(start, position.area.start - offset));
                 }
                 AxisStaticEdge::End => {
-                    entries.push(inset_override(end, extent - (position.area.end - offset)));
+                    entries.push(px_override(end, extent - (position.area.end - offset)));
                 }
                 AxisStaticEdge::Center => {
                     // The library reads the alignment along the physical x
@@ -360,9 +369,18 @@ fn static_position_overrides(
                     // block leaves no room: the box is centered on it.
                     let center = (position.area.start + position.area.end) / 2.0 - offset;
                     let half = center.min(extent - center).max(0.0);
+                    // With both insets stated the library gives free space to
+                    // an `auto` margin, while with an `auto` inset it counts
+                    // as zero, as the box asked for.
+                    entries.extend(
+                        margins
+                            .into_iter()
+                            .filter(|&(_, auto)| auto)
+                            .map(|(property, _)| px_override(property, 0.0)),
+                    );
                     entries.extend([
-                        inset_override(start, center - half),
-                        inset_override(end, extent - (center + half)),
+                        px_override(start, center - half),
+                        px_override(end, extent - (center + half)),
                         (
                             key,
                             alignment(Some(AlignItems {

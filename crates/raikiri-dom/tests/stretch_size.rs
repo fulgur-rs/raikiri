@@ -684,4 +684,25 @@ cases! {
     abspos_stretch_centered_by_justify_content_ignores_its_own_justify_self:
         r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;justify-self:end"></div></div></div>"# =>
         [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_left_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-left:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_right_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-right:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_top_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-top:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_bottom_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-bottom:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_all_auto_margins_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_fills_the_room_beside_auto_margins:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:auto"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_centered_centers_its_margin_box_beside_an_auto_margin:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-left:auto;margin-right:6px"></div></div></div>"# =>
+        [("t", (50.0, 53.0, 50.0, 50.0))];
 }
