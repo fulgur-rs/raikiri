@@ -293,6 +293,36 @@ fn scoped_override_production_validates_the_whole_batch_before_applying_it() {
 }
 
 #[test]
+fn scoped_override_production_holds_a_self_alignment_next_to_an_inset() {
+    use raikiri_layout_style::values::AlignItems;
+    let (mut doc, _, child, _) = fixture_with_styles("display:block", "width:31px");
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &cascade);
+    let key = session.nodes.box_key(child).unwrap();
+    assert_eq!(session.style_view(child).bridge_justify_self(), None);
+    assert_eq!(session.style_view(child).bridge_align_self(), None);
+    let centered = Some(AlignItems::CENTER);
+    session.with_overrides(
+        vec![
+            (
+                key,
+                OwnedPropertyOverride::length(LengthProperty::Left, L::Px(4.0), false).unwrap(),
+            ),
+            (key, OwnedPropertyOverride::justify_self(centered)),
+            (key, OwnedPropertyOverride::align_self(centered)),
+        ],
+        |tree| {
+            let view = tree.style_view(child);
+            assert_eq!(view.bridge_justify_self(), centered);
+            assert_eq!(view.bridge_align_self(), centered);
+            assert_eq!(view.size().width, Dimension::length(31.0));
+        },
+    );
+    assert_eq!(session.style_view(child).bridge_justify_self(), None);
+    assert_eq!(session.style_view(child).bridge_align_self(), None);
+}
+
+#[test]
 fn scoped_override_production_reaches_all_generated_key_kinds() {
     let mut doc = Document::new();
     let source = doc.append_element(Some(0), "div", Some("display:block"));

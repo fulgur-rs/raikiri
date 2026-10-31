@@ -182,16 +182,11 @@ impl LayoutContainingBlock for LayoutSession<'_> {
 
     fn get_oof_item_style(&self, node: taffy::NodeId) -> Self::OofItemStyle<'_> {
         let view = self.query_style(usize::from(node), ReadRole::Oof);
-        // The last baseline of the container that holds the box places it on the
-        // container's axes, so the swap applies only where the container is on
-        // vertical axes as well.
-        TaffyStyle::new(
-            if self.context.oof_axes_vertical && self.container_is_vertical(usize::from(node)) {
-                view.with_swapped_oof_alignment()
-            } else {
-                view
-            },
-        )
+        TaffyStyle::new(if self.oof_alignment_swapped(usize::from(node)) {
+            view.with_swapped_oof_alignment()
+        } else {
+            view
+        })
     }
 
     fn clear_hoisted_children(&mut self, node: taffy::NodeId) {

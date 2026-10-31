@@ -35,6 +35,27 @@ impl OwnedPropertyOverride {
         )
     }
 
+    /// Whether the entry sets a physical margin. A positioning pass holds such
+    /// an entry in a scope to keep an `auto` margin at zero beside insets it
+    /// sets itself; like an inset it is not a sizing override.
+    pub fn is_physical_margin(&self) -> bool {
+        use LengthProperty::*;
+        matches!(
+            self.as_borrowed().0,
+            OverrideKind::Length(MarginTop | MarginRight | MarginBottom | MarginLeft, _)
+        )
+    }
+
+    /// Whether the entry sets a self-alignment. A positioning pass holds such
+    /// an entry in a scope, next to the insets it sets, to align a box inside
+    /// the area those insets bound; like an inset it is not a sizing override.
+    pub fn is_self_alignment(&self) -> bool {
+        matches!(
+            self.as_borrowed().0,
+            OverrideKind::AlignSelf(_) | OverrideKind::JustifySelf(_)
+        )
+    }
+
     /// Write one physical sizing override into a `BoxStyle` snapshot.
     ///
     /// Only the affected field is replaced, and the previous value is not

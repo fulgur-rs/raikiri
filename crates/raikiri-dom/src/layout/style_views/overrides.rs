@@ -142,8 +142,11 @@ impl LayoutSession<'_> {
         for (key, entry) in entries {
             let index = self.nodes.layout_index(key).expect("override key is live");
             assert!(
-                entry.is_physical_sizing() || entry.is_physical_inset(),
-                "scope entry is a physical sizing or inset override"
+                entry.is_physical_sizing()
+                    || entry.is_physical_inset()
+                    || entry.is_physical_margin()
+                    || entry.is_self_alignment(),
+                "scope entry is a physical sizing, inset, margin or self-alignment override"
             );
             *counts.entry(key).or_default() += 1;
             indexed.push((key, index, entry));
