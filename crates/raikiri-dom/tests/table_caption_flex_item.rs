@@ -825,3 +825,287 @@ fn a_vertical_table_is_not_made_taller_than_its_container_by_the_height_it_gets(
         }
     }
 }
+
+/// A table whose caption is `empty_caption(caption_style)` and whose one row
+/// is `r`.
+fn captioned(style: &str, caption_style: &str) -> String {
+    table(
+        style,
+        &format!("{}{}", empty_caption(caption_style), row("r")),
+    )
+}
+
+#[test]
+fn a_flex_column_that_grows_or_shrinks_a_table_gives_the_height_of_its_whole_wrapper() {
+    let edges = "padding:3px;border:2px solid";
+    check(&[
+        // The stated height is that of the grid, so the table grows from the
+        // grid and the caption: the height the container gives is the
+        // wrapper's, and the grid takes what the caption leaves.
+        Case {
+            label: "a height and flex-grow",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned("height:50px;flex-grow:1", ""),
+            ),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 10.0]),
+                ("r", [8.0, 18.0, 784.0, 190.0]),
+            ],
+        },
+        Case {
+            label: "a basis that grows",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned("width:80px;flex:1 1 50px", ""),
+            ),
+            expected: &[
+                ("c", [8.0, 8.0, 80.0, 10.0]),
+                ("r", [8.0, 18.0, 80.0, 190.0]),
+            ],
+        },
+        Case {
+            label: "a caption below the grid",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned("height:50px;flex-grow:1", "caption-side:bottom"),
+            ),
+            expected: &[
+                ("c", [8.0, 198.0, 784.0, 10.0]),
+                ("r", [8.0, 8.0, 784.0, 190.0]),
+            ],
+        },
+        Case {
+            label: "a caption higher than the padding and border",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned(&format!("height:50px;flex-grow:1;{edges}"), "height:20px"),
+            ),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 20.0]),
+                ("r", [13.0, 33.0, 774.0, 170.0]),
+            ],
+        },
+        Case {
+            label: "a content-box table",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned(
+                    &format!("height:50px;flex-grow:1;box-sizing:content-box;{edges}"),
+                    "",
+                ),
+            ),
+            expected: &[("r", [13.0, 23.0, 774.0, 180.0])],
+        },
+        Case {
+            label: "a max-height under the room",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned("height:50px;flex-grow:1;max-height:100px", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 90.0])],
+        },
+        // The container clamps the item the way it grows it, so the height
+        // is the wrapper's when a `max-height` takes the item under the
+        // height it states.
+        Case {
+            label: "a max-height under the stated height",
+            body: flex(
+                "flex-direction:column;height:400px",
+                &captioned("height:200px;max-height:100px", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 90.0])],
+        },
+        Case {
+            label: "a max-height under the basis",
+            body: flex(
+                "flex-direction:column;height:400px",
+                &captioned("flex:0 0 200px;max-height:100px", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 90.0])],
+        },
+        Case {
+            label: "two tables that share the room",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &format!(
+                    "{}{}",
+                    captioned("flex:1 1 50px", ""),
+                    table(
+                        "flex:1 1 50px",
+                        &format!(
+                            "<div id=c2 style=\"display:table-caption;height:10px\"></div>{}",
+                            row("r2")
+                        )
+                    )
+                ),
+            ),
+            expected: &[
+                ("r", [8.0, 18.0, 784.0, 90.0]),
+                ("c2", [8.0, 108.0, 784.0, 10.0]),
+                ("r2", [8.0, 118.0, 784.0, 90.0]),
+            ],
+        },
+        // The border and padding stay inside the grid, whatever the caption.
+        Case {
+            label: "a basis that grows, with padding and a border",
+            body: flex(
+                "flex-direction:column;height:100px",
+                &captioned(&format!("flex:1 1 50px;{edges}"), ""),
+            ),
+            expected: &[("r", [13.0, 23.0, 774.0, 80.0])],
+        },
+        Case {
+            label: "a basis that grows, with a higher caption",
+            body: flex(
+                "flex-direction:column;height:100px",
+                &captioned(&format!("flex:1 1 50px;{edges}"), "height:20px"),
+            ),
+            expected: &[("r", [13.0, 33.0, 774.0, 70.0])],
+        },
+        Case {
+            label: "a basis that shrinks",
+            body: flex(
+                "flex-direction:column;height:40px",
+                &captioned(&format!("flex:0 1 80px;{edges}"), ""),
+            ),
+            expected: &[("r", [13.0, 23.0, 774.0, 20.0])],
+        },
+        Case {
+            label: "a basis that shrinks, with a higher caption",
+            body: flex(
+                "flex-direction:column;height:40px",
+                &captioned(&format!("flex:0 1 80px;{edges}"), "height:20px"),
+            ),
+            expected: &[("r", [13.0, 33.0, 774.0, 10.0])],
+        },
+        Case {
+            label: "a content-box basis that shrinks, with a higher caption",
+            body: flex(
+                "flex-direction:column;height:40px",
+                &captioned(
+                    &format!("flex:0 1 80px;box-sizing:content-box;{edges}"),
+                    "height:20px",
+                ),
+            ),
+            expected: &[("r", [13.0, 33.0, 774.0, 10.0])],
+        },
+        // A container that is not as high as the table's wrapper, but not
+        // lower than its grid, still grows the table to its own height.
+        Case {
+            label: "a basis that grows to a container 5px above it",
+            body: flex(
+                "flex-direction:column;height:55px",
+                &captioned("flex:1 1 50px", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 45.0])],
+        },
+    ]);
+}
+
+#[test]
+fn a_flex_column_that_leaves_a_table_at_its_stated_height_gives_the_grid_that_height() {
+    let edges = "padding:3px;border:2px solid";
+    let column = "flex-direction:column;height:100px";
+    check(&[
+        // The height or the basis is the grid's, padding and border
+        // included, and the caption comes on top of it.
+        Case {
+            label: "a border-box basis",
+            body: flex(column, &captioned(&format!("flex:0 0 50px;{edges}"), "")),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 10.0]),
+                ("r", [13.0, 23.0, 774.0, 40.0]),
+            ],
+        },
+        Case {
+            label: "a content-box basis",
+            body: flex(
+                column,
+                &captioned(&format!("flex:0 0 50px;box-sizing:content-box;{edges}"), ""),
+            ),
+            expected: &[("r", [13.0, 23.0, 774.0, 50.0])],
+        },
+        Case {
+            label: "a border-box basis, with a higher caption",
+            body: flex(
+                column,
+                &captioned(&format!("flex:0 0 50px;{edges}"), "height:20px"),
+            ),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 20.0]),
+                ("r", [13.0, 33.0, 774.0, 40.0]),
+            ],
+        },
+        Case {
+            label: "a content-box basis, with a higher caption",
+            body: flex(
+                column,
+                &captioned(
+                    &format!("flex:0 0 50px;box-sizing:content-box;{edges}"),
+                    "height:20px",
+                ),
+            ),
+            expected: &[("r", [13.0, 33.0, 774.0, 50.0])],
+        },
+        Case {
+            label: "a caption below the grid",
+            body: flex(
+                column,
+                &captioned(&format!("flex:0 0 50px;{edges}"), "caption-side:bottom"),
+            ),
+            expected: &[
+                ("c", [8.0, 58.0, 784.0, 10.0]),
+                ("r", [13.0, 13.0, 774.0, 40.0]),
+            ],
+        },
+        Case {
+            label: "a percentage basis",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned(&format!("flex:0 0 50%;{edges}"), "height:20px"),
+            ),
+            expected: &[("r", [13.0, 33.0, 774.0, 90.0])],
+        },
+        // A container with room to spare leaves a table that may shrink at
+        // its basis.
+        Case {
+            label: "a basis that may shrink and has room",
+            body: flex(column, &captioned(&format!("flex:0 1 50px;{edges}"), "")),
+            expected: &[("r", [13.0, 23.0, 774.0, 40.0])],
+        },
+        Case {
+            label: "a height and room",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &captioned("height:50px", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 50.0])],
+        },
+        Case {
+            label: "a height that may not shrink",
+            body: flex(
+                "flex-direction:column;height:40px",
+                &captioned("height:50px;flex-shrink:0", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 50.0])],
+        },
+        // The container takes the whole wrapper.
+        Case {
+            label: "an auto-height container",
+            body: flex(
+                "flex-direction:column",
+                &captioned(&format!("flex:0 0 50px;{edges}"), ""),
+            ),
+            expected: &[("w", [8.0, 8.0, 784.0, 60.0])],
+        },
+        Case {
+            label: "an auto-height container and a higher caption",
+            body: flex(
+                "flex-direction:column",
+                &captioned(&format!("flex:0 0 50px;{edges}"), "height:20px"),
+            ),
+            expected: &[("w", [8.0, 8.0, 784.0, 70.0])],
+        },
+    ]);
+}
