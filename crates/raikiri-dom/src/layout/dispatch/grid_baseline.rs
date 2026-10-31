@@ -16,6 +16,7 @@ use crate::layout::style_views::ReadRole;
 use crate::node::Node;
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{AlignItemsKeyword, Contain, Position};
+use std::collections::HashSet;
 
 /// Whether the grid container `grid` runs its algorithm on the axes of a
 /// vertical writing mode.
@@ -82,14 +83,26 @@ pub(crate) fn first_baseline_item(
         .collect::<Vec<_>>();
     // A stable sort keeps the order-modified document order within a column.
     first_row_items.sort_by_key(|&(column, _)| column);
+    // Build membership once, rather than scanning every exclusion for each
+    // baseline candidate. The empty exclusion list needs no bucket storage.
+    let excluded: HashSet<_> = node.grid_items_without_baseline.iter().copied().collect();
+    #[cfg(test)]
+    tests::record_insertions(node.grid_items_without_baseline.len());
     first_row_items
         .iter()
         .map(|&(_, item)| item)
         .find(|&child| {
-            aligns_by_baseline(child) && !node.grid_items_without_baseline.contains(&child)
+            aligns_by_baseline(child) && {
+                #[cfg(test)]
+                tests::record_query();
+                !excluded.contains(&child)
+            }
         })
         .or_else(|| first_row_items.first().map(|&(_, item)| item))
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Replace the first baseline in `output`, the result of the grid algorithm
 /// for the container `idx`, with the one of the first line of the item that
