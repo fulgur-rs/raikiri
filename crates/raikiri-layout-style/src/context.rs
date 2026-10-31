@@ -177,6 +177,11 @@ impl StyleFlags {
     /// vertical margins and the vertical padding and border do not apply to
     /// it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1).
     pub const INLINE_BOX: Self = Self(1 << 21);
+    /// A block-level box that keeps its border box clear of the margin boxes
+    /// of the floats in its formatting context without establishing one: a
+    /// replaced element, or a form control that behaves as one (CSS 2.1
+    /// section 9.5).
+    pub const AVOIDS_FLOATS: Self = Self(1 << 22);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.

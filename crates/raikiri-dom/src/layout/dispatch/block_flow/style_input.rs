@@ -32,6 +32,7 @@ fn materialize(query: LayoutStyleView<'_>) -> BoxStyle {
         item_is_table: query.is_table(),
         item_is_replaced: query.is_replaced(),
         item_is_compressible_replaced: query.is_compressible_replaced(),
+        item_avoids_floats: query.avoids_floats(),
         box_sizing: query.box_sizing(),
         direction: query.direction(),
         overflow: query.overflow(),

@@ -25,6 +25,10 @@ pub struct BoxStyle {
     pub item_is_replaced: bool,
     /// Whether the box is a replaced element whose automatic size may shrink.
     pub item_is_compressible_replaced: bool,
+    /// Whether the box keeps its border box clear of the floats in its
+    /// formatting context without establishing one of its own: a replaced
+    /// element, or a form control that behaves as one.
+    pub item_avoids_floats: bool,
     /// What the size properties measure.
     pub box_sizing: BoxSizing,
     /// The inline direction.
@@ -119,6 +123,7 @@ impl Default for BoxStyle {
             item_is_table: false,
             item_is_replaced: false,
             item_is_compressible_replaced: false,
+            item_avoids_floats: false,
             box_sizing: BoxSizing::BorderBox,
             direction: Direction::Ltr,
             overflow: Point {
