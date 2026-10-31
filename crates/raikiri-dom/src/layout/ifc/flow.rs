@@ -397,6 +397,26 @@ pub(crate) fn rebreak_roots(
             .and_then(|text| widths.authored_containing_width(text))
             .or(generated_width)
             .unwrap_or(max_advance);
+        // A box that makes a formatting context of its own is sized by layout,
+        // beside a float for one. Breaking again never moves a box, so the
+        // lines stay within the content width layout gave it.
+        let width = if widths.sized_by_context_root(id) {
+            let layout = &doc.nodes[id].layout;
+            let content = layout.size.width
+                - layout.padding.left
+                - layout.padding.right
+                - layout.border.left
+                - layout.border.right
+                - layout.scrollbar_size.width;
+            // A box layout has not sized has no width to hold the lines to.
+            if content > 0.0 {
+                width.min(content)
+            } else {
+                width
+            }
+        } else {
+            width
+        };
         let Some(root) = doc.nodes[id].ifc.as_mut() else {
             continue;
         };

@@ -3721,6 +3721,14 @@ pub(crate) struct AncestorFacts {
     containing_width_ancestor: Vec<Option<usize>>,
     /// An auto-width block this pass projects to contain descendants.
     projected_auto_width: Vec<bool>,
+    /// A projected block that makes a block formatting context of its own. It
+    /// keeps its border box clear of the floats beside it (CSS 2.1 section
+    /// 9.5), so its `auto` width is the room they leave, which only layout
+    /// knows. Its projected width still answers where a paragraph breaks
+    /// again, but layout sizes it and the blocks inside it.
+    context_root: Vec<bool>,
+    /// The node, or an ancestor that sizes it, is a context root.
+    in_context_root: Vec<bool>,
     /// Layout, not the authored widths, decides the width of the nearest
     /// strict ancestor with a box: it has an `auto` or keyword width, and this
     /// pass does not project it (it fits its content, or leaves room for its
@@ -3735,6 +3743,23 @@ pub(crate) struct AncestorFacts {
     inline_box: Vec<bool>,
 }
 
+/// Whether the block `id` makes a block formatting context of its own: a
+/// scroll container, a box with layout or paint containment or with
+/// `align-content` other than `normal`, or a multicol container. The overflow
+/// of the body that propagates to the viewport is not the body's own.
+fn roots_formatting_context(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let cv = &cascade.computed[id];
+    let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
+    (scrolls(cv.overflow.x) || scrolls(cv.overflow.y))
+        && !super::body_overflow::body_overflow_propagates_to_viewport(doc, cascade, id)
+        || cv
+            .contain
+            .contains(raikiri_style::property::Contain::LAYOUT)
+        || cv.contain.contains(raikiri_style::property::Contain::PAINT)
+        || cv.align_content != raikiri_style::property::ContentAlignmentValue::Normal
+        || doc.nodes[id].multicol.is_some()
+}
+
 impl AncestorFacts {
     pub(crate) fn new(doc: &Document, cascade: &CascadeResult, fallback_width: f32) -> Self {
         let count = doc.nodes.len();
@@ -3746,6 +3771,8 @@ impl AncestorFacts {
             content_width: vec![0.0; count],
             containing_width_ancestor: vec![None; count],
             projected_auto_width: vec![false; count],
+            context_root: vec![false; count],
+            in_context_root: vec![false; count],
             laid_out_container: vec![false; count],
             intrinsic_width: vec![false; count],
             inline_box: super::style_views::metadata::inline_boxes(doc, cascade),
@@ -3856,7 +3883,9 @@ impl AncestorFacts {
                     // Layout decides an `auto` width, unless this pass
                     // projects it from a container whose width is known.
                     ComputedLengthPercentageOrAuto::Auto => {
-                        !self.projected_auto_width[parent] || self.laid_out_container[parent]
+                        !self.projected_auto_width[parent]
+                            || self.context_root[parent]
+                            || self.laid_out_container[parent]
                     }
                     width if width.is_content_keyword() => true,
                     // A percentage refers to the container, so it is as
@@ -3865,6 +3894,15 @@ impl AncestorFacts {
                 }
             };
         self.projected_auto_width[id] = self.can_project_auto_width(doc, cascade, id);
+        // `laid_out_container` of the children reads `context_root[id]`, so it
+        // is settled here, right after the projected test it depends on.
+        self.context_root[id] =
+            self.projected_auto_width[id] && roots_formatting_context(doc, cascade, id);
+        // Only blocks in ordinary block flow below a root are sized by it.
+        self.in_context_root[id] = self.context_root[id]
+            || (self.in_context_root[parent]
+                && !self.non_block_flow_ancestor[id]
+                && !self.multicol_ancestor[id]);
         if self.projected_auto_width[id]
             && let Some(width) = self.authored_containing_width(id)
         {
@@ -3938,6 +3976,12 @@ impl AncestorFacts {
             .copied()
             .flatten()
             .map(|ancestor| self.content_width[ancestor])
+    }
+
+    /// Layout, not the projected width, sized the horizontal box `id` or the
+    /// box around it, because that box makes a formatting context of its own.
+    pub(crate) fn sized_by_context_root(&self, id: usize) -> bool {
+        self.in_context_root[id] && !self.vertical[id]
     }
 
     pub(crate) fn content_width(&self, id: usize) -> Option<f32> {
@@ -4053,7 +4097,10 @@ pub(crate) fn prepare_authored_block_widths(
         if ancestors.multicol_ancestor[idx] {
             continue;
         }
-        if !ancestors.projected_auto_width[idx] || ancestors.laid_out_container[idx] {
+        if !ancestors.projected_auto_width[idx]
+            || ancestors.context_root[idx]
+            || ancestors.laid_out_container[idx]
+        {
             continue;
         }
         if let Some(width) = ancestors.authored_containing_width(idx) {

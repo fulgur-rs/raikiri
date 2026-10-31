@@ -4141,6 +4141,72 @@ fn relayout_breaks_lines_at_the_authored_or_the_given_width() {
     }
 }
 
+#[test]
+fn relayout_breaks_a_context_roots_lines_inside_its_padding() {
+    use crate::layout::relayout_text_for_width;
+    // The root is an `auto`-width block in a 100px box, so its content is 80px
+    // wide whatever the page width is, and layout sizes the box itself because
+    // it makes a formatting context of its own. "aaaa bbbb cccc" is 140px of
+    // Ahem: three lines at 80px, two at the 100px of the box around it.
+    for css in [
+        "overflow:hidden;padding:10px",
+        "contain:layout;padding:10px",
+        "align-content:center;padding:10px",
+    ] {
+        let (mut doc, cascade, _floats, root) =
+            ahem_paragraph_beside_floats("aaaa bbbb cccc", &[], css);
+        lay_out(&mut doc, &cascade);
+        assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{css}");
+        for max_advance in [50.0_f32, 800.0] {
+            relayout_text_for_width(&mut doc, &cascade, max_advance);
+            assert_eq!(
+                stored_lines(&doc, root).lines.len(),
+                3,
+                "{css} / {max_advance}"
+            );
+        }
+    }
+}
+
+#[test]
+fn relayout_of_a_context_root_with_no_content_width_breaks_at_the_width_it_has() {
+    use crate::layout::relayout_text_for_width;
+    // The padding takes all of the 100px box around the root: with no content
+    // width to hold the lines to, each word stays on a line of its own.
+    let (mut doc, cascade, _floats, root) =
+        ahem_paragraph_beside_floats("aaaa bbbb cccc", &[], "overflow:hidden;padding:0 50px");
+    lay_out(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+    relayout_text_for_width(&mut doc, &cascade, 800.0);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 3);
+}
+
+#[test]
+fn relayout_keeps_a_context_roots_lines_within_the_room_beside_a_float() {
+    use crate::layout::relayout_text_for_width;
+    // The 30px float leaves the root 70px of the 100px box around it, so
+    // "aaaa bbbb cccc" breaks into three lines; at the 100px of the box
+    // around it, it would take two, and they would run under the float.
+    for css in ["overflow:hidden", "contain:paint", "align-content:center"] {
+        let (mut doc, cascade, _floats, root) = ahem_paragraph_beside_floats(
+            "aaaa bbbb cccc",
+            &["float:left;width:30px;height:60px"],
+            css,
+        );
+        lay_out(&mut doc, &cascade);
+        assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{css}");
+        assert_eq!(doc.nodes[root].layout.size.width, 70.0, "{css}");
+        for max_advance in [50.0_f32, 800.0] {
+            relayout_text_for_width(&mut doc, &cascade, max_advance);
+            assert_eq!(
+                stored_lines(&doc, root).lines.len(),
+                3,
+                "{css} / {max_advance}"
+            );
+        }
+    }
+}
+
 // ── ifc roots beside floats ──────────────────────────────────
 
 #[test]
