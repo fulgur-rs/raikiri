@@ -91,6 +91,21 @@ image, or the image is ambiguous.
 - not-renderable: the condition needs interaction, animation, scrolling, \
 printing, hover, or readable glyph shapes.
 
+Before answering pass, check every word of the pass condition literally:
+- Position words mean what they say. "At the top of the page" means at the \
+top edge with nothing above it; "on the right side" means against or near \
+the right edge. A shape pushed below text or into the middle does not \
+qualify.
+- Shape words are measured. A "square" has equal width and height to within \
+a few pixels; "the same width" or "identical" means you measured both and \
+they match. If you cannot measure confidently, answer needs-human.
+- A layout engine bug often still paints the expected colors in the wrong \
+place, at the wrong size, or with extra space around them. The absence of \
+red is not enough; the described shapes must also be where and how the \
+condition says.
+- Use the assertion to tell where things should end up. If the screenshot \
+shows the layout the assertion says should not happen, answer fail.
+
 Be strict: answer pass only when you would bet on it."""
 
 
