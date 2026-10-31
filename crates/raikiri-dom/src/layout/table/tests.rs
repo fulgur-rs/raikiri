@@ -141,6 +141,7 @@ fn place_cells_in_session(
                 row_origins: origins.1,
                 row_spacing: spacing.1,
                 vertical_writing,
+                height_is_definite: true,
             },
             &mut oof_candidates,
         )
