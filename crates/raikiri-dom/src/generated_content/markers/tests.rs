@@ -148,7 +148,6 @@ fn list_marker_text_formats_ordinals_and_styles() {
     );
     let text = document.append_text(document.root_index(), "text");
     assert_eq!(list_item_ordinal(&document, &cascade, text), 1);
-    assert_eq!(alpha_marker(0), "");
 }
 
 #[test]
@@ -434,6 +433,75 @@ fn marker_quotes_repeat_the_last_explicit_pair_and_nest_the_auto_marks() {
     );
     assert_eq!(text(&[], true), Some("“‘‘’’”".to_string()));
     assert_eq!(text(&[], false), Some(String::new()));
+}
+
+#[test]
+fn predefined_counter_styles_make_markers_with_their_own_suffix() {
+    // The texts Chromium shows for the same list items.
+    let (_, cascade, _, _) = list_fixture("display: list-item", "display: list-item", None);
+    let marker = |style: &str, value: i32| {
+        list_marker_text_with_ordinal(&cascade, &ListStyleType::Named(style.into()), value)
+            .expect("ordered marker")
+    };
+    for (style, value, expected) in [
+        ("lower-greek", 5, "ε. "),
+        ("lower-greek", 26, "αβ. "),
+        ("thai", 5, "๕. "),
+        ("arabic-indic", 12, "١٢. "),
+        ("hebrew", 12, "יב. "),
+        ("armenian", 12, "ԺԲ. "),
+        ("georgian", 5, "ე. "),
+        ("cjk-decimal", 12, "一二、"),
+        ("cjk-decimal", 0, "〇、"),
+        ("hiragana", 5, "お、"),
+        ("katakana-iroha", 5, "ホ、"),
+        ("cjk-earthly-branch", 5, "辰、"),
+        ("cjk-earthly-branch", 26, "二六、"),
+        ("japanese-informal", 12, "十二、"),
+        ("japanese-formal", 5, "伍、"),
+        ("simp-chinese-formal", 5, "伍、"),
+        ("trad-chinese-informal", 12, "十二、"),
+        ("cjk-ideographic", 5, "五、"),
+        ("korean-hangul-formal", 5, "오, "),
+        ("korean-hanja-informal", 12, "十二, "),
+        ("ethiopic-numeric", 12, "፲፪/ "),
+        // The style asked for keeps its suffix when the value falls back.
+        ("cjk-earthly-branch", -3, "-3、"),
+        ("lower-greek", 0, "0. "),
+        ("ethiopic-numeric", -3, "-3/ "),
+        ("hiragana", 0, "0、"),
+        // A name is a predefined style whatever its case, and any other is decimal.
+        ("Hiragana", 5, "お、"),
+        ("no-such-style", 5, "5. "),
+    ] {
+        assert_eq!(marker(style, value), expected, "{style} at {value}");
+    }
+}
+
+#[test]
+fn an_author_counter_style_is_tried_before_the_predefined_marker_styles() {
+    let (_, cascade, _, _) = list_fixture(
+        "display: list-item",
+        "display: list-item",
+        Some(
+            "@counter-style lower-alpha { system: cyclic; symbols: '*'; suffix: ') ' } \
+             @counter-style lower-roman { system: cyclic; symbols: 'x' } \
+             @counter-style custom-style { system: cyclic; symbols: '#' }",
+        ),
+    );
+    let marker = |style: &str, value: i32| {
+        list_marker_text_with_ordinal(&cascade, &ListStyleType::Named(style.into()), value)
+            .expect("ordered marker")
+    };
+    assert_eq!(marker("lower-alpha", 3), "*) ");
+    // A predefined name matches without regard to case, another name exactly.
+    assert_eq!(marker("Lower-Alpha", 3), "*) ");
+    assert_eq!(marker("upper-alpha", 3), "C. ");
+    assert_eq!(marker("custom-style", 3), "#. ");
+    assert_eq!(marker("Custom-Style", 3), "3. ");
+    // The roman range of the predefined style does not limit an author style.
+    assert_eq!(marker("lower-roman", 4000), "x. ");
+    assert_eq!(marker("lower-roman", 0), "x. ");
 }
 
 #[test]

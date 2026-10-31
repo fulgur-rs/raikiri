@@ -680,6 +680,48 @@ pub fn is_predefined_counter_style(name: &str) -> bool {
             .any(|(candidate, _)| is(candidate))
 }
 
+/// The `suffix` descriptor of the predefined counter style `name` (matched
+/// without regard to case): what follows its representation in a list marker.
+/// Most styles take the default `". "`; the East Asian styles take the
+/// ideographic comma, the Korean ones a comma and a space, and
+/// `ethiopic-numeric` a slash and a space (CSS Counter Styles 3, sections 6
+/// and 7). `disc`, `circle` and `square` take a space, but a marker draws
+/// them as a bullet and does not use their suffix.
+#[doc(hidden)]
+pub fn predefined_counter_suffix(name: &str) -> &'static str {
+    const IDEOGRAPHIC_COMMA: &[&str] = &[
+        "cjk-decimal",
+        "hiragana",
+        "hiragana-iroha",
+        "katakana",
+        "katakana-iroha",
+        "cjk-earthly-branch",
+        "cjk-heavenly-stem",
+        "japanese-informal",
+        "japanese-formal",
+        "simp-chinese-informal",
+        "simp-chinese-formal",
+        "trad-chinese-informal",
+        "trad-chinese-formal",
+        "cjk-ideographic",
+    ];
+    const KOREAN: &[&str] = &[
+        "korean-hangul-formal",
+        "korean-hanja-informal",
+        "korean-hanja-formal",
+    ];
+    let is = |candidate: &&str| name.eq_ignore_ascii_case(candidate);
+    if IDEOGRAPHIC_COMMA.iter().any(is) {
+        "\u{3001}"
+    } else if KOREAN.iter().any(is) {
+        ", "
+    } else if name.eq_ignore_ascii_case("ethiopic-numeric") {
+        "/ "
+    } else {
+        ". "
+    }
+}
+
 /// Bare decimal representation — CSS Counter Styles L3 `numeric` system with
 /// the `decimal` `symbols` table (digits `0`-`9`) and default `negative:
 /// "-"` prefix <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>.

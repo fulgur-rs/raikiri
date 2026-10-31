@@ -19,7 +19,7 @@ pub use context::{CounterStack, NamedStringState, PageContext};
 pub use target::{
     PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry,
     format_counter as format_predefined_counter, is_predefined_counter_style,
-    resolve_content_component,
+    predefined_counter_suffix, resolve_content_component,
 };
 
 use crate::dom::{NodeId, Symbol};
