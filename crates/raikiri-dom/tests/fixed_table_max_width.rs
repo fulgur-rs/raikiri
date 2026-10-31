@@ -56,6 +56,90 @@ fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
 const TOLERANCE: f32 = 0.04;
 
 #[test]
+fn a_zero_width_auto_column_keeps_its_cell_at_the_column_origin() {
+    let mut mismatches = Vec::new();
+    check_boxes(
+        &mut mismatches,
+        "zero-width auto column",
+        "<style>td{padding:5px;border:1px solid}</style>\
+         <table id=t style='font:inherit;table-layout:fixed;width:150px;border-spacing:2px'>\
+         <tr><td id=a style='width:100px'>Row 1 Left</td>\
+         <td id=b style='width:100px'>y</td><td id=c>x</td></tr></table>",
+        &[
+            ("t", 0.0, 0.0, 232.0, 26.0),
+            ("a", 2.0, 2.0, 112.0, 22.0),
+            ("b", 116.0, 2.0, 112.0, 22.0),
+            ("c", 230.0, 2.0, 0.0, 22.0),
+        ],
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn narrow_columns_and_single_cell_widths_match_chromium() {
+    let cases: &[(&str, u32, &str, &str, Expected)] = &[
+        (
+            "narrow",
+            240,
+            "",
+            "width:100px",
+            &[
+                ("t", 0.0, 0.0, 240.0, 26.0),
+                ("a", 2.0, 2.0, 112.0, 22.0),
+                ("b", 116.0, 2.0, 112.0, 22.0),
+                ("c", 230.0, 2.0, 8.0, 22.0),
+            ],
+        ),
+        (
+            "ordinary",
+            250,
+            "",
+            "width:100px",
+            &[
+                ("t", 0.0, 0.0, 250.0, 26.0),
+                ("a", 2.0, 2.0, 112.0, 22.0),
+                ("b", 116.0, 2.0, 112.0, 22.0),
+                ("c", 230.0, 2.0, 18.0, 22.0),
+            ],
+        ),
+        (
+            "border box",
+            400,
+            "",
+            "width:100px;box-sizing:border-box",
+            &[
+                ("t", 0.0, 0.0, 400.0, 36.0),
+                ("a", 2.0, 2.0, 100.0, 32.0),
+                ("b", 104.0, 2.0, 112.0, 32.0),
+                ("c", 218.0, 2.0, 180.0, 32.0),
+            ],
+        ),
+        (
+            "column priority",
+            400,
+            "<col style='width:50px'><col><col>",
+            "width:100px",
+            &[
+                ("t", 0.0, 0.0, 400.0, 46.0),
+                ("a", 2.0, 2.0, 50.0, 42.0),
+                ("b", 54.0, 2.0, 112.0, 42.0),
+                ("c", 168.0, 2.0, 230.0, 42.0),
+            ],
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for &(label, width, columns, first, expected) in cases {
+        let markup = format!(
+            "<style>td{{padding:5px;border:1px solid}}</style>\
+            <table id=t style='font:inherit;table-layout:fixed;width:{width}px;border-spacing:2px'>{columns}\
+            <tr><td id=a style='{first}'>Row 1 Left</td><td id=b style='width:100px'>y</td><td id=c>x</td></tr></table>"
+        );
+        check_boxes(&mut mismatches, label, &markup, expected);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
 fn first_row_spanning_widths_contribute_to_unfixed_columns() {
     let cases: &[(&str, &str, &str, Expected)] = &[
         (
