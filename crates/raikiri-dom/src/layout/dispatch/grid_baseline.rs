@@ -15,7 +15,7 @@ use crate::layout::protocol::{LayoutOutput, RunMode};
 use crate::layout::style_views::ReadRole;
 use crate::node::Node;
 use raikiri_layout_style::LayoutStyleView;
-use raikiri_layout_style::values::{AlignItemsKeyword, Contain, Position};
+use raikiri_layout_style::values::{AlignItemsKeyword, Position};
 use std::collections::HashSet;
 
 /// Whether the grid container `grid` runs its algorithm on the axes of a
@@ -114,8 +114,7 @@ mod tests;
 /// baseline is the one the item handed over when the algorithm last laid it
 /// out: an offset from its block-start border edge, or, for an item that has
 /// none, one synthesized from its border box (CSS Box Alignment 3 §9.1).
-/// Layout containment suppresses the baseline of the item (CSS Contain 2
-/// §3.2).
+/// An item with layout containment hands over none (CSS Contain 2 §3.2).
 pub(super) fn with_first_baseline(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -137,23 +136,16 @@ pub(super) fn with_first_baseline(
         .filter(|&item| !tree.nodes[item].opposed_baseline_group);
     if let Some(item) = item {
         let node = &tree.nodes[item];
-        let contained = tree
-            .physical_style(item)
-            .contain()
-            .contains(Contain::LAYOUT);
         let height = node.layout.size.height;
-        let baseline = node
-            .exported_first_baseline
-            .filter(|_| !contained)
-            .unwrap_or_else(|| {
-                // The line-under edge of a box on horizontal axes is its
-                // bottom, whatever its writing mode.
-                if vertical {
-                    synthesized_baseline(tree, idx, height)
-                } else {
-                    height
-                }
-            });
+        let baseline = node.exported_first_baseline.unwrap_or_else(|| {
+            // The line-under edge of a box on horizontal axes is its bottom,
+            // whatever its writing mode.
+            if vertical {
+                synthesized_baseline(tree, idx, height)
+            } else {
+                height
+            }
+        });
         let top = node.layout.location.y - relative_block_offset(tree, idx, item, vertical);
         output.baselines.first = Some(top + baseline);
     }

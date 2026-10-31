@@ -22,9 +22,9 @@ use crate::layout::taffy_adapter::{GridInfo, RowSizing};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcRef, Dimension,
-    Direction, Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float, LengthPercentage,
-    LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
+    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcRef, Contain,
+    Dimension, Direction, Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float,
+    LengthPercentage, LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -874,7 +874,7 @@ impl LayoutSession<'_> {
                 self.context.text_group_shortest.take(),
             )
         });
-        let output = if let Some(output) =
+        let mut output = if let Some(output) =
             self.compute_transposed_child(node_id, inputs, block_ctx.as_deref_mut())
         {
             output
@@ -889,6 +889,15 @@ impl LayoutSession<'_> {
             self.context.text_group_shortest = shortest;
         }
         self.context.recursion.leave();
+        // Whichever path laid the box out, layout containment leaves it with
+        // no baselines: whatever aligns it, or collects the baseline of its
+        // content, finds none in it and synthesizes one from its border box
+        // instead, so the first line inside it does not decide where it sits
+        // (CSS Contain 2 §3.2).
+        // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
+        if exports_no_baseline(self, idx) {
+            output.baselines = Baselines::NONE;
+        }
         // A grid container reads this when its algorithm returns, and the
         // last layout the algorithm performs of an item is the one that
         // places it, so it is the baseline the container saw of the item.
@@ -2506,6 +2515,31 @@ fn first_block_baseline(doc: &LayoutSession<'_>, idx: usize) -> Option<(usize, f
     })
 }
 
+/// Whether the box `idx` exports no baseline because layout containment
+/// applies to it. The containment has no effect on `display: contents` and on
+/// internal table boxes other than cells (CSS Containment 2 §3.2); a
+/// non-atomic inline box is not laid out as a box of its own, so it never
+/// asks.
+/// spec: <https://www.w3.org/TR/css-contain-2/#containment-layout>
+fn exports_no_baseline(doc: &LayoutSession<'_>, idx: usize) -> bool {
+    doc.physical_style(idx).contain().contains(Contain::LAYOUT)
+        && layout_containment_applies(doc, idx)
+}
+
+/// Whether layout containment can apply to the box `idx`, by its `display`.
+fn layout_containment_applies(doc: &LayoutSession<'_>, idx: usize) -> bool {
+    !matches!(
+        doc.nodes[idx].display(),
+        DisplayValue::Contents
+            | DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableColumn
+            | DisplayValue::TableColumnGroup
+    )
+}
+
 /// Return the first baseline of an inline-block from the descendant layout
 /// tree: inline-blocks use the baseline of their last in-flow line box, so recover
 /// the last in-flow text line from the descendant layout tree. See CSS 2.1
@@ -2552,8 +2586,11 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         let node = &doc.nodes[idx];
         // Clamping a value to this box and then to the boxes around it is
         // clamping it to this box's edges, each clamped to the outer range.
-        let clip = if node.kind() != raikiri_traits::NodeKind::Text
-            && is_scroll_container(doc.physical_style(idx).overflow())
+        let is_text = node.kind() == raikiri_traits::NodeKind::Text;
+        let style = (!is_text).then(|| doc.physical_style(idx));
+        let clip = if style
+            .as_ref()
+            .is_some_and(|style| is_scroll_container(style.overflow()))
         {
             let bottom = offset_y + node.layout.size.height;
             (
@@ -2563,6 +2600,17 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         } else {
             outer_clip
         };
+        // A box with layout containment exports no baseline, so the lines
+        // inside it say nothing about where this one sits (CSS Contain 2
+        // §3.2).
+        // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
+        if style
+            .as_ref()
+            .is_some_and(|style| style.contain().contains(Contain::LAYOUT))
+            && layout_containment_applies(doc, idx)
+        {
+            continue;
+        }
         if node.flags.contains(NodeFlags::IS_IFC_ROOT) {
             if let Some(line_baseline) = node.ifc.as_ref().and_then(|root| root.last_baseline()) {
                 let layout = &node.layout;
