@@ -1,6 +1,26 @@
 use super::*;
 use std::cell::Cell;
 
+mod budget_tests;
+
+fn fixture_lease(
+    images: &RenderSvgImages<'_, '_>,
+    mime: &str,
+    bytes: &[u8],
+    image: Option<&DecodedImage>,
+) -> InlineImageLease {
+    // Synthetic memo fixtures bypass decoding and reserve their known pixels
+    // alongside the key. Production uses a separate fresh-pixel reservation.
+    InlineImageLease::new(
+        &images.resources.image_cache,
+        DATA_ENTRY_METADATA_BYTES
+            + mime.len() as u64
+            + bytes.len() as u64
+            + image.map_or(0, |image| image.rgba.len() as u64),
+    )
+    .unwrap()
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Work {
     comparisons: usize,
@@ -50,7 +70,8 @@ fn populate(images: &RenderSvgImages<'_, '_>, count: usize) -> Vec<(Vec<u8>, Arc
         .collect();
     let mut state = images.state();
     for (bytes, image) in &pictures {
-        state.remember_data("image/png", bytes, Some(Arc::clone(image)));
+        let lease = fixture_lease(images, "image/png", bytes, Some(image));
+        state.remember_data("image/png", bytes, Some(Arc::clone(image)), lease);
     }
     state.attempts = count;
     pictures
@@ -127,8 +148,10 @@ fn same_bytes_with_different_mime_and_negative_results_remain_distinct() {
     let bytes = b"encoded";
     {
         let mut state = images.state();
-        state.remember_data("image/png", bytes, None);
-        state.remember_data("image/gif", bytes, Some(Arc::clone(&expected)));
+        let lease = fixture_lease(&images, "image/png", bytes, None);
+        state.remember_data("image/png", bytes, None, lease);
+        let lease = fixture_lease(&images, "image/gif", bytes, Some(&expected));
+        state.remember_data("image/gif", bytes, Some(Arc::clone(&expected)), lease);
         state.attempts = 34;
     }
     assert!(images.data("image/png", bytes).is_none());

@@ -8,11 +8,14 @@
 //! children out as one stream and slices each box at the column boundaries.
 
 use super::*;
-use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
 use raikiri_style::property::BreakInside;
+
+mod paged;
+pub(super) use paged::{PagedPiece, paginate};
 
 /// The rendered children of `parent` when every one of them is a plain
 /// block with no content, and at least one of them has a block size (or, with
@@ -2178,6 +2181,37 @@ pub(super) fn layout(
     tree.fragment_tree.retire_previous_roots(parent);
     tree.nodes[parent].multicol_groups.clear();
     tree.nodes[parent].multicol_rows.clear();
+    // Columns that fill in turn under an auto height are one column that
+    // nothing limits. Pages that cut the container fill them again, page by
+    // page, from the group kept here.
+    if definite_height.is_none()
+        && maximum.is_none()
+        && minimum <= origin.y + block_end_inset
+        && context.column_fill == ColumnFillValue::Auto
+        && outer_height.is_none()
+        && tree.context.fragmentation_stack.len() <= 1
+        && !tree.context.unpaged_plain_columns
+        && wrapped.iter().all(Option::is_none)
+        && absolute.iter().all(Vec::is_empty)
+        && !sliced_flex.contains(&true)
+    {
+        tree.nodes[parent].multicol_groups.push(MulticolGroup {
+            context: FragmentationContext {
+                origin_x: origin.x,
+                origin_y: origin.y,
+                ..context
+            },
+            height: column_height,
+            occupied: placements
+                .pieces
+                .iter()
+                .flatten()
+                .filter(|piece| piece.height > 0.0)
+                .map(|piece| piece.column)
+                .collect(),
+            slice: None,
+        });
+    }
     let container = tree.fragment_tree.try_push(LayoutFragment {
         node_id: parent,
         parent: None,

@@ -43,7 +43,7 @@ pub(crate) fn fixture_with_styles(
     let mut doc = Document::new();
     let root = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(root), "body", Some(container));
-    let child = doc.append_element(Some(body), "div", Some(child));
+    let child = doc.append_element(Some(body), "div", Some(format!("display:block;{child}")));
     let text = doc.append_text(body, "text");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -669,37 +669,40 @@ pub(crate) fn prepare_all_layout_views(tree: &mut LayoutSession<'_>) {
 mod block_view_tests;
 
 #[test]
-fn an_inline_box_holds_a_block_when_one_is_in_it_or_in_an_inline_box_of_its_own() {
-    // A deep chain of inline boxes is classified in one pass, not by a walk of
-    // the subtree under each box.
+fn every_inline_box_is_classified_whatever_it_holds() {
+    // A deep chain of inline boxes is classified without a walk of the
+    // subtree under each box.
     const DEPTH: usize = 4_000;
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
-    let mut open = Vec::new();
+    let mut with_block = Vec::new();
     let mut parent = body;
     for _ in 0..DEPTH {
         parent = doc.append_element(Some(parent), "span", Some("display:inline"));
-        open.push(parent);
+        with_block.push(parent);
     }
     let block = doc.append_element(Some(parent), "div", Some("display:block"));
-    let mut closed = Vec::new();
+    let mut without_block = Vec::new();
     let mut parent = body;
     for _ in 0..DEPTH {
         parent = doc.append_element(Some(parent), "span", Some("display:inline"));
-        closed.push(parent);
+        without_block.push(parent);
     }
     let float = doc.append_element(Some(parent), "div", Some("float:left"));
     let atomic = doc.append_element(Some(parent), "div", Some("display:inline-block"));
+    let empty = doc.append_element(Some(body), "span", Some("display:inline"));
+    let absolute = doc.append_element(Some(body), "span", Some("position:absolute"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style_in_session(&mut LayoutSession::with_cascade(&mut doc, &cr), &cr)
         .expect("styles");
 
-    let holds = super::metadata::inline_boxes_holding_blocks(&doc, &cr);
-    assert!(open.iter().all(|&span| holds[span]));
-    assert!(closed.iter().all(|&span| !holds[span]));
-    for node in [body, block, float, atomic] {
-        assert!(!holds[node], "node {node} is not an inline box");
+    let boxes = super::metadata::inline_boxes(&doc, &cr);
+    assert!(with_block.iter().all(|&span| boxes[span]));
+    assert!(without_block.iter().all(|&span| boxes[span]));
+    assert!(boxes[empty]);
+    for node in [body, block, float, atomic, absolute] {
+        assert!(!boxes[node], "node {node} is not an inline box");
     }
 }

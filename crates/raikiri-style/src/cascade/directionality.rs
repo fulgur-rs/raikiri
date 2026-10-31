@@ -45,26 +45,37 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 /// `dir` attribute still falls through to the ancestor walk below, same as
 /// any other element with no `dir`) and the shadow-tree host step of
 /// "parent directionality" (raikiri has no shadow DOM).
+///
+/// `known` supplies an ancestor's nearest explicit/default inheritance value,
+/// not its own `dir="auto"` text result. A successful result's `Some(index)`
+/// identifies the suffix `ancestors[index..]` and the subject that can share
+/// that inheritance value. `None` marks an own Auto result, which must not be
+/// published to an inheritance memo.
 pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
+    mut known: impl FnMut(StyleNodeId) -> Option<Direction>,
     mut visit: impl FnMut() -> Result<(), crate::CascadeError>,
-) -> Result<Direction, crate::CascadeError> {
+) -> Result<(Direction, Option<usize>), crate::CascadeError> {
     match own_dir_attribute_state(elem) {
-        DirAttributeState::Ltr => return Ok(Direction::Ltr),
-        DirAttributeState::Rtl => return Ok(Direction::Rtl),
+        DirAttributeState::Ltr => return Ok((Direction::Ltr, Some(ancestors.len()))),
+        DirAttributeState::Rtl => return Ok((Direction::Rtl, Some(ancestors.len()))),
         DirAttributeState::Auto => {
-            return Ok(
+            return Ok((
                 contained_text_auto_directionality(dom, elem_id, &mut visit)?
                     .unwrap_or(Direction::Ltr),
-            );
+                None,
+            ));
         }
         DirAttributeState::Undefined => {}
     }
-    for &ancestor_id in ancestors.iter().rev() {
+    for (index, &ancestor_id) in ancestors.iter().enumerate().rev() {
         visit()?;
+        if let Some(dir) = known(ancestor_id) {
+            return Ok((dir, Some(index)));
+        }
         // Same "explicit `if let` nesting instead of `.and_then` chain"
         // reason as `effective_language`'s sibling loop — `own_explicit_direction`
         // borrows from `ancestor_elem`, which itself borrows from a `node`
@@ -73,10 +84,10 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
             && let Some(ancestor_elem) = node.as_element()
             && let Some(dir) = own_explicit_direction(&ancestor_elem)
         {
-            return Ok(dir);
+            return Ok((dir, Some(index)));
         }
     }
-    Ok(Direction::Ltr)
+    Ok((Direction::Ltr, Some(0)))
 }
 
 /// The `dir` attribute's full enumerated state — HTML LS §3.2.6.4's LTR /

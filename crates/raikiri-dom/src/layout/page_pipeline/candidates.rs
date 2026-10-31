@@ -522,6 +522,9 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     /// blocks: some box avoids a break before or after it, and no box names a
     /// page, which would break the flow between boxes of its own.
     finds_nested_runs: bool,
+    /// Whether some box forces a break after itself, so that a box after one
+    /// may take it.
+    forces_break_after: bool,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -557,6 +560,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             )
                         })
                 }),
+            forces_break_after: cascade.computed.iter().any(|computed| {
+                matches!(
+                    computed.break_after,
+                    raikiri_style::property::BreakBetween::Page
+                        | raikiri_style::property::BreakBetween::Always
+                )
+            }),
         }
     }
 
@@ -929,6 +939,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A block box in the flow that is a candidate to move to the
                 // next page, along with the box it holds or the edges it ends.
                 let in_flow_block = in_flow_block_level && is_plain_block_box(document, node_id);
+                // A box after one that forces a break after itself takes the
+                // break, though it holds no line of its own to take it: the
+                // pass otherwise leaves it on the page the break closes, and
+                // the break falls before the next box that holds a line. The
+                // box before it is the last box in the flow ahead of it, a
+                // float or an out-of-flow box between the two not counted,
+                // and only a block that moves its later siblings has one.
+                let after_forced_break = self.forces_break_after
+                    && in_flow_block
+                    && !direct_body_child
+                    && frame.previous_box.is_some_and(|previous| {
+                        page_edge_constraint(document, cascade, previous, false).0
+                    });
                 // A flex container, grid or table is a box that can end a block
                 // too, and move to the next page for the edges it ends.
                 let in_flow_container =
@@ -1101,6 +1124,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || flex_item_candidate
                         || is_rendered_leaf
                         || grid_item_candidate
+                        || after_forced_break
                         || sets_page_flow);
                 // A box is measured against a clipping ancestor's edge like
                 // text: one past it is not a candidate, and one running over

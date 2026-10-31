@@ -446,7 +446,11 @@ fn element_matches(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;
     let matched = with_selector_query(context, |doc, budget| {
-        let ancestors = bounded_ancestors(doc, index, budget)?;
+        let ancestors = if query.requires_ancestor_context() {
+            bounded_ancestors(doc, index, budget)?
+        } else {
+            Vec::new()
+        };
         let scope = Some(StyleNodeId(index as u64));
         query.try_matches_scoped(doc, StyleNodeId(index as u64), &ancestors, scope, budget)
     })?;

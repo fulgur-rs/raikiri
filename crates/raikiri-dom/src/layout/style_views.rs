@@ -183,7 +183,7 @@ impl<'a> StyleViews<'a> {
     fn prepare_foundations(&mut self, doc: &mut Document) {
         // Every live box needs a foundation even when Taffy never queries its view.
         // The range iterator owns indices; source values stay externally borrowed.
-        let inline_boxes = metadata::inline_boxes_holding_blocks(doc, self.cascade);
+        let inline_boxes = metadata::inline_boxes(doc, self.cascade);
         for idx in doc.nodes.layout_keys() {
             let key = doc.nodes.box_key(idx).expect("foundation key is live");
             if doc.box_style_data.get(key).is_none()

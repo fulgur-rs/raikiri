@@ -122,6 +122,9 @@ pub(crate) struct MatchCaches {
     languages: RefCell<FxHashMap<StyleNodeId, Rc<str>>>,
     /// Resolved directionality per element id; see [`resolve_directionality`].
     directions: RefCell<FxHashMap<StyleNodeId, Direction>>,
+    /// Explicit/default inheritance per element id, separate from its own
+    /// `dir="auto"` text result; see [`resolve_directionality`].
+    inherited_directions: RefCell<FxHashMap<StyleNodeId, Direction>>,
     /// `:has()` results per anchor; see [`HasCache`].
     has: RefCell<HasCache>,
     /// Reusable buffers for `:has()` searches; see [`HasScratch`].
@@ -217,6 +220,7 @@ impl MatchCaches {
             siblings: RefCell::default(),
             languages: RefCell::default(),
             directions: RefCell::default(),
+            inherited_directions: RefCell::default(),
             has: RefCell::default(),
             has_scratch: RefCell::default(),
         }
@@ -289,7 +293,21 @@ impl MatchCaches {
         if let Some(&dir) = self.directions.borrow().get(&elem_id) {
             return Ok(dir);
         }
-        let dir = resolve_directionality(dom, elem, elem_id, ancestors, || self.work.charge(1))?;
+        let (dir, inherited_from) = resolve_directionality(
+            dom,
+            elem,
+            elem_id,
+            ancestors,
+            |ancestor| self.inherited_directions.borrow().get(&ancestor).copied(),
+            || self.work.charge(1),
+        )?;
+        if let Some(start) = inherited_from {
+            let mut inherited = self.inherited_directions.borrow_mut();
+            for &ancestor in &ancestors[start..] {
+                inherited.insert(ancestor, dir);
+            }
+            inherited.insert(elem_id, dir);
+        }
         self.directions.borrow_mut().insert(elem_id, dir);
         Ok(dir)
     }
