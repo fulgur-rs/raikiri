@@ -543,6 +543,7 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_grid_box = None;
         doc.nodes[table_idx].table_first_baseline = None;
     }
+    let absolute_table = doc.nodes[table_idx].layout_position() == Position::Absolute;
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
@@ -561,6 +562,10 @@ fn compute_table_layout_checked(
                         | ExpandedDimension::Calc(_)
                 )
         });
+    // The height of the whole wrapper box, caption included, is also what an
+    // absolutely positioned table is given: its layout measures the wrapper
+    // and lays the table out at that size.
+    let wrapper_height_is_assigned = parent_assigns_wrapper_height || absolute_table;
     let grid = cache::table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -727,7 +732,7 @@ fn compute_table_layout_checked(
             });
             let mut height = stated_h.unwrap_or_else(|| {
                 let known = effective_known.height.map(|wrapper_height| {
-                    if parent_assigns_wrapper_height && !vertical_writing {
+                    if wrapper_height_is_assigned && !vertical_writing {
                         grid_height_in_wrapper(
                             doc,
                             table_idx,
@@ -1124,12 +1129,13 @@ fn compute_table_layout_checked(
         };
         // A flex or grid parent assigns the table the height of the whole
         // wrapper box, caption included, and the grid box takes what is left of
-        // it. This does not hold for an authored height, which sizes the grid
-        // box alone (the wrapper is that much and the caption).
+        // it; so does the layout of an absolutely positioned table. This does
+        // not hold for an authored height, which sizes the grid box alone (the
+        // wrapper is that much and the caption).
         let assigned_grid_height = effective_known
             .height
             .filter(|_| {
-                parent_assigns_wrapper_height && !vertical_writing && specified_height.is_none()
+                wrapper_height_is_assigned && !vertical_writing && specified_height.is_none()
             })
             .map(|wrapper_height| {
                 grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
