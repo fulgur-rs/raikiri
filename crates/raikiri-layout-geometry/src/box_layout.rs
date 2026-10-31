@@ -73,24 +73,27 @@ impl BoxLayout {
         }
     }
 
-    /// The width of the content box.
+    /// The used width of the content box, floored at zero when its edges
+    /// exceed the border box (for example, a cell in a zero-width column).
     #[inline]
     pub fn content_box_width(&self) -> f32 {
-        self.size.width
+        let width = self.size.width
             - self.padding.left
             - self.padding.right
             - self.border.left
-            - self.border.right
+            - self.border.right;
+        if width < 0.0 { 0.0 } else { width }
     }
 
-    /// The height of the content box.
+    /// The used height of the content box, floored at zero.
     #[inline]
     pub fn content_box_height(&self) -> f32 {
-        self.size.height
+        let height = self.size.height
             - self.padding.top
             - self.padding.bottom
             - self.border.top
-            - self.border.bottom
+            - self.border.bottom;
+        if height < 0.0 { 0.0 } else { height }
     }
 
     /// The size of the content box.

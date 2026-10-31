@@ -195,6 +195,10 @@ fn table_caption(doc: &Document, table: usize) -> Option<usize> {
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
 }
 
+/// How far a flex column's height for a table item may be from the height the
+/// item states and still count as that height: layout units are 1/64px.
+const FLEXED_HEIGHT_TOLERANCE: f32 = 0.02;
+
 /// Whether the caption of `table` takes up room around the grid; an absolutely
 /// positioned one does not.
 fn caption_in_flow(doc: &Document, table: usize) -> bool {
@@ -591,36 +595,30 @@ fn compute_table_layout_checked(
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
+    // A flex column is the one parent that sizes its item by a stated height
+    // (a definite `flex-basis`, or else the `height`) before it flexes it.
+    let flex_column_parent = !absolute_table
+        && doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+            doc.nodes[parent].formatting_context == FormattingContext::Flex
+                && !doc.physical_style(parent).flex_direction_is_row()
+        });
     // The height a flex or grid parent assigns is that of the whole wrapper
     // box, caption included, except when a definite `flex-basis` sizes the
     // item along a column: like an authored height, it sizes the grid box
-    // alone, with the caption on top of it.
+    // alone, with the caption on top of it, for as long as the container has
+    // not grown or shrunk the item (see `item_is_flexed` below).
     let parent_assigns_wrapper_height = parent_is_flex_or_grid
-        && !doc.taffy_parent_of(table_idx).is_some_and(|parent| {
-            doc.nodes[parent].formatting_context == FormattingContext::Flex
-                && !doc.physical_style(parent).flex_direction_is_row()
-                && matches!(
-                    doc.physical_style(table_idx).flex_basis().expand(),
-                    ExpandedDimension::Length(_)
-                        | ExpandedDimension::Percent(_)
-                        | ExpandedDimension::Calc(_)
-                )
-        });
-    // The height of the whole wrapper box, caption included, is also what an
-    // absolutely positioned table is given: its layout measures the wrapper
-    // and lays the table out at that size.
-    let wrapper_height_is_assigned = parent_assigns_wrapper_height || absolute_table;
-    // What is left of the flex and grid items is the item of a flex column with
-    // a definite `flex-basis`: the height it is given is that of its grid box,
-    // as an authored `height` is. (A `flex-basis` does not size an absolutely
-    // positioned table, which is the wrapper's case above.)
-    let parent_sizes_grid_alone = parent_is_flex_or_grid && !wrapper_height_is_assigned;
+        && !(flex_column_parent
+            && matches!(
+                doc.physical_style(table_idx).flex_basis().expand(),
+                ExpandedDimension::Length(_)
+                    | ExpandedDimension::Percent(_)
+                    | ExpandedDimension::Calc(_)
+            ));
     // The layout library measures the wrapper of such a table and gives that
     // height back, so a known height is the wrapper's even though the table
     // states one; the height it states is for the measure alone.
     let wrapper_measured_by_library = absolute_table && wrapper_owns_height(doc, table_idx);
-    let known_is_wrapper_height =
-        wrapper_measured_by_library && inputs.known_dimensions.height.is_some();
     let grid = cache::table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -725,6 +723,39 @@ fn compute_table_layout_checked(
         let max_w_outer = max_w.map(|m| m + lift_w);
         let min_h_outer = min_h.map(|m| m + lift_h);
         let max_h_outer = max_h.map(|m| m + lift_h);
+        // A flex column gives the item the height it states (see above) while
+        // it has not grown or shrunk it, and that height is the grid box's
+        // alone: the caption comes on top of it. Once the container has moved
+        // the item off that height, the height is the whole wrapper box's, as
+        // for any other flex or grid item, and the grid box takes what the
+        // caption leaves. A `min-height` or `max-height` clamps the item the
+        // same way, which is why it counts as flexing. (An item flexed to land
+        // on the stated height cannot be told from one that was not.)
+        let item_is_flexed = flex_column_parent
+            && caption_in_flow(doc, table_idx)
+            && inputs.known_dimensions.height.is_some_and(|known| {
+                resolve_dimension(
+                    doc.physical_style(table_idx).flex_basis(),
+                    inputs.parent_size.height,
+                )
+                .or(specified_height)
+                .is_some_and(|stated| (known - (stated + lift_h)).abs() > FLEXED_HEIGHT_TOLERANCE)
+            });
+        // A flex or grid parent assigns the height of the whole wrapper box,
+        // caption included, and so does the layout of an absolutely positioned
+        // table, which measures the wrapper and lays the table out at that
+        // size.
+        let wrapper_height_is_assigned =
+            parent_assigns_wrapper_height || absolute_table || item_is_flexed;
+        // What is left of the flex and grid items is the item of a flex column
+        // with a definite `flex-basis` that the container has left alone: the
+        // height it is given is that of its grid box, as an authored `height`
+        // is. (A `flex-basis` does not size an absolutely positioned table,
+        // which is the wrapper's case above.)
+        let parent_sizes_grid_alone = parent_is_flex_or_grid && !wrapper_height_is_assigned;
+        let known_is_wrapper_height = (wrapper_measured_by_library
+            && inputs.known_dimensions.height.is_some())
+            || item_is_flexed;
         // Without a known height the stated one stands in for it. The library
         // would have reported it in the outer box-sizing domain and within the
         // limits (the minimum wins), and the grid below does not shrink to a
@@ -1227,7 +1258,8 @@ fn compute_table_layout_checked(
         // wrapper box, caption included, and the grid box takes what is left of
         // it; so does the layout of an absolutely positioned table. This does
         // not hold for an authored height, which sizes the grid box alone (the
-        // wrapper is that much and the caption).
+        // wrapper is that much and the caption), unless the height is the
+        // wrapper's that a flex column gave a table it grew or shrank.
         let assigned_grid_height = effective_known
             .height
             .filter(|_| {
@@ -1340,16 +1372,16 @@ fn compute_table_layout_checked(
                         // Taffy reports authored definite table heights in the
                         // outer box-sizing domain, and so does a flex column
                         // for the main size it gives a table whose
-                        // `flex-basis` is definite (shrunk or grown, too).
-                        // With a caption that size is the wrapper's once the
-                        // item is flexed and the grid's when it is not, which
-                        // is not told apart here, so a table with a caption
-                        // and other auto tables retain the legacy known-height
-                        // normalization used by fragmentation.
+                        // `flex-basis` is definite, as long as it has not
+                        // grown or shrunk it: the height of the grid box
+                        // alone, with the caption on top of it. (Once it is
+                        // flexed the height is the wrapper's, which the
+                        // assigned height above takes care of.) Other auto
+                        // tables retain the legacy known-height normalization
+                        // used by fragmentation.
                         // CSS 2.2 §17.5.3: a specified height is a minimum; the
                         // table still holds its rows and the spacing.
-                        let outer_height = if specified_height.is_some()
-                            || (parent_sizes_grid_alone && early_caption.is_none())
+                        let outer_height = if specified_height.is_some() || parent_sizes_grid_alone
                         {
                             f32_max_compat(h, content_height + padding_border_size.height)
                         } else {
@@ -2639,8 +2671,8 @@ fn resolve_table_columns(
         // once for each pass over the columns.
         let width = style.size().width;
         cell.fixed_extra = 0.0;
-        if cell.col_span > 1 {
-            if let ExpandedDimension::Length(length) = width.expand() {
+        match width.expand() {
+            ExpandedDimension::Length(length) if cell.col_span > 1 => {
                 // A length sizes the spanning border box. Percentages instead
                 // contribute a share of the net track width, without cell
                 // edges.
@@ -2648,20 +2680,18 @@ fn resolve_table_columns(
                     pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
                 cell.specified_width = Dimension::length((outer_of(length) - gaps).max(0.0));
             }
-        } else if horizontal && let Some(stated) = fixed_column_width(width, avail) {
-            if !matches!(width.expand(), ExpandedDimension::Percent(_)) {
-                let capped = capped_by_max_width(&style, stated);
-                // A border-box width cannot take the box below its padding
-                // and border.
-                cell.specified_width = Dimension::length(if content_box {
-                    capped
-                } else {
-                    capped.max(cell_insets)
-                });
+            ExpandedDimension::Length(length) if horizontal => {
+                // A length sizes the cell's border box, held to its
+                // `max-width` first.
+                cell.specified_width =
+                    Dimension::length(outer_of(capped_by_max_width(&style, length)));
             }
-            if content_box {
+            ExpandedDimension::Percent(_) if horizontal && cell.col_span == 1 && content_box => {
+                // The share of the table is the content box's, and the column
+                // takes the cell's edges on top of it.
                 cell.fixed_extra = cell_insets;
             }
+            _ => {}
         }
         if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
             let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
