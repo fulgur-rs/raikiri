@@ -4084,6 +4084,46 @@ fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
 }
 
 #[test]
+fn ancestor_width_table_marks_the_boxes_layout_sizes_because_they_make_a_context() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Some("display:block;width:400px"));
+    // The overflow of the body goes to the viewport, so the body is no root.
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;overflow:hidden"),
+    );
+    let plain = doc.append_element(Some(body), "div", Some("display:block"));
+    let scroller = doc.append_element(Some(plain), "div", Some("display:block;overflow:auto"));
+    let below = doc.append_element(Some(scroller), "div", Some("display:block"));
+    let text = doc.append_text(below, "test");
+    let aligned = doc.append_element(Some(plain), "div", Some("display:block;align-content:end"));
+    let columns = doc.append_element(Some(plain), "div", Some("display:block;column-count:2"));
+    let contained = doc.append_element(Some(plain), "div", Some("display:block;contain:paint"));
+    let visible = doc.append_element(Some(plain), "div", Some("display:block;overflow:clip"));
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    for node in [body, plain, below, visible] {
+        assert!(!widths.context_root[node], "{node} is no context root");
+    }
+    for node in [scroller, aligned, columns, contained] {
+        assert!(widths.context_root[node], "{node} is a context root");
+        assert!(widths.sized_by_context_root(node));
+    }
+    // The projected width stays what a paragraph breaks again at, and layout
+    // sizes the blocks below a root.
+    assert_eq!(widths.authored_containing_width(text), Some(400.0));
+    assert!(widths.sized_by_context_root(text));
+    assert!(widths.laid_out_container[below]);
+    assert!(!widths.sized_by_context_root(plain));
+    assert!(!widths.laid_out_container[plain]);
+}
+
+#[test]
 fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
     use raikiri_style::{build_rule_tree, cascade};
 
