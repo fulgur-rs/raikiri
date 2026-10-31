@@ -34,6 +34,12 @@ impl LayoutStyleView<'_> {
     pub fn is_replaced(&self) -> bool {
         self.flags().contains(StyleFlags::REPLACED)
     }
+    /// Whether the box keeps its border box clear of the floats in its
+    /// formatting context although it does not establish one.
+    #[inline]
+    pub fn avoids_floats(&self) -> bool {
+        self.flags().contains(StyleFlags::AVOIDS_FLOATS)
+    }
     /// The used box-sizing, including the border-box exception for side borders.
     #[inline]
     pub fn box_sizing(&self) -> values::BoxSizing {

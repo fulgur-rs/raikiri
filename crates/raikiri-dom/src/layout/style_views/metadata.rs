@@ -38,6 +38,9 @@ pub(super) fn prepare_metadata(
             .union(StyleFlags::REPLACED)
             .union(StyleFlags::COMPRESSIBLE_REPLACED);
     }
+    if source && !neutral_contents && avoids_floats(doc, idx) {
+        flags = flags.union(StyleFlags::AVOIDS_FLOATS);
+    }
     if source && !neutral_contents && inline_box {
         flags = flags.union(StyleFlags::INLINE_BOX);
     }
@@ -207,6 +210,17 @@ pub(in crate::layout) fn size_containment(
         width: !vertical,
         height: vertical,
     }
+}
+
+/// Whether the element, as a block-level box, keeps its border box clear of
+/// the margin boxes of the floats in its formatting context: a replaced
+/// element, whether or not it has a natural size, and the form controls that
+/// browsers lay out as one (CSS 2.1 section 9.5). An `<object>` shows its
+/// fallback content here, as an ordinary block, because nothing loads into it.
+fn avoids_floats(doc: &Document, idx: usize) -> bool {
+    let tag = doc.nodes[idx].tag_name();
+    (tag != Some("object") && crate::paint_rules::is_replaced_element(doc, idx))
+        || matches!(tag, Some("input" | "select" | "textarea" | "button"))
 }
 
 pub(in crate::layout) fn is_replaced(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
