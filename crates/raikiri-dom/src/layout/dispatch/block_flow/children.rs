@@ -13,8 +13,8 @@ use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, BoxGenerationMode, Clear, Direction, ExpandedDimension, Float,
-    MaybeResolve, Overflow, Position,
+    AlignContent, AlignContentKeyword, AlignmentSafety, BoxGenerationMode, Clear, Direction,
+    ExpandedDimension, Float, MaybeResolve, Overflow, Position,
 };
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 
@@ -490,6 +490,7 @@ pub(super) fn layout(
             }
             if inputs.run_mode == RunMode::PerformLayout {
                 commit(tree, child, order, child_metrics, &output, location, margin);
+                flow.placed.push(child);
             }
             continue;
         }
@@ -812,15 +813,27 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
     if style.align_content.keyword == AlignContentKeyword::Normal {
         return;
     }
-    let offset = compute_block_align_content_offset(style.align_content, free);
+    // Without an overflow-position keyword, a block container keeps overflowing
+    // content at its start edge, as `safe` does: content pushed past the start
+    // edge could not be scrolled to. Only `unsafe` aligns it as written.
+    let align_content = AlignContent {
+        safety: match style.align_content.safety {
+            AlignmentSafety::Default => AlignmentSafety::Safe,
+            safety => safety,
+        },
+        ..style.align_content
+    };
+    let offset = compute_block_align_content_offset(align_content, free);
     if offset == 0.0 {
         return;
     }
     flow.baselines.first = flow.baselines.first.map(|baseline| baseline + offset);
     flow.baselines.last = flow.baselines.last.map(|baseline| baseline + offset);
-    if flow.overflow != Edges::ZERO {
-        flow.overflow.top += offset;
-        flow.overflow.bottom += offset;
+    for overflow in [&mut flow.overflow, &mut flow.float_overflow] {
+        if *overflow != Edges::ZERO {
+            overflow.top += offset;
+            overflow.bottom += offset;
+        }
     }
     flow.oof_candidates.translate(Point { x: 0.0, y: offset });
     for &node in &flow.placed {
