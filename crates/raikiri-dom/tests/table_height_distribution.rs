@@ -85,6 +85,32 @@ fn check_rows(cases: &[Case<'_>]) {
     }
 }
 
+#[test]
+fn cell_min_height_does_not_floor_the_row() {
+    check_rows(&[
+        (
+            "cell minimum with a percentage-height child",
+            "<div id=t style='display:table'><div id=r style='display:table-row'><div id=c style='display:table-cell;min-height:40px'><div style='height:50%'>x</div></div></div></div>",
+            &[("t", 8.0, 10.0), ("r", 8.0, 10.0), ("c", 8.0, 10.0)],
+        ),
+        (
+            "cell height still floors the row",
+            "<table id=t><tr id=r><td id=c style='height:30px;min-height:80px'>x</td></tr></table>",
+            &[("t", 8.0, 30.0), ("r", 8.0, 30.0), ("c", 8.0, 30.0)],
+        ),
+        (
+            "row height still floors the row",
+            "<table id=t><tr id=r style='height:30px'><td id=c style='min-height:80px'>x</td></tr></table>",
+            &[("t", 8.0, 30.0), ("r", 8.0, 30.0), ("c", 8.0, 30.0)],
+        ),
+        (
+            "table minimum still floors the grid",
+            "<table id=t style='min-height:30px'><tr id=r><td id=c style='min-height:80px'>x</td></tr></table>",
+            &[("t", 8.0, 30.0), ("r", 8.0, 30.0), ("c", 8.0, 30.0)],
+        ),
+    ]);
+}
+
 /// The extra height of a table goes to the rows that have no authored height, in proportion to their heights; a row with its own `height`, or whose single-row cell has one, keeps it.
 #[test]
 fn a_table_height_goes_to_the_rows_without_an_authored_height() {

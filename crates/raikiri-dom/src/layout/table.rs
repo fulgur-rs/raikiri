@@ -1438,6 +1438,7 @@ fn compute_table_layout_checked(
                 row_origins: &row_origins,
                 row_spacing: border_spacing.1,
                 vertical_writing,
+                height_is_definite: vertical_writing || specified_height.is_some(),
             },
             &mut oof_candidates,
         )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
@@ -2638,7 +2639,16 @@ fn resolve_table_columns(
         // once for each pass over the columns.
         let width = style.size().width;
         cell.fixed_extra = 0.0;
-        if horizontal && let Some(stated) = fixed_column_width(width, avail) {
+        if cell.col_span > 1 {
+            if let ExpandedDimension::Length(length) = width.expand() {
+                // A length sizes the spanning border box. Percentages instead
+                // contribute a share of the net track width, without cell
+                // edges.
+                let gaps =
+                    pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
+                cell.specified_width = Dimension::length((outer_of(length) - gaps).max(0.0));
+            }
+        } else if horizontal && let Some(stated) = fixed_column_width(width, avail) {
             if !matches!(width.expand(), ExpandedDimension::Percent(_)) {
                 let capped = capped_by_max_width(&style, stated);
                 // A border-box width cannot take the box below its padding
@@ -3833,6 +3843,10 @@ struct CellPlacementTracks<'a> {
     row_origins: &'a [f32],
     row_spacing: f32,
     vertical_writing: bool,
+    /// The table states its own height, so the height of a cell is definite
+    /// for the percentage heights of the cell's children. A vertical table
+    /// keeps the height definite whatever it states.
+    height_is_definite: bool,
 }
 
 fn place_cells(
@@ -3852,6 +3866,7 @@ fn place_cells(
         row_origins: row_y,
         row_spacing,
         vertical_writing,
+        height_is_definite,
     } = tracks;
     // A cell belongs to the row it starts in. One starting in a collapsed row
     // has no block extent, so it sets no baseline for the rows it spans.
@@ -3925,6 +3940,12 @@ fn place_cells(
         let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
             (rect, OofCandidates::new())
         } else {
+            // The height the row gives the cell is a definite one for the
+            // percentage heights of its children only when the table or the
+            // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
+            // as in the pass that measured the row.
+            let cell_height_is_definite = height_is_definite
+                || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
             let output = doc.compute_child_layout(
                 NodeId::from(cell.node_id),
                 LayoutInput {
@@ -3937,7 +3958,7 @@ fn place_cells(
                     },
                     parent_size: Size {
                         width: Some(cell_width),
-                        height: Some(cell_height),
+                        height: height_is_definite.then_some(cell_height),
                     },
                     available_space: Size {
                         width: AvailableSpace::Definite(cell_width),
@@ -3945,7 +3966,7 @@ fn place_cells(
                     },
                     known_dimensions_are_definite: Size {
                         width: true,
-                        height: true,
+                        height: cell_height_is_definite,
                     },
                     vertical_margins_are_collapsible: Line::FALSE,
                 },
@@ -4289,14 +4310,14 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
 /// Fixed column sizing: no content measurement.
 ///
 /// `avail` is the table width net of padding + outer (collapsed) borders.
-/// Per §17.5.2.1, a first-row cell with `colspan == 1` and a specified
-/// `width` (length or percentage-of-table-width) fixes its column; all
-/// remaining columns divide the leftover equally. A `<col>` width fixes a
-/// column that no such cell fixed. Specified widths in non-first rows and
-/// `colspan > 1` first-row widths are ignored. Leftover underflow clamps unfixed
-/// columns to zero (the table overflows rather than shrinking fixed
-/// columns). When every column is fixed and `share_extra` is set, the room they
-/// leave over is shared out in proportion to their widths.
+/// A `<col>` width takes priority over a first-row cell's specified width.
+/// A spanning first-row cell divides its width among its columns, assigning
+/// that share only to columns the `<col>` elements have not fixed. Remaining
+/// columns divide the leftover equally. Non-first-row widths are ignored.
+/// Leftover underflow clamps unfixed columns to zero (the table overflows
+/// rather than shrinking fixed columns). When every column states a width and
+/// `share_extra` is set, the room they leave over is shared out in proportion
+/// to their widths.
 fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) -> Vec<f32> {
     let n = grid.n_cols as usize;
     let mut fixed: Vec<Option<f32>> = vec![None; n];
@@ -4355,7 +4376,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
     }
     // Only a table whose columns all state a width shares the room that is
     // left over; a `<col>` minimum fixes a column without stating its width.
-    let all_columns_state_a_width = fixed.iter().all(Option::is_some);
+    let mut states_a_width: Vec<bool> = fixed.iter().map(Option::is_some).collect();
     // A `<col>` minimum fixes an otherwise unspecified column.
     for (c, sz) in grid.col_widths.iter().enumerate() {
         if c >= n || fixed[c].is_some() {
@@ -4387,6 +4408,26 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
             *width = width.max(*floor);
         }
     }
+    let mut span_fixed_column = false;
+    for cell in &grid.cells {
+        if cell.row != 0 || cell.col_span <= 1 {
+            continue;
+        }
+        let Some(width) = fixed_column_width(cell.specified_width, avail) else {
+            continue;
+        };
+        let columns =
+            cell_column_range(cell, n).expect("validated table cell spans existing columns");
+        let share = width / columns.len() as f32;
+        for column in columns {
+            if fixed[column].is_none() {
+                fixed[column] = Some(share.max(floors[column]));
+                states_a_width[column] = true;
+                span_fixed_column = true;
+            }
+        }
+    }
+    let all_columns_state_a_width = states_a_width.iter().all(|&stated| stated);
     let fixed_sum: f32 = fixed.iter().flatten().sum();
     let mut remaining = (avail - fixed_sum).max(0.0);
     let reclaimable: Vec<_> = fixed.iter().map(Option::is_none).collect();
@@ -4410,8 +4451,9 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
     // share it in proportion to their widths (CSS 2.1 section 17.5.2.1: the
     // extra space is distributed over the columns). The columns that state a
     // length take it, and one that states a percentage keeps its share of the
-    // table, unless every column states a percentage.
-    if share_extra && all_columns_state_a_width {
+    // table, unless every column states a percentage. A span that fixes the
+    // last auto columns must still fill the table.
+    if all_columns_state_a_width && (share_extra || span_fixed_column) {
         let takes: Vec<bool> = (0..n).map(|c| !percent[c] && widths[c] > 0.0).collect();
         let taken: f32 = (0..n).filter(|&c| takes[c]).map(|c| widths[c]).sum();
         if taken > 0.0 {

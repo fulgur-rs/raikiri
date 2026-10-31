@@ -182,6 +182,8 @@ impl StyleFlags {
     /// replaced element, or a form control that behaves as one (CSS 2.1
     /// section 9.5).
     pub const AVOIDS_FLOATS: Self = Self(1 << 22);
+    /// A used table-cell box, after blockification.
+    pub const TABLE_CELL: Self = Self(1 << 23);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.
