@@ -1040,9 +1040,35 @@ fn compute_table_layout_checked(
             },
             ..inputs
         };
+        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
+        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
+        // width keeps the fill basis.
+        let table_width_basis = if parent_is_flex_or_grid {
+            // Flex/grid supplies a used item width even when the table's own
+            // width is auto. Keep that width instead of shrink-wrapping again.
+            effective_known.width
+        } else {
+            match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
+            }
+        };
+        // A fixed layout table takes its columns from the width it states
+        // alone, not from the content, so a `max-width` below that width
+        // shrinks the columns with the table (CSS 2.1 section 17.5.2.1); the
+        // automatic algorithm measures the content against the room instead.
+        // The columns share the width the table comes to: the one its caller
+        // assigned, which has the limits and the padding and border of a
+        // content-box table in it, or else the one it states. A vertical
+        // table keeps the width as stated.
+        let column_basis_width = if table_layout == TableLayoutValue::Fixed && !vertical_writing {
+            specified_width.map(|stated| table_width_basis.unwrap_or(stated))
+        } else {
+            specified_width
+        };
         let pass = ColumnPass {
             table_layout,
-            specified_width,
+            specified_width: column_basis_width,
             caption_minimum,
             wrapper_minimum,
             wrapper_maximum,
@@ -1135,19 +1161,6 @@ fn compute_table_layout_checked(
                 x = x.min(mx);
             }
             x
-        };
-        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
-        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
-        // width keeps the fill basis.
-        let table_width_basis = if parent_is_flex_or_grid {
-            // Flex/grid supplies a used item width even when the table's own
-            // width is auto. Keep that width instead of shrink-wrapping again.
-            effective_known.width
-        } else {
-            match specified_width {
-                Some(_) => effective_known.width,
-                None => None,
-            }
         };
         // Vertical tables stack each column's inline track along the physical
         // height, so the physical spacing applies across that stack: the
