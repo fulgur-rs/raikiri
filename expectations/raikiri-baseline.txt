@@ -2855,6 +2855,7 @@ css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/track-sizing/colum
 css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/track-sizing/row-subgrid-extra-margin-005.html
 css/css-grid/grid-lanes/track-sizing/auto-repeat/intrinsic-auto-repeat/column-auto-repeat-auto-008.html
 css/css-grid/grid-lanes/track-sizing/auto-repeat/row-auto-repeat-006.html
+css/css-grid/grid-model/grid-container-scrollbar-001.html
 css/css-grid/grid-model/grid-display-grid-001.html
 css/css-grid/grid-model/grid-first-letter-001.html
 css/css-grid/grid-model/grid-first-letter-002.html
@@ -3309,6 +3310,7 @@ css/css-text-decor/text-decoration-shorthands-001.html
 css/css-text-decor/text-decoration-shorthands-002.html
 css/css-text-decor/text-decoration-style-multiple.html
 css/css-text-decor/text-decoration-style-recalc.html
+css/css-text-decor/text-decoration-subelements-002.html
 css/css-text-decor/text-decoration-subelements-005.html
 css/css-text-decor/text-shadow/basic-negcoord.html
 css/css-text-decor/text-shadow/basic-opacity.html

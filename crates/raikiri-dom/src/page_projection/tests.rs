@@ -216,7 +216,7 @@ fn shared_source_clips_snap_after_fractional_page_translation() {
     );
     doc.project_pages(&cascade, page, &slices, &[geometry, geometry])
         .unwrap();
-    for (index, y) in [(0, 1.0), (1, -100.0)] {
+    for (index, y) in [(0, 1.0), (1, -99.0)] {
         let clip = doc
             .page_overflow_clips(index)
             .find(|entry| entry.node == NodeId(node as u64))

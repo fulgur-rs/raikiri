@@ -4897,10 +4897,10 @@ fn elliptical_border_ring_has_independent_outer_and_inner_axes() {
 }
 
 #[test]
-fn overflow_hidden_clip_min_edges_floor_outward() {
-    // A fractional padding-box origin must not antialias-cut pixel-snapped
-    // descendant backgrounds. Min edges floor outward to integer pixels while
-    // max edges keep the exact extent for `overflow:hidden`.
+fn overflow_hidden_clip_edges_round_to_the_nearest_pixel() {
+    // Chromium moves every edge of an overflow clip to the nearest pixel, and
+    // a descendant background snaps the same way, so the two agree on the
+    // pixels: the background is neither antialias-cut nor clipped short.
     let scene = transform_markup_scene(
         "<body style='margin:0'><div style='position:absolute;left:10.4px;top:20.6px;width:100px;height:50px;overflow:hidden'><div style='width:10px;height:10px;background:green'></div></div>",
     );
@@ -4914,23 +4914,37 @@ fn overflow_hidden_clip_min_edges_floor_outward() {
             _ => None,
         })
         .find(|bounds| (bounds.x0 - 10.0).abs() < 1e-5)
-        .expect("overflow clip with floored min edge must exist");
+        .expect("overflow clip with rounded min edge must exist");
     assert!(
         (bounds.x0 - 10.0).abs() < 1e-5,
-        "min x floors outward {bounds:?}"
+        "min x rounds to the nearest pixel {bounds:?}"
     );
     assert!(
-        (bounds.y0 - 20.0).abs() < 1e-5,
-        "min y floors outward {bounds:?}"
+        (bounds.y0 - 21.0).abs() < 1e-5,
+        "min y rounds to the nearest pixel {bounds:?}"
     );
     assert!(
-        (bounds.x1 - 110.4).abs() < 1e-5,
-        "max x keeps exact extent {bounds:?}"
+        (bounds.x1 - 110.0).abs() < 1e-5,
+        "max x rounds to the nearest pixel {bounds:?}"
     );
     assert!(
-        (bounds.y1 - 70.6).abs() < 1e-5,
-        "max y keeps exact extent {bounds:?}"
+        (bounds.y1 - 71.0).abs() < 1e-5,
+        "max y rounds to the nearest pixel {bounds:?}"
     );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        120,
+        80,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 120 + x) * 4..(y * 120 + x) * 4 + 4];
+    let green = [0, 128, 0, 255];
+    let white = [255, 255, 255, 255];
+    for (x, y) in [(10, 21), (19, 21), (10, 30), (19, 30)] {
+        assert_eq!(pixel(x, y), &green, "inside the child at ({x}, {y})");
+    }
+    for (x, y) in [(9, 21), (20, 21), (10, 20), (10, 31)] {
+        assert_eq!(pixel(x, y), &white, "outside the child at ({x}, {y})");
+    }
 }
 
 fn engine_document() -> Document {
