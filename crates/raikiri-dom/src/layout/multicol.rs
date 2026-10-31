@@ -3660,6 +3660,12 @@ pub(crate) struct AncestorFacts {
     containing_width_ancestor: Vec<Option<usize>>,
     /// An auto-width block this pass projects to contain descendants.
     projected_auto_width: Vec<bool>,
+    /// Layout, not the authored widths, decides the width of the nearest
+    /// strict ancestor with a box: it has an `auto` or keyword width, and this
+    /// pass does not project it (it fits its content, or leaves room for its
+    /// margins and the like) or sits in such a box itself. The width of the
+    /// authored ancestor further up is not the width of the blocks inside.
+    laid_out_container: Vec<bool>,
     /// The node or an ancestor has a `min-content`, `max-content` or
     /// `fit-content` width.
     intrinsic_width: Vec<bool>,
@@ -3679,6 +3685,7 @@ impl AncestorFacts {
             content_width: vec![0.0; count],
             containing_width_ancestor: vec![None; count],
             projected_auto_width: vec![false; count],
+            laid_out_container: vec![false; count],
             intrinsic_width: vec![false; count],
             inline_box: super::style_views::metadata::inline_boxes(doc, cascade),
         };
@@ -3776,6 +3783,26 @@ impl AncestorFacts {
         } else {
             Some(parent)
         };
+        self.laid_out_container[id] =
+            if doc.nodes[parent].display() == DisplayValue::Contents || self.inline_box[parent] {
+                // Neither has a box to size: the blocks inside belong to the
+                // container around it.
+                self.laid_out_container[parent]
+            } else {
+                match values.width {
+                    // A length is the width of the box wherever the box is.
+                    ComputedLengthPercentageOrAuto::Px(_) => false,
+                    // Layout decides an `auto` width, unless this pass
+                    // projects it from a container whose width is known.
+                    ComputedLengthPercentageOrAuto::Auto => {
+                        !self.projected_auto_width[parent] || self.laid_out_container[parent]
+                    }
+                    width if width.is_content_keyword() => true,
+                    // A percentage refers to the container, so it is as
+                    // known as the container is.
+                    _ => self.laid_out_container[parent],
+                }
+            };
         self.projected_auto_width[id] = self.can_project_auto_width(doc, cascade, id);
         if self.projected_auto_width[id]
             && let Some(width) = self.authored_containing_width(id)
@@ -3945,7 +3972,10 @@ pub(crate) fn group_column_fragments(
 /// authored containing block before layout. Descendants of a multicol
 /// container are left to the multicol dispatch in [`compute_multicol_layout`],
 /// which supplies their used widths, so they are not guessed from a page
-/// fallback. A replaced box keeps its natural width (CSS 2.1 §10.3.4).
+/// fallback. A replaced box keeps its natural width (CSS 2.1 §10.3.4). The
+/// blocks inside an `auto`-width box that this pass does not project itself
+/// (one that shrinks to fit, or leaves room for its margins) are left to layout
+/// too: the width of the authored ancestor above such a box is not theirs.
 pub(crate) fn prepare_authored_block_widths(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -3962,7 +3992,7 @@ pub(crate) fn prepare_authored_block_widths(
         if ancestors.multicol_ancestor[idx] {
             continue;
         }
-        if !ancestors.projected_auto_width[idx] {
+        if !ancestors.projected_auto_width[idx] || ancestors.laid_out_container[idx] {
             continue;
         }
         if let Some(width) = ancestors.authored_containing_width(idx) {
