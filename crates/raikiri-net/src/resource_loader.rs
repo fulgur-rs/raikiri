@@ -320,9 +320,6 @@ impl ImageSource {
         let ImageSourceKind::Svg(bytes) = &self.kind else {
             return None;
         };
-        if self.raster_only.load(Ordering::Relaxed) {
-            return None;
-        }
         let (flight, owner) = {
             let mut cache = self.scene_cache.lock().ok()?;
             if self.raster_only.load(Ordering::Relaxed) {
