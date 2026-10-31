@@ -38,7 +38,7 @@ mod tree;
 pub(crate) use cache::LayoutCache;
 pub(crate) use float::{FloatContext, FloatIntrinsicWidthCalculator};
 pub(crate) use grid_info::{GridInfo, GridRowCounts};
-pub(crate) use grid_rows::{RowSizing, rows_size_to_content};
+pub(crate) use grid_rows::{RowSizing, columns_have_no_content_minimum, rows_size_to_content};
 pub(crate) use margin_set::CollapsibleMarginSet;
 pub(crate) use oof_candidates::{OofBatch, OofCandidates, OofSpan};
 
