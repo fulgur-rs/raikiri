@@ -4063,6 +4063,7 @@ fn place_cells(
             .row_pass
             .filter(|pass| pass.width == cell_width)
             .map(|pass| pass.scrollable_overflow_rect);
+        let mut resolved_natural_height = None;
         let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
             (rect, OofCandidates::new())
         } else {
@@ -4072,6 +4073,10 @@ fn place_cells(
             // as in the pass that measured the row.
             let cell_height_is_definite = height_is_definite
                 || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
+            // Only the layout of this pass may leave the height the content
+            // has: a cached one, or a cell that is not a block container,
+            // leaves none, and the height measured before stands.
+            doc.nodes[cell.node_id].auto_block_size = None;
             let output = doc.compute_child_layout(
                 NodeId::from(cell.node_id),
                 LayoutInput {
@@ -4097,6 +4102,18 @@ fn place_cells(
                     vertical_margins_are_collapsible: Line::FALSE,
                 },
             );
+            // The height the content has now that the row height made a
+            // percentage height of a child definite, which the alignment
+            // below follows.
+            let aligned_by_its_end = matches!(
+                doc.ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .table_vertical_align,
+                VerticalAlign::Middle | VerticalAlign::Bottom
+            );
+            resolved_natural_height = (cell_height_is_definite && aligned_by_its_end)
+                .then(|| doc.nodes[cell.node_id].auto_block_size)
+                .flatten();
             (output.scrollable_overflow_rect, output.oof_candidates)
         };
         child_candidates.translate(Point {
@@ -4140,7 +4157,7 @@ fn place_cells(
         let extra = if vertical_cell {
             0.0
         } else {
-            (cell_height - cell.natural_height).max(0.0)
+            (cell_height - resolved_natural_height.unwrap_or(cell.natural_height)).max(0.0)
         };
         let shift = match doc
             .ifc_layout_node(cell.node_id)
