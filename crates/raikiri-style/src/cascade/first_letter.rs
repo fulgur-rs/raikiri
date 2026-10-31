@@ -71,6 +71,12 @@ fn property_applies(key: crate::property::PropertyKey) -> bool {
         )
 }
 
+struct FirstLineTarget {
+    paragraph: Option<StyleNodeId>,
+    actual_parent: StyleNodeId,
+    generated: Option<crate::PseudoElem>,
+}
+
 impl CascadeResult {
     /// Resolve enclosing first-line pseudos in outer-to-inner box-tree order.
     /// The ordinary custom-property inheritance channel remains unchanged.
@@ -87,9 +93,12 @@ impl CascadeResult {
             dom,
             &inputs.context,
             line_origins,
-            None,
-            actual_parent,
-            generated,
+            FirstLineTarget {
+                paragraph: None,
+                actual_parent,
+                generated,
+            },
+            |_, _| {},
         )
     }
 
@@ -130,9 +139,45 @@ impl CascadeResult {
             dom,
             context,
             line_origins,
-            Some(paragraph),
-            element,
-            generated,
+            FirstLineTarget {
+                paragraph: Some(paragraph),
+                actual_parent: element,
+                generated,
+            },
+            |_, _| {},
+        )
+    }
+
+    /// Resolve a paragraph's first-line values and visit each enclosing
+    /// first-line origin's values in the same outer-to-inner walk.
+    ///
+    /// `line_origins` must be distinct block ancestors of `paragraph` (or the
+    /// paragraph itself), outermost first, with first-line styles. Each visit
+    /// has the values that [`Self::first_line_style`] computes with both its
+    /// paragraph and element set to that origin. The returned values belong
+    /// to `paragraph`; inline descendants and generated boxes still use
+    /// [`Self::first_line_style`] with their own target.
+    ///
+    /// No visit occurs when the outer style is absent or does not enclose the
+    /// paragraph. The callback can retain only the styles its consumer needs.
+    pub fn first_line_block_style<D: crate::StyleDom>(
+        &self,
+        dom: &D,
+        line_origins: &[StyleNodeId],
+        paragraph: StyleNodeId,
+        visit_origin: impl FnMut(StyleNodeId, &ComputedValues),
+    ) -> Option<ComputedValues> {
+        let context = self.first_line_contexts.get(line_origins.first()?)?;
+        self.first_line_chain(
+            dom,
+            context,
+            line_origins,
+            FirstLineTarget {
+                paragraph: Some(paragraph),
+                actual_parent: paragraph,
+                generated: None,
+            },
+            visit_origin,
         )
     }
 
@@ -152,10 +197,14 @@ impl CascadeResult {
         dom: &D,
         context: &ResolveContext,
         line_origins: &[StyleNodeId],
-        paragraph: Option<StyleNodeId>,
-        actual_parent: StyleNodeId,
-        generated: Option<crate::PseudoElem>,
+        target: FirstLineTarget,
+        mut visit_origin: impl FnMut(StyleNodeId, &ComputedValues),
     ) -> Option<ComputedValues> {
+        let FirstLineTarget {
+            paragraph,
+            actual_parent,
+            generated,
+        } = target;
         let &line_origin = line_origins.first()?;
         let mut computed = self
             .pseudo
@@ -183,6 +232,7 @@ impl CascadeResult {
         if paragraph == Some(line_origin) {
             blocks_from = Some(chain.len());
         }
+        visit_origin(line_origin, &computed);
         let mut parent_id = line_origin;
         for (position, &id) in chain.iter().enumerate().rev() {
             let inherited = super::first_line::first_line_parent(
@@ -198,6 +248,9 @@ impl CascadeResult {
             } else {
                 self.recompute_typographic_child(id, pseudo, &inherited, context)
             };
+            if pseudo == Some(crate::PseudoElem::FirstLine) {
+                visit_origin(id, &computed);
+            }
             parent_id = id;
         }
         if let Some(pseudo) = generated {
@@ -238,6 +291,8 @@ impl CascadeResult {
         inherited: &ComputedValues,
         context: &ResolveContext,
     ) -> ComputedValues {
+        #[cfg(test)]
+        tests::record_recomputation();
         let ordinary = pseudo
             .filter(|&pseudo| pseudo != crate::PseudoElem::FirstLine)
             .and_then(|pseudo| self.pseudo.get(&(id, pseudo)))
