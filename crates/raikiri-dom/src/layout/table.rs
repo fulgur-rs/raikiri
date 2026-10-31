@@ -3805,7 +3805,9 @@ fn share_span_deficit(heights: &mut [f32], fixed: &[bool], starts_span: &[bool],
 /// `cell`, from the top of its border box, as their last layout placed them.
 /// A cell laid out as a line box has no children to read it from, and only a
 /// cell that centres or bottom-aligns its content is moved by where the
-/// content ends.
+/// content ends. A positioned child is left out: its stored location has its
+/// inset in it, and an inset in a percentage moves when the height becomes
+/// definite although the content does not.
 fn cell_flow_bottom(doc: &LayoutSession<'_>, cell: usize) -> Option<f32> {
     let root = doc.ifc_layout_node(cell).expect("table cell layout view");
     if root.is_ifc_root()
@@ -3818,7 +3820,7 @@ fn cell_flow_bottom(doc: &LayoutSession<'_>, cell: usize) -> Option<f32> {
     }
     root.children
         .iter()
-        .filter(|&&child| doc.nodes[child].layout_position() != Position::Absolute)
+        .filter(|&&child| doc.nodes[child].layout_position() == Position::Static)
         .map(|&child| {
             let layout = &doc.nodes[child].layout;
             layout.location.y + layout.size.height + layout.margin.bottom

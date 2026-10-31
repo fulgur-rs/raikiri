@@ -535,3 +535,75 @@ fn a_cell_aligns_the_same_in_a_table_some_container_lays_out() {
         },
     ]);
 }
+
+#[test]
+fn an_offset_of_a_positioned_child_is_not_part_of_the_content_height() {
+    let middle = "vertical-align:middle;height:40px";
+    let relative =
+        |style: &str| format!("<div id=p style=\"position:relative;{style};height:10px\">x</div>");
+    check(&[
+        // The line is 10px high and centred at 15px; `top: 50%` of the 40px
+        // cell then moves it 20px, which is no more content.
+        Case {
+            label: "a percentage top, middle",
+            body: aligned("", middle, &relative("top:50%")),
+            expected: &[("p", [8.0, 43.0, 10.0, 10.0])],
+        },
+        Case {
+            label: "a percentage top, bottom",
+            body: aligned(
+                "",
+                "vertical-align:bottom;height:40px",
+                &relative("top:50%"),
+            ),
+            expected: &[("p", [8.0, 58.0, 10.0, 10.0])],
+        },
+        Case {
+            label: "a percentage bottom",
+            body: aligned("", middle, &relative("bottom:50%")),
+            expected: &[("p", [8.0, 3.0, 10.0, 10.0])],
+        },
+        Case {
+            label: "a length top",
+            body: aligned("", middle, &relative("top:5px")),
+            expected: &[("p", [8.0, 28.0, 10.0, 10.0])],
+        },
+        Case {
+            label: "a percentage top in a table with a height",
+            body: aligned(
+                "height:100px",
+                "vertical-align:middle",
+                &relative("top:50%"),
+            ),
+            expected: &[("p", [8.0, 103.0, 10.0, 10.0])],
+        },
+        Case {
+            label: "a positioned parent",
+            body: aligned(
+                "",
+                middle,
+                "<div id=q style=\"position:relative;top:50%\">\
+                 <div id=p style=\"height:10px\">x</div></div>",
+            ),
+            expected: &[
+                ("q", [8.0, 43.0, 10.0, 10.0]),
+                ("p", [8.0, 43.0, 10.0, 10.0]),
+            ],
+        },
+        Case {
+            label: "a positioned child below another",
+            body: aligned(
+                "",
+                middle,
+                &format!(
+                    "<div id=q style=\"height:10px\">y</div>{}",
+                    relative("top:50%")
+                ),
+            ),
+            expected: &[
+                ("q", [8.0, 18.0, 10.0, 10.0]),
+                ("p", [8.0, 48.0, 10.0, 10.0]),
+            ],
+        },
+    ]);
+}
