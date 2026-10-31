@@ -4334,9 +4334,8 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         let Some(width) = fixed_column_width(cell.specified_width, avail) else {
             continue;
         };
-        let Ok(columns) = cell_column_range(cell, n) else {
-            continue;
-        };
+        let columns =
+            cell_column_range(cell, n).expect("validated table cell spans existing columns");
         let share = width / columns.len() as f32;
         for column in columns {
             if fixed[column].is_none() {
