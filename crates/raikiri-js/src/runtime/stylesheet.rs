@@ -2216,13 +2216,22 @@ fn this_margin_rule_text(this: &JsValue, context: &mut Context) -> JsResult<Stri
 
 /// `CSSMarginRule.name`: the margin rule's at-keyword, ASCII-lowercased.
 fn margin_rule_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let text = this_margin_rule_text(this, context)?;
-    let mut input = ParserInput::new(&text);
-    let mut parser = Parser::new(&mut input);
-    let name = match parser.next() {
-        Ok(Token::AtKeyword(name)) => name.to_ascii_lowercase(),
-        _ => String::new(),
-    };
+    let slot = margin_rule_data(this)?;
+    let name = with_state(context, |state| {
+        let (sheet, rule, margin) = slot.location(state);
+        let parsed = sheet_snapshot(state, sheet);
+        let text = parsed
+            .margins(rule)
+            .get(margin.unwrap_or_default())
+            .map(|range| &parsed.text[range.clone()])
+            .unwrap_or_default();
+        let mut input = ParserInput::new(text);
+        let mut parser = Parser::new(&mut input);
+        match parser.next() {
+            Ok(Token::AtKeyword(name)) => name.to_ascii_lowercase(),
+            _ => String::new(),
+        }
+    })?;
     Ok(JsValue::from(JsString::from(name)))
 }
 
