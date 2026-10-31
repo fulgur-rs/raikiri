@@ -129,7 +129,7 @@ impl LayoutStyleView<'_> {
     pub fn size(&self) -> Size<Dimension> {
         self.size_axes(
             self.length(LengthProperty::Width).dimension(),
-            self.length(LengthProperty::Height).dimension(),
+            self.library_height(LengthProperty::Height).dimension(),
         )
     }
     /// The minimum size.
@@ -137,7 +137,7 @@ impl LayoutStyleView<'_> {
     pub fn min_size(&self) -> Size<LengthPercentageAuto> {
         self.size_axes(
             self.length(LengthProperty::MinWidth).auto(false),
-            self.length(LengthProperty::MinHeight).auto(false),
+            self.library_height(LengthProperty::MinHeight).auto(false),
         )
     }
     /// The maximum size.
@@ -145,7 +145,7 @@ impl LayoutStyleView<'_> {
     pub fn max_size(&self) -> Size<LengthPercentageAuto> {
         self.size_axes(
             self.length(LengthProperty::MaxWidth).auto(false),
-            self.length(LengthProperty::MaxHeight).auto(false),
+            self.library_height(LengthProperty::MaxHeight).auto(false),
         )
     }
     /// The preferred aspect ratio after projection into the returned axes.
