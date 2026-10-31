@@ -438,6 +438,149 @@ fn a_definite_flex_basis_along_a_column_sizes_the_grid_alone() {
     ]);
 }
 
+#[test]
+fn a_height_a_flex_column_gives_a_table_is_its_outer_height_with_padding_and_border() {
+    let column = "flex-direction:column;height:100px";
+    let edges = "padding:3px;border:2px solid";
+    let cell_row = row("r");
+    check(&[
+        // The basis, and the height the item ends up with, is the whole box
+        // of a `border-box` table, and the box inside the padding and border
+        // of a `content-box` one.
+        Case {
+            label: "a border-box basis",
+            body: flex(column, &table(&format!("flex:0 0 50px;{edges}"), &cell_row)),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 50.0]),
+                ("r", [13.0, 13.0, 774.0, 40.0]),
+            ],
+        },
+        Case {
+            label: "a content-box basis",
+            body: flex(
+                column,
+                &table(
+                    &format!("flex:0 0 50px;box-sizing:content-box;{edges}"),
+                    &cell_row,
+                ),
+            ),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 60.0]),
+                ("r", [13.0, 13.0, 774.0, 50.0]),
+            ],
+        },
+        Case {
+            label: "two rows share a border-box basis",
+            body: flex(
+                column,
+                &table(
+                    &format!("flex:0 0 50px;{edges}"),
+                    &format!("{cell_row}{}", row("s")),
+                ),
+            ),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 50.0]),
+                ("r", [13.0, 13.0, 774.0, 20.0]),
+                ("s", [13.0, 33.0, 774.0, 20.0]),
+            ],
+        },
+        Case {
+            label: "a percentage basis",
+            body: flex(column, &table(&format!("flex:0 0 50%;{edges}"), &cell_row)),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 50.0]),
+                ("r", [13.0, 13.0, 774.0, 40.0]),
+            ],
+        },
+        // The container takes the table at the height the basis gives it.
+        Case {
+            label: "an auto-height container",
+            body: flex(
+                "flex-direction:column",
+                &table(&format!("flex:0 0 50px;{edges}"), &cell_row),
+            ),
+            expected: &[
+                ("w", [8.0, 8.0, 784.0, 50.0]),
+                ("o", [8.0, 8.0, 784.0, 50.0]),
+            ],
+        },
+        // Growing and shrinking move the box, and the rows follow it.
+        Case {
+            label: "a table that grows past its basis",
+            body: flex(column, &table(&format!("flex:1 1 50px;{edges}"), &cell_row)),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 100.0]),
+                ("r", [13.0, 13.0, 774.0, 90.0]),
+            ],
+        },
+        Case {
+            label: "a table that shrinks below its basis",
+            body: flex(
+                "flex-direction:column;height:30px",
+                &table(&format!("flex:0 1 80px;{edges}"), &cell_row),
+            ),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 30.0]),
+                ("r", [13.0, 13.0, 774.0, 20.0]),
+            ],
+        },
+        // The table still holds its rows, and `max-height` still caps it.
+        Case {
+            label: "a basis below the rows",
+            body: flex(column, &table(&format!("flex:0 0 5px;{edges}"), &cell_row)),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 20.0]),
+                ("r", [13.0, 13.0, 774.0, 10.0]),
+            ],
+        },
+        Case {
+            label: "a max-height below the basis",
+            body: flex(
+                column,
+                &table(&format!("flex:0 0 50px;max-height:30px;{edges}"), &cell_row),
+            ),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 30.0]),
+                ("r", [13.0, 13.0, 774.0, 20.0]),
+            ],
+        },
+        Case {
+            label: "a min-height above the basis",
+            body: flex(
+                column,
+                &table(&format!("flex:0 0 50px;min-height:60px;{edges}"), &cell_row),
+            ),
+            expected: &[
+                ("o", [8.0, 8.0, 784.0, 60.0]),
+                ("r", [13.0, 13.0, 774.0, 50.0]),
+            ],
+        },
+        Case {
+            label: "a table with a width of its own",
+            body: flex(
+                column,
+                &table(&format!("flex:0 0 50px;width:80px;{edges}"), &cell_row),
+            ),
+            expected: &[
+                ("o", [8.0, 8.0, 80.0, 50.0]),
+                ("r", [13.0, 13.0, 70.0, 40.0]),
+            ],
+        },
+        // Collapsed borders count as the table's border here too.
+        Case {
+            label: "a border-box table with collapsed borders",
+            body: flex(
+                column,
+                &table(
+                    "flex:0 0 50px;border-collapse:collapse;border:4px solid",
+                    &cell_row,
+                ),
+            ),
+            expected: &[("o", [8.0, 8.0, 784.0, 50.0])],
+        },
+    ]);
+}
+
 /// A row with one cell `x`, as id `id`, whose own `style` is added to it.
 fn styled_row(id: &str, style: &str) -> String {
     format!(
