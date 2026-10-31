@@ -116,7 +116,8 @@ fn an_empty_box_takes_the_break_of_an_empty_box_before_it() {
 /// Without a forced break the empty box stays after the box before it.
 #[test]
 fn an_empty_box_stays_after_the_box_before_it_without_a_forced_break() {
-    let body = "<div><div>first</div>\
+    // Keep paragraph geometry independent of installed system font metrics.
+    let body = "<div style='line-height: 19px'><div>first</div>\
                 <div id=b style='height: 40px; background: blue'></div></div>";
     let (pages, b) = place(body, "b");
     assert_eq!(pages, 1);
