@@ -5,6 +5,8 @@
 //! the cascade reads it for `:focus`, `:focus-within` and `:focus-visible`.
 //! There is no user input here, so focus only ever moves by script.
 
+use std::collections::HashMap;
+
 use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
 use raikiri_dom::{Document, NodeKind};
 
@@ -284,13 +286,18 @@ fn image_map_images(document: &Document, area: usize) -> Vec<usize> {
         return Vec::new();
     };
     let elements = elements_in_tree_order(document);
-    let map_named = |name: &str| {
-        elements.iter().copied().find(|&element| {
-            html_tag(document, element) == Some("map")
-                && (document.element_attribute(element, "id") == Some(name)
-                    || document.element_attribute(element, "name") == Some(name))
-        })
-    };
+    let mut map_names = HashMap::new();
+    for &element in &elements {
+        #[cfg(test)]
+        tests::record_map_work(0);
+        if html_tag(document, element) == Some("map") {
+            for attribute in ["id", "name"] {
+                if let Some(name) = document.element_attribute(element, attribute) {
+                    map_names.entry(name).or_insert(element);
+                }
+            }
+        }
+    }
     elements
         .iter()
         .copied()
@@ -299,7 +306,14 @@ fn image_map_images(document: &Document, area: usize) -> Vec<usize> {
                 && document
                     .element_attribute(image, "usemap")
                     .and_then(|usemap| usemap.split_once('#'))
-                    .is_some_and(|(_, name)| !name.is_empty() && map_named(name) == Some(map))
+                    .is_some_and(|(_, name)| {
+                        if name.is_empty() {
+                            return false;
+                        }
+                        #[cfg(test)]
+                        tests::record_map_work(1);
+                        map_names.get(name).copied() == Some(map)
+                    })
         })
         .collect()
 }
