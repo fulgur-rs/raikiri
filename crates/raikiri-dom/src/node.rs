@@ -1184,8 +1184,8 @@ impl Node {
 
     /// Whether layout gives this element no box of its own, so that its
     /// children take its place in the container: a `display: contents`
-    /// element, or a plain block that wraps a column spanner (CSS
-    /// Multi-column Layout 1, 6.1).
+    /// element, or a plain block, or an inline box around blocks, that wraps a
+    /// column spanner (CSS Multi-column Layout 1, 6.1).
     ///
     /// This is the display that layout used, which the cascade does not
     /// carry for the wrapper of a spanner: painters that read the cascade's
