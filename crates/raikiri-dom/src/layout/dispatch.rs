@@ -92,6 +92,28 @@ fn apply_local_sizing(style: &mut Style, entries: &[OwnedPropertyOverride]) {
     }
 }
 
+/// Give the leaf style `style` of box `idx` the border-box `height`, as a
+/// `height` of its own that follows its `box-sizing`.
+fn apply_border_box_height(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    style: &mut Style,
+    height: f32,
+    inline_basis: f32,
+) {
+    let adjustment =
+        crate::layout::ifc::boxes::box_sizing_height_adjustment(tree, idx, inline_basis);
+    apply_local_sizing(
+        style,
+        &[OwnedPropertyOverride::length(
+            LengthProperty::Height,
+            raikiri_style::ComputedLengthPercentageOrAuto::Px((height - adjustment).max(0.0)),
+            true,
+        )
+        .expect("resolved pixel height")],
+    );
+}
+
 /// A replaced box that a paragraph measures for its min-content contribution
 /// is given a zero basis for the percentages of its sizes, as the width they
 /// refer to is what the contributions decide. A `width` or `max-width` that is
@@ -2761,11 +2783,48 @@ fn compute_inline_block_shrink_wrap(
     // A replaced leaf with an `auto` side is sized by its ratio and its
     // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
+    // An item of a column flex container takes its width from a height along its
+    // ratio. While the container's own width is measured, that is the height the
+    // item states, though the item is measured for its content there: its main
+    // size is not content-sized. Once the container's width is fixed, which Taffy
+    // says by offering the item a definite width, it is the height the
+    // container flexed the item to.
+    let in_column_flex = leaf_intrinsic.is_some() && tree.in_column_flex_container(idx);
+    let flexed_height = inputs.known_dimensions.height.filter(|_| {
+        in_column_flex
+            && inputs.sizing_mode == SizingMode::ContentSize
+            && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+    });
+    let sides_style = flexed_height.map(|height| {
+        let mut style = leaf_style.clone();
+        apply_border_box_height(
+            tree,
+            idx,
+            &mut style,
+            height,
+            inputs.parent_size.width.unwrap_or(0.0),
+        );
+        style
+    });
     let leaf_auto_sides = leaf_intrinsic.and_then(|natural| {
         replaced_size::auto_sides_size(
-            &leaf_style,
+            sides_style.as_ref().unwrap_or(&leaf_style),
             &LayoutInput {
                 known_dimensions: Size::NONE,
+                sizing_mode: if in_column_flex {
+                    SizingMode::InherentSize
+                } else {
+                    inputs.sizing_mode
+                },
+                // A percentage height has a basis only while the height of the
+                // container does not depend on the content of its items.
+                parent_size: Size {
+                    width: inputs.parent_size.width,
+                    height: inputs
+                        .parent_size
+                        .height
+                        .filter(|_| !in_column_flex || inputs.known_dimensions_are_definite.height),
+                },
                 ..inputs
             },
             natural,
@@ -2786,19 +2845,12 @@ fn compute_inline_block_shrink_wrap(
             && matches!(leaf_style.size.height.expand(), ExpandedDimension::Stretch)
     });
     if let Some(height) = stretched_height {
-        let adjustment = crate::layout::ifc::boxes::box_sizing_height_adjustment(
+        apply_border_box_height(
             tree,
             idx,
-            inputs.parent_size.width.unwrap_or(0.0),
-        );
-        apply_local_sizing(
             &mut leaf_style,
-            &[OwnedPropertyOverride::length(
-                LengthProperty::Height,
-                raikiri_style::ComputedLengthPercentageOrAuto::Px((height - adjustment).max(0.0)),
-                true,
-            )
-            .expect("resolved pixel height")],
+            height,
+            inputs.parent_size.width.unwrap_or(0.0),
         );
     }
 
