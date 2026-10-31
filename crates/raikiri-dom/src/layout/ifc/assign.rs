@@ -9,13 +9,15 @@ use super::projection::{
 use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
 use super::style;
 use crate::Document;
-use crate::generated_content::is_line_making_generated_text;
+use crate::generated_content::{
+    inside_marker_in_flow, is_page_flow_generated_text, marker_is_enabled,
+};
 use crate::layout::BoxParentScope;
 use crate::layout::box_tree::BoxTree;
 use crate::node::NodeFlags;
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse};
-use raikiri_style::{CascadeResult, ComputedColumnWidth, PseudoElem, StyleNodeId};
-use raikiri_traits::{LayoutError, NodeKind};
+use raikiri_style::{CascadeResult, ComputedColumnWidth, ListStyleType, PseudoElem, StyleNodeId};
+use raikiri_traits::{LayoutError, NodeKind, QuirksMode};
 use rayon::prelude::*;
 use shodo::LayoutContext;
 use std::collections::HashSet;
@@ -190,7 +192,7 @@ pub(super) fn marker_holds_only_line(
     if !is_outside_marker_item(cascade, idx)
         || [PseudoElem::Before, PseudoElem::After]
             .into_iter()
-            .any(|pseudo| is_line_making_generated_text(cascade, idx, pseudo))
+            .any(|pseudo| is_page_flow_generated_text(cascade, idx, pseudo))
     {
         return Ok(false);
     }
@@ -199,7 +201,7 @@ pub(super) fn marker_holds_only_line(
     // item holding only such a box still gets the line of its marker.
     let margins_count = !matches!(
         doc.quirks_mode(),
-        raikiri_traits::QuirksMode::Quirks | raikiri_traits::QuirksMode::LimitedQuirks
+        QuirksMode::Quirks | QuirksMode::LimitedQuirks
     );
     Ok(
         inline_content(doc, cascade, idx, fonts, counters, margins_count)? == InlineContent::Empty
@@ -209,24 +211,22 @@ pub(super) fn marker_holds_only_line(
 
 /// Whether `idx` is a list item whose marker, if it has one, is outside.
 fn is_outside_marker_item(cascade: &CascadeResult, idx: usize) -> bool {
-    crate::generated_content::marker_is_enabled(cascade, idx)
-        && !crate::generated_content::inside_marker_in_flow(cascade, idx)
+    marker_is_enabled(cascade, idx) && !inside_marker_in_flow(cascade, idx)
 }
 
 /// Whether the list item `idx` has an outside marker box: `::marker` content,
 /// an image, or a `list-style-type` other than `none`. The text of the box may
 /// be empty, as in `list-style-type: ""`; `list-style-type: none` and
-/// `::marker { content: none }` leave no box.
+/// `::marker { content: none }` leave no box. This follows the rules by which
+/// the marker is resolved for painting (`marker_render_info`), without the
+/// counters that its text needs.
 fn has_outside_marker_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     is_outside_marker_item(cascade, idx)
         && (cascade
             .pseudo
             .get(&(StyleNodeId::new(idx as u64), PseudoElem::Marker))
             .is_some_and(|marker| !marker.content.is_empty())
-            || !matches!(
-                cascade.computed[idx].list_style_type,
-                raikiri_style::ListStyleType::None
-            )
+            || !matches!(cascade.computed[idx].list_style_type, ListStyleType::None)
             || doc.list_marker_image_size(idx).is_some())
 }
 

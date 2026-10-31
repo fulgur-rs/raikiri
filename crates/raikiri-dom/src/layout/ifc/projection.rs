@@ -1464,7 +1464,8 @@ fn project_children_builder(
     // one line high (CSS Lists 3, 3.1). The line ends in a break, like the
     // line of a `<br>`, and its strut is the item's own. Anything the item
     // holds besides the marker (white space, an empty inline element, a float,
-    // an out-of-flow box) stays in front of the break.
+    // an out-of-flow box) stays in front of the break. The check stops at the
+    // first child that makes a line, so an item with text is cheap to rule out.
     if anonymous_children.is_none()
         && root_plan.is_none()
         && super::assign::marker_holds_only_line(doc, cascade, root, fonts, counters)?

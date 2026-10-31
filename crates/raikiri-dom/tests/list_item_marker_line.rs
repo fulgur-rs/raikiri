@@ -35,7 +35,10 @@ type Rect = (f32, f32, f32, f32);
 struct Case {
     name: &'static str,
     body: &'static str,
-    /// Whether quirks mode and limited-quirks mode give the same boxes.
+    /// Whether quirks mode and limited-quirks mode are checked as well. They
+    /// give the same boxes in Chromium; a case that is left out hits a quirk
+    /// that is not applied to generated content yet (an inline-block of no
+    /// height in `::before` makes no line there).
     all_modes: bool,
     expected: &'static [(&'static str, Rect)],
 }
@@ -701,6 +704,51 @@ const CASES: &[Case] = &[
     Case {
         name: "clear_float",
         body: "<div style=\"float:left;width:10px;height:50px\"></div><ul style=\"margin:0;padding:0 0 0 40px\"><li id=o></li></ul><div id=c style=\"height:10px\"></div>",
+        all_modes: true,
+        expected: &[
+            ("o", (48.0, 8.0, 744.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "li_before_space",
+        body: "<style>#o::before{content:\" \"}</style><ul style=\"margin:0;padding:0 0 0 40px\"><li id=o ></li></ul><div id=c style=\"height:10px\"></div>",
+        all_modes: true,
+        expected: &[
+            ("o", (48.0, 8.0, 744.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "li_after_space",
+        body: "<style>#o::after{content:\" \"}</style><ul style=\"margin:0;padding:0 0 0 40px\"><li id=o ></li></ul><div id=c style=\"height:10px\"></div>",
+        all_modes: true,
+        expected: &[
+            ("o", (48.0, 8.0, 744.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "li_before_inline_block",
+        body: "<style>#o::before{content:\"\";display:inline-block;width:5px;height:0}</style><ul style=\"margin:0;padding:0 0 0 40px\"><li id=o ></li></ul><div id=c style=\"height:10px\"></div>",
+        all_modes: false,
+        expected: &[
+            ("o", (48.0, 8.0, 744.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "li_before_float",
+        body: "<style>#o::before{content:\"\";float:left;width:5px;height:5px}</style><ul style=\"margin:0;padding:0 0 0 40px\"><li id=o ></li></ul><div id=c style=\"height:10px\"></div>",
+        all_modes: true,
+        expected: &[
+            ("o", (48.0, 8.0, 744.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "li_before_abspos",
+        body: "<style>#o::before{content:\"\";position:absolute}</style><ul style=\"margin:0;padding:0 0 0 40px\"><li id=o ></li></ul><div id=c style=\"height:10px\"></div>",
         all_modes: true,
         expected: &[
             ("o", (48.0, 8.0, 744.0, 10.0)),
