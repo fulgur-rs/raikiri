@@ -56,6 +56,125 @@ fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
 const TOLERANCE: f32 = 0.04;
 
 #[test]
+fn collapsed_fixed_columns_keep_their_share_of_the_natural_width() {
+    let cases: &[(&str, &str, &[usize], bool, Expected)] = &[
+        (
+            "collapsed",
+            "",
+            &[1],
+            false,
+            &[
+                ("t", 0.0, 0.0, 136.671_88, 30.0),
+                ("a", 10.0, 10.0, 40.0, 10.0),
+                ("b", 50.0, 10.0, 0.0, 10.0),
+                ("c", 60.0, 10.0, 66.671875, 10.0),
+            ],
+        ),
+        (
+            "shown",
+            "",
+            &[],
+            false,
+            &[
+                ("t", 0.0, 0.0, 200.0, 30.0),
+                ("a", 10.0, 10.0, 40.0, 10.0),
+                ("b", 60.0, 10.0, 53.328125, 10.0),
+                ("c", 123.328125, 10.0, 66.671875, 10.0),
+            ],
+        ),
+        (
+            "minimum",
+            "min-width:300px",
+            &[1],
+            false,
+            &[
+                ("t", 0.0, 0.0, 203.34375, 30.0),
+                ("a", 10.0, 10.0, 65.0, 10.0),
+                ("b", 75.0, 10.0, 0.0, 10.0),
+                ("c", 85.0, 10.0, 108.34375, 10.0),
+            ],
+        ),
+        (
+            "maximum",
+            "max-width:100px",
+            &[1],
+            false,
+            &[
+                ("t", 0.0, 0.0, 110.0, 30.0),
+                ("a", 10.0, 10.0, 30.0, 10.0),
+                ("b", 40.0, 10.0, 0.0, 10.0),
+                ("c", 50.0, 10.0, 50.0, 10.0),
+            ],
+        ),
+        (
+            "all collapsed",
+            "",
+            &[0, 1, 2],
+            false,
+            &[
+                ("t", 0.0, 0.0, 20.0, 30.0),
+                ("a", 10.0, 10.0, 0.0, 10.0),
+                ("b", 10.0, 10.0, 0.0, 10.0),
+                ("c", 10.0, 10.0, 0.0, 10.0),
+            ],
+        ),
+        (
+            "caption",
+            "",
+            &[1],
+            true,
+            &[
+                // Table fragments expose the grid alone, while Chromium's
+                // div-table BCR includes the caption. Check its wrapper too.
+                ("w", 0.0, 0.0, 300.0, 40.0),
+                ("t", 0.0, 10.0, 203.34375, 30.0),
+                ("cap", 0.0, 0.0, 300.0, 10.0),
+                ("a", 10.0, 20.0, 65.0, 10.0),
+                ("b", 75.0, 20.0, 0.0, 10.0),
+                ("c", 85.0, 20.0, 108.34375, 10.0),
+            ],
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for &(label, style, collapsed, caption, expected) in cases {
+        let columns: String = (0..3)
+            .map(|column| {
+                format!(
+                    "<div style='display:table-column;{}'></div>",
+                    if collapsed.contains(&column) {
+                        "visibility:collapse"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .collect();
+        let cells: String = [30, 40, 50]
+            .into_iter()
+            .zip(['a', 'b', 'c'])
+            .map(|(width, id)| {
+                format!("<div id={id} style='display:table-cell;padding:0;width:{width}px'>x</div>")
+            })
+            .collect();
+        let caption = if caption {
+            "<div id=cap style='display:table-caption;min-width:300px'>x</div>"
+        } else {
+            ""
+        };
+        let markup = format!(
+            "<div id=t style='display:table;table-layout:fixed;width:200px;border-spacing:10px;{style}'>{caption}{columns}<div style='display:table-row'>{cells}</div></div>"
+        );
+        let markup = if caption.is_empty() {
+            markup
+        } else {
+            format!("<div id=w style='display:inline-block'>{markup}</div>")
+        };
+        check_boxes(&mut mismatches, label, &markup, expected);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
 fn a_zero_width_auto_column_keeps_its_cell_at_the_column_origin() {
     let mut mismatches = Vec::new();
     check_boxes(
@@ -72,6 +191,29 @@ fn a_zero_width_auto_column_keeps_its_cell_at_the_column_origin() {
             ("c", 230.0, 2.0, 0.0, 22.0),
         ],
     );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn fixed_collapse_keeps_intrinsic_minimum_keywords_from_measuring_the_content() {
+    let mut mismatches = Vec::new();
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        let cells: String = [30,40,50].into_iter().zip(['a','b','c']).map(|(width,id)| format!("<div id={id} style='display:table-cell;padding:0;width:{width}px'>xxxxxxxxxxxxxxxxxxxx</div>")).collect();
+        let markup = format!(
+            "<div id=t style='display:table;table-layout:fixed;width:200px;border-spacing:10px;min-width:{keyword}'><div style='display:table-column'></div><div style='display:table-column;visibility:collapse'></div><div style='display:table-column'></div><div style='display:table-row'>{cells}</div></div>"
+        );
+        check_boxes(
+            &mut mismatches,
+            keyword,
+            &markup,
+            &[
+                ("t", 0.0, 0.0, 136.671_88, 30.0),
+                ("a", 10.0, 10.0, 40.0, 10.0),
+                ("b", 50.0, 10.0, 0.0, 10.0),
+                ("c", 60.0, 10.0, 66.671875, 10.0),
+            ],
+        );
+    }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
@@ -240,7 +382,12 @@ fn a_span_that_fixes_the_last_auto_columns_shares_the_surplus_proportionally() {
 
 /// Lays out `html` and appends to `mismatches` each element of `expected`
 /// whose box differs.
-fn check_boxes(mismatches: &mut Vec<String>, label: &str, html: &str, expected: Expected) {
+fn check_boxes(
+    mismatches: &mut Vec<String>,
+    label: &str,
+    html: &str,
+    expected: &[(&str, f32, f32, f32, f32)],
+) {
     let actual = boxes(html);
     for &(id, left, top, width, height) in expected {
         let (_, rect) = actual
@@ -258,6 +405,73 @@ fn check_boxes(mismatches: &mut Vec<String>, label: &str, html: &str, expected: 
             ));
         }
     }
+}
+
+#[test]
+fn fixed_percentages_and_intrinsic_limits_match_chromium() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/fixed-table-collapse-intrinsic.json"))
+            .expect("Chromium measurements");
+    let mut mismatches = Vec::new();
+    for case in oracle["cases"].as_array().expect("cases") {
+        let label = case["label"].as_str().expect("label");
+        let limit = case["limit"].as_str().expect("limit");
+        let edges = case["edges"].as_str().expect("edges");
+        let column = case["column"].as_str().expect("column");
+        let visibility = if case["collapse"].as_bool().expect("collapse") {
+            "visibility:collapse"
+        } else {
+            ""
+        };
+        let text = case["text"].as_str().expect("text");
+        let cells: String = case["widths"].as_array().expect("widths").iter().zip(['a','b','c']).map(|(width,id)| {
+            let width = width.as_str().expect("width");
+            format!("<div id={id} style='display:table-cell;padding:0;width:{width};{edges}'>{text}</div>")
+        }).collect();
+        let markup = format!(
+            "<div id=t style='display:table;table-layout:fixed;width:200px;border-spacing:10px;{limit}'><div style='display:table-column'></div><div style='display:table-column;{visibility};width:{column}'></div><div style='display:table-column'></div><div style='display:table-row'>{cells}</div></div>"
+        );
+        let expected: Vec<_> = case["expected"]
+            .as_array()
+            .expect("expected")
+            .iter()
+            .map(|rect| {
+                (
+                    rect[0].as_str().expect("id"),
+                    rect[1].as_f64().expect("x") as f32,
+                    rect[2].as_f64().expect("y") as f32,
+                    rect[3].as_f64().expect("width") as f32,
+                    rect[4].as_f64().expect("height") as f32,
+                )
+            })
+            .collect();
+        check_boxes(&mut mismatches, label, &markup, &expected);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn a_first_row_percentage_span_keeps_its_origin_in_intrinsic_sizing() {
+    let markup = "<table id=t style='font:inherit;table-layout:fixed;width:200px;border-spacing:10px;min-width:max-content'>\
+        <col style='width:30px'><col style='visibility:collapse'><col>\
+        <tr><td id=a colspan=2 style='font:inherit;padding:0;width:60%'>xxxxxxxxxxxxxxxxxxxx</td>\
+        <td id=c style='font:inherit;padding:0;width:50px'>xxxxxxxxxxxxxxxxxxxx</td></tr>\
+        <tr><td id=d style='padding:0'>x</td><td id=e style='padding:0'>x</td><td id=f style='padding:0'>x</td></tr></table>";
+    let mut mismatches = Vec::new();
+    check_boxes(
+        &mut mismatches,
+        "percentage span",
+        markup,
+        &[
+            ("t", 0.0, 0.0, 251.656_25, 50.0),
+            ("a", 10.0, 10.0, 83.125, 10.0),
+            ("c", 103.125, 10.0, 138.531_25, 10.0),
+            ("d", 10.0, 30.0, 83.125, 10.0),
+            ("e", 93.125, 30.0, 0.0, 10.0),
+            ("f", 103.125, 30.0, 138.531_25, 10.0),
+        ],
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
 /// A 300px wide block holding the table `t` in flow, with the fixed layout

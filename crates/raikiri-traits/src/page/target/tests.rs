@@ -117,6 +117,43 @@ fn every_predefined_counter_style_name_is_recognized_in_any_case() {
 }
 
 #[test]
+fn the_marker_suffix_of_a_predefined_counter_style_is_its_suffix_descriptor() {
+    for name in [
+        "cjk-decimal hiragana hiragana-iroha katakana katakana-iroha cjk-earthly-branch \
+         cjk-heavenly-stem japanese-informal japanese-formal simp-chinese-informal \
+         simp-chinese-formal trad-chinese-informal trad-chinese-formal cjk-ideographic",
+    ]
+    .iter()
+    .flat_map(|names| names.split_whitespace())
+    {
+        assert_eq!(predefined_counter_suffix(name), "\u{3001}", "{name}");
+        assert_eq!(
+            predefined_counter_suffix(&name.to_uppercase()),
+            "\u{3001}",
+            "{name}"
+        );
+    }
+    for name in [
+        "korean-hangul-formal",
+        "korean-hanja-informal",
+        "korean-hanja-formal",
+    ] {
+        assert_eq!(predefined_counter_suffix(name), ", ", "{name}");
+    }
+    assert_eq!(predefined_counter_suffix("ethiopic-numeric"), "/ ");
+    for name in [
+        "decimal",
+        "lower-greek",
+        "thai",
+        "hebrew",
+        "lower-roman",
+        "no-such-style",
+    ] {
+        assert_eq!(predefined_counter_suffix(name), ". ", "{name}");
+    }
+}
+
+#[test]
 fn format_counter_decimal_leading_zero() {
     let style = CounterStyle::Named(SmolStr::new("decimal-leading-zero"));
     assert_eq!(format_counter(0, &style), "00");

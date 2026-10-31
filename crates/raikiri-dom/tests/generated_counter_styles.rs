@@ -156,3 +156,25 @@ fn a_marker_shows_a_predefined_style_in_its_counters() {
     );
     assert_eq!(text, "105");
 }
+
+#[test]
+fn a_list_marker_shows_the_predefined_style_with_its_suffix() {
+    // The marker texts Chromium shows for the fifth item of a list.
+    for (style, expected) in [
+        ("decimal", "5. "),
+        ("lower-greek", "\u{3b5}. "),
+        ("thai", "\u{e55}. "),
+        ("cjk-decimal", "\u{4e94}\u{3001}"),
+        ("hiragana", "\u{304a}\u{3001}"),
+        ("cjk-earthly-branch", "\u{8fb0}\u{3001}"),
+        ("korean-hangul-formal", "\u{c624}, "),
+        ("ethiopic-numeric", "\u{136d}/ "),
+    ] {
+        let text = generated_text(
+            "",
+            &format!("<ol start=5><li style='list-style: {style} inside'>x</li></ol>"),
+            GeneratedKind::Marker,
+        );
+        assert_eq!(text, expected, "{style}");
+    }
+}
