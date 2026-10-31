@@ -5487,3 +5487,7 @@ css/css-ruby/ruby-line-breaking-002.html
 css/css-flexbox/flexbox-safe-overflow-position-001.html
 css/css-flexbox/flexbox-safe-overflow-position-003.html
 css/css-flexbox/flexbox-safe-overflow-position-004.html
+
+# --- A page name after only a float (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A float is no part of the page flow (CSS Page 3, section 4.1), so a box that names a page after only floats names the first page, and no page changes. Layout took the float for the page before the box and cleared the box below it. The test is a negative one: its subject has no effect, so `audit-vacuous-passes` reports it VACUOUS-UNSTYLED in two runs. It was FAIL before the change and stays as a guard, as the other named-page guards do.
+css/css-page/page-name-float-001-print.html

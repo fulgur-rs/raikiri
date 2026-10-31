@@ -1044,7 +1044,10 @@ fn style_element_sheet(this: &JsValue, _: &[JsValue], context: &mut Context) -> 
             .into());
     }
     let connected = with_state(context, |state| {
-        stylesheet_nodes(state.host.document()).contains(&index)
+        state
+            .css_sheet_index
+            .nodes(state.host.document())
+            .contains(&index)
     })?;
     if connected {
         Ok(style_sheet_object(context, index)?.into())
