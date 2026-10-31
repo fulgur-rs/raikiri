@@ -322,8 +322,19 @@ fn rule_longhands_resolve_currentcolor() {
 fn rules_cover_the_full_column_height_even_when_the_last_column_is_short() {
     compare(
         "<div class=mc>A<br>B<br>C<br>D</div>",
-        ".mc{height:60px;column-rule:2px solid red}",
+        ".mc{height:60px;column-fill:auto;column-rule:2px solid red}",
         "<div style='position:absolute;left:49px;top:0;width:2px;height:60px;background:red'></div><div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D</div>",
+    );
+}
+
+#[test]
+fn rules_of_balanced_columns_cover_the_height_of_the_container() {
+    // The columns are as tall as their lines need, and the rule still spans
+    // the container, as in Chromium.
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{height:60px;column-rule:2px solid red}",
+        "<div style='position:absolute;left:49px;top:0;width:2px;height:60px;background:red'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
     );
 }
 
