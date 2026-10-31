@@ -602,6 +602,11 @@ fn compute_table_layout_checked(
     // absolutely positioned table is given: its layout measures the wrapper
     // and lays the table out at that size.
     let wrapper_height_is_assigned = parent_assigns_wrapper_height || absolute_table;
+    // What is left of the flex and grid items is the item of a flex column with
+    // a definite `flex-basis`: the height it is given is that of its grid box,
+    // as an authored `height` is. (A `flex-basis` does not size an absolutely
+    // positioned table, which is the wrapper's case above.)
+    let parent_sizes_grid_alone = parent_is_flex_or_grid && !wrapper_height_is_assigned;
     // The layout library measures the wrapper of such a table and gives that
     // height back, so a known height is the wrapper's even though the table
     // states one; the height it states is for the measure alone.
@@ -1310,11 +1315,19 @@ fn compute_table_layout_checked(
                     .height
                     .map(|h| {
                         // Taffy reports authored definite table heights in the
-                        // outer box-sizing domain. Auto tables retain the legacy
-                        // known-height normalization used by fragmentation.
+                        // outer box-sizing domain, and so does a flex column
+                        // for the main size it gives a table whose
+                        // `flex-basis` is definite (shrunk or grown, too).
+                        // With a caption that size is the wrapper's once the
+                        // item is flexed and the grid's when it is not, which
+                        // is not told apart here, so a table with a caption
+                        // and other auto tables retain the legacy known-height
+                        // normalization used by fragmentation.
                         // CSS 2.2 §17.5.3: a specified height is a minimum; the
                         // table still holds its rows and the spacing.
-                        let outer_height = if specified_height.is_some() {
+                        let outer_height = if specified_height.is_some()
+                            || (parent_sizes_grid_alone && early_caption.is_none())
+                        {
                             f32_max_compat(h, content_height + padding_border_size.height)
                         } else {
                             (h - padding_border_size.height).max(0.0) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
