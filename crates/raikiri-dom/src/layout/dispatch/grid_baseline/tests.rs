@@ -153,7 +153,7 @@ fn public_layout_records_percentage_exclusions_and_selects_the_last_eligible_ite
         .unwrap();
         let node = &doc.nodes[grid];
         assert_eq!(&*node.grid_items_without_baseline, &children[..count]);
-        assert!(node.exported_first_baseline.is_some());
+        assert_eq!(node.exported_first_baseline, Some(1.0));
         for (index, &child) in children.iter().enumerate() {
             assert_eq!(doc.nodes[child].layout.size.width, 1.0);
             assert_eq!(doc.nodes[child].layout.location.x, index as f32);
