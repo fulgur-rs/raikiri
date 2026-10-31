@@ -5499,3 +5499,7 @@ css/css-page/monolithic-overflow-013-print.html
 # --- Columns that fill in turn across pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
 # A multicol container with `column-fill: auto` and an auto height fills the columns of each page it crosses in turn, as tall as what the page has left, and goes on at the top of the next page (CSS Multi-column 1 sections 8.1 and 8.2; CSS Fragmentation 3 section 2). It kept one column per page before the change. The test was FAIL before and KEEP in the audit-vacuous-passes run.
 css/css-multicol/auto-fill-auto-size-002-print.html
+
+# --- A scroll container in columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A scroll container with a block size of its own is monolithic (CSS Fragmentation 3, monolithic content): a column end never cuts it, so it moves to the next column whole when it does not fit below what comes before it, and one taller than a column overflows the column it starts at the top of. A multicol container with one fell back to full-width block layout before the change (40000 pixels differed). The test was FAIL before and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-scroll-content.html

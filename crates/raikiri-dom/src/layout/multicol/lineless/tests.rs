@@ -25,6 +25,7 @@ fn split(height: f32) -> Item {
         margin_bottom: 0.0,
         splittable: true,
         whole: false,
+        monolithic: false,
         slice: None,
         edges: 0.0,
     }
@@ -35,6 +36,54 @@ fn avoid(height: f32) -> Item {
         splittable: false,
         ..split(height)
     }
+}
+
+/// A box a column end never cuts, with `margin_top` above it.
+fn monolithic(height: f32, margin_top: f32) -> Item {
+    Item {
+        splittable: false,
+        whole: true,
+        monolithic: true,
+        margin_top,
+        ..split(height)
+    }
+}
+
+#[test]
+fn a_monolithic_box_pushed_out_by_its_margin_starts_the_next_column() {
+    // It fits below its margin.
+    assert_eq!(
+        shape(&[monolithic(60.0, 30.0)], 100.0),
+        vec![vec![(0, 30.0, 60.0)]]
+    );
+    // It does not fit below its margin, so it moves to the next column, where
+    // the margin is truncated.
+    assert_eq!(
+        shape(&[monolithic(60.0, 50.0)], 100.0),
+        vec![vec![(1, 0.0, 60.0)]]
+    );
+    // One taller than a column has no room to start the first one below a
+    // margin, and overflows the next one it starts.
+    assert_eq!(
+        shape(&[monolithic(150.0, 30.0)], 100.0),
+        vec![vec![(1, 0.0, 150.0)]]
+    );
+    // With no margin it overflows the column it starts.
+    assert_eq!(
+        shape(&[monolithic(150.0, 0.0)], 100.0),
+        vec![vec![(0, 0.0, 150.0)]]
+    );
+}
+
+#[test]
+fn a_box_that_stays_whole_is_not_pushed_out_by_its_margin() {
+    let whole = Item {
+        margin_top: 30.0,
+        splittable: false,
+        whole: true,
+        ..split(150.0)
+    };
+    assert_eq!(shape(&[whole], 100.0), vec![vec![(0, 30.0, 150.0)]]);
 }
 
 #[test]
