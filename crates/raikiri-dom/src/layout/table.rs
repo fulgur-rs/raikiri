@@ -543,7 +543,6 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_grid_box = None;
         doc.nodes[table_idx].table_first_baseline = None;
     }
-    let abspos_table = doc.nodes[table_idx].layout_position() == Position::Absolute;
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
@@ -1067,15 +1066,7 @@ fn compute_table_layout_checked(
         // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
         // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
         // width keeps the fill basis.
-        let table_width_basis = if abspos_table && specified_width.is_none() {
-            // An auto-width absolutely positioned table uses the containing block's
-            // available width for this table-layout path.  Taffy's shrink-to-fit
-            // probe may report the intrinsic cell width as `known_dimensions.width`,
-            // but CSS Tables 3 caps the available size at (and in this case fills)
-            // the containing block; retaining the probe would leave a narrow strip
-            // missing from the table background.
-            inputs.parent_size.width.or(effective_known.width)
-        } else if parent_is_flex_or_grid {
+        let table_width_basis = if parent_is_flex_or_grid {
             // Flex/grid supplies a used item width even when the table's own
             // width is auto. Keep that width instead of shrink-wrapping again.
             effective_known.width
