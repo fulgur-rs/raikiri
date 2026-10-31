@@ -1130,32 +1130,41 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
     Some(text)
 }
 
+/// The name under which `registry` knows the style that `name` asks for.
+///
+/// A predefined name matches without regard to case, so an author style that
+/// redefines one answers to every spelling of it (stored in lower case); the
+/// name of any other style matches exactly. A rule spelled with capitals is
+/// still found by the same spelling.
+pub(crate) fn author_style_name<'a>(
+    registry: &CounterStyleRegistry,
+    name: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    if name.bytes().any(|byte| byte.is_ascii_uppercase())
+        && raikiri_traits::page::is_predefined_counter_style(name)
+    {
+        let lowered = name.to_ascii_lowercase();
+        if registry.get(&lowered).is_some() {
+            return std::borrow::Cow::Owned(lowered);
+        }
+    }
+    std::borrow::Cow::Borrowed(name)
+}
+
 /// `value` in the counter style `style`: an author `@counter-style` of
 /// `registry` first, since it can redefine a predefined name, then the
 /// predefined styles of CSS Counter Styles 3, else decimal.
 #[doc(hidden)]
 pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
-    let CounterStyle::Named(name) = style else {
-        return raikiri_traits::page::format_predefined_counter(value, style);
-    };
-    // A predefined name matches without regard to case, so an author style
-    // that redefines it answers to every spelling; the name of any other
-    // style matches exactly. A rule spelled with capitals is still found by
-    // the same spelling.
-    let name = name.as_str();
-    let lowered = (name.bytes().any(|byte| byte.is_ascii_uppercase())
-        && raikiri_traits::page::is_predefined_counter_style(name))
-    .then(|| name.to_ascii_lowercase());
-    let author_name = lowered
-        .as_deref()
-        .filter(|lowered| registry.get(lowered).is_some())
-        .unwrap_or(name);
-    if registry.get(author_name).is_some() {
-        // A value the style and its fallbacks cannot render uses decimal.
-        resolve_custom_counter(registry, author_name, value).unwrap_or_else(|| value.to_string())
-    } else {
-        raikiri_traits::page::format_predefined_counter(value, style)
+    if let CounterStyle::Named(name) = style {
+        let author_name = author_style_name(registry, name.as_str());
+        if registry.get(&author_name).is_some() {
+            // A value the style and its fallbacks cannot render uses decimal.
+            return resolve_custom_counter(registry, &author_name, value)
+                .unwrap_or_else(|| value.to_string());
+        }
     }
+    raikiri_traits::page::format_predefined_counter(value, style)
 }
 
 #[cfg(test)]
