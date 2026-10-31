@@ -55,7 +55,104 @@ fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
 /// Layout units are 1/64px; allow a little more for the 32-bit sums.
 const TOLERANCE: f32 = 0.04;
 
+#[test]
+fn first_row_spanning_widths_contribute_to_unfixed_columns() {
+    let cases: &[(&str, &str, &str, Expected)] = &[
+        (
+            "length",
+            "",
+            "width:100px",
+            &[
+                ("a", 2.0, 2.0, 112.0, 22.0),
+                ("c", 116.0, 2.0, 182.0, 22.0),
+                ("d", 2.0, 26.0, 55.0, 22.0),
+                ("e", 59.0, 26.0, 55.0, 22.0),
+                ("f", 116.0, 26.0, 182.0, 22.0),
+            ],
+        ),
+        (
+            "narrow column wins",
+            "<col style='width:20px'><col><col>",
+            "width:100px",
+            &[
+                ("a", 2.0, 2.0, 77.0, 32.0),
+                ("c", 81.0, 2.0, 217.0, 32.0),
+                ("d", 2.0, 36.0, 20.0, 22.0),
+                ("e", 24.0, 36.0, 55.0, 22.0),
+                ("f", 81.0, 36.0, 217.0, 22.0),
+            ],
+        ),
+        (
+            "wide column wins",
+            "<col style='width:150px'><col><col>",
+            "width:100px",
+            &[
+                ("a", 2.0, 2.0, 207.0, 22.0),
+                ("c", 211.0, 2.0, 87.0, 22.0),
+                ("d", 2.0, 26.0, 150.0, 22.0),
+                ("e", 154.0, 26.0, 55.0, 22.0),
+                ("f", 211.0, 26.0, 87.0, 22.0),
+            ],
+        ),
+        (
+            "percentage",
+            "",
+            "width:50%",
+            &[
+                ("a", 2.0, 2.0, 148.0, 22.0),
+                ("c", 152.0, 2.0, 146.0, 22.0),
+                ("d", 2.0, 26.0, 73.0, 22.0),
+                ("e", 77.0, 26.0, 73.0, 22.0),
+                ("f", 152.0, 26.0, 146.0, 22.0),
+            ],
+        ),
+        (
+            "border box",
+            "",
+            "box-sizing:border-box;width:100px",
+            &[
+                ("a", 2.0, 2.0, 100.0, 32.0),
+                ("c", 104.0, 2.0, 194.0, 32.0),
+                ("d", 2.0, 36.0, 49.0, 22.0),
+                ("e", 53.0, 36.0, 49.0, 22.0),
+                ("f", 104.0, 36.0, 194.0, 22.0),
+            ],
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for &(label, columns, style, expected) in cases {
+        let html = format!(
+            "<style>td{{padding:5px;border:1px solid}}</style><table style='font:inherit;table-layout:fixed;width:300px;border-spacing:2px'>{columns}<tr><td id=a colspan=2 style='{style}'>Row 1 Left</td><td id=c>x</td></tr><tr><td id=d>1</td><td id=e>2</td><td id=f>3</td></tr></table>"
+        );
+        check_boxes(&mut mismatches, label, &html, expected);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
 type Expected = &'static [(&'static str, f32, f32, f32, f32)];
+
+#[test]
+fn a_span_that_fixes_the_last_auto_columns_shares_the_surplus_proportionally() {
+    let mut mismatches = Vec::new();
+    check_boxes(
+        &mut mismatches,
+        "no automatic columns",
+        "<table style='font:inherit;table-layout:fixed;width:300px;border-spacing:0'>\
+         <tr><td id=a colspan=2 style='width:100px;padding:0;border:0'>x</td>\
+         <td id=c style='width:100px;padding:0;border:0'>x</td></tr>\
+         <tr><td id=d style='padding:0;border:0'>x</td>\
+         <td id=e style='padding:0;border:0'>x</td>\
+         <td id=f style='padding:0;border:0'>x</td></tr></table>",
+        &[
+            ("a", 0.0, 0.0, 150.0, 10.0),
+            ("c", 150.0, 0.0, 150.0, 10.0),
+            ("d", 0.0, 10.0, 75.0, 10.0),
+            ("e", 75.0, 10.0, 75.0, 10.0),
+            ("f", 150.0, 10.0, 150.0, 10.0),
+        ],
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
 
 /// Lays out `html` and appends to `mismatches` each element of `expected`
 /// whose box differs.

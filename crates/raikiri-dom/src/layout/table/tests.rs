@@ -2429,9 +2429,8 @@ fn resolve_fixed_column_widths_ignores_non_first_row_width() {
 }
 
 #[test]
-fn resolve_fixed_column_widths_ignores_colspan_first_row_width() {
-    // A first-row cell with colspan > 1 never fixes a column — only
-    // colspan == 1 first-row cells participate in §17.5.2.1 fixing.
+fn resolve_fixed_column_widths_spanning_first_row_width_leaves_no_auto_columns() {
+    // With no auto columns, the columns share the table's excess width.
     let grid = super::TableGrid {
         n_cols: 2,
         rows: vec![],
@@ -2440,6 +2439,20 @@ fn resolve_fixed_column_widths_ignores_colspan_first_row_width() {
     };
     let widths = super::resolve_fixed_column_widths(&grid, 400.0);
     assert_eq!(widths, [200.0, 200.0]);
+}
+
+#[test]
+fn a_first_row_span_leaves_the_remainder_for_other_auto_columns() {
+    let grid = super::TableGrid {
+        n_cols: 3,
+        rows: vec![],
+        cells: vec![fixed_cell(0, 0, 2, Dimension::length(200.0))],
+        col_widths: vec![],
+    };
+    assert_eq!(
+        super::resolve_fixed_column_widths(&grid, 400.0),
+        [100.0, 100.0, 200.0]
+    );
 }
 
 #[test]

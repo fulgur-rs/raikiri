@@ -2602,6 +2602,22 @@ fn resolve_table_columns(
             continue;
         }
         let style = doc.table_style(cell.node_id);
+        if cell.col_span > 1
+            && let ExpandedDimension::Length(width) = style.size().width.expand()
+        {
+            // A length sizes the spanning border box. Percentages instead
+            // contribute a share of the net track width, without cell edges.
+            let padding = style.padding().resolve_or_zero(Some(avail));
+            let border = style.border().resolve_or_zero(Some(avail));
+            let cell_insets = padding.left + padding.right + border.left + border.right;
+            let outer = if style.box_sizing() == BoxSizing::ContentBox {
+                width + cell_insets
+            } else {
+                width.max(cell_insets)
+            };
+            let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
+            cell.specified_width = Dimension::length((outer - gaps).max(0.0));
+        }
         if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
             let padding = style.padding().resolve_or_zero(Some(avail));
             let border = style.border().resolve_or_zero(Some(avail));
@@ -4239,13 +4255,12 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
 /// Fixed column sizing: no content measurement.
 ///
 /// `avail` is the table width net of padding + outer (collapsed) borders.
-/// Per §17.5.2.1, a first-row cell with `colspan == 1` and a specified
-/// `width` (length or percentage-of-table-width) fixes its column; all
-/// remaining columns divide the leftover equally. A `<col>` width fixes a
-/// column that no such cell fixed. Specified widths in non-first rows and
-/// `colspan > 1` first-row widths are ignored. Leftover underflow clamps unfixed
-/// columns to zero (the table overflows rather than shrinking fixed
-/// columns).
+/// A `<col>` width takes priority over a first-row cell's specified width.
+/// A spanning first-row cell divides its width among its columns, assigning
+/// that share only to columns the `<col>` elements have not fixed. Remaining
+/// columns divide the leftover equally. Non-first-row widths are ignored.
+/// Leftover underflow clamps unfixed columns to zero (the table overflows
+/// rather than shrinking fixed columns).
 fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
     let n = grid.n_cols as usize;
     let mut fixed: Vec<Option<f32>> = vec![None; n];
@@ -4311,6 +4326,24 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
             *width = width.max(*floor);
         }
     }
+    let mut span_fixed_column = false;
+    for cell in &grid.cells {
+        if cell.row != 0 || cell.col_span <= 1 {
+            continue;
+        }
+        let Some(width) = fixed_column_width(cell.specified_width, avail) else {
+            continue;
+        };
+        let columns =
+            cell_column_range(cell, n).expect("validated table cell spans existing columns");
+        let share = width / columns.len() as f32;
+        for column in columns {
+            if fixed[column].is_none() {
+                fixed[column] = Some(share.max(floors[column]));
+                span_fixed_column = true;
+            }
+        }
+    }
     let fixed_sum: f32 = fixed.iter().flatten().sum();
     let mut remaining = (avail - fixed_sum).max(0.0);
     let reclaimable: Vec<_> = fixed.iter().map(Option::is_none).collect();
@@ -4330,6 +4363,10 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
         .collect();
+    // A span that fixes the last auto columns must still fill the table.
+    if span_fixed_column && automatic.is_empty() {
+        distribute_extra(&mut widths, None, avail);
+    }
     // The first row's spanning cells, as their columns and minimum width.
     let first_row_spans: Vec<(usize, usize, f32)> = grid
         .cells
