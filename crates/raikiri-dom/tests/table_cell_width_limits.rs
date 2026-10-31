@@ -97,6 +97,14 @@ fn row(table_style: &str, cells: &[String]) -> String {
     )
 }
 
+/// A one-row table like [`row`] with the `<col>` elements `cols` before it.
+fn row_with_cols(table_style: &str, cols: &str, cells: &[String]) -> String {
+    format!(
+        "{STYLE}<table id=t style='{table_style}'>{cols}<tr>{}</tr></table>",
+        cells.concat()
+    )
+}
+
 fn cell(id: &str, style: &str, text: &str) -> String {
     format!("<td id={id} style='{style}'>{text}</td>")
 }
@@ -399,6 +407,106 @@ fn a_fixed_table_shares_the_room_the_columns_leave_in_proportion_to_their_widths
                 ("a", 2.0, 2.0, 62.0, 32.0),
                 ("b", 66.0, 2.0, 115.0, 32.0),
                 ("c", 183.0, 2.0, 115.0, 32.0),
+            ],
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for (label, html, expected) in &cases {
+        check_boxes(&mut mismatches, label, html, expected);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn a_percentage_column_keeps_its_share_of_a_fixed_table_while_lengths_take_the_room() {
+    let cases: Vec<(&str, String, Expected)> = vec![
+        (
+            "a length column takes the room beside a percentage",
+            row(
+                FIXED_300,
+                &[
+                    cell("a", "width: 20%", "Row 1 Left"),
+                    cell("c", "width: 100px", WORD),
+                ],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 36.0),
+                ("a", 2.0, 2.0, 70.8, 32.0),
+                ("c", 74.8, 2.0, 223.2, 32.0),
+            ],
+        ),
+        (
+            "length columns share it in proportion to their widths",
+            row(
+                FIXED_300,
+                &[
+                    cell("a", "width: 20%", "Row 1 Left"),
+                    cell("b", "width: 100px", "y"),
+                    cell("c", "width: 50px", WORD),
+                ],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 36.0),
+                ("a", 2.0, 2.0, 70.41, 32.0),
+                ("b", 74.41, 2.0, 142.64, 32.0),
+                ("c", 219.05, 2.0, 78.95, 32.0),
+            ],
+        ),
+        (
+            "percentages alone share it in proportion to their widths",
+            row(
+                FIXED_300,
+                &[
+                    cell("a", "width: 20%", "Row 1 Left"),
+                    cell("c", "width: 30%", WORD),
+                ],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 26.0),
+                ("a", 2.0, 2.0, 121.72, 22.0),
+                ("c", 125.72, 2.0, 172.28, 22.0),
+            ],
+        ),
+        (
+            "a percentage on a col and one on a cell are both cut back",
+            row_with_cols(
+                FIXED_300,
+                "<col style='width: 70%'><col>",
+                &[
+                    cell("a", "padding: 0; border: 0", "Row 1 Left"),
+                    cell("c", "width: 70%; padding: 0; border: 0", "x"),
+                ],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 14.0),
+                ("a", 2.0, 2.0, 147.0, 10.0),
+                ("c", 151.0, 2.0, 147.0, 10.0),
+            ],
+        ),
+        (
+            "two percentages on cols are cut back",
+            row_with_cols(
+                FIXED_300,
+                "<col style='width: 70%'><col style='width: 70%'>",
+                &[cell("a", "", "Row 1 Left"), cell("c", "", "x")],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 26.0),
+                ("a", 2.0, 2.0, 147.0, 22.0),
+                ("c", 151.0, 2.0, 147.0, 22.0),
+            ],
+        ),
+        (
+            "a percentage on a col gives way to a length on a col",
+            row_with_cols(
+                FIXED_300,
+                "<col style='width: 70%'><col style='width: 100px'>",
+                &[cell("a", "", "Row 1 Left"), cell("c", "", "x")],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 26.0),
+                ("a", 2.0, 2.0, 194.0, 22.0),
+                ("c", 198.0, 2.0, 100.0, 22.0),
             ],
         ),
     ];

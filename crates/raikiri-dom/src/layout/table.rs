@@ -4300,6 +4300,8 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
 fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) -> Vec<f32> {
     let n = grid.n_cols as usize;
     let mut fixed: Vec<Option<f32>> = vec![None; n];
+    // The columns that state a percentage, whether on a `<col>` or on a cell.
+    let mut percent = vec![false; n];
     // A specified `<col>` width takes priority over first-row cell widths
     // (CSS 2.1 §17.5.2.1).
     // Percentages resolve against the same avail basis as cell percentages.
@@ -4310,6 +4312,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
         let minimum = resolve_dimension(sz.min_width, None);
         let maximum = resolve_dimension(sz.max_width, None);
         if let Some(mut x) = fixed_column_width(sz.width, avail) {
+            percent[c] = matches!(sz.width.expand(), ExpandedDimension::Percent(_));
             if let Some(minimum) = minimum {
                 x = f32_max_compat(x, minimum);
             }
@@ -4322,7 +4325,6 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
         }
     }
     // First-row cells set widths only for columns without a specified `<col>` width.
-    let mut percent = vec![false; n];
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span != 1 {
             continue;
@@ -4406,9 +4408,20 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
         .collect();
     // With no automatic column to take the room that is left, the columns
     // share it in proportion to their widths (CSS 2.1 section 17.5.2.1: the
-    // extra space is distributed over the columns).
+    // extra space is distributed over the columns). The columns that state a
+    // length take it, and one that states a percentage keeps its share of the
+    // table, unless every column states a percentage.
     if share_extra && all_columns_state_a_width {
-        distribute_extra(&mut widths, None, avail);
+        let takes: Vec<bool> = (0..n).map(|c| !percent[c] && widths[c] > 0.0).collect();
+        let taken: f32 = (0..n).filter(|&c| takes[c]).map(|c| widths[c]).sum();
+        if taken > 0.0 {
+            let extra = (avail - widths.iter().sum::<f32>()).max(0.0);
+            for c in (0..n).filter(|&c| takes[c]) {
+                widths[c] += extra * widths[c] / taken;
+            }
+        } else {
+            distribute_extra(&mut widths, None, avail);
+        }
     }
     // The first row's spanning cells, as their columns and minimum width.
     let first_row_spans: Vec<(usize, usize, f32)> = grid
