@@ -877,7 +877,7 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // nothing inside it may stand among them, if one of the others holds lines: one
 // with a block size of its own, which the planner places whole in a column, or
 // one with no room of its own, whose margins collapse through it. So may a box
-// of lines with a height of its own (see [`is_sized_paragraph`]).
+// of lines with a height of its own (see `is_sized_paragraph`).
 //
 // One undecorated paragraph also counts when `balances` is set: the columns of
 // a definite-height container that balance take their height from the planner,
