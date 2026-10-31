@@ -520,6 +520,8 @@ pub(crate) fn walk_from<D: StyleDom>(
     // Per element of `ancestor_path`, the nearest element up to it that
     // declares each stroke length, kept in lockstep with the path.
     let mut stroke_declarers: Vec<StrokeDeclarers> = Vec::new();
+    // Nearest exported painting declarations, in the same ancestor slots.
+    let mut painting_declarers: Vec<PaintingDeclarers> = Vec::new();
     let mut store = InputStore::new(options.share_retention_budget);
     // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
     // and reused for every node. Two per-node `HashMap`s previously accounted
@@ -550,6 +552,8 @@ pub(crate) fn walk_from<D: StyleDom>(
         ancestor_path.truncate(ancestors);
         ancestor_filter.truncate(ancestors);
         stroke_declarers.truncate(ancestors);
+        painting_declarers.truncate(ancestors);
+        let parent_painting_declarers = painting_declarers.last().copied().unwrap_or_default();
         // Skip the entire subtree when is_in_document()==false: detached and
         // template descendants keep initial() instead of inheriting from their
         // parent (nodes under `<template style="color:red">` do not inherit
@@ -623,6 +627,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             ancestor_path.push(id);
             ancestor_filter.push(&elem);
             stroke_declarers.push(StrokeDeclarers::default());
+            painting_declarers.push(PaintingDeclarers::default());
         }
 
         let shared = collector.shared();
@@ -974,6 +979,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                     inherit_ancestor_paint(
                         &mut node_svg_properties,
                         attribute_set,
+                        parent_painting_declarers,
                         ancestors,
                         &out.svg_properties,
                         &out.computed,
@@ -991,6 +997,10 @@ pub(crate) fn walk_from<D: StyleDom>(
             if let Some(slot) = stroke_declarers.last_mut() {
                 *slot = parent_declarers.declared_by(&node_svg_properties, attribute_set, id);
             }
+        }
+        if is_element && let Some(slot) = painting_declarers.last_mut() {
+            *slot = parent_painting_declarers
+                .declared_by(&node_svg_properties, ancestor_path.len() - 1);
         }
         if !node_svg_properties.is_empty() {
             // Every element owns a copy of the text of its painting
@@ -1743,6 +1753,25 @@ pub(crate) struct SvgCollector<'a> {
     pub(crate) painting_only: bool,
 }
 
+/// Ancestor-path indices of the nearest non-inherited exported painting
+/// declarations, including known absences. Presentation attributes that are
+/// not exported do not change this environment.
+#[derive(Clone, Copy, Default)]
+struct PaintingDeclarers([Option<usize>; crate::property::PropertyKey::SVG_PRESENTATION.len()]);
+
+impl PaintingDeclarers {
+    /// Includes the final exports of the element at `depth`, after sharing,
+    /// root completion, and relative-length conversion.
+    fn declared_by(mut self, properties: &[SvgStyleProperty], depth: usize) -> Self {
+        for property in properties.iter().filter(|property| !property.inherited) {
+            if let Some(slot) = svg_presentation_slot(property.property) {
+                self.0[slot] = Some(depth);
+            }
+        }
+        self
+    }
+}
+
 /// Completes the painting properties of the root of an inline SVG with the
 /// values it inherits from its ancestors.
 ///
@@ -1756,6 +1785,7 @@ pub(crate) struct SvgCollector<'a> {
 fn inherit_ancestor_paint(
     properties: &mut Vec<SvgStyleProperty>,
     attribute_set: [bool; crate::property::PropertyKey::SVG_PRESENTATION.len()],
+    declarers: PaintingDeclarers,
     ancestors: &[StyleNodeId],
     exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     computed: &[ComputedValues],
@@ -1771,10 +1801,21 @@ fn inherit_ancestor_paint(
     for (pending, set) in pending.iter_mut().zip(attribute_set) {
         *pending &= !set;
     }
-    for ancestor in ancestors.iter().rev() {
-        let Some(listed) = exported.get(ancestor) else {
+    // Preserve the old nearest-ancestor and per-export order, visiting each
+    // donor only once. Missing properties require no ancestor lookup.
+    let mut depths = declarers.0;
+    depths.sort_unstable();
+    let mut previous = None;
+    for depth in depths.into_iter().rev().flatten() {
+        if previous == Some(depth) {
             continue;
-        };
+        }
+        previous = Some(depth);
+        let ancestor = &ancestors[depth];
+        #[cfg(test)]
+        tests::paint_inheritance_tests::record_donor_lookup();
+        // Each recorded donor has a nonempty final export in this walk.
+        let listed = &exported[ancestor];
         for entry in listed {
             let Some(slot) = svg_presentation_slot(entry.property)
                 .filter(|&slot| pending[slot] && !entry.inherited)
