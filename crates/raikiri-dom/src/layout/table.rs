@@ -194,6 +194,38 @@ fn caption_in_flow(doc: &Document, table: usize) -> bool {
         .is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute)
 }
 
+/// Whether the layout library places an absolutely positioned `table` by the
+/// height of its whole wrapper box rather than by the `height` it states.
+///
+/// A stated `height` is that of the grid box, and a caption in flow comes on
+/// top of it, so the wrapper is taller than the `height` and the library, which
+/// cannot tell the caption's share, would place the box by the wrong extent
+/// (a `bottom` inset anchors the grid's end instead of the caption's). The
+/// style it reads leaves the `height` out (see
+/// `LayoutStyleView::with_hidden_table_height`), so it measures the wrapper and
+/// gives that height back as the known one, which the layout of the table
+/// then splits into the caption's share and the grid's.
+///
+/// A table with both vertical insets stated keeps its `height` in the library's
+/// style: without it the library would stretch the table between the insets,
+/// and with it the box ends up where Chromium puts it unless an `auto` margin
+/// or an alignment centers it.
+pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
+    if doc.nodes[table].formatting_context != FormattingContext::Table
+        || doc.nodes[table].layout_position() != Position::Absolute
+        || table_writing_mode(doc, table).is_vertical()
+    {
+        return false;
+    }
+    // The table's own view answers on the physical axes of its horizontal
+    // writing mode, wherever its containing block runs.
+    let style = doc.table_style(table);
+    let inset = style.inset();
+    !style.size().height.is_auto()
+        && (inset.top.is_auto() || inset.bottom.is_auto())
+        && caption_in_flow(doc, table)
+}
+
 /// The height left for the grid box of a horizontal table when a flex or grid
 /// parent assigns `wrapper_height` to the whole wrapper box: the caption above
 /// or below the grid keeps its own share. `caption` is the laid-out caption.
@@ -566,6 +598,12 @@ fn compute_table_layout_checked(
     // absolutely positioned table is given: its layout measures the wrapper
     // and lays the table out at that size.
     let wrapper_height_is_assigned = parent_assigns_wrapper_height || absolute_table;
+    // The layout library measures the wrapper of such a table and gives that
+    // height back, so a known height is the wrapper's even though the table
+    // states one; the height it states is for the measure alone.
+    let wrapper_measured_by_library = absolute_table && wrapper_owns_height(doc, table_idx);
+    let known_is_wrapper_height =
+        wrapper_measured_by_library && inputs.known_dimensions.height.is_some();
     let grid = cache::table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -670,6 +708,22 @@ fn compute_table_layout_checked(
         let max_w_outer = max_w.map(|m| m + lift_w);
         let min_h_outer = min_h.map(|m| m + lift_h);
         let max_h_outer = max_h.map(|m| m + lift_h);
+        // Without a known height the stated one stands in for it. The library
+        // would have reported it in the outer box-sizing domain and within the
+        // limits (the minimum wins), and the grid below does not shrink to a
+        // maximum that is under the height it is given.
+        let effective_known = if wrapper_measured_by_library && !known_is_wrapper_height {
+            Size {
+                height: effective_known.height.map(|stated| {
+                    let outer =
+                        max_h_outer.map_or(stated + lift_h, |max| (stated + lift_h).min(max));
+                    min_h_outer.map_or(outer, |min| outer.max(min))
+                }),
+                ..effective_known
+            }
+        } else {
+            effective_known
+        };
 
         if grid.n_cols == 0 || grid.rows.is_empty() {
             // Empty tables shrink-wrap like the main path below: a specified
@@ -724,12 +778,14 @@ fn compute_table_layout_checked(
             } else {
                 layout_table_caption(doc, table_idx, width, inputs.parent_size.height)
             };
-            let stated_h = specified_height.map(|stated| {
-                f32_max_compat(
-                    inputs.known_dimensions.height.unwrap_or(stated + lift_h),
-                    padding_border_size.height,
-                )
-            });
+            let stated_h = specified_height
+                .filter(|_| !known_is_wrapper_height)
+                .map(|stated| {
+                    f32_max_compat(
+                        inputs.known_dimensions.height.unwrap_or(stated + lift_h),
+                        padding_border_size.height,
+                    )
+                });
             let mut height = stated_h.unwrap_or_else(|| {
                 let known = effective_known.height.map(|wrapper_height| {
                     if wrapper_height_is_assigned && !vertical_writing {
@@ -1135,7 +1191,9 @@ fn compute_table_layout_checked(
         let assigned_grid_height = effective_known
             .height
             .filter(|_| {
-                wrapper_height_is_assigned && !vertical_writing && specified_height.is_none()
+                wrapper_height_is_assigned
+                    && !vertical_writing
+                    && (specified_height.is_none() || known_is_wrapper_height)
             })
             .map(|wrapper_height| {
                 grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
