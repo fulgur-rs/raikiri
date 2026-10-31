@@ -493,11 +493,13 @@ fn headers_and_footers_repeat_beside_monolithic_content_of_an_anonymous_row() {
 #[test]
 fn a_footer_only_table_whose_first_row_starts_the_next_page_keeps_its_footer_after_it() {
     for spacer in [85, 95] {
-        let body =
-            table_with_footer(4, true).replace("<thead><tr><th id='h'>H</th></tr></thead>", "");
+        let body = table_with_footer(4, true)
+            .replace("<thead><tr><th id='h'>H</th></tr></thead>", "")
+            .replace("<table>", "<table id='t'>");
         let document = lay_out(&format!("<div style='height:{spacer}px'></div>{body}"));
         // The table starts the next page with its first row, and its footer
         // follows the four rows there.
+        assert_eq!(tops(&document, "t"), [(1, 0.0)], "spacer {spacer}");
         assert_eq!(rect(&document, "r0", 1).y, 0.0, "spacer {spacer}");
         assert_eq!(tops(&document, "f"), [(1, 80.0)], "spacer {spacer}");
     }
