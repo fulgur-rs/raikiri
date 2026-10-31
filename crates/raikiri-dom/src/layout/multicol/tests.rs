@@ -143,6 +143,47 @@ fn balanced_column_height_keeps_the_orphans_of_every_column_before_a_break() {
     // The last column may hold fewer lines than `widows` asks for.
     assert_height(height(5, 2, 3, 3), 30.0);
 
+    // Lines of different heights take the least height whose columns keep the
+    // `orphans`, even when a taller height gives the first column more lines
+    // and leaves the second one too few.
+    let uneven = [
+        (0.0, 10.0),
+        (10.0, 30.0),
+        (30.0, 50.0),
+        (50.0, 70.0),
+        (70.0, 110.0),
+    ];
+    assert_height(
+        balanced_column_height(&uneven, context(3, 2, 1)).expect("uneven lines"),
+        40.0,
+    );
+    // The columns grow through several steps when each next height still
+    // leaves a column too short (each case is measured in Chromium).
+    let heights = |heights: &[f32]| {
+        let mut top = 0.0;
+        heights
+            .iter()
+            .map(|height| {
+                let extent = (top, top + height);
+                top += height;
+                extent
+            })
+            .collect::<Vec<_>>()
+    };
+    for (line_heights, expected) in [
+        ([10.0, 10.0, 20.0, 10.0, 10.0], 40.0),
+        ([20.0, 20.0, 20.0, 30.0, 10.0], 60.0),
+        ([30.0, 30.0, 10.0, 20.0, 30.0], 70.0),
+    ] {
+        assert_height(
+            balanced_column_height(&heights(&line_heights), context(3, 3, 1)).expect("steps"),
+            expected,
+        );
+    }
+    // An `orphans` that no height below the number of steps keeps gives up on
+    // it, and the columns stay as tall as the last step made them.
+    assert_height(height(2000, 2, 100_000, 1), 12_560.0);
+
     // A definite height caps the columns. When no height below the cap keeps
     // the `orphans`, the columns take the cap, and the lines that do not fit
     // continue in overflow columns.

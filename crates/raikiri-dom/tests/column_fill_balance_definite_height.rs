@@ -567,6 +567,47 @@ fn lines_in_the_container_keep_their_orphans_when_they_balance() {
             ("l3", &[(108.0, 28.0, 10.0, 10.0)]),
         ],
     );
+    // Lines of different heights take the least height that keeps the `orphans`
+    // (a taller height would put three lines in the first column and one in
+    // the second).
+    check(
+        "uneven_lines",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:2;widows:1\">\
+             <span id=l0>L</span><br>\
+             <span id=l1 style=\"line-height:20px\">L</span><br>\
+             <span id=l2 style=\"line-height:20px\">L</span><br>\
+             <span id=l3 style=\"line-height:20px\">L</span><br>\
+             <span id=l4 style=\"line-height:40px\">L</span></div>"
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 40.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(8.0, 23.0, 10.0, 10.0)]),
+            ("l2", &[(108.0, 13.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 33.0, 10.0, 10.0)]),
+            ("l4", &[(208.0, 23.0, 10.0, 10.0)]),
+        ],
+    );
+    // The columns grow through several steps when each next height still leaves
+    // a column with too few lines.
+    check(
+        "uneven_lines_in_steps",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:3;widows:1\">\
+             <span id=l0 style=\"line-height:10px\">L</span><br>\
+             <span id=l1 style=\"line-height:10px\">L</span><br>\
+             <span id=l2 style=\"line-height:20px\">L</span><br>\
+             <span id=l3 style=\"line-height:10px\">L</span><br>\
+             <span id=l4 style=\"line-height:10px\">L</span></div>"
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 40.0)]),
+            ("l2", &[(8.0, 33.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 8.0, 10.0, 10.0)]),
+            ("l4", &[(108.0, 18.0, 10.0, 10.0)]),
+        ],
+    );
     // The lines of a paragraph inside a div follow the same rule.
     check(
         "paragraph_in_a_div",
