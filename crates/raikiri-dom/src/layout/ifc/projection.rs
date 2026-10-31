@@ -1459,6 +1459,18 @@ fn project_children_builder(
             &mut generated_images,
         )?;
     }
+    // The outside marker of a list item sits on the item's first line even
+    // when nothing else makes one, so an item that holds no line content is
+    // one line high (CSS Lists 3, 3.1). The line ends in a break, like the
+    // line of a `<br>`, and its strut is the item's own. Anything the item
+    // holds besides the marker (white space, an empty inline element, a float,
+    // an out-of-flow box) stays in front of the break.
+    if anonymous_children.is_none()
+        && root_plan.is_none()
+        && super::assign::marker_holds_only_line(doc, cascade, root, fonts, counters)?
+    {
+        builder.push_forced_break(NodeId(generated_node_id(root, PseudoElem::Marker) as u64));
+    }
     Ok(Projected {
         paragraph: builder,
         meta: ProjectedMeta {
