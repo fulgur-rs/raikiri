@@ -1401,7 +1401,7 @@ impl PaginationState {
             return Ok(0.0);
         };
         if !self.deferred_shifts.line_splits.is_empty()
-            || !lines_can_shift_between_blocks(document, root)
+            || !lines_can_shift_between_blocks(document, env.cascade, root)
         {
             return Ok(0.0);
         }

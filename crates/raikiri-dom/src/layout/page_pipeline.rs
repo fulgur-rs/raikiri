@@ -7505,9 +7505,11 @@ fn lines_can_shift_inside(document: &super::context::LayoutSession<'_>, block_id
 /// Whether the lines of the paragraph `block_id` that follow its block
 /// children can move down inside it: its height grows with them, it is in one
 /// column, and the only boxes it lays out are those block children, which
-/// follow the moved lines when pagination reaches them.
+/// follow the moved lines when pagination reaches them, and out-of-flow boxes
+/// that a block-axis inset places away from the lines.
 fn lines_can_shift_between_blocks(
     document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
     height_follows_content(document, block_id)
@@ -7516,7 +7518,11 @@ fn lines_can_shift_between_blocks(
             .and_then(|node| node.ifc.as_ref())
             .is_some_and(|ifc| {
                 ifc.multicol_fragments.is_none()
-                    && ifc.boxes.iter().all(|b| b.kind == IfcBoxKind::Block)
+                    && ifc.boxes.iter().all(|b| {
+                        b.kind == IfcBoxKind::Block
+                            || (b.kind == IfcBoxKind::OutOfFlow
+                                && has_explicit_block_axis_inset(document, cascade, b.node))
+                    })
             })
 }
 
