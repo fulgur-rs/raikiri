@@ -3322,7 +3322,8 @@ fn line_ranges_in_columns(
 }
 
 /// Find the smallest column height that fits `extents` within the available
-/// columns. The returned height is then used to fill each column in source
+/// columns, with at least `orphans` lines in every column that a break
+/// follows. The returned height is then used to fill each column in source
 /// order, including a partially filled final column.
 ///
 /// A definite `available_height` caps the columns: lines that do not fit
@@ -3341,27 +3342,43 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     if !low.is_finite() || !high.is_finite() || high < low {
         return None;
     }
-    // The lines fit when the column of the last one exists and no column is
-    // taller than `height`.
-    let fits = |height: f32| {
+    // The columns the lines take at `height`, when the column of the last one
+    // exists and no column is taller than `height`.
+    let columns_at = |height: f32| {
         let trial_context = FragmentationContext {
             available_height: Some(height),
             ..context
         };
         let ranges = line_ranges_in_columns(extents, trial_context, false);
-        ranges
+        (ranges
             .last()
             .is_some_and(|&(_, _, column)| column < context.column_count)
             && ranges.iter().all(|&(start, end, _)| {
                 extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
-            })
+            }))
+        .then_some(ranges)
+    };
+    // The lines also fit only if every column that a break follows keeps at
+    // least `orphans` lines: a break that leaves fewer lines before it is not
+    // an option, so the columns grow instead. `widows` is not checked: the
+    // columns after a break give up lines to it when they can, and when they
+    // cannot, the last column keeps the lines it has.
+    let orphans = context.orphans.max(1);
+    let fits = |height: f32| {
+        columns_at(height).is_some_and(|ranges| {
+            ranges
+                .iter()
+                .rev()
+                .skip(1)
+                .all(|&(start, end, _)| end - start >= orphans)
+        })
     };
     if let Some(cap) = context.available_height.filter(|height| *height > 0.0)
         && cap < high
     {
-        if !fits(cap) {
-            return None;
-        }
+        columns_at(cap)?;
+        // The columns cannot grow past the cap, and when no height below it
+        // keeps the `orphans`, the answer is the cap itself.
         high = cap;
     }
 
