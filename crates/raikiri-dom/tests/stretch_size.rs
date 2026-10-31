@@ -768,4 +768,16 @@ cases! {
     abspos_stretch_in_the_initial_containing_block_between_a_min_content_and_a_numeric_limit:
         r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;min-width:min-content;max-width:40px"><div style="width:30px;height:10px"></div></div></div>"# =>
         [("t", (58.0, 50.0, 40.0, 10.0))];
+    abspos_stretch_height_centered_in_the_initial_containing_block_keeps_the_cross_axis_static_position_in_a_column_flex:
+        r#"<div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:10px;height:stretch"></div></div>"# =>
+        [("t", (118.0, 0.0, 10.0, 140.0))];
+    abspos_stretch_width_end_aligned_in_the_initial_containing_block_keeps_the_cross_axis_static_position_in_a_row_flex:
+        r#"<div style="display:flex;justify-content:flex-end;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:10px"></div></div>"# =>
+        [("t", (0.0, 65.0, 128.0, 10.0))];
+    abspos_stretch_height_centered_in_the_initial_containing_block_keeps_the_static_position_in_a_grid:
+        r#"<div style="display:grid;justify-items:end;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:10px;height:stretch"></div></div>"# =>
+        [("t", (118.0, 0.0, 10.0, 140.0))];
+    abspos_stretch_both_axes_in_the_initial_containing_block_under_max_size_in_a_column_flex:
+        r#"<div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div>"# =>
+        [("t", (78.0, 45.0, 50.0, 50.0))];
 }

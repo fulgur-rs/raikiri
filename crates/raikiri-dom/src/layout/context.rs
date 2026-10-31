@@ -205,7 +205,11 @@ pub(crate) struct NodeLayoutState {
 #[derive(Debug)]
 pub(crate) struct RootOofCapture {
     pub(crate) root: protocol::NodeId,
+    pub(crate) available_space: Size<protocol::AvailableSpace>,
     pub(crate) candidates: protocol::OofCandidates,
+    /// The override checkpoint from before the static-position overrides of the
+    /// positioning pass were pushed, while they are in place.
+    pub(crate) checkpoint: Option<usize>,
 }
 
 pub(crate) struct LayoutSession<'doc> {

@@ -77,11 +77,9 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
-        LayoutSession::set_unrounded_layout(
-            self,
-            NodeId::from_taffy(node_id),
-            &BoxLayout::from_taffy(*layout),
-        );
+        let node = NodeId::from_taffy(node_id);
+        LayoutSession::set_unrounded_layout(self, node, &BoxLayout::from_taffy(*layout));
+        self.install_root_static_position_overrides(node);
     }
 
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
@@ -201,9 +199,11 @@ impl LayoutContainingBlock for LayoutSession<'_> {
     }
 
     fn add_hoisted_children(&mut self, node: taffy::NodeId, children: &[taffy::NodeId]) {
+        let node = NodeId::from_taffy(node);
+        self.remove_root_static_position_overrides(node);
         LayoutSession::add_hoisted_children(
             self,
-            NodeId::from_taffy(node),
+            node,
             children.iter().copied().map(NodeId::from_taffy),
         );
     }

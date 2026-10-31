@@ -178,10 +178,15 @@ fn oof_batch(tree: &LayoutSession<'_>, candidates: impl Iterator<Item = OofCandi
 /// fixed and otherwise unclaimed out-of-flow boxes against the initial
 /// containing block.
 ///
-/// The library positions those boxes in a pass of its own that no override can
-/// reach, once their static positions are known. A box that `stretch` sizes
-/// from its static position (see [`static_position_overrides`]) therefore takes
-/// a second layout with the overrides it needs, which the first one finds out.
+/// The library positions those boxes in a pass of its own once the root is laid
+/// out, so the overrides a box that `stretch` sizes from its static position
+/// needs (see [`static_position_overrides`]) are in place for that pass alone:
+/// [`LayoutSession::install_root_static_position_overrides`] pushes them as the
+/// root layout is stored, and
+/// [`LayoutSession::remove_root_static_position_overrides`] pops them when the
+/// library records the boxes it positioned. The scope here restores whatever
+/// is left, which is all of them when the library reads the root from its
+/// cache and records nothing.
 pub(crate) fn compute_root_layout_with_content_limits(
     tree: &mut LayoutSession<'_>,
     root: NodeId,
@@ -192,23 +197,64 @@ pub(crate) fn compute_root_layout_with_content_limits(
         super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
             tree.context.root_oof_capture = Some(RootOofCapture {
                 root,
+                available_space,
                 candidates: OofCandidates::new(),
+                checkpoint: None,
             });
-            compute_root_layout(tree, root, available_space);
-            let handed = tree
-                .context
-                .root_oof_capture
-                .take()
-                .map_or_else(OofCandidates::new, |capture| capture.candidates);
-            let overrides = root_static_position_overrides(tree, root, &handed, available_space);
-            if !overrides.is_empty() {
-                tree.clear_hoisted_children(root);
-                tree.with_overrides(overrides, |tree| {
-                    compute_root_layout(tree, root, available_space);
-                });
-            }
+            tree.with_overrides(Vec::new(), |tree| {
+                compute_root_layout(tree, root, available_space);
+            });
+            tree.context.root_oof_capture = None;
         });
     });
+}
+
+impl LayoutSession<'_> {
+    /// Push the overrides that give the out-of-flow boxes the library is about
+    /// to position against the initial containing block their static
+    /// positions, when `root` is the root whose candidates are being recorded.
+    ///
+    /// The library lays the root out, stores its layout, and only then positions
+    /// the boxes it handed back, so this runs once its layout is stored.
+    pub(crate) fn install_root_static_position_overrides(&mut self, root: NodeId) {
+        let Some(capture) = self
+            .context
+            .root_oof_capture
+            .as_ref()
+            .filter(|capture| capture.root == root && capture.checkpoint.is_none())
+        else {
+            return;
+        };
+        let overrides = root_static_position_overrides(
+            self,
+            root,
+            &capture.candidates,
+            capture.available_space,
+        );
+        let checkpoint = self.override_checkpoint();
+        self.push_overrides(overrides);
+        if let Some(capture) = self.context.root_oof_capture.as_mut() {
+            capture.checkpoint = Some(checkpoint);
+        }
+    }
+
+    /// Pop the overrides [`LayoutSession::install_root_static_position_overrides`]
+    /// pushed, when `root` is the root they were pushed for.
+    ///
+    /// The library records the boxes it positioned right after the pass, and
+    /// what it records of a box, whether its static position moves it with
+    /// its parent, is read from the style the author gave it.
+    pub(crate) fn remove_root_static_position_overrides(&mut self, root: NodeId) {
+        let checkpoint = self
+            .context
+            .root_oof_capture
+            .as_mut()
+            .filter(|capture| capture.root == root)
+            .and_then(|capture| capture.checkpoint.take());
+        if let Some(checkpoint) = checkpoint {
+            self.restore_overrides_to(checkpoint);
+        }
+    }
 }
 
 /// [`static_position_overrides`] for the `handed` candidates that the root
