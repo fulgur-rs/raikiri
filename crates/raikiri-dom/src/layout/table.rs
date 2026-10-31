@@ -4073,6 +4073,10 @@ fn place_cells(
             // as in the pass that measured the row.
             let cell_height_is_definite = height_is_definite
                 || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
+            // Only the layout of this pass may leave the height the content
+            // has: a cached one, or a cell that is not a block container,
+            // leaves none, and the height measured before stands.
+            doc.nodes[cell.node_id].auto_block_size = None;
             let output = doc.compute_child_layout(
                 NodeId::from(cell.node_id),
                 LayoutInput {
@@ -4101,7 +4105,13 @@ fn place_cells(
             // The height the content has now that the row height made a
             // percentage height of a child definite, which the alignment
             // below follows.
-            resolved_natural_height = cell_height_is_definite
+            let aligned_by_its_end = matches!(
+                doc.ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .table_vertical_align,
+                VerticalAlign::Middle | VerticalAlign::Bottom
+            );
+            resolved_natural_height = (cell_height_is_definite && aligned_by_its_end)
                 .then(|| doc.nodes[cell.node_id].auto_block_size)
                 .flatten();
             (output.scrollable_overflow_rect, output.oof_candidates)
