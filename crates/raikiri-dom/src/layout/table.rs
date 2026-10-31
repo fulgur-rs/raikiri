@@ -131,6 +131,7 @@ struct CellPlacement {
     col_span: u16,
     row_span: u16,
     specified_width: Dimension,
+    percent_border_padding: f32,
     specified_min_width: Dimension,
     resolved: Option<BoxLayout>,
     natural_height: f32,
@@ -555,7 +556,7 @@ fn position_table_caption(
             }
         } else {
             Size {
-                width: grid_size.width,
+                width: grid_size.width.max(caption_size.width),
                 height: grid_size.height + caption_size.height,
             }
         },
@@ -941,13 +942,20 @@ fn compute_table_layout_checked(
             .iter()
             .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
             .collect();
+        let specified_width = stated_table_width(table_size.width, &inputs);
+        let fixed_columns_collapse = columns_collapse
+            && table_layout == TableLayoutValue::Fixed
+            && specified_width.is_some();
         let shown_columns = collapsed_cols
             .iter()
             .filter(|collapsed| !**collapsed)
             .count();
         let spacing = Size {
-            // With every column collapsed nothing remains to space apart.
-            width: if shown_columns == 0 {
+            // A definite fixed table retains both outer spacing sides even
+            // when every column collapses.
+            width: if shown_columns == 0 && fixed_columns_collapse {
+                border_spacing.0 * 2.0
+            } else if shown_columns == 0 {
                 0.0
             } else {
                 border_spacing.0 * (shown_columns as f32 + 1.0)
@@ -970,7 +978,6 @@ fn compute_table_layout_checked(
         // and must NOT stretch to fill the containing block: `effective_known`
         // carries the container-imposed width (800 for top-level blocks), which
         // is a cap for auto tables, the target only for specified widths.
-        let specified_width = stated_table_width(table_size.width, &inputs);
         // In fixed mode an unresolvable specified width (auto, or % of an
         // indefinite container) falls back to the auto algorithm below
         // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
@@ -991,7 +998,9 @@ fn compute_table_layout_checked(
         {
             (None, None, inputs.available_space.width)
         } else {
-            let intrinsic_grid = if columns_collapse {
+            let fixed_intrinsic =
+                table_layout == TableLayoutValue::Fixed && specified_width.is_some();
+            let intrinsic_grid = if columns_collapse && !fixed_intrinsic {
                 without_collapsed_columns(&grid, collapsed_cols, false)
             } else {
                 grid.clone()
@@ -1004,6 +1013,22 @@ fn compute_table_layout_checked(
                 ..inputs
             };
             let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
+                if fixed_intrinsic {
+                    let insets = pad.left
+                        + pad.right
+                        + columns_in_place.as_ref().map_or_else(
+                            || collapsed.inline_border_width(),
+                            |columns| columns.border_width,
+                        )
+                        + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+                    return fixed_intrinsic_width(
+                        doc,
+                        &intrinsic_grid,
+                        border_spacing.0,
+                        insets,
+                        matches!(available_space, AvailableSpace::MaxContent),
+                    );
+                }
                 let probe = LayoutInput {
                     available_space: Size {
                         width: available_space,
@@ -1038,7 +1063,25 @@ fn compute_table_layout_checked(
                 min_content: intrinsic_minimum,
                 max_content: intrinsic_maximum,
                 inputs: &inputs,
-                available_space: inputs.available_space.width,
+                // The layout caller caps the available width at the authored
+                // width. A wrapper's fit-content limit uses its containing
+                // block's room instead of that already capped width.
+                available_space: if fixed_intrinsic {
+                    inputs
+                        .parent_size
+                        .width
+                        .map_or(inputs.available_space.width, |width| {
+                            let margin = doc.table_style(table_idx).margin();
+                            let left = super::used_style_length_percentage_auto(margin.left, width)
+                                .unwrap_or(0.0);
+                            let right =
+                                super::used_style_length_percentage_auto(margin.right, width)
+                                    .unwrap_or(0.0);
+                            AvailableSpace::Definite((width - left - right).max(0.0))
+                        })
+                } else {
+                    inputs.available_space.width
+                },
                 horizontal: true,
             };
             let wrapper_minimum =
@@ -1143,6 +1186,7 @@ fn compute_table_layout_checked(
             specified_width
         };
         let pass = ColumnPass {
+            overlap_width: overlap_w,
             table_layout,
             specified_width: column_basis_width,
             caption_minimum,
@@ -1168,12 +1212,39 @@ fn compute_table_layout_checked(
                 |columns| columns.border_width,
             )
             + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+        // Apply width floors before removing fixed columns. Redistributing
+        // after collapse would give their share to the remaining columns.
+        let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
+            .into_iter()
+            .flatten()
+            .reduce(f32::max);
+        let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
+            if let Some(minimum) = minimum_table_width {
+                distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
+            }
+        };
         let natural_widths = columns_collapse.then(|| {
-            measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-                resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
-            })
+            let natural_pass = ColumnPass {
+                overlap_width: columns_in_place
+                    .as_ref()
+                    .map_or(overlap_w, |columns| columns.overlap_width),
+                ..pass
+            };
+            let mut widths = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+                resolve_table_columns(doc, &mut grid, &natural_pass, natural_insets_width)
+            });
+            grow_columns(&mut widths, natural_insets_width, None);
+            widths
         });
-        let mut column_widths = if columns_collapse {
+        let mut column_widths = if fixed_columns_collapse {
+            natural_widths
+                .as_ref()
+                .expect("collapsed columns have their natural widths")
+                .iter()
+                .zip(collapsed_cols)
+                .map(|(&width, &hidden)| if hidden { 0.0 } else { width })
+                .collect()
+        } else if columns_collapse {
             let mut remaining = without_collapsed_columns(&grid, collapsed_cols, false);
             let mut widths =
                 resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
@@ -1191,27 +1262,13 @@ fn compute_table_layout_checked(
             resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
         };
 
-        // Extra min-width grows columns (mirrors the min-height→rows path
-        // below, and the definite-width distribution above). Must run before
-        // row heights are measured so cells lay out at final column widths.
-        let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
-            .into_iter()
-            .flatten()
-            .reduce(f32::max);
-        let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
-            if let Some(minimum) = minimum_table_width {
-                distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
-            }
-        };
-        grow_columns(
-            &mut column_widths,
-            distrib_insets.width,
-            columns_collapse.then_some(&collapsed_cols[..]),
-        );
-        let natural_widths = natural_widths.map(|mut widths| {
-            grow_columns(&mut widths, natural_insets_width, None);
-            widths
-        });
+        if !fixed_columns_collapse {
+            grow_columns(
+                &mut column_widths,
+                distrib_insets.width,
+                columns_collapse.then_some(&collapsed_cols[..]),
+            );
+        }
 
         // The table's width follows from its columns alone, so it is settled
         // before the rows are sized: the caption wraps at that width, and a
@@ -1251,6 +1308,8 @@ fn compute_table_layout_checked(
             effective_known
                 .width
                 .unwrap_or(vertical_content_width + padding_border_size.width)
+        } else if fixed_columns_collapse {
+            min_table_width
         } else {
             table_width_basis
                 .map(|w| {
@@ -1455,7 +1514,7 @@ fn compute_table_layout_checked(
         // Position cells: origin includes padding + collapsed outer border.
         let x_origin = pad.left
             + collapsed.outer_left
-            + if shown_columns == 0 {
+            + if shown_columns == 0 && !fixed_columns_collapse {
                 0.0
             } else {
                 border_spacing.0
@@ -2057,6 +2116,7 @@ fn build_table_grid(
                     col_span,
                     row_span,
                     specified_width,
+                    percent_border_padding: 0.0,
                     specified_min_width,
                     resolved: None,
                     natural_height: 0.0,
@@ -2395,6 +2455,7 @@ fn push_row(
             col_span,
             row_span,
             specified_width,
+            percent_border_padding: 0.0,
             specified_min_width,
             resolved: None,
             natural_height: 0.0,
@@ -2593,6 +2654,7 @@ fn constrain_cell_intrinsic_widths(
 
 /// What the column pass needs besides the grid and the room the tracks share.
 struct ColumnPass {
+    overlap_width: f32,
     table_layout: TableLayoutValue,
     specified_width: Option<f32>,
     caption_minimum: f32,
@@ -2676,14 +2738,35 @@ fn resolve_table_columns(
             percent_width_cap,
         );
     };
+    normalize_fixed_cells(doc, grid, avail, pass.border_spacing_x);
+    resolve_fixed_column_widths(grid, avail, pass.overlap_width)
+}
+
+fn normalize_fixed_cells(
+    doc: &LayoutSession<'_>,
+    grid: &mut TableGrid,
+    avail: f32,
+    border_spacing: f32,
+) {
     for cell in &mut grid.cells {
         if cell.row != 0 {
             continue;
         }
         let style = doc.table_style(cell.node_id);
+        cell.percent_border_padding = if cell.col_span == 1
+            && matches!(style.size().width.expand(), ExpandedDimension::Percent(_))
+            && style.box_sizing() == BoxSizing::ContentBox
+        {
+            let padding = style.padding().resolve_or_zero(Some(avail));
+            let border = style.border().resolve_or_zero(Some(avail));
+            padding.left + padding.right + border.left + border.right
+        } else {
+            0.0
+        };
         if let ExpandedDimension::Length(width) = style.size().width.expand() {
-            // A length sizes the cell's border box. Percentages instead
-            // contribute a share of the net track width, without cell edges.
+            // A length sizes the cell's border box. A single percentage cell
+            // adds its edges separately; a spanning percentage only contributes
+            // its share of the net track width.
             let padding = style.padding().resolve_or_zero(Some(avail));
             let border = style.border().resolve_or_zero(Some(avail));
             let cell_insets = padding.left + padding.right + border.left + border.right;
@@ -2692,7 +2775,7 @@ fn resolve_table_columns(
             } else {
                 width.max(cell_insets)
             };
-            let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
+            let gaps = border_spacing * usize::from(cell.col_span).saturating_sub(1) as f32;
             cell.specified_width = Dimension::length((outer - gaps).max(0.0));
         }
         if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
@@ -2704,11 +2787,10 @@ fn resolve_table_columns(
             } else {
                 minimum.max(cell_insets)
             };
-            let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
+            let gaps = border_spacing * usize::from(cell.col_span).saturating_sub(1) as f32;
             cell.specified_min_width = Dimension::length((outer - gaps).max(0.0));
         }
     }
-    resolve_fixed_column_widths(grid, avail)
 }
 
 // ---------------------------------------------------------------------------
@@ -4329,81 +4411,102 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
     resolve_dimension(width, Some(avail))
 }
 
-/// Fixed column sizing: no content measurement.
-///
-/// `avail` is the table width net of padding + outer (collapsed) borders.
-/// A `<col>` width takes priority over a first-row cell's specified width.
-/// A spanning first-row cell divides its width among its columns, assigning
-/// that share only to columns the `<col>` elements have not fixed. Remaining
-/// columns divide the leftover equally. Non-first-row widths are ignored.
-/// Leftover underflow clamps unfixed columns to zero (the table overflows
-/// rather than shrinking fixed columns).
-fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
-    let n = grid.n_cols as usize;
-    let mut fixed: Vec<Option<f32>> = vec![None; n];
-    // A specified `<col>` width takes priority over first-row cell widths
-    // (CSS 2.1 §17.5.2.1).
-    // Percentages resolve against the same avail basis as cell percentages.
-    for (c, sz) in grid.col_widths.iter().enumerate() {
-        if c >= n {
-            continue;
-        }
-        let minimum = resolve_dimension(sz.min_width, None);
-        let maximum = resolve_dimension(sz.max_width, None);
-        if let Some(mut x) = fixed_column_width(sz.width, avail) {
-            if let Some(minimum) = minimum {
-                x = f32_max_compat(x, minimum);
-            }
-            if let Some(maximum) = maximum
-                && !minimum.is_some_and(|minimum| minimum > maximum)
-            {
-                x = x.min(maximum);
-            }
-            fixed[c] = Some(x);
+/// A percentage share and its content-box border and padding contribution.
+#[derive(Clone, Copy, Debug)]
+struct FixedPercent {
+    share: f32,
+    edges: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FixedColumn {
+    width: Option<f32>,
+    percent: Option<FixedPercent>,
+    floor: f32,
+    ceiling: Option<f32>,
+}
+
+impl FixedColumn {
+    fn constrain(self, width: f32) -> f32 {
+        self.ceiling
+            .map_or(width, |ceiling| width.min(ceiling))
+            .max(self.floor)
+    }
+
+    fn minimum(self) -> f32 {
+        if self.percent.is_some() {
+            self.floor
+        } else {
+            self.width.unwrap_or(self.floor)
         }
     }
-    // First-row cells set widths only for columns without a specified `<col>` width.
+}
+
+fn fixed_percent(width: Dimension, edges: f32) -> Option<FixedPercent> {
+    match width.expand() {
+        ExpandedDimension::Percent(share) => Some(FixedPercent { share, edges }),
+        _ => None,
+    }
+}
+
+/// Preferred widths and their origins, before distributing the table's room.
+fn fixed_column_constraints(grid: &TableGrid, avail: f32) -> Vec<FixedColumn> {
+    let n = usize::from(grid.n_cols);
+    let mut columns = vec![FixedColumn::default(); n];
+    // A column's length takes precedence over the first row's cells.
+    // A percentage column keeps the larger column or first-row percentage.
+    for (column, sizing) in columns.iter_mut().zip(&grid.col_widths) {
+        if let Some(width) = fixed_column_width(sizing.width, avail) {
+            let minimum = resolve_dimension(sizing.min_width, None);
+            let maximum = resolve_dimension(sizing.max_width, None);
+            column.floor = minimum.unwrap_or(0.0);
+            column.ceiling =
+                maximum.filter(|&maximum| !minimum.is_some_and(|minimum| minimum > maximum));
+            column.width = Some(column.constrain(width));
+            column.percent = fixed_percent(sizing.width, 0.0);
+        }
+    }
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span != 1 {
             continue;
         }
-        let c = cell.col_start as usize;
-        if c < n && fixed[c].is_none() {
-            fixed[c] = fixed_column_width(cell.specified_width, avail);
-        }
-    }
-    // A `<col>` minimum fixes an otherwise unspecified column.
-    for (c, sz) in grid.col_widths.iter().enumerate() {
-        if c >= n || fixed[c].is_some() {
-            continue;
-        }
-        let minimum = resolve_dimension(sz.min_width, None);
-        let maximum = resolve_dimension(sz.max_width, None);
-        if let Some(mut x) = minimum {
-            if let Some(maximum) = maximum
-                && !minimum.is_some_and(|minimum| minimum > maximum)
+        if let Some(column) = columns.get_mut(usize::from(cell.col_start)) {
+            let percent = fixed_percent(cell.specified_width, cell.percent_border_padding);
+            let larger_percent = column
+                .percent
+                .zip(percent)
+                .is_some_and(|(column, cell)| cell.share > column.share);
+            if (column.width.is_none() || larger_percent)
+                && let Some(width) = fixed_column_width(cell.specified_width, avail)
             {
-                x = x.min(maximum);
+                column.percent = percent;
+                column.width = Some(width + percent.map_or(0.0, |percent| percent.edges));
             }
-            fixed[c] = Some(x);
         }
     }
-    let mut floors = vec![0.0_f32; n];
+    // A column minimum supplies a preferred width only if neither a column
+    // width nor a first-row cell has already supplied one.
+    for (column, sizing) in columns.iter_mut().zip(&grid.col_widths) {
+        if column.width.is_none()
+            && let Some(minimum) = resolve_dimension(sizing.min_width, None)
+        {
+            column.floor = minimum;
+            column.ceiling =
+                resolve_dimension(sizing.max_width, None).filter(|&maximum| minimum <= maximum);
+            column.width = Some(column.constrain(minimum));
+        }
+    }
     for cell in &grid.cells {
-        if cell.row == 0 && cell.col_span == 1 {
-            let c = usize::from(cell.col_start);
-            if c < n {
-                floors[c] = floors[c]
-                    .max(resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0));
-            }
+        if cell.row == 0
+            && cell.col_span == 1
+            && let Some(column) = columns.get_mut(usize::from(cell.col_start))
+        {
+            column.floor = column
+                .floor
+                .max(resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0));
+            column.width = column.width.map(|width| width.max(column.floor));
         }
     }
-    for (column, floor) in fixed.iter_mut().zip(&floors) {
-        if let Some(width) = column {
-            *width = width.max(*floor);
-        }
-    }
-    let mut span_fixed_column = false;
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span <= 1 {
             continue;
@@ -4411,13 +4514,177 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         let Some(width) = fixed_column_width(cell.specified_width, avail) else {
             continue;
         };
-        let columns =
+        let range =
             cell_column_range(cell, n).expect("validated table cell spans existing columns");
-        let share = width / columns.len() as f32;
-        for column in columns {
-            if fixed[column].is_none() {
-                fixed[column] = Some(share.max(floors[column]));
-                span_fixed_column = true;
+        let count = range.len() as f32;
+        for column in &mut columns[range] {
+            if column.width.is_none() {
+                column.width = Some((width / count).max(column.floor));
+                column.percent =
+                    fixed_percent(cell.specified_width, 0.0).map(|percent| FixedPercent {
+                        share: percent.share / count,
+                        edges: 0.0,
+                    });
+            }
+        }
+    }
+    columns
+}
+
+fn fixed_percent_scale(columns: &[FixedColumn]) -> f32 {
+    let sum: f32 = columns
+        .iter()
+        .filter_map(|column| column.percent)
+        .map(|percent| percent.share)
+        .sum();
+    if sum > 1.0 { 1.0 / sum } else { 1.0 }
+}
+
+/// Intrinsic sizes of a fixed table use declared lengths for constrained
+/// columns. Only auto and percentage columns need max-content measurement.
+fn fixed_intrinsic_width(
+    doc: &mut LayoutSession<'_>,
+    grid: &TableGrid,
+    spacing: f32,
+    insets: f32,
+    maximum: bool,
+) -> f32 {
+    let mut grid = grid.clone();
+    normalize_fixed_cells(doc, &mut grid, 0.0, spacing);
+    let columns = fixed_column_constraints(&grid, 0.0);
+    let minimum: f32 = columns.iter().map(|column| column.minimum()).sum();
+    if !maximum {
+        return minimum + insets;
+    }
+    let mut max_widths: Vec<_> = columns.iter().map(|column| column.minimum()).collect();
+    let mut known: Vec<_> = columns
+        .iter()
+        .map(|column| column.width.is_some() && column.percent.is_none())
+        .collect();
+    for cell in grid.cells.iter().filter(|cell| cell.row == 0) {
+        let range = cell_column_range(cell, columns.len()).expect("validated fixed intrinsic grid");
+        if range.clone().all(|column| known[column]) {
+            continue;
+        }
+        let contribution = if let ExpandedDimension::Length(width) = cell.specified_width.expand() {
+            let style = doc.table_style(cell.node_id);
+            let padding = style.padding().resolve_or_zero(Some(0.0));
+            let border = style.border().resolve_or_zero(Some(0.0));
+            let edges = padding.left + padding.right + border.left + border.right;
+            let maximum = resolve_dimension(style.max_size().width.into(), None).map(|maximum| {
+                let outer = if style.box_sizing() == BoxSizing::ContentBox {
+                    maximum + edges
+                } else {
+                    maximum.max(edges)
+                };
+                (outer - spacing * f32::from(cell.col_span.saturating_sub(1))).max(0.0)
+            });
+            maximum.map_or(width, |maximum| width.min(maximum))
+        } else {
+            let outer = measure_cell_inline(
+                doc,
+                cell.node_id,
+                AvailableSpace::MAX_CONTENT,
+                SizingMode::ContentSize,
+            );
+            (outer - spacing * f32::from(cell.col_span.saturating_sub(1))).max(0.0)
+        } / f32::from(cell.col_span);
+        for column in range {
+            if !known[column] {
+                max_widths[column] = max_widths[column].max(contribution);
+                known[column] = true;
+            }
+        }
+    }
+    let scale = fixed_percent_scale(&columns);
+    let shares: Vec<_> = columns
+        .iter()
+        .map(|column| column.percent.map_or(0.0, |percent| percent.share * scale))
+        .collect();
+    let percent_max: Vec<_> = columns
+        .iter()
+        .zip(&max_widths)
+        .map(|(column, &width)| {
+            (width - column.percent.map_or(0.0, |percent| percent.edges)).max(0.0)
+        })
+        .collect();
+    let maximum = percent_columns_max_content_width(max_widths.iter().sum(), &percent_max, &shares);
+    // A full percentage allocation leaves no finite intrinsic width for
+    // length columns. Match Chromium's finite table intrinsic fallback so
+    // later percentage distribution cannot produce infinity minus infinity.
+    let maximum = if maximum.is_infinite() {
+        1_000_000.0
+    } else {
+        maximum
+    };
+    maximum.max(minimum) + insets
+}
+
+/// Distribute the fixed table's room before removing collapsed columns.
+/// Lengths share excess space after percentages; auto columns take the
+/// remainder. Percentages shrink if the assigned lengths leave less room.
+fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, overlap: f32) -> Vec<f32> {
+    // Internal border overlap compensates for the full-border cell model;
+    // it is not extra space to distribute among explicitly sized columns.
+    let surplus_target = (avail - overlap).max(0.0);
+    let minimum: f32 = fixed_column_constraints(grid, 0.0)
+        .iter()
+        .map(|column| column.minimum())
+        .sum();
+    let avail = avail.max(minimum);
+    let columns = fixed_column_constraints(grid, avail);
+    let n = columns.len();
+    let scale = fixed_percent_scale(&columns);
+    let mut fixed: Vec<_> = columns
+        .iter()
+        .map(|column| {
+            if let Some(percent) = column.percent {
+                Some(column.constrain(percent.share * scale * avail + percent.edges))
+            } else {
+                column.width
+            }
+        })
+        .collect();
+    let mut floors: Vec<_> = columns.iter().map(|column| column.floor).collect();
+    let automatic_count = columns
+        .iter()
+        .filter(|column| column.width.is_none())
+        .count();
+    let length_sum: f32 = columns
+        .iter()
+        .zip(&fixed)
+        .filter(|(column, _)| column.percent.is_none())
+        .filter_map(|(_, width)| *width)
+        .sum();
+    let percent_sum: f32 = columns
+        .iter()
+        .zip(&fixed)
+        .filter(|(column, _)| column.percent.is_some())
+        .filter_map(|(_, width)| *width)
+        .sum();
+    if automatic_count == 0 && length_sum > 0.0 {
+        let extra = (surplus_target - percent_sum - length_sum).max(0.0);
+        for (column, width) in columns.iter().zip(&mut fixed) {
+            if column.percent.is_none()
+                && let Some(width) = width
+            {
+                *width += extra * *width / length_sum;
+            }
+        }
+    }
+    let assigned_lengths: f32 = columns
+        .iter()
+        .zip(&fixed)
+        .filter(|(column, _)| column.percent.is_none())
+        .filter_map(|(_, width)| *width)
+        .sum();
+    let percent_room = (avail - assigned_lengths).max(0.0);
+    if percent_sum > percent_room {
+        for (column, width) in columns.iter().zip(&mut fixed) {
+            if column.percent.is_some()
+                && let Some(width) = width
+            {
+                *width = (*width * percent_room / percent_sum).max(column.floor);
             }
         }
     }
@@ -4440,9 +4707,24 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
         .collect();
-    // A span that fixes the last auto columns must still fill the table.
-    if span_fixed_column && automatic.is_empty() {
-        distribute_extra(&mut widths, None, avail);
+    // With no positive length or auto columns, percentages share the excess.
+    if automatic.is_empty() && length_sum == 0.0 {
+        let has_percent = columns.iter().any(|column| column.percent.is_some());
+        let selected: Vec<_> = columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| !has_percent || column.percent.is_some())
+            .map(|(index, _)| index)
+            .collect();
+        let total: f32 = selected.iter().map(|&index| widths[index]).sum();
+        let extra = (surplus_target - widths.iter().sum::<f32>()).max(0.0);
+        for &index in &selected {
+            widths[index] += if total > 0.0 {
+                extra * widths[index] / total
+            } else {
+                extra / selected.len() as f32
+            };
+        }
     }
     // The first row's spanning cells, as their columns and minimum width.
     let first_row_spans: Vec<(usize, usize, f32)> = grid
@@ -4941,6 +5223,7 @@ fn resolve_collapsed_borders(
 /// columns that remain give them.
 #[derive(Debug)]
 struct ColumnsInPlace {
+    overlap_width: f32,
     /// [`CollapsedLines::inline_border_width`] with every column in place.
     border_width: f32,
     /// [`CollapsedLines::row_overlaps`] of the cells with the borders `in_place`
@@ -4966,6 +5249,7 @@ impl ColumnsInPlace {
     fn new(
         shown: &TableGrid,
         border_width: f32,
+        overlap_width: f32,
         mut in_place: BorderState,
         remaining: BorderState,
     ) -> Self {
@@ -4982,6 +5266,7 @@ impl ColumnsInPlace {
         }
         Self {
             border_width,
+            overlap_width,
             row_overlaps: Vec::new(),
             in_place,
             remaining,
@@ -5090,13 +5375,13 @@ fn border_width_with_columns_in_place(
     shown: &TableGrid,
     table_idx: usize,
     metrics: (&Edges<f32>, Option<f32>),
-) -> (f32, BorderState) {
+) -> (f32, f32, BorderState) {
     let (table_border, basis) = metrics;
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
     if rows_shown.rows.is_empty() {
         // Nothing shows, so no cell border meets the table's own.
         state.reset_authored(doc, grid);
-        return (table_border.left + table_border.right, state.clone());
+        return (table_border.left + table_border.right, 0.0, state.clone());
     }
     let index = CellIndex::new(&rows_shown);
     state.reset_authored(doc, grid);
@@ -5104,7 +5389,11 @@ fn border_width_with_columns_in_place(
     let lines = compute_collapsed_lines(doc, state, &rows_shown, &index, table_border, basis);
     let in_place = state.clone();
     state.reset_authored(doc, shown);
-    (lines.inline_border_width(), in_place)
+    (
+        lines.inline_border_width(),
+        lines.col_overlaps.iter().sum(),
+        in_place,
+    )
 }
 
 fn compute_collapsed_lines(
