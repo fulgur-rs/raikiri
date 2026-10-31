@@ -43,7 +43,7 @@ use decode::{
 };
 use image_cache::{
     BackgroundInflight, CachedBackgroundImage, CachedBackgroundSource, DecodedImageCache,
-    ProcessDecodeGuard, ProcessImageBudget,
+    InlineImageLease, ProcessDecodeGuard, ProcessImageBudget,
 };
 pub(crate) use network::{NetworkFontFaceLoader, ResourceNetworkProvider};
 pub use svg_images::RenderSvgImages;
@@ -52,7 +52,7 @@ pub use svg_images::RenderSvgImages;
 pub const DEFAULT_MAX_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 /// Default maximum combined response bytes accepted through [`RenderResources`].
 pub const DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES: u64 = 128 * 1024 * 1024;
-/// Maximum decoded CSS background image bytes retained by one resource set.
+/// Maximum accounted background and SVG data-image bytes retained per resource set.
 const DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_BACKGROUND_IMAGE_ATTEMPTS: usize = 256;
 const MAX_SVG_IMAGE_BYTES: usize = 32 * 1024 * 1024;
@@ -449,6 +449,15 @@ impl<'a> RenderResources<'a> {
             (cache.remaining_for(url), cache.prior_bytes(url))
         };
         per_available.min(self.process_budget.available_for(prior))
+    }
+
+    fn inline_image_remaining(&self) -> u64 {
+        let remaining = self
+            .image_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .inline_remaining();
+        remaining.min(self.process_budget.available_for(0))
     }
 
     fn cached_scene(&self, url: &Url, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
