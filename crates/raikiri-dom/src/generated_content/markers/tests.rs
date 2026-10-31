@@ -455,7 +455,7 @@ fn out_of_range_marker_values_fall_back_to_decimal() {
             .expect("ordered marker")
     };
     assert_eq!(marker("decimal", -2), "-2. ");
-    assert_eq!(marker("decimal-leading-zero", -3), "-03. ");
+    assert_eq!(marker("decimal-leading-zero", -3), "-3. ");
     assert_eq!(marker("decimal-leading-zero", 3), "03. ");
     assert_eq!(marker("lower-alpha", 0), "0. ");
     assert_eq!(marker("upper-alpha", 2), "B. ");

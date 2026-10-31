@@ -591,8 +591,11 @@ fn parse_fragment(url: &str) -> Option<&str> {
 /// 1. **Genuinely unknown name** — not a CSS Counter Styles L3 keyword at
 ///    all. Step 1 applies verbatim; decimal is spec-correct here.
 /// 2. **A custom `@counter-style` rule** — a valid `<custom-ident>` per
-///    spec, but *unreachable* today: raikiri-style has no `@counter-style`
-///    parser/registry to resolve it against (tracked as a follow-up).
+///    spec, but this function has no registry to resolve it against.
+///    `raikiri-dom` looks an author `@counter-style` up first and calls this
+///    function only for a name the author did not define; the `string-set`
+///    and `target-counter()` paths of this crate have no registry yet, so
+///    they show such a value in decimal.
 /// 3. **`disclosure-open` / `disclosure-closed`** — the only §6/§7
 ///    predefined styles still unimplemented. Deliberately
 ///    deferred, not a fallback bug: §6.3
@@ -609,10 +612,13 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    here would be exactly the "complete but wrong" outcome this work was
 ///    meant to avoid; tracked as a residual scope item for follow-up.
 ///
-/// **Visibility**: `pub(crate)` (widened from private) — see
-/// [`join_counter_stack`]'s doc for why (sibling `page::context` module
-/// needs this for real `string-set` text resolution).
-pub(crate) fn format_counter(value: i32, style: &CounterStyle) -> String {
+/// **Visibility**: `pub`, hidden from the documentation and re-exported as
+/// `page::format_predefined_counter`. The sibling `page::context` module uses it
+/// for real `string-set` text resolution, and `raikiri-dom` uses it for
+/// `counter()` / `counters()` and markers, after it has looked for an author
+/// `@counter-style` of the same name.
+#[doc(hidden)]
+pub fn format_counter(value: i32, style: &CounterStyle) -> String {
     match style {
         CounterStyle::Decimal => format_decimal(value),
         CounterStyle::Named(name) => format_named_counter(value, name),
@@ -629,6 +635,51 @@ pub(crate) fn format_counter(value: i32, style: &CounterStyle) -> String {
     }
 }
 
+/// Whether `name` is, without regard to case, the name of a predefined
+/// counter style of CSS Counter Styles 3 (sections 6 and 7), including the
+/// two `disclosure-*` styles this module does not format. Such a name matches
+/// ASCII case-insensitively, while the name of an author `@counter-style`
+/// matches exactly, so a caller that looks the name up among author styles
+/// first has to lower-case a predefined name and only that.
+#[doc(hidden)]
+pub fn is_predefined_counter_style(name: &str) -> bool {
+    const OTHER: &[&str] = &[
+        "decimal",
+        "decimal-leading-zero",
+        "lower-roman",
+        "upper-roman",
+        "lower-alpha",
+        "upper-alpha",
+        "lower-latin",
+        "upper-latin",
+        "disc",
+        "circle",
+        "square",
+        "disclosure-open",
+        "disclosure-closed",
+        "cjk-decimal",
+        "ethiopic-numeric",
+    ];
+    let is = |candidate: &str| name.eq_ignore_ascii_case(candidate);
+    OTHER.iter().any(|candidate| is(candidate))
+        || NUMERIC_DIGIT_STYLES
+            .iter()
+            .any(|(candidate, _)| is(candidate))
+        || ADDITIVE_NUMERIC_STYLES
+            .iter()
+            .any(|(candidate, _, _)| is(candidate))
+        || ALPHABETIC_EXTENDED_STYLES
+            .iter()
+            .any(|(candidate, _)| is(candidate))
+        || FIXED_STYLES.iter().any(|(candidate, _)| is(candidate))
+        || LONGHAND_ADDITIVE_STYLES
+            .iter()
+            .any(|(candidate, _, _)| is(candidate))
+        || CHINESE_DIGIT_MARKER_STYLES
+            .iter()
+            .any(|(candidate, _)| is(candidate))
+}
+
 /// Bare decimal representation — CSS Counter Styles L3 `numeric` system with
 /// the `decimal` `symbols` table (digits `0`-`9`) and default `negative:
 /// "-"` prefix <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>.
@@ -639,6 +690,7 @@ fn format_decimal(value: i32) -> String {
 }
 
 /// Dispatch the predefined [`CounterStyle::Named`] styles implemented here
+/// (a style added below belongs in [`is_predefined_counter_style`] too)
 /// (see [`format_counter`] doc for the overall implemented/deferred split
 /// and the three distinct reasons an unmatched name falls back to
 /// `decimal`).
@@ -707,7 +759,13 @@ fn format_named_counter(value: i32, name: &str) -> String {
         .iter()
         .find(|(n, _)| name.eq_ignore_ascii_case(n))
     {
-        format_fixed(value, symbols).unwrap_or_else(|| format_decimal(value))
+        // Both `@counter-style` blocks of §6.4 name `fallback: cjk-decimal`,
+        // which renders zero and every positive value outside the symbol
+        // list; cjk-decimal's own range rejects negative values in turn, so
+        // those reach plain decimal.
+        format_fixed(value, symbols)
+            .or_else(|| format_cjk_decimal(value))
+            .unwrap_or_else(|| format_decimal(value))
     } else if let Some((_, table, negative)) = LONGHAND_ADDITIVE_STYLES
         .iter()
         .find(|(n, _, _)| name.eq_ignore_ascii_case(n))
@@ -762,15 +820,16 @@ fn format_named_counter(value: i32, name: &str) -> String {
 /// <https://www.w3.org/TR/css-counter-styles-3/#simple-numeric>,
 /// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-pad>.
 /// generate-a-counter builds the initial representation from the *absolute*
-/// value (step 3), pads it to width 2 with `'0'` (step 4), then applies the
-/// negative sign outside the padding (step 5) — so `-1` is `"-01"`, not
-/// `"0-1"`.
+/// value (step 3), pads it with `'0'` until the whole representation,
+/// negative sign included, is two symbols long (step 4), then applies the
+/// negative sign (step 5). A negative value therefore needs no padding: `-1`
+/// is `"-1"`, as in Chromium and as the WPT `descriptor-pad` reference
+/// expects (`-*I.` for a padded length of three).
 fn format_decimal_leading_zero(value: i32) -> String {
-    let magnitude = format!("{:02}", value.unsigned_abs());
     if value < 0 {
-        format!("-{magnitude}")
+        format!("-{}", value.unsigned_abs())
     } else {
-        magnitude
+        format!("{value:02}")
     }
 }
 

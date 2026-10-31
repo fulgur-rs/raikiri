@@ -1130,46 +1130,31 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
     Some(text)
 }
 
-/// `value` in the counter style `style`: the roman styles, a custom
-/// `@counter-style` of `registry`, else decimal.
+/// `value` in the counter style `style`: an author `@counter-style` of
+/// `registry` first, since it can redefine a predefined name, then the
+/// predefined styles of CSS Counter Styles 3, else decimal.
 #[doc(hidden)]
 pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
-    match style {
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
-            if value <= 0 {
-                return value.to_string();
-            }
-            let mut n = value;
-            let mut result = String::new();
-            for (unit, glyph) in [
-                (1000, "m"),
-                (900, "cm"),
-                (500, "d"),
-                (400, "cd"),
-                (100, "c"),
-                (90, "xc"),
-                (50, "l"),
-                (40, "xl"),
-                (10, "x"),
-                (9, "ix"),
-                (5, "v"),
-                (4, "iv"),
-                (1, "i"),
-            ] {
-                while n >= unit {
-                    result.push_str(glyph);
-                    n -= unit;
-                }
-            }
-            result
-        }
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("upper-roman") => {
-            format_counter(value, &CounterStyle::Named("lower-roman".into()), registry)
-                .to_uppercase()
-        }
-        CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
-            .unwrap_or_else(|| value.to_string()),
-        _ => value.to_string(),
+    let CounterStyle::Named(name) = style else {
+        return raikiri_traits::page::format_predefined_counter(value, style);
+    };
+    // A predefined name matches without regard to case, so an author style
+    // that redefines it answers to every spelling; the name of any other
+    // style matches exactly. A rule spelled with capitals is still found by
+    // the same spelling.
+    let name = name.as_str();
+    let lowered = (name.bytes().any(|byte| byte.is_ascii_uppercase())
+        && raikiri_traits::page::is_predefined_counter_style(name))
+    .then(|| name.to_ascii_lowercase());
+    let author_name = lowered
+        .as_deref()
+        .filter(|lowered| registry.get(lowered).is_some())
+        .unwrap_or(name);
+    if registry.get(author_name).is_some() {
+        // A value the style and its fallbacks cannot render uses decimal.
+        resolve_custom_counter(registry, author_name, value).unwrap_or_else(|| value.to_string())
+    } else {
+        raikiri_traits::page::format_predefined_counter(value, style)
     }
 }
 

@@ -820,6 +820,27 @@ fn a_deferred_page_count_marks_its_placeholder() {
 }
 
 #[test]
+fn page_counters_use_the_predefined_counter_styles() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: counter(page, decimal-leading-zero) '|' \
+                       counter(pages, lower-alpha) '|' counter(page, cjk-decimal) '|' \
+                       counter(pages, disc); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 3, false),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "01|c|\u{4e00}|\u{2022}");
+}
+
+#[test]
 fn a_deferred_placeholder_that_ends_the_text_with_a_line_feed_keeps_its_range() {
     // The line feed that ends text is not a line of its own, but this one
     // belongs to the placeholder, which the slot's range has to keep covering.
