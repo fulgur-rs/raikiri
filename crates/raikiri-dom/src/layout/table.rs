@@ -682,10 +682,7 @@ fn compute_table_layout_checked(
         // the item under the height.
         let states_height = !(flex_column_parent && inputs.sizing_mode == SizingMode::ContentSize);
         let effective_known = Size {
-            width: inputs
-                .known_dimensions
-                .width
-                .or(stated_table_width(table_size.width, &inputs)),
+            width: inputs.known_dimensions.width,
             height: inputs.known_dimensions.height.or_else(|| {
                 states_height
                     .then(|| resolve_dimension(table_size.height, inputs.parent_size.height))
@@ -743,6 +740,31 @@ fn compute_table_layout_checked(
         let max_w_outer = max_w.map(|m| m + lift_w);
         let min_h_outer = min_h.map(|m| m + lift_h);
         let max_h_outer = max_h.map(|m| m + lift_h);
+        // Inline tables do not receive a used width from their caller. Lift
+        // the authored width into the same border-box domain and apply its
+        // limits before distributing it among the fixed columns. Stretch
+        // already names border-box room rather than a content-box width.
+        let effective_known = Size {
+            width: effective_known.width.or_else(|| {
+                stated_table_width(table_size.width, &inputs).map(|width| {
+                    // Vertical tables resolve physical width separately from
+                    // inline tracks, retaining their existing width basis.
+                    if vertical_writing {
+                        return width;
+                    }
+                    let width = if matches!(table_size.width.expand(), ExpandedDimension::Stretch) {
+                        width
+                    } else {
+                        width + lift_w
+                    };
+                    let maximum = max_w_outer
+                        .filter(|maximum| min_w_outer.is_none_or(|minimum| minimum <= *maximum));
+                    apply_wrapper_width_bounds(width, min_w_outer, maximum)
+                        .max(padding_border_size.width)
+                })
+            }),
+            ..effective_known
+        };
         // A flex column gives the item the height it states (see above) while
         // it has not grown or shrunk it, and that height is the grid box's
         // alone: the caption comes on top of it. Once the container has moved
