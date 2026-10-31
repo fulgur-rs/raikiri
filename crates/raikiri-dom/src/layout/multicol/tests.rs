@@ -97,6 +97,110 @@ fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
 }
 
 #[test]
+fn balanced_column_height_keeps_the_orphans_of_every_column_before_a_break() {
+    let context = |column_count: usize, orphans: usize, widows: usize| FragmentationContext {
+        rtl: false,
+        available_width: 100.0 * column_count as f32,
+        available_height: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
+        column_width: 100.0,
+        column_count,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans,
+        widows,
+    };
+    let lines = |count: usize| {
+        (0..count)
+            .map(|index| (index as f32 * 10.0, index as f32 * 10.0 + 10.0))
+            .collect::<Vec<_>>()
+    };
+    let height = |count: usize, columns: usize, orphans: usize, widows: usize| {
+        balanced_column_height(&lines(count), context(columns, orphans, widows))
+            .expect("the lines balance")
+    };
+    let assert_height = |got: f32, expected: f32| {
+        assert!(
+            (got - expected).abs() < 0.01,
+            "balanced height {got}, expected {expected}"
+        );
+    };
+
+    // Two lines split 1|1 only when `orphans` lets a column hold one.
+    assert_height(height(2, 2, 1, 1), 10.0);
+    assert_height(height(2, 2, 2, 2), 20.0);
+    // The columns after the first give up lines to `widows`; a column before
+    // a break keeps `orphans`.
+    assert_height(height(3, 3, 2, 2), 20.0);
+    assert_height(height(3, 2, 2, 2), 20.0);
+    assert_height(height(4, 2, 3, 1), 30.0);
+    assert_height(height(5, 3, 3, 1), 30.0);
+    assert_height(height(4, 2, 1, 3), 30.0);
+    // More `orphans` than lines leave one column, whatever the count.
+    assert_height(height(2, 2, 3, 1), 20.0);
+    // The last column may hold fewer lines than `widows` asks for.
+    assert_height(height(5, 2, 3, 3), 30.0);
+
+    // Lines of different heights take the least height whose columns keep the
+    // `orphans`, even when a taller height gives the first column more lines
+    // and leaves the second one too few.
+    let uneven = [
+        (0.0, 10.0),
+        (10.0, 30.0),
+        (30.0, 50.0),
+        (50.0, 70.0),
+        (70.0, 110.0),
+    ];
+    assert_height(
+        balanced_column_height(&uneven, context(3, 2, 1)).expect("uneven lines"),
+        40.0,
+    );
+    // The columns grow through several steps when each next height still
+    // leaves a column too short (each case is measured in Chromium).
+    let heights = |heights: &[f32]| {
+        let mut top = 0.0;
+        heights
+            .iter()
+            .map(|height| {
+                let extent = (top, top + height);
+                top += height;
+                extent
+            })
+            .collect::<Vec<_>>()
+    };
+    for (line_heights, expected) in [
+        ([10.0, 10.0, 20.0, 10.0, 10.0], 40.0),
+        ([20.0, 20.0, 20.0, 30.0, 10.0], 60.0),
+        ([30.0, 30.0, 10.0, 20.0, 30.0], 70.0),
+    ] {
+        assert_height(
+            balanced_column_height(&heights(&line_heights), context(3, 3, 1)).expect("steps"),
+            expected,
+        );
+    }
+    // An `orphans` that no height below the number of steps keeps gives up on
+    // it, and the columns stay as tall as the last step made them.
+    assert_height(height(2000, 2, 100_000, 1), 12_560.0);
+
+    // A definite height caps the columns. When no height below the cap keeps
+    // the `orphans`, the columns take the cap, and the lines that do not fit
+    // continue in overflow columns.
+    let capped = |count: usize, cap: f32, orphans: usize| {
+        let context = FragmentationContext {
+            available_height: Some(cap),
+            ..context(2, orphans, 1)
+        };
+        balanced_column_height(&lines(count), context)
+    };
+    assert_height(capped(4, 25.0, 3).expect("capped"), 25.0);
+    assert_height(capped(4, 25.0, 2).expect("capped"), 20.0);
+    // Lines that need more columns than the cap leaves have nothing to balance.
+    assert_eq!(capped(8, 25.0, 2), None);
+}
+
+#[test]
 fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
         rtl: false,

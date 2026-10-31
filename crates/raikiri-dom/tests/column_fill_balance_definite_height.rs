@@ -452,6 +452,196 @@ fn lines_in_the_container_share_the_columns() {
     );
 }
 
+/// A column that a break follows keeps `orphans` lines, so two lines stay in one column by default, and the columns grow instead of splitting them.
+#[test]
+fn lines_in_the_container_keep_their_orphans_when_they_balance() {
+    const THREE: &str = "columns:3;width:300px;column-gap:0";
+    // Two lines under the default `orphans: 2` stay together, with or without a height.
+    check(
+        "two_lines",
+        &format!("<div id=m style=\"{TWO}\">{}</div>", spans(2)),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 20.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(8.0, 18.0, 10.0, 10.0)]),
+        ],
+    );
+    check(
+        "two_lines_with_a_height",
+        &format!("<div id=m style=\"{TWO};height:100px\">{}</div>", spans(2)),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 100.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(8.0, 18.0, 10.0, 10.0)]),
+        ],
+    );
+    // Three columns of three lines use two of them.
+    check(
+        "three_lines_in_three_columns",
+        &format!("<div id=m style=\"{THREE}\">{}</div>", spans(3)),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 20.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(8.0, 18.0, 10.0, 10.0)]),
+            ("l2", &[(108.0, 8.0, 10.0, 10.0)]),
+        ],
+    );
+    // `orphans: 1` lets the lines split 1|1.
+    check(
+        "orphans_one",
+        &format!(
+            "<div id=m style=\"{TWO};orphans:1;widows:1\">{}</div>",
+            spans(2)
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 10.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(108.0, 8.0, 10.0, 10.0)]),
+        ],
+    );
+    // A larger `orphans` makes the first column taller than an even split.
+    check(
+        "orphans_three",
+        &format!(
+            "<div id=m style=\"{TWO};orphans:3;widows:1\">{}</div>",
+            spans(4)
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 30.0)]),
+            ("l2", &[(8.0, 28.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 8.0, 10.0, 10.0)]),
+        ],
+    );
+    check(
+        "orphans_three_in_three_columns",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:3;widows:1\">{}</div>",
+            spans(5)
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 30.0)]),
+            ("l2", &[(8.0, 28.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 8.0, 10.0, 10.0)]),
+            ("l4", &[(108.0, 18.0, 10.0, 10.0)]),
+        ],
+    );
+    check(
+        "orphans_three_with_a_height",
+        &format!(
+            "<div id=m style=\"{TWO};height:100px;orphans:3;widows:1\">{}</div>",
+            spans(4)
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 100.0)]),
+            ("l2", &[(8.0, 28.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 8.0, 10.0, 10.0)]),
+        ],
+    );
+    // A height that the lines fill keeps the columns as tall as the height,
+    // and the lines that do not fit continue in an overflow column.
+    check(
+        "orphans_three_filling_the_height",
+        &format!(
+            "<div id=m style=\"{TWO};height:25px;orphans:3;widows:1\">{}</div>",
+            spans(5)
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 25.0)]),
+            ("l1", &[(8.0, 18.0, 10.0, 10.0)]),
+            ("l2", &[(108.0, 8.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 18.0, 10.0, 10.0)]),
+            ("l4", &[(208.0, 8.0, 10.0, 10.0)]),
+        ],
+    );
+    // `widows` moves lines into the last column, which then sets the height.
+    check(
+        "widows_three",
+        &format!(
+            "<div id=m style=\"{TWO};orphans:1;widows:3\">{}</div>",
+            spans(4)
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 30.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(108.0, 8.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 28.0, 10.0, 10.0)]),
+        ],
+    );
+    // Lines of different heights take the least height that keeps the `orphans`
+    // (a taller height would put three lines in the first column and one in
+    // the second).
+    check(
+        "uneven_lines",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:2;widows:1\">\
+             <span id=l0>L</span><br>\
+             <span id=l1 style=\"line-height:20px\">L</span><br>\
+             <span id=l2 style=\"line-height:20px\">L</span><br>\
+             <span id=l3 style=\"line-height:20px\">L</span><br>\
+             <span id=l4 style=\"line-height:40px\">L</span></div>"
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 40.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(8.0, 23.0, 10.0, 10.0)]),
+            ("l2", &[(108.0, 13.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 33.0, 10.0, 10.0)]),
+            ("l4", &[(208.0, 23.0, 10.0, 10.0)]),
+        ],
+    );
+    // The columns grow through several steps when each next height still leaves
+    // a column with too few lines.
+    check(
+        "uneven_lines_in_steps",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:3;widows:1\">\
+             <span id=l0 style=\"line-height:10px\">L</span><br>\
+             <span id=l1 style=\"line-height:10px\">L</span><br>\
+             <span id=l2 style=\"line-height:20px\">L</span><br>\
+             <span id=l3 style=\"line-height:10px\">L</span><br>\
+             <span id=l4 style=\"line-height:10px\">L</span></div>"
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 40.0)]),
+            ("l2", &[(8.0, 33.0, 10.0, 10.0)]),
+            ("l3", &[(108.0, 8.0, 10.0, 10.0)]),
+            ("l4", &[(108.0, 18.0, 10.0, 10.0)]),
+        ],
+    );
+    // `widows` counts as well: a split whose last column has one line is not
+    // taken over a taller one that keeps `widows` (80px with 4|3, not 70px).
+    check(
+        "uneven_lines_with_widows",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:3;widows:3\">\
+             <span id=l0 style=\"line-height:10px\">L</span><br>\
+             <span id=l1 style=\"line-height:10px\">L</span><br>\
+             <span id=l2 style=\"line-height:20px\">L</span><br>\
+             <span id=l3 style=\"line-height:10px\">L</span><br>\
+             <span id=l4 style=\"line-height:30px\">L</span><br>\
+             <span id=l5 style=\"line-height:30px\">L</span><br>\
+             <span id=l6 style=\"line-height:20px\">L</span></div>"
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 80.0)]),
+            ("l3", &[(8.0, 48.0, 10.0, 10.0)]),
+            ("l4", &[(108.0, 18.0, 10.0, 10.0)]),
+            ("l5", &[(108.0, 48.0, 10.0, 10.0)]),
+            ("l6", &[(108.0, 73.0, 10.0, 10.0)]),
+        ],
+    );
+    // The lines of a paragraph inside a div follow the same rule.
+    check(
+        "paragraph_in_a_div",
+        &format!("<div id=m style=\"{TWO}\"><div>{}</div></div>", spans(2)),
+        &[
+            ("m", &[(8.0, 8.0, 200.0, 20.0)]),
+            ("l0", &[(8.0, 8.0, 10.0, 10.0)]),
+            ("l1", &[(8.0, 18.0, 10.0, 10.0)]),
+        ],
+    );
+}
+
 /// Lines taller than the container fill the columns and go on in overflow columns, and `column-fill: auto` fills them in turn.
 #[test]
 fn lines_in_the_container_that_need_more_than_the_height_fill_the_columns() {

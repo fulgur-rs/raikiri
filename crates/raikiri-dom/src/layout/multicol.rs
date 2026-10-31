@@ -3295,11 +3295,7 @@ fn line_ranges_in_columns(
         // 1, 8.2).
         let mut column = context.column_index;
         while start < line_count {
-            let origin = extents[start].0;
-            let mut end = start + 1;
-            while end < line_count && extents[end].1 - origin <= height + f32::EPSILON {
-                end += 1;
-            }
+            let end = column_end(extents, start, height);
             ranges.push((start, end, column));
             column += 1;
             start = end;
@@ -3383,7 +3379,8 @@ fn line_ranges_in_columns(
 }
 
 /// Find the smallest column height that fits `extents` within the available
-/// columns. The returned height is then used to fill each column in source
+/// columns, with at least `orphans` lines in every column that a break
+/// follows. The returned height is then used to fill each column in source
 /// order, including a partially filled final column.
 ///
 /// A definite `available_height` caps the columns: lines that do not fit
@@ -3402,42 +3399,104 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     if !low.is_finite() || !high.is_finite() || high < low {
         return None;
     }
-    // The lines fit when the column of the last one exists and no column is
-    // taller than `height`.
-    let fits = |height: f32| {
+    // The columns the lines take at `height`, when the column of the last one
+    // exists and no column is taller than `height`.
+    let columns_at = |height: f32| {
         let trial_context = FragmentationContext {
             available_height: Some(height),
             ..context
         };
         let ranges = line_ranges_in_columns(extents, trial_context, false);
-        ranges
+        (ranges
             .last()
             .is_some_and(|&(_, _, column)| column < context.column_count)
             && ranges.iter().all(|&(start, end, _)| {
                 extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
-            })
+            }))
+        .then_some(ranges)
     };
     if let Some(cap) = context.available_height.filter(|height| *height > 0.0)
         && cap < high
     {
-        if !fits(cap) {
-            return None;
-        }
+        columns_at(cap)?;
         high = cap;
     }
 
+    // The columns never need to be taller than `limit`: the cap of a definite
+    // height, or all the lines in one column.
+    let limit = high;
     for _ in 0..32 {
         if high - low <= 0.001 {
             break;
         }
         let height = (low + high) * 0.5;
-        if fits(height) {
+        if columns_at(height).is_some() {
             high = height;
         } else {
             low = height;
         }
     }
+
+    // A column that a break follows keeps at least `orphans` lines: a break
+    // that leaves fewer lines before it is not an option, so the columns grow,
+    // one step at a time to the next height at which a column takes another
+    // line, until every such column does. `widows` is not checked: the columns
+    // after a break give up lines to it when they can, and when they cannot,
+    // the last column keeps the lines it has. When no height below `limit`
+    // keeps the `orphans`, the answer is `limit`. After too many steps the
+    // `orphans` are given up and the last height stands.
+    let orphans = context.orphans.max(1);
+    let keeps_orphans = |height: f32| {
+        columns_at(height).is_some_and(|ranges| {
+            ranges
+                .iter()
+                .rev()
+                .skip(1)
+                .all(|&(start, end, _)| end - start >= orphans)
+        })
+    };
+    for _ in 0..MAX_ORPHAN_STEPS {
+        if keeps_orphans(high) {
+            return Some(high);
+        }
+        match next_taller_column(extents, high) {
+            Some(next) if next < limit => high = next,
+            _ => return Some(limit),
+        }
+    }
     Some(high)
+}
+
+/// The most steps `balanced_column_height` takes while it grows the columns to
+/// keep the `orphans` of each, so that a huge `orphans` costs a bounded number
+/// of passes over the lines.
+const MAX_ORPHAN_STEPS: usize = 256;
+
+/// The end of the column that starts at the line `start` and takes lines for as
+/// long as they fit in `height`, and at least one line.
+fn column_end(extents: &[(f32, f32)], start: usize, height: f32) -> usize {
+    let origin = extents[start].0;
+    let mut end = start + 1;
+    while end < extents.len() && extents[end].1 - origin <= height + f32::EPSILON {
+        end += 1;
+    }
+    end
+}
+
+/// The least height above `height` at which the columns that take the lines
+/// greedily at `height` would take one more line, if there is one.
+fn next_taller_column(extents: &[(f32, f32)], height: f32) -> Option<f32> {
+    let mut next: Option<f32> = None;
+    let mut start = 0;
+    while start < extents.len() {
+        let end = column_end(extents, start, height);
+        if let Some(line) = extents.get(end) {
+            let taller = line.1 - extents[start].0;
+            next = Some(next.map_or(taller, |least| least.min(taller)));
+        }
+        start = end;
+    }
+    next
 }
 
 /// The height of columns that balance in a container with the definite
