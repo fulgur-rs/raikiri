@@ -760,6 +760,71 @@ fn a_fixed_table_in_a_flex_or_grid_container_follows_its_max_width() {
 }
 
 #[test]
+fn inline_tables_lift_and_constrain_their_authored_width() {
+    let vertical_rows = TWO_CELLS.replace("200px", "100px");
+    let extra: &[(&str, &str, &str, Expected)] = &[
+        (
+            "auto layout keeps its intrinsic floor",
+            "table-layout:auto;width:100px;max-width:50px;border:2px solid",
+            TWO_CELLS,
+            &[
+                ("t", 0.0, 0.0, 404.0, 14.0),
+                ("d", 2.0, 2.0, 200.0, 10.0),
+                ("e", 202.0, 2.0, 200.0, 10.0),
+            ],
+        ),
+        (
+            "vertical writing keeps its physical width floor",
+            "width:100px;max-width:50px;writing-mode:vertical-rl",
+            &vertical_rows,
+            &[
+                ("t", 0.0, 0.0, 100.0, 20.0),
+                ("d", 0.0, 0.0, 100.0, 10.0),
+                ("e", 0.0, 10.0, 100.0, 10.0),
+            ],
+        ),
+        (
+            "min wins over max",
+            "width:100px;min-width:150px;max-width:50px",
+            TWO_CELLS,
+            &[
+                ("t", 0.0, 0.0, 150.0, 10.0),
+                ("d", 0.0, 0.0, 75.0, 10.0),
+                ("e", 75.0, 0.0, 75.0, 10.0),
+            ],
+        ),
+        (
+            "stretch content box",
+            "width:stretch;border:2px solid",
+            TWO_CELLS,
+            &[
+                ("t", 0.0, 0.0, 300.0, 14.0),
+                ("d", 2.0, 2.0, 148.0, 10.0),
+                ("e", 150.0, 2.0, 148.0, 10.0),
+            ],
+        ),
+        (
+            "border-box floor",
+            "width:100px;max-width:2px;box-sizing:border-box;padding:3px;border:2px solid",
+            TWO_CELLS,
+            &[
+                ("t", 0.0, 0.0, 10.0, 20.0),
+                ("d", 5.0, 5.0, 0.0, 10.0),
+                ("e", 5.0, 5.0, 0.0, 10.0),
+            ],
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for &(label, style, rows, expected) in CASES.iter().chain(extra) {
+        let markup = format!(
+            "<div style='width:300px'><div id=t style='display:inline-table;table-layout:fixed;{style}'>{rows}</div></div>"
+        );
+        check_boxes(&mut mismatches, label, &markup, expected);
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
 fn the_columns_a_table_states_stay_wider_than_a_max_width() {
     // The widths of the columns stay (the table overflows its limit rather
     // than shrinking them), and so does the table, which is never narrower
