@@ -196,6 +196,64 @@ fn a_fixed_height_column_container_splits_a_nested_plain_block() {
 }
 
 #[test]
+fn a_fixed_height_plain_chain_balances_its_lines_in_the_columns() {
+    // The columns are as tall as the lines need, and the container keeps its
+    // height, so the paragraph after it starts below the whole height.
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+    compare(
+        "<div class=mc><div><div><p>A<br>B<br>C</p></div></div></div><p>E</p>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C</div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+}
+
+#[test]
+fn a_fixed_height_plain_chain_fills_its_columns_in_turn_with_column_fill_auto() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div>",
+    );
+}
+
+#[test]
+fn a_balanced_fixed_height_chain_paints_its_wrapper_background_in_each_column() {
+    compare(
+        "<div class=mc><div style='background:lime'><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:lime'>A<br>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'>C<br>D</div>",
+    );
+}
+
+#[test]
+fn a_balanced_fixed_height_chain_paints_its_paragraph_background_in_each_column() {
+    compare(
+        "<div class=mc><div><p style='background:lime'>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:lime'>A<br>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'>C<br>D</div>",
+    );
+}
+
+#[test]
+fn boxes_with_text_and_a_height_are_placed_whole_in_balanced_columns() {
+    compare(
+        "<div class=mc><div style='height:40px;background:red'>A</div><div style='height:40px;background:lime'>B</div><div style='height:40px;background:blue'>C</div><div style='height:40px;background:yellow'>D</div></div><p>E</p>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:red'>A</div><div style='position:absolute;left:0;top:40px;width:40px;height:40px;background:lime'>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:blue'>C</div><div style='position:absolute;left:60px;top:40px;width:40px;height:40px;background:yellow'>D</div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+    // The text wraps at the width of a column.
+    compare(
+        "<div class=mc><div style='height:40px;background:red'>A B</div><div style='height:40px;background:lime'>C D</div></div>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:red'>A<br>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'>C<br>D</div>",
+    );
+}
+
+#[test]
 fn a_fixed_height_plain_chain_uses_three_columns_below_a_prefix() {
     compare(
         "<p>X</p><div class=mc><div><div><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div></div><p>G</p>",

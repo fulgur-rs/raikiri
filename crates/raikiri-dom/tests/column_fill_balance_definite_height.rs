@@ -263,6 +263,166 @@ fn paragraphs_that_need_more_than_the_height_fill_the_columns() {
     );
 }
 
+/// `count` blocks of `height` px that hold `text`, with the ids `t0`, `t1`, and
+/// so on, and `style` added to their own.
+fn text_blocks(count: usize, height: u32, style: &str, text: &str) -> String {
+    (0..count)
+        .map(|index| format!("<div id=t{index} style=\"height:{height}px{style}\">{text}</div>"))
+        .collect()
+}
+
+/// A box that holds lines and has a height of its own goes whole to a column,
+/// at the width of the column, and the balanced columns share such boxes.
+#[test]
+fn boxes_with_lines_and_a_height_share_the_columns() {
+    let four: &[(&str, &[Piece])] = &[
+        ("t0", &[(8.0, 8.0, 100.0, 20.0)]),
+        ("t1", &[(8.0, 28.0, 100.0, 20.0)]),
+        ("t2", &[(108.0, 8.0, 100.0, 20.0)]),
+        ("t3", &[(108.0, 28.0, 100.0, 20.0)]),
+    ];
+    check(
+        "four_boxes",
+        &format!(
+            "<div style=\"{TWO};height:100px\">{}</div>",
+            text_blocks(4, 20, "", "L")
+        ),
+        four,
+    );
+    // Words that wrap at the width of the column make the lines of the box.
+    check(
+        "four_boxes_with_wrapped_words",
+        &format!(
+            "<div style=\"{TWO};height:100px\">{}</div>",
+            text_blocks(4, 20, "", "LLLLLL LLLLLL")
+        ),
+        four,
+    );
+    check(
+        "six_boxes_in_three_columns",
+        &format!(
+            "<div style=\"columns:3;width:300px;column-gap:0;height:100px\">{}</div>",
+            text_blocks(6, 20, "", "L")
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 20.0)]),
+            ("t1", &[(8.0, 28.0, 100.0, 20.0)]),
+            ("t2", &[(108.0, 8.0, 100.0, 20.0)]),
+            ("t3", &[(108.0, 28.0, 100.0, 20.0)]),
+            ("t4", &[(208.0, 8.0, 100.0, 20.0)]),
+            ("t5", &[(208.0, 28.0, 100.0, 20.0)]),
+        ],
+    );
+    check(
+        "boxes_of_two_lines",
+        &format!(
+            "<div style=\"{TWO};height:100px\"><div id=t0 style=\"height:60px\">L<br>L</div><div id=t1 style=\"height:60px\">L<br>L</div></div>"
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 60.0)]),
+            ("t1", &[(108.0, 8.0, 100.0, 60.0)]),
+        ],
+    );
+    check(
+        "boxes_with_margins",
+        &format!(
+            "<div style=\"{TWO};height:100px\">{}</div>",
+            text_blocks(4, 20, ";margin-bottom:10px", "L")
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 20.0)]),
+            ("t1", &[(8.0, 38.0, 100.0, 20.0)]),
+            ("t2", &[(108.0, 8.0, 100.0, 20.0)]),
+            ("t3", &[(108.0, 38.0, 100.0, 20.0)]),
+        ],
+    );
+    check(
+        "boxes_with_padding_and_border",
+        &format!(
+            "<div style=\"{TWO};height:100px\">{}</div>",
+            text_blocks(4, 30, ";padding:5px;border:1px solid", "L")
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 30.0)]),
+            ("t1", &[(8.0, 38.0, 100.0, 30.0)]),
+            ("t2", &[(108.0, 8.0, 100.0, 30.0)]),
+            ("t3", &[(108.0, 38.0, 100.0, 30.0)]),
+        ],
+    );
+    check(
+        "boxes_in_a_padded_container",
+        &format!(
+            "<div style=\"{TWO};height:120px;padding:10px;box-sizing:content-box\">{}</div>",
+            text_blocks(4, 20, "", "L")
+        ),
+        &[
+            ("t0", &[(18.0, 18.0, 100.0, 20.0)]),
+            ("t1", &[(18.0, 38.0, 100.0, 20.0)]),
+            ("t2", &[(118.0, 18.0, 100.0, 20.0)]),
+            ("t3", &[(118.0, 38.0, 100.0, 20.0)]),
+        ],
+    );
+    // The boxes and the lines of a paragraph between them share the columns.
+    check(
+        "boxes_around_a_paragraph",
+        &format!(
+            "<div style=\"{TWO};height:100px\"><div id=t0 style=\"height:40px\">L</div><div id=p>L<br>L</div><div id=t1 style=\"height:40px\">L</div></div>"
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 40.0)]),
+            ("p", &[(8.0, 48.0, 100.0, 20.0)]),
+            ("t1", &[(108.0, 8.0, 100.0, 40.0)]),
+        ],
+    );
+}
+
+/// Boxes with lines and a height that need more than the container fill its
+/// columns and go on in overflow columns, and `column-fill: auto` fills the
+/// columns in turn.
+#[test]
+fn boxes_with_lines_and_a_height_that_need_more_than_the_height_fill_the_columns() {
+    check(
+        "exact_fill",
+        &format!(
+            "<div style=\"{TWO};height:100px\">{}</div>",
+            text_blocks(4, 50, "", "L")
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 50.0)]),
+            ("t1", &[(8.0, 58.0, 100.0, 50.0)]),
+            ("t2", &[(108.0, 8.0, 100.0, 50.0)]),
+            ("t3", &[(108.0, 58.0, 100.0, 50.0)]),
+        ],
+    );
+    check(
+        "overflow_column",
+        &format!(
+            "<div style=\"{TWO};height:100px\">{}</div>",
+            text_blocks(5, 50, "", "L")
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 50.0)]),
+            ("t1", &[(8.0, 58.0, 100.0, 50.0)]),
+            ("t2", &[(108.0, 8.0, 100.0, 50.0)]),
+            ("t3", &[(108.0, 58.0, 100.0, 50.0)]),
+            ("t4", &[(208.0, 8.0, 100.0, 50.0)]),
+        ],
+    );
+    check(
+        "column_fill_auto",
+        &format!(
+            "<div style=\"{TWO};height:100px;column-fill:auto\">{}</div>",
+            text_blocks(4, 20, "", "L")
+        ),
+        &[
+            ("t0", &[(8.0, 8.0, 100.0, 20.0)]),
+            ("t1", &[(8.0, 28.0, 100.0, 20.0)]),
+            ("t2", &[(8.0, 48.0, 100.0, 20.0)]),
+            ("t3", &[(8.0, 68.0, 100.0, 20.0)]),
+        ],
+    );
+}
+
 /// Lines directly in the container are shared among the balanced columns.
 #[test]
 fn lines_in_the_container_share_the_columns() {

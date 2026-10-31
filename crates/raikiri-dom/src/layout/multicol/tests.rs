@@ -4933,12 +4933,22 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(!paragraphs(
         "display:block;margin:0;padding-bottom:2px;border-radius:4px"
     ));
+    // A box of lines with a height of its own goes whole to a column.
+    assert!(paragraphs("display:block;margin:0;height:20px"));
+    assert!(paragraphs(
+        "display:block;margin:0 0 4px;height:20px;padding:2px"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
         "display:block;position:absolute",
         "display:block;float:left",
-        "display:block;height:20px",
+        "display:block;height:20px;overflow:hidden",
+        "display:block;height:20px;float:right",
+        "display:block;height:20px;writing-mode:vertical-rl",
+        "display:block;height:20px;break-inside:avoid",
+        "display:block;height:20px;margin-top:auto",
+        "display:block;height:50%;margin:0",
         "display:block;min-height:20px",
         "display:block;max-height:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
@@ -6506,6 +6516,113 @@ fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
             "{css}"
         );
     }
+    // A lone box of lines with a height of its own is placed whole by the
+    // planner, which the columns that balance need.
+    let (mut doc, container, _) = padded_paragraph_columns("height:60px", 2);
+    for balances in [true, false] {
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container, balances)
+            }),
+            balances
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_below_a_wrapper_balances_in_a_definite_height_container() {
+    // A paragraph below a plain wrapper is balanced like one of the container's
+    // own: the columns are as tall as its lines need, up to the height.
+    let ranges = |container_css: &str, lines: usize| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some(
+                format!(
+                    "display:block;width:200px;columns:2;column-gap:0;orphans:1;widows:1;\
+                     {container_css}"
+                )
+                .as_str(),
+            ),
+        );
+        let wrapper = doc.append_element(Some(container), "div", Some("display:block"));
+        let paragraph = doc.append_element(Some(wrapper), "div", Some("display:block"));
+        for line in 0..lines {
+            doc.append_text(paragraph, "x");
+            if line + 1 < lines {
+                doc.append_element(Some(paragraph), "br", None::<&str>);
+            }
+        }
+        lay_out_in_ahem(&mut doc, 400.0, 300.0);
+        paragraph_pieces(&doc, paragraph).0
+    };
+    assert_eq!(ranges("height:100px", 6), [(0, 3, 0), (3, 6, 1)]);
+    assert_eq!(ranges("height:100px", 3), [(0, 2, 0), (2, 3, 1)]);
+    // Lines that need all of the height fill it, and go on in an overflow column.
+    assert_eq!(ranges("height:20px", 6), [(0, 2, 0), (2, 4, 1), (4, 6, 2)]);
+    // `column-fill: auto` fills the columns in turn.
+    assert_eq!(ranges("height:100px;column-fill:auto", 6), [(0, 6, 0)]);
+}
+
+#[test]
+fn a_box_whose_lines_reach_past_its_height_is_not_placed_whole() {
+    // The planner places a box of lines with a height of its own whole in a
+    // column, so the lines have to lie inside the height; a box whose lines
+    // would reach past it keeps the placement it had.
+    let build = |text: &[&str]| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:200px;height:100px;columns:2;column-gap:0"),
+        );
+        let boxes: Vec<usize> = text
+            .iter()
+            .map(|lines| {
+                let child = doc.append_element(
+                    Some(container),
+                    "div",
+                    Some("display:block;height:20px;box-sizing:border-box"),
+                );
+                for (index, line) in lines.split('/').enumerate() {
+                    if index > 0 {
+                        doc.append_element(Some(child), "br", None::<&str>);
+                    }
+                    doc.append_text(child, line);
+                }
+                child
+            })
+            .collect();
+        lay_out_in_ahem(&mut doc, 400.0, 300.0);
+        (doc, boxes)
+    };
+    // Lines inside the heights: the boxes share the columns at their width.
+    let (doc, boxes) = build(&["x/x", "x", "x", "x"]);
+    for (index, &child) in boxes.iter().enumerate() {
+        assert_eq!(doc.nodes[child].layout.size.width, 100.0, "box {index}");
+    }
+    let tops: Vec<f32> = boxes
+        .iter()
+        .map(|&child| doc.nodes[child].layout.location.y)
+        .collect();
+    assert_eq!(tops, [0.0, 20.0, 0.0, 20.0]);
+    // Three lines in a box of 20px: the plan is declined, and the boxes follow
+    // one another at the width of a column.
+    let (doc, boxes) = build(&["x/x/x", "x"]);
+    for &child in &boxes {
+        assert_eq!(doc.nodes[child].layout.size.width, 100.0);
+        assert_eq!(doc.nodes[child].layout.size.height, 20.0);
+    }
+    let tops: Vec<f32> = boxes
+        .iter()
+        .map(|&child| doc.nodes[child].layout.location.y)
+        .collect();
+    assert_eq!(tops, [0.0, 20.0]);
 }
 
 #[test]

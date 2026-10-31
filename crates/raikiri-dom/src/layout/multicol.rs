@@ -876,7 +876,8 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // path breaks between lines in a definite-height container as well. A box with
 // nothing inside it may stand among them, if one of the others holds lines: one
 // with a block size of its own, which the planner places whole in a column, or
-// one with no room of its own, whose margins collapse through it.
+// one with no room of its own, whose margins collapse through it. So may a box
+// of lines with a height of its own (see [`is_sized_paragraph`]).
 //
 // One undecorated paragraph also counts when `balances` is set: the columns of
 // a definite-height container that balance take their height from the planner,
@@ -901,6 +902,12 @@ fn multicol_has_only_paragraph_children(
     let mut paragraphs = 0usize;
     let plain = children.all(|child| {
         if lineless::is_sized_leaf(tree, child) || lineless::is_margin_only_block(tree, child) {
+            return insets_are_a_relative_offset(tree, child);
+        }
+        // A box of lines with a height of its own goes whole to a column, so
+        // it needs the planner as a box of lines does.
+        if is_sized_paragraph(tree, child) {
+            paragraphs += 1;
             return insets_are_a_relative_offset(tree, child);
         }
         let node = &tree.nodes[child];
@@ -1040,6 +1047,29 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
                 && style.min_size().height.is_auto()
                 && style.max_size().height.is_auto()
         }
+}
+
+/// Whether `child` is a plain block of lines whose height is authored: a box
+/// the planner places whole in a column, whatever its lines would give it, as
+/// it places a box with no lines. The structure decides this before the box
+/// is laid out; [`paragraph_group`] also checks that the lines fit the height
+/// once they are shaped.
+fn is_sized_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    node.formatting_context == FormattingContext::Inline
+        && lineless::is_plain_block_holding_lines(tree, child)
+        && !node
+            .authored_writing_mode
+            .is_some_and(WritingMode::is_vertical)
+        && node.break_inside == raikiri_style::property::BreakInside::Auto
+        && !node.has_before_or_after_content
+        && !multicol_subtree_has_float(tree, child)
+        && style_dimension_length(style.size().height).is_some_and(|height| height > 0.0)
+        && style.min_size().height.is_auto()
+        && style.max_size().height.is_auto()
+        && !style.margin().top.is_auto()
+        && !style.margin().bottom.is_auto()
 }
 
 /// Whether the padding and border above the first line and below the last of
@@ -1457,10 +1487,20 @@ fn layout_column_group(
             context.column_fill != ColumnFillValue::Auto,
         )
         && !multicol_has_nested_descendant(tree, index);
+    // The paragraph of a chain of plain wrappers balances in a container with
+    // a definite height too: its lines need only as much of the height as
+    // they take, so the columns do not run to the container's height.
+    let definite_chain = !definite_paragraphs
+        && fragment_height.is_some()
+        && context.column_fill != ColumnFillValue::Auto
+        && tree.context.fragmentation_stack.len() <= 1
+        && multicol_has_plain_paragraph_chain(tree, index)
+        && !multicol_has_nested_descendant(tree, index);
     let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
         && fragment_height.is_none()
         && !multicol_has_nested_descendant(tree, index))
         || definite_paragraphs
+        || definite_chain
     {
         let mut measurements = Vec::with_capacity(children.len());
         for &child in children {
@@ -1500,7 +1540,7 @@ fn layout_column_group(
             None => paragraph_group::balance(tree, entries, context),
         });
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
-        if fragment_height.is_some() {
+        if fragment_height.is_some() && !definite_chain {
             return None;
         }
         let mut boxes = entries.iter().filter(|(child, output, _, _, _, _)| {
@@ -1526,6 +1566,10 @@ fn layout_column_group(
         }
         let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
         let (fragments, height) = root_column_fragments(lines, context);
+        // Lines that need all of a definite height go in turn, as they did.
+        if let Some(definite) = fragment_height {
+            balanced_below(height, definite)?;
+        }
         let (first, last) = (lines.lines.first()?, lines.lines.last()?);
         let stacked = last.block_offset() + last.block_size() - first.block_offset();
         (fragments.len() > 1).then_some(ParagraphBalance {
