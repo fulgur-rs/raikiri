@@ -3760,7 +3760,8 @@ struct CellPlacementTracks<'a> {
     row_spacing: f32,
     vertical_writing: bool,
     /// The table states its own height, so the height of a cell is definite
-    /// for the percentage heights of the cell's children.
+    /// for the percentage heights of the cell's children. A vertical table
+    /// keeps the height definite whatever it states.
     height_is_definite: bool,
 }
 
@@ -3846,12 +3847,6 @@ fn place_cells(
                 .filter(|gap| **gap != 0.0)
                 .count() as f32
                 * row_spacing;
-        // The height the row gives the cell is a definite one for the
-        // percentage heights of its children only when the table or the cell
-        // states a height (CSS 2.1 §10.5); otherwise they are `auto`, as in the
-        // pass that measured the row.
-        let cell_height_is_definite = height_is_definite
-            || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
         // Final layout for cell contents with definite size. A cell whose
         // content does not depend on its height keeps its row-pass lines.
         let reused = cell
@@ -3861,6 +3856,12 @@ fn place_cells(
         let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
             (rect, OofCandidates::new())
         } else {
+            // The height the row gives the cell is a definite one for the
+            // percentage heights of its children only when the table or the
+            // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
+            // as in the pass that measured the row.
+            let cell_height_is_definite = height_is_definite
+                || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
             let output = doc.compute_child_layout(
                 NodeId::from(cell.node_id),
                 LayoutInput {

@@ -86,7 +86,7 @@ fn check(cases: &[Case]) {
 fn table(table: &str, row: &str, cell: &str, beside: &str, rows: usize) -> String {
     let more_rows = "<div style=\"display:table-row\"><div style=\"display:table-cell\">\
                      <div style=\"height:10px\"></div></div></div>"
-        .repeat(rows - 1);
+        .repeat(rows.saturating_sub(1));
     format!(
         "<div id=t style=\"display:table;{table}\">\
          <div id=r style=\"display:table-row;{row}\">\
@@ -295,7 +295,22 @@ fn a_percentage_height_resolves_against_a_stated_height() {
             ],
         },
         // The cell's own height makes it definite, and the row it ends up in
-        // is what the percentage resolves against.
+        // is what the percentage resolves against, even when the row is
+        // taller than the height the cell states.
+        Case {
+            label: "a cell with a height next to a taller cell",
+            body: table(
+                "",
+                "",
+                "height:40px",
+                "<div id=d style=\"display:table-cell\"><div style=\"width:10px;height:60px\"></div></div>",
+                1,
+            ),
+            expected: &[
+                ("c", [8.0, 8.0, 10.0, 62.0]),
+                ("p", [8.0, 60.0, 10.0, 31.0]),
+            ],
+        },
         Case {
             label: "a cell with a height in a taller row",
             body: table("height:100px", "", "height:40px", "", 2),
