@@ -305,6 +305,16 @@
       "collapse": false,
       "text": "xxxxxxxxxxxxxxxxxxxx",
       "expected": [["t", 0, 0, 1000040, 30], ["a", 10, 10, 30, 10], ["b", 50, 10, 999920, 10], ["c", 999980, 10, 50, 10]]
+    },
+    {
+      "label": "min-max-colpercent-cellmax-borderbox",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "100px;max-width:70px", "50px"],
+      "edges": "padding:5px;border:1px solid;box-sizing:border-box",
+      "column": "40%",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 135, 42], ["a", 10, 10, 39.375, 22], ["b", 49.375, 10, 0, 22], ["c", 59.375, 10, 65.625, 22]]
     }
   ]
 }
