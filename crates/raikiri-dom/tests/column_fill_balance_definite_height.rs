@@ -608,6 +608,28 @@ fn lines_in_the_container_keep_their_orphans_when_they_balance() {
             ("l4", &[(108.0, 18.0, 10.0, 10.0)]),
         ],
     );
+    // `widows` counts as well: a split whose last column has one line is not
+    // taken over a taller one that keeps `widows` (80px with 4|3, not 70px).
+    check(
+        "uneven_lines_with_widows",
+        &format!(
+            "<div id=m style=\"{THREE};orphans:3;widows:3\">\
+             <span id=l0 style=\"line-height:10px\">L</span><br>\
+             <span id=l1 style=\"line-height:10px\">L</span><br>\
+             <span id=l2 style=\"line-height:20px\">L</span><br>\
+             <span id=l3 style=\"line-height:10px\">L</span><br>\
+             <span id=l4 style=\"line-height:30px\">L</span><br>\
+             <span id=l5 style=\"line-height:30px\">L</span><br>\
+             <span id=l6 style=\"line-height:20px\">L</span></div>"
+        ),
+        &[
+            ("m", &[(8.0, 8.0, 300.0, 80.0)]),
+            ("l3", &[(8.0, 48.0, 10.0, 10.0)]),
+            ("l4", &[(108.0, 18.0, 10.0, 10.0)]),
+            ("l5", &[(108.0, 48.0, 10.0, 10.0)]),
+            ("l6", &[(108.0, 73.0, 10.0, 10.0)]),
+        ],
+    );
     // The lines of a paragraph inside a div follow the same rule.
     check(
         "paragraph_in_a_div",
