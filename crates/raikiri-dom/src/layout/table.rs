@@ -2772,7 +2772,8 @@ fn resolve_column_widths(
                 // Percentage columns can ask for more than the columns' own
                 // max-content widths add up to. The room and a `max-width`
                 // still cap that, but never below the natural total.
-                let widened = percent_columns_max_content_width(natural, &col_max_full, &col_pct)
+                let shares = percent_shares_in_order(&col_pct);
+                let widened = percent_columns_max_content_width(natural, &col_max_full, &shares)
                     .min(avail)
                     .min(percent_width_cap.unwrap_or(f32::INFINITY));
                 if widened > natural {
@@ -2780,7 +2781,7 @@ fn resolve_column_widths(
                         widened,
                         &col_min_full,
                         &col_max_full,
-                        &col_pct,
+                        &shares,
                         &authored_length,
                     )
                 } else if natural <= avail {
@@ -2799,31 +2800,43 @@ fn resolve_column_widths(
     }
 }
 
+/// The share of the grid each column gets when the percentages are taken in
+/// column order: a column gets what is left of 100% at most, and none once
+/// nothing is left.
+fn percent_shares_in_order(pct: &[f32]) -> Vec<f32> {
+    let mut left = 1.0f32;
+    pct.iter()
+        .map(|&share| {
+            let taken = share.min(left).max(0.0);
+            left -= taken;
+            taken
+        })
+        .collect()
+}
+
 /// The width of a table grid with percentage columns that keeps every column at
 /// its max-content width, which is `natural`, the columns' own max-content
-/// total, when no percentage asks for more.
+/// total, when no percentage asks for more. `shares` are the columns' shares
+/// from [`percent_shares_in_order`].
 ///
 /// A percentage column of max-content width `m` and share `p` takes `m / p`
 /// of the grid, and the other columns together need their max-content widths
 /// out of what the percentages leave, so the grid is at least that sum over
 /// `1 - total share` wide. When the shares take everything and the other
-/// columns have content, no width is enough and the result is infinite. Shares
-/// are taken in column order, and a column whose share is gone counts with the
-/// columns that have none.
-fn percent_columns_max_content_width(natural: f32, max: &[f32], pct: &[f32]) -> f32 {
+/// columns have content, no width is enough and the result is infinite. A
+/// column whose share is gone counts with the columns that have none.
+fn percent_columns_max_content_width(natural: f32, max: &[f32], shares: &[f32]) -> f32 {
     let mut width = natural;
-    let mut left = 1.0f32;
     let mut other = 0.0f32;
-    for (&max_content, &share) in max.iter().zip(pct) {
-        if share > 0.0 && left > 0.0 {
-            let taken = share.min(left);
-            width = f32_max_compat(width, max_content / taken);
-            left -= taken;
+    for (&max_content, &share) in max.iter().zip(shares) {
+        if share > 0.0 {
+            width = f32_max_compat(width, max_content / share);
         } else {
             other += max_content;
         }
     }
     if other > 0.0 {
+        let left = 1.0 - shares.iter().sum::<f32>();
         width = if left > 0.0 {
             f32_max_compat(width, other / left)
         } else {

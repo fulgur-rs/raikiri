@@ -326,9 +326,26 @@ fn percentages_that_take_everything_fill_the_room() {
 
 #[test]
 fn shares_past_one_hundred_percent_in_total_get_nothing() {
-    // The second 60% gets the 40% that is left, so 10px of it is 25px.
-    let (table, _) = rects(FLOAT, &[column(10.0, Some(60.0)), column(10.0, Some(60.0))]);
+    // The second 60% gets the 40% that is left, so 10px of it is 25px, and the
+    // cells follow the same split.
+    let (table, cells) = rects(FLOAT, &[column(10.0, Some(60.0)), column(10.0, Some(60.0))]);
     assert_close(table, (0.0, 0.0, 25.0, 10.0), "two 60% columns");
+    assert_close(cells[0], (0.0, 0.0, 15.0, 10.0), "first of two 60% columns");
+    assert_close(
+        cells[1],
+        (15.0, 0.0, 10.0, 10.0),
+        "second of two 60% columns",
+    );
+    // The first 60% has to hold its 90px, which sets the width, and the
+    // column is not squeezed to half of it by the second share.
+    let (table, cells) = rects(FLOAT, &[column(90.0, Some(60.0)), column(10.0, Some(60.0))]);
+    assert_close(table, (0.0, 0.0, 150.0, 10.0), "wide first 60% column");
+    assert_close(cells[0], (0.0, 0.0, 90.0, 10.0), "wide first 60% column");
+    assert_close(
+        cells[1],
+        (90.0, 0.0, 60.0, 10.0),
+        "narrow second 60% column",
+    );
     // A column after the first 100% has nothing left, like one without a
     // share: its 30px have no width that is enough, and the table fills the
     // room.
