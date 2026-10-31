@@ -5481,3 +5481,9 @@ css/css-multicol/multicol-span-all-005.html
 # A block-level box in ruby content, or in a ruby-internal box, is inlinized: it is an atomic inline-level box in the line it sits in, so a block, a table or a flex container in `rb` or `rt` no longer breaks the line around itself (CSS Ruby 1 section 2.2). Both tests were FAIL before the change and KEEP in two audit-vacuous-passes runs.
 css/css-ruby/ruby-inlinize-blocks-002.html
 css/css-ruby/ruby-line-breaking-002.html
+
+# --- `safe` and `unsafe` before a `<content-position>` of `justify-content` and `align-content` (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# `justify-content`, `align-content` and `place-content` accept an `<overflow-position>` keyword before `center`, `start`, `end`, `flex-start` and `flex-end` (CSS Box Alignment 3 section 4.4): `safe` aligns overflowing content to its start edge instead, and `unsafe` aligns it as written. The whole declaration was dropped before the change, so the content of these flex containers stayed at the default alignment (1044, 1800 and 2000 pixels differ). All three KEEP in two audit-vacuous-passes runs. `flexbox-safe-overflow-position-002`, `-005` and `-006` were already listed above and still pass.
+css/css-flexbox/flexbox-safe-overflow-position-001.html
+css/css-flexbox/flexbox-safe-overflow-position-003.html
+css/css-flexbox/flexbox-safe-overflow-position-004.html
