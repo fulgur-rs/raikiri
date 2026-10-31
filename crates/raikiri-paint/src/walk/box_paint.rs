@@ -294,23 +294,59 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             cv,
             inside_fixed,
             fixed_in_viewport,
+            paint_y,
+            paint_height,
             ..
         } = *element;
         let PageGeometry {
             page_clip_transform,
             page_content_clip,
+            page_top,
+            flow_band,
             ..
         } = self.geometry;
         // Paint element background (CSS Backgrounds 3 §2.2).
         // Shift applies to the box itself per CSS 2.1 §10.8.1.
-        let clip_background = page_content_clip.filter(|_| {
-            !inside_fixed
-                && !fixed_in_viewport
-                && matches!(
-                    cv.position,
-                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                )
-        });
+        let clip_background = page_content_clip
+            .filter(|_| {
+                !inside_fixed
+                    && !fixed_in_viewport
+                    && matches!(
+                        cv.position,
+                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                    )
+            })
+            .or_else(|| {
+                // An absolutely positioned box is laid out whole, not broken
+                // at the pages. Its background is cut to the page area where
+                // the box goes on to the next page or comes from the page
+                // before, as the background of each fragment of a broken box
+                // is (CSS Fragmentation 3, section 5.4). On the first page a
+                // box above the page area lies in the margin, and is not cut.
+                const UNBOUNDED: f64 = 1.0e7;
+                let clip = page_content_clip?;
+                if inside_fixed
+                    || fixed_in_viewport
+                    || flow_band.is_some()
+                    || !matches!(cv.position, PositionValue::Absolute)
+                {
+                    return None;
+                }
+                let continues_from_before = page_top > 0.0 && f64::from(paint_y) < clip.y0 - 0.01;
+                let continues_after = f64::from(paint_y + paint_height) > clip.y1 + 0.01;
+                (continues_from_before || continues_after).then(|| {
+                    Rect::new(
+                        -UNBOUNDED,
+                        if continues_from_before {
+                            clip.y0
+                        } else {
+                            -UNBOUNDED
+                        },
+                        UNBOUNDED,
+                        if continues_after { clip.y1 } else { UNBOUNDED },
+                    )
+                })
+            });
         if let Some(clip) = clip_background {
             self.scene.scene.push_clip_layer(page_clip_transform, &clip);
         }
