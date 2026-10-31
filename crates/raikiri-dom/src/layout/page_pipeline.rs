@@ -8263,6 +8263,7 @@ fn place_repeated_table_footers(
         .filter(|(_, group)| group.footer && group.visit_shift.is_none())
         .map(|(&id, _)| id)
         .collect();
+    // cov:ignore: pagination reaches every footer unless the page limit stops it first.
     for footer_id in footers {
         // Without a visit, the footer keeps its offset below the table's top.
         let footer = &table_headers.headers[&footer_id];
