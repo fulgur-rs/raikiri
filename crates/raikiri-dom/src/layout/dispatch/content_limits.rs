@@ -28,6 +28,7 @@ use crate::layout::protocol::{
 };
 use crate::layout::taffy_adapter::LayoutCache;
 use crate::node::FormattingContext;
+use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
@@ -513,6 +514,94 @@ pub(crate) fn with_oof_content_limits<R>(
             Ok(value) => value,
             Err(payload) => std::panic::resume_unwind(payload),
         }
+    })
+}
+
+/// The `max-width` overrides that keep the absolutely positioned tables among
+/// `candidates` at least as wide as their min-content width.
+///
+/// A table is never narrower than its columns can be, whatever its `max-width`
+/// says (CSS Tables 3 §3, csswg-drafts#5336), but the library clamps every
+/// out-of-flow box to its `max-width`, so a table with a `max-width` below its
+/// min-content width came out as wide as the limit. The table is measured at
+/// its min-content width, without its own `width`, `min-width` and `max-width`,
+/// and a `max-width` below that width is raised to it. A `max-width` the
+/// content fits in stays as it is: the library also offers the table that room
+/// to wrap its content in. `containing_width` is the width of the containing
+/// block, which the percentages resolve against.
+pub(super) fn table_max_width_floors(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_width: f32,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let limited = candidates
+        .iter()
+        .copied()
+        .filter_map(|candidate| {
+            let idx = usize::from(candidate);
+            if !is_table_content_limits(tree, idx) {
+                return None;
+            }
+            let adjustment = box_sizing_adjustment(tree, idx, containing_width);
+            let maximum = tree
+                .physical_style(idx)
+                .max_size()
+                .width
+                .maybe_resolve(Some(containing_width))?
+                + adjustment;
+            Some((candidate, maximum, adjustment))
+        })
+        .collect::<Vec<_>>();
+    if limited.is_empty() {
+        return Vec::new();
+    }
+    scoped(tree, |tree| {
+        limited
+            .into_iter()
+            .filter_map(|(node_id, maximum, adjustment)| {
+                let idx = usize::from(node_id);
+                let along = LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Both,
+                    known_dimensions: Size::NONE,
+                    known_dimensions_are_definite: Size {
+                        width: false,
+                        height: false,
+                    },
+                    parent_size: Size {
+                        width: Some(containing_width),
+                        height: None,
+                    },
+                    available_space: Size {
+                        width: AvailableSpace::MinContent,
+                        height: AvailableSpace::MaxContent,
+                    },
+                    vertical_margins_are_collapsible: Line::FALSE,
+                };
+                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+                use LengthProperty::*;
+                let minimum = probe(
+                    tree,
+                    node_id,
+                    key,
+                    along,
+                    neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
+                );
+                (minimum > maximum).then(|| {
+                    let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
+                    let floor = OwnedPropertyOverride::length(
+                        MaxWidth,
+                        raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                            (minimum - adjustment).max(0.0),
+                        ),
+                        true,
+                    )
+                    .expect("resolved pixel bound");
+                    (key, floor)
+                })
+            })
+            .collect()
     })
 }
 
