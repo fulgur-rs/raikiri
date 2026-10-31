@@ -249,6 +249,26 @@ fn grid_height_in_wrapper(
     f32_max_compat(wrapper_height - caption_height, 0.0)
 }
 
+/// The `min-height` that bounds the grid box of a table whose flex column
+/// grew or shrank it: the container bounds the item, the whole wrapper box, so
+/// the grid has what the caption leaves of the minimum. Any other minimum bounds
+/// the grid box itself.
+fn min_h_outer_of_grid(
+    doc: &Document,
+    table: usize,
+    min_h_outer: Option<f32>,
+    item_is_flexed: bool,
+    caption: Option<&(Size<f32>, OofCandidates)>,
+) -> Option<f32> {
+    min_h_outer.map(|minimum| {
+        if item_is_flexed {
+            grid_height_in_wrapper(doc, table, minimum, caption)
+        } else {
+            minimum
+        }
+    })
+}
+
 fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
     let Some(caption) = table_caption(doc, table)
         .filter(|&id| doc.nodes[id].layout_position() != Position::Absolute)
@@ -654,15 +674,22 @@ fn compute_table_layout_checked(
         // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
         let table_size = doc.table_style(table_idx).size();
+        // The size of the content of a flex column item (the measure behind its
+        // automatic minimum size, CSS Flexbox 1 §4.5) is that of its rows and
+        // caption, not the height it states: the flex algorithm weighs the two
+        // against each other, and a `flex-basis` or a lower container can take
+        // the item under the height.
+        let states_height = !(flex_column_parent && inputs.sizing_mode == SizingMode::ContentSize);
         let effective_known = Size {
             width: inputs
                 .known_dimensions
                 .width
                 .or(stated_table_width(table_size.width, &inputs)),
-            height: inputs.known_dimensions.height.or(resolve_dimension(
-                table_size.height,
-                inputs.parent_size.height,
-            )),
+            height: inputs.known_dimensions.height.or_else(|| {
+                states_height
+                    .then(|| resolve_dimension(table_size.height, inputs.parent_size.height))
+                    .flatten()
+            }),
         };
 
         let border_spacing = if collapse {
@@ -818,8 +845,21 @@ fn compute_table_layout_checked(
             } else {
                 layout_table_caption(doc, table_idx, width, inputs.parent_size.height)
             };
+            let min_h_outer = min_h_outer_of_grid(
+                doc,
+                table_idx,
+                min_h_outer,
+                item_is_flexed,
+                early_caption.as_ref(),
+            );
+            // A content-size measure of a flex column item has no height to
+            // state: it reports the content, so the container can shrink the
+            // item below its `height`.
             let stated_h = specified_height
-                .filter(|_| !known_is_wrapper_height)
+                .filter(|_| {
+                    !known_is_wrapper_height
+                        && (states_height || inputs.known_dimensions.height.is_some())
+                })
                 .map(|stated| {
                     f32_max_compat(
                         inputs.known_dimensions.height.unwrap_or(stated + lift_h),
@@ -1244,6 +1284,13 @@ fn compute_table_layout_checked(
         } else {
             layout_table_caption(doc, table_idx, final_width, inputs.parent_size.height)
         };
+        let min_h_outer = min_h_outer_of_grid(
+            doc,
+            table_idx,
+            min_h_outer,
+            item_is_flexed,
+            early_caption.as_ref(),
+        );
         // A flex or grid parent assigns the table the height of the whole
         // wrapper box, caption included, and the grid box takes what is left of
         // it; so does the layout of an absolutely positioned table. This does
