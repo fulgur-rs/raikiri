@@ -781,7 +781,7 @@ fn follow_moved_table_rows(
         table_headers
             .headers
             .values()
-            .any(|header| header.table == table)
+            .any(|header| header.table == table && !header.footer)
     });
 }
 
@@ -3690,10 +3690,21 @@ fn paginate_flow(
         control,
     )
     .collect_flow(root_flow_offset)?;
-    let table_headers =
-        HeaderRepeats::prepare(document, cascade, roots.contents, page_step, |id| {
-            root_flow_offset + current_abs_y(document, id)
-        });
+    let table_headers = HeaderRepeats::prepare(
+        document,
+        cascade,
+        roots.contents,
+        page_step,
+        |id| root_flow_offset + current_abs_y(document, id),
+        |id| {
+            super::page::is_monolithic_for_pagination_with_transposed_axes(
+                document,
+                cascade,
+                id,
+                document.context.pagination_on_transposed_axes,
+            )
+        },
+    );
     let avoided_breaks = AvoidedBreaks::collect(
         document,
         cascade,
@@ -3764,6 +3775,7 @@ fn paginate_flow(
         document.context.page_filled_columns_moved = true;
         return Ok(Vec::new());
     }
+    place_repeated_table_footers(document, &mut state.table_headers, &page_origins);
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(
@@ -3958,7 +3970,7 @@ fn first_row_ends(
                 && !document.nodes[table]
                     .children
                     .iter()
-                    .any(|child| table_headers.headers.contains_key(child))
+                    .any(|&child| table_headers.repeats_header(child))
         })
         .map(|(table, (row, end))| {
             let group_end = row_groups
@@ -4706,13 +4718,16 @@ impl AvoidedBreaks {
         // cell-internal breaks remain out of this narrow row-boundary pass.
         // A row that follows a repeated header must fit beside the header's
         // copy on the next page; otherwise moving it gains nothing.
+        // A row of a table that repeats its footer leaves room for the
+        // footer's copy below it, on this page and on the next.
         let repeated_header_height = table_headers.repeated_height_before(node_id);
+        let repeated_footer_height = table_headers.repeated_height_after(node_id);
         let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
         let table_row = candidate.context.is_table_row()
             && table_row_moves(
                 flow_y,
-                height,
-                table_row_lead + height + repeated_header_height,
+                height + repeated_footer_height,
+                table_row_lead + height + repeated_header_height + repeated_footer_height,
                 page_start,
                 page_end,
                 next_page_step,
@@ -4978,13 +4993,76 @@ fn follow_moved_ifc_text(
         return; // cov:ignore: the paragraph root of an indexed text carries its line records.
     };
     lines.shifts.push(first.line, delta);
-    let boxes: Vec<usize> = ifc.boxes.iter().map(|b| b.node).collect();
-    for b in boxes {
+    let boxes: Vec<(usize, IfcBoxKind)> = ifc.boxes.iter().map(|b| (b.node, b.kind)).collect();
+    let last_line_end = lines.lines.last().map(|line| {
+        line.block_offset() + line.block_size() + lines.shifts.of(lines.lines.len() - 1)
+    });
+    for &(b, kind) in &boxes {
+        // A float before the text in the source is a page candidate of its
+        // own and was placed in the paginated flow before the text was.
+        if kind == IfcBoxKind::Float && precedes_in_tree(document, b, text) {
+            continue;
+        }
         let location = &mut document.nodes[b].layout.location;
         if location.y >= old_top - 0.01 {
             location.y += delta;
         }
     }
+    // The root holds the lines that moved, and the floats of the paragraph
+    // when it establishes a formatting context of its own.
+    let node = &document.nodes[root];
+    let contains_floats = matches!(
+        node.display(),
+        DisplayValue::FlowRoot
+            | DisplayValue::InlineBlock
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+    ) || matches!(
+        node.position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    );
+    let floats_end = boxes
+        .iter()
+        .filter(|&&(_, kind)| contains_floats && kind == IfcBoxKind::Float)
+        .map(|&(b, _)| {
+            let layout = document.nodes[b].layout;
+            layout.location.y + layout.size.height + layout.margin.bottom
+        })
+        .fold(f32::NEG_INFINITY, f32::max);
+    let layout = &mut document.table_layout_node_mut(root).layout;
+    if let Some(end) = last_line_end {
+        let height = (layout.border.top
+            + layout.padding.top
+            + end
+            + layout.padding.bottom
+            + layout.border.bottom)
+            .max(floats_end + layout.padding.bottom + layout.border.bottom);
+        layout.size.height = layout.size.height.max(height);
+    }
+}
+
+/// Whether `a` comes before `b` in tree order. An ancestor comes before its
+/// descendants.
+fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
+    let a_chain: Vec<usize> = document.inclusive_ancestors(a).collect();
+    let mut b_child = None;
+    for id in document.inclusive_ancestors(b) {
+        if let Some(position) = a_chain.iter().position(|&ancestor| ancestor == id) {
+            let Some(b_child) = b_child else {
+                // `b` is `a` or one of its ancestors.
+                return false;
+            };
+            let Some(a_child) = position.checked_sub(1).map(|index| a_chain[index]) else {
+                // `a` is an ancestor of `b`.
+                return true;
+            };
+            let children = &document.nodes[id].children;
+            let index = |child| children.iter().position(|&c| c == child);
+            return index(a_child) < index(b_child);
+        }
+        b_child = Some(id);
+    }
+    false
 }
 
 /// A block child of a paragraph laid out by the inline engine was moved
@@ -7474,9 +7552,11 @@ fn lines_can_shift_inside(document: &super::context::LayoutSession<'_>, block_id
 /// Whether the lines of the paragraph `block_id` that follow its block
 /// children can move down inside it: its height grows with them, it is in one
 /// column, and the only boxes it lays out are those block children, which
-/// follow the moved lines when pagination reaches them.
+/// follow the moved lines when pagination reaches them, and out-of-flow boxes
+/// that a block-axis inset places away from the lines.
 fn lines_can_shift_between_blocks(
     document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
     height_follows_content(document, block_id)
@@ -7485,7 +7565,11 @@ fn lines_can_shift_between_blocks(
             .and_then(|node| node.ifc.as_ref())
             .is_some_and(|ifc| {
                 ifc.multicol_fragments.is_none()
-                    && ifc.boxes.iter().all(|b| b.kind == IfcBoxKind::Block)
+                    && ifc.boxes.iter().all(|b| {
+                        b.kind == IfcBoxKind::Block
+                            || (b.kind == IfcBoxKind::OutOfFlow
+                                && has_explicit_block_axis_inset(document, cascade, b.node))
+                    })
             })
 }
 
@@ -7997,7 +8081,9 @@ fn break_margins(
 
 /// Places the repeated header of the table that `row` belongs to, when no
 /// page holds it yet: the header follows the flow shift so far, and the page
-/// it lands on records the placement.
+/// it lands on records the placement. The rows of a table whose body is all
+/// in anonymous rows are not placed on their own, so the table itself places
+/// its header.
 fn place_first_table_header(
     document: &mut Document,
     table_headers: &mut HeaderRepeats,
@@ -8005,7 +8091,11 @@ fn place_first_table_header(
     flow_shift: f32,
     page_origins: &PageOrigins,
 ) {
-    let Some(&header_id) = table_headers.rows.get(&row) else {
+    let Some(&header_id) = table_headers
+        .rows
+        .get(&row)
+        .or_else(|| table_headers.anonymous_body_tables.get(&row))
+    else {
         return;
     };
     let header = table_headers
@@ -8028,7 +8118,52 @@ fn place_first_table_header(
 /// The first body row also brings the first header to its page when the
 /// header was left alone on an earlier one. Returns how far `row` moved down
 /// below the header copy, which is zero when nothing moves.
+///
+/// When the table repeats its footer, a row that starts a later page than
+/// the one the previous body row ended on closes that page with a copy of
+/// the footer below the previous row.
 fn make_room_for_table_header(
+    document: &mut Document,
+    table_headers: &mut HeaderRepeats,
+    row: usize,
+    row_y: f32,
+    height: f32,
+    current_page: u32,
+    page_origins: &PageOrigins,
+) -> f32 {
+    let delta = make_room_for_header_copy(
+        document,
+        table_headers,
+        row,
+        row_y,
+        height,
+        current_page,
+        page_origins,
+    );
+    if let Some(&footer_id) = table_headers.footer_rows.get(&row) {
+        let footer = table_headers
+            .headers
+            .get_mut(&footer_id)
+            .expect("prepared footer");
+        if let Some((page, bottom)) = footer.last_row
+            && page < current_page
+        {
+            footer
+                .placements
+                .entry(page)
+                .or_insert((page_origins.origin(page), bottom + footer.gap));
+        }
+        let bottom = row_y + delta + height;
+        let end_page = page_origins
+            .page_index_for_y(bottom - 0.001)
+            .max(current_page);
+        footer.last_row = Some((end_page, bottom));
+    }
+    delta
+}
+
+/// The header part of [`make_room_for_table_header`].
+fn make_room_for_header_copy(
     document: &mut Document,
     table_headers: &mut HeaderRepeats,
     row: usize,
@@ -8072,6 +8207,93 @@ fn make_room_for_table_header(
         return delta;
     }
     0.0
+}
+
+/// Places the source of the repeated footer `footer_id` below the body rows
+/// placed before it, at its position moved by `flow_shift`, or at the top of
+/// the next page when it would cross the page end. Returns how much further
+/// down than `flow_shift` alone the footer went.
+fn place_table_footer(
+    document: &mut Document,
+    table_headers: &mut HeaderRepeats,
+    footer_id: usize,
+    flow_shift: f32,
+    page_origins: &PageOrigins,
+) -> f32 {
+    let footer = table_headers.headers.get_mut(&footer_id).expect("footer");
+    footer.visit_shift = Some(flow_shift);
+    let natural = footer.source_y + flow_shift;
+    let after_rows = footer
+        .last_row
+        .map_or(f32::NEG_INFINITY, |(_, bottom)| bottom + footer.gap);
+    let mut y = natural.max(after_rows);
+    let mut page = page_origins.page_index_for_y(y + 0.001);
+    let page_end = page_origins.origin(page) + page_origins.step_at(page);
+    let next = page.saturating_add(1);
+    if y + footer.height > page_end + 0.001 && footer.height <= page_origins.step_at(next) + 0.001 {
+        page = next;
+        y = page_origins.origin(page);
+    }
+    materialize_y(document, footer_id, y);
+    footer.source_y = y;
+    footer
+        .placements
+        .insert(page, (page_origins.origin(page), y));
+    (y - natural).max(0.0)
+}
+
+/// Places the repeated footers of the tables once pagination has placed
+/// their rows, and the copies that a body box which does not break needs on
+/// the pages it runs over.
+///
+/// A footer source that pagination did not reach keeps its offset below the
+/// table's top (see [`place_table_footer`]).
+/// A body box that runs past a page edge without breaking carries the
+/// table onto the next page, so that page opens with a header copy over
+/// the box, and the page it runs out of closes with a footer copy over the
+/// box at the page's end.
+fn place_repeated_table_footers(
+    document: &mut Document,
+    table_headers: &mut HeaderRepeats,
+    page_origins: &PageOrigins,
+) {
+    let footers: Vec<usize> = table_headers
+        .headers
+        .iter()
+        .filter(|(_, group)| group.footer && group.visit_shift.is_none())
+        .map(|(&id, _)| id)
+        .collect();
+    // cov:ignore: pagination reaches every footer unless the page limit stops it first.
+    for footer_id in footers {
+        // Without a visit, the footer keeps its offset below the table's top.
+        let footer = &table_headers.headers[&footer_id];
+        let shift = current_abs_y(document, footer.table) - footer.table_source_y;
+        place_table_footer(document, table_headers, footer_id, shift, page_origins);
+    }
+    for index in 0..table_headers.monolithic.len() {
+        let (id, groups) = table_headers.monolithic[index];
+        let top = current_abs_y(document, id);
+        let bottom = top + document.nodes[id].layout.size.height;
+        let first = page_origins.page_index_for_y(top + 0.001);
+        let last = page_origins.page_index_for_y(bottom - 0.001);
+        for group_id in groups.into_iter().flatten() {
+            let group = table_headers.headers.get_mut(&group_id).expect("group");
+            let pages = if group.footer {
+                first..last
+            } else {
+                first.saturating_add(1)..last.saturating_add(1)
+            };
+            for page in pages {
+                let origin = page_origins.origin(page);
+                let y = if group.footer {
+                    origin + page_origins.step_at(page) - group.height
+                } else {
+                    origin
+                };
+                group.placements.entry(page).or_insert((origin, y));
+            }
+        }
+    }
 }
 
 /// The lines of a paragraph that move down inside it, away from a break

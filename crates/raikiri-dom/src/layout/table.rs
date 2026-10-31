@@ -1161,10 +1161,16 @@ fn compute_table_layout_checked(
         // for percentage-sized children of a single-row cell. Fragmentation can
         // impose a definite height on a single-row table without doing so; keep
         // that free space in the wrapper rather than manufacturing a cell
-        // fragment in that case.
+        // fragment in that case. A flex or grid parent is different: the height
+        // it gives is the size the table ends up with (stretched, grown, or
+        // from the basis), and the rows take what the table leaves them
+        // whether there is one or several. A vertical table is left out: its
+        // row tracks run along the physical width, and the sum that sizes the
+        // box counts them once for each column.
+        let parent_sizes_rows = parent_is_flex_or_grid && !vertical_writing;
         let known_target = assigned_grid_height
             .or(effective_known.height)
-            .filter(|_| grid.rows.len() > 1 || specified_height.is_some())
+            .filter(|_| grid.rows.len() > 1 || specified_height.is_some() || parent_sizes_rows)
             .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
         // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer

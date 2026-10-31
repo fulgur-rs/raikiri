@@ -22,9 +22,9 @@ use super::{
     move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_text_candidate, positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, shift_text_candidate, straddling_line,
-    text_changes_page_name, text_sets_page_name,
+    place_table_footer, place_text_candidate, positioned_text_start_y, reaches_line,
+    record_candidate_pages, reset_inline_x_for_page_transition, shift_text_candidate,
+    straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -318,7 +318,23 @@ impl PaginationState {
         let node_id = candidate.node_id;
         // Header lines stay together and are placed from the table's rows,
         // rather than acquiring independent text-page shifts.
-        if self.table_headers.owner(node_id).is_some() {
+        if let Some(group) = self.table_headers.owner(node_id) {
+            // The footer closes the table below the rows placed before it,
+            // and what follows the table follows the footer.
+            if self
+                .table_headers
+                .headers
+                .get(&group)
+                .is_some_and(|footer| footer.footer && footer.visit_shift.is_none())
+            {
+                self.flow_shift += place_table_footer(
+                    document,
+                    &mut self.table_headers,
+                    group,
+                    self.flow_shift,
+                    env.page_origins,
+                );
+            }
             return Ok(None);
         }
         let name_participates_in_flow = candidate.context.page_name_in_flow();
@@ -1401,7 +1417,7 @@ impl PaginationState {
             return Ok(0.0);
         };
         if !self.deferred_shifts.line_splits.is_empty()
-            || !lines_can_shift_between_blocks(document, root)
+            || !lines_can_shift_between_blocks(document, env.cascade, root)
         {
             return Ok(0.0);
         }

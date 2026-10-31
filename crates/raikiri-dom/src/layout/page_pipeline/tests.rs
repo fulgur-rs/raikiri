@@ -34,6 +34,7 @@ mod sibling_adjacency_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod top_edge_tests;
+mod tree_order_tests;
 mod vertical_grid_tests;
 
 fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
@@ -422,8 +423,14 @@ fn repeated_header_columns_shift_shared_overflow_and_break_clips_together() {
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
     // Prepare real table ownership, then supply independently scheduled
     // repeated-header and column placements to the projection boundary.
-    doc.table_objects.headers =
-        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    doc.table_objects.headers = crate::layout::table::headers::HeaderRepeats::prepare(
+        &doc,
+        &cascade,
+        body,
+        600.0,
+        |_| 0.0,
+        |_| false,
+    );
     let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
     repeated.placements.insert(0, (0.0, 0.0));
     repeated.placements.insert(1, (100.0, 107.5));
@@ -1736,11 +1743,19 @@ fn inline_block_width_auto_shrink_wraps_to_content() {
     // Block sibling first so body keeps mixed children (no minimal
     // line-box rerouting) and lays the inline-blocks out as block
     // children with a definite available width.
-    let _p = doc.append_element(Some(body), "p", None::<&str>);
+    let _p = doc.append_element(Some(body), "p", Some("display:block"));
     let ib = doc.append_element(Some(body), "div", Some("display:inline-block"));
-    let _child = doc.append_element(Some(ib), "div", Some("width:100px;height:20px"));
+    let _child = doc.append_element(
+        Some(ib),
+        "div",
+        Some("display:block;width:100px;height:20px"),
+    );
     let ib_fixed = doc.append_element(Some(body), "div", Some("display:inline-block;width:300px"));
-    let _fixed_child = doc.append_element(Some(ib_fixed), "div", Some("width:100px;height:20px"));
+    let _fixed_child = doc.append_element(
+        Some(ib_fixed),
+        "div",
+        Some("display:block;width:100px;height:20px"),
+    );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -1850,9 +1865,17 @@ fn order_is_ignored_for_non_flex_grid_children() {
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let _head = doc.append_element(Some(html), "head", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let block = doc.append_element(Some(body), "div", None::<&str>);
-    let a = doc.append_element(Some(block), "div", Some("order:2;height:20px"));
-    let b = doc.append_element(Some(block), "div", Some("order:-1;height:20px"));
+    let block = doc.append_element(Some(body), "div", Some("display:block"));
+    let a = doc.append_element(
+        Some(block),
+        "div",
+        Some("display:block;order:2;height:20px"),
+    );
+    let b = doc.append_element(
+        Some(block),
+        "div",
+        Some("display:block;order:-1;height:20px"),
+    );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -3668,14 +3691,14 @@ fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let lead = doc.append_element(Some(body), "div", Some("height:20px"));
+    let lead = doc.append_element(Some(body), "div", Some("display:block;height:20px"));
     let note = doc.append_element(
         Some(body),
         "aside",
         Some("float:footnote;height:10px;width:50px"),
     );
     doc.append_text(note, "note");
-    let following = doc.append_element(Some(body), "div", Some("height:10px"));
+    let following = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3776,8 +3799,16 @@ fn direct_absolute_auto_width_shrink_to_fit_block_child() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let abs_pos = doc.append_element(Some(body), "div", Some("position:absolute; height:100px"));
-    let _child = doc.append_element(Some(abs_pos), "div", Some("width:100px;height:20px"));
+    let abs_pos = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;position:absolute; height:100px"),
+    );
+    let _child = doc.append_element(
+        Some(abs_pos),
+        "div",
+        Some("display:block;width:100px;height:20px"),
+    );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -3804,9 +3835,17 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let outer = doc.append_element(Some(body), "div", Some("position:relative"));
-    let abs_pos = doc.append_element(Some(outer), "div", Some("position:absolute; height:100px"));
-    let _child = doc.append_element(Some(abs_pos), "div", Some("width:100px;height:20px"));
+    let outer = doc.append_element(Some(body), "div", Some("display:block;position:relative"));
+    let abs_pos = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;position:absolute; height:100px"),
+    );
+    let _child = doc.append_element(
+        Some(abs_pos),
+        "div",
+        Some("display:block;width:100px;height:20px"),
+    );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -10729,8 +10768,14 @@ fn repeated_header_copies_are_charged_to_the_projection_budget() {
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.table_objects.headers =
-        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    doc.table_objects.headers = crate::layout::table::headers::HeaderRepeats::prepare(
+        &doc,
+        &cascade,
+        body,
+        600.0,
+        |_| 0.0,
+        |_| false,
+    );
     let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
     let pages = 64;
     let slices: Vec<_> = (0..pages)
@@ -17196,8 +17241,14 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
     let anonymous_cell = doc.anonymous_table_cells(text_table).next().unwrap().0;
-    let headers =
-        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    let headers = crate::layout::table::headers::HeaderRepeats::prepare(
+        &doc,
+        &cascade,
+        body,
+        600.0,
+        |_| 0.0,
+        |_| false,
+    );
     assert!(headers.owner(header_cell).is_some());
 
     let pages = PageOrigins::new(&[], 100.0);

@@ -562,3 +562,5 @@ thread_local! {
 pub(super) fn record_id_visits(visits: usize) {
     ID_VISITS.with(|count| count.set(count.get() + visits));
 }
+
+mod local_matches_tests;

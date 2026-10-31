@@ -162,18 +162,25 @@ pub(super) fn place_sources(
             .headers
             .placements_of(source.node_id.0 as usize);
         let is_table_header = header_placements.is_some();
+        let is_table_footer = is_table_header
+            && document
+                .table_objects
+                .headers
+                .is_footer_source(source.node_id.0 as usize);
         let placements = fragment_placements(source, header_placements, pages, &slots, work)?;
         let fragment_count = placements.len() as u32;
         for (fragment_index, placement) in placements.into_iter().enumerate() {
             if let Some(page) = pages.get_mut(placement.page_slot) {
-                page.items.push(fragment_item(
+                let mut item = fragment_item(
                     source,
                     &placement,
                     page,
                     flow_axis,
                     is_table_header,
                     (fragment_index as u32, fragment_count),
-                ));
+                );
+                item.is_table_footer_repeat = is_table_footer;
+                page.items.push(item);
             }
         }
     }

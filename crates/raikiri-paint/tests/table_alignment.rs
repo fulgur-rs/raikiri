@@ -579,7 +579,7 @@ fn document() -> (Document, usize) {
 }
 
 fn element(doc: &mut Document, parent: usize, style: &str) -> usize {
-    doc.append_element(Some(parent), "div", Some(style))
+    doc.append_element(Some(parent), "div", Some(format!("display:block;{style}")))
 }
 
 fn page() -> PageBox {

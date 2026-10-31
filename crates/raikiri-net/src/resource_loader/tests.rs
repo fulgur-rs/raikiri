@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod admission_tests;
 mod fragment_tests;
+mod scene_flight_tests;
 
 struct RejectingProvider;
 

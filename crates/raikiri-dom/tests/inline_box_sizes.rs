@@ -1,10 +1,12 @@
-//! An inline box that holds a block (CSS 2.1 section 9.2.1.1) keeps the rules of
-//! an inline box: its `width`, `height`, `min-*` and `max-*` sizes and its
-//! vertical margins do not apply to it (sections 8.3, 10.3.1 and 10.6.1), and
-//! its vertical padding and border are painted without changing the height of
-//! a line. The block inside takes its width from the block that contains the
-//! inline box, whatever the inline box says. An edge along the line (a side
-//! border, say) still makes a line box before and after the block.
+//! A non-atomic inline box keeps the rules of an inline box, whether it holds
+//! text, a block that splits it (CSS 2.1 section 9.2.1.1) or nothing: its `width`,
+//! `height`, `min-*` and `max-*` sizes and its vertical margins do not apply to
+//! it (sections 8.3, 10.3.1 and 10.6.1), and its vertical padding and border are
+//! painted without changing the height of a line. The block inside takes its
+//! width from the block that contains the inline box, whatever the inline box
+//! says. An edge along the line (a side border, say) still makes a line box
+//! before and after the block, and a line of its own for a box with nothing in
+//! it.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
@@ -334,5 +336,210 @@ fn a_last_line_of_inline_boxes_with_only_vertical_edges_makes_no_line() {
             ("o", (8.0, 8.0, 100.0, 30.0)),
             ("c", (8.0, 38.0, 784.0, 10.0)),
         ],
+    );
+}
+
+/// `inner` in a container 100px wide, followed by a block of 10px.
+fn in_container(inner: &str, container_style: &str) -> String {
+    format!(
+        r#"<div id=o style="width:100px;{container_style}">{inner}</div><div id=c style="height:10px"></div>"#
+    )
+}
+
+/// An inline box with `style` and no content in a container of its own.
+fn around_nothing(style: &str) -> String {
+    in_container(&format!(r#"<span style="{style}"></span>"#), "")
+}
+
+/// The container `o` is `o` high and the block `c` after it starts at `8 + o`.
+fn container_height(o: f32) -> [(&'static str, Rect); 2] {
+    [
+        ("o", (8.0, 8.0, 100.0, o)),
+        ("c", (8.0, 8.0 + o, 784.0, 10.0)),
+    ]
+}
+
+#[test]
+fn an_empty_inline_box_ignores_what_does_not_apply_to_it() {
+    for style in IGNORED.iter().chain(&[
+        "width:30px",
+        "height:20px",
+        "width:30px;height:20px",
+        "position:relative;top:3px;padding:20px 0",
+        "position:relative;width:30px;height:20px",
+    ]) {
+        check(&around_nothing(style), &container_height(0.0));
+    }
+}
+
+#[test]
+fn an_empty_inline_box_with_an_edge_along_the_line_makes_a_line() {
+    for style in [
+        "border-left:5px solid",
+        "padding-left:5px",
+        "border:5px solid",
+        "padding:20px",
+        "padding:20px 0 20px 5px",
+    ] {
+        check(&around_nothing(style), &container_height(10.0));
+    }
+}
+
+#[test]
+fn an_inline_box_holding_nothing_but_whitespace_or_nothing_drawn_is_empty() {
+    let style = "padding:20px 0";
+    for inner in [
+        format!(r#"<span style="{style}"> </span>"#),
+        format!(r#" <span style="{style}"></span>"#),
+        format!(r#"<span style="{style}"></span> "#),
+        format!(r#"<span style="{style}"><!-- c --></span>"#),
+        format!(r#"<span style="{style}"><div style="display:none"></div></span>"#),
+        format!(r#"<a style="{style}"></a>"#),
+    ] {
+        check(&in_container(&inner, ""), &container_height(0.0));
+    }
+}
+
+#[test]
+fn empty_inline_boxes_nested_or_in_a_row_ignore_what_does_not_apply_to_them() {
+    let style = "padding:20px 0";
+    for inner in [
+        format!(r#"<span style="{style}"><span style="{style}"></span></span>"#),
+        format!(r#"<span style="{style}"><span></span></span>"#),
+        format!(r#"<span style="{style}"></span><span style="{style}"></span>"#),
+        format!(r#"<span><span style="{style}"></span></span>"#),
+    ] {
+        check(&in_container(&inner, ""), &container_height(0.0));
+    }
+}
+
+#[test]
+fn an_empty_inline_box_next_to_text_or_blocks_makes_no_line_of_its_own() {
+    let span = r#"<span style="padding:20px 0"></span>"#;
+    let block = |id| format!(r#"<div id={id} style="height:10px"></div>"#);
+    for inner in [format!("x{span}"), format!("{span}x")] {
+        check(&in_container(&inner, ""), &container_height(10.0));
+    }
+    check(
+        &in_container(&format!("{}{span}", block("b")), ""),
+        &[
+            ("o", (8.0, 8.0, 100.0, 10.0)),
+            ("b", (8.0, 8.0, 100.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    );
+    check(
+        &in_container(&format!("{span}{}", block("b")), ""),
+        &[
+            ("o", (8.0, 8.0, 100.0, 10.0)),
+            ("b", (8.0, 8.0, 100.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    );
+    check(
+        &in_container(&format!("{}{span}{}", block("b"), block("b2")), ""),
+        &[
+            ("o", (8.0, 8.0, 100.0, 20.0)),
+            ("b", (8.0, 8.0, 100.0, 10.0)),
+            ("b2", (8.0, 18.0, 100.0, 10.0)),
+            ("c", (8.0, 28.0, 784.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn an_empty_inline_box_in_any_container_ignores_what_does_not_apply_to_it() {
+    let span = r#"<span style="padding:20px 0"></span>"#;
+    check(
+        &format!(
+            r#"<div id=o style="display:inline-block;vertical-align:top;width:100px">{span}</div>"#
+        ),
+        &[("o", (8.0, 8.0, 100.0, 0.0))],
+    );
+    check(
+        &format!(
+            r#"<ul style="margin:0;padding:0;list-style:none"><li id=o>{span}</li></ul><div id=c style="height:10px"></div>"#
+        ),
+        &[
+            ("o", (8.0, 8.0, 784.0, 0.0)),
+            ("c", (8.0, 8.0, 784.0, 10.0)),
+        ],
+    );
+    check(
+        &format!(
+            r#"<div style="display:table"><div style="display:table-row"><div id=o style="display:table-cell;width:100px">{span}</div></div></div><div id=c style="height:10px"></div>"#
+        ),
+        &[
+            ("o", (8.0, 8.0, 100.0, 0.0)),
+            ("c", (8.0, 8.0, 784.0, 10.0)),
+        ],
+    );
+    check(
+        &in_container(&format!("<span>{span}</span>"), ""),
+        &container_height(0.0),
+    );
+}
+
+#[test]
+fn an_empty_box_that_a_flex_or_grid_container_blockifies_keeps_what_applies_to_it() {
+    for container in ["display:flex", "display:grid"] {
+        check(
+            &in_container(r#"<span style="padding:20px 0"></span>"#, container),
+            &container_height(40.0),
+        );
+    }
+    check(
+        &in_container(
+            r#"<span style="width:30px;height:20px"></span>"#,
+            "display:flex",
+        ),
+        &container_height(20.0),
+    );
+}
+
+#[test]
+fn an_empty_box_that_floats_or_is_absolute_takes_no_room_in_the_flow() {
+    for style in [
+        "float:left;width:30px;height:20px",
+        "position:absolute;width:30px;height:20px",
+    ] {
+        check(&around_nothing(style), &container_height(0.0));
+    }
+}
+
+#[test]
+fn an_empty_inline_box_before_a_break_or_holding_one_still_makes_a_line() {
+    check(&in_container("<br>", ""), &container_height(10.0));
+    check(
+        &in_container(r#"<span style="padding:20px 0"><br></span>"#, ""),
+        &container_height(10.0),
+    );
+}
+
+#[test]
+fn an_inline_box_with_text_keeps_the_box_it_is_painted_with() {
+    // The vertical padding and border stay in the box of an inline box with
+    // text, though they take no room on the line; its sizes do not apply.
+    let around = |style: &str, text: &str| {
+        format!(
+            r#"<div id=o style="margin-top:100px;width:100px">{text}<span id=s style="{style}">yy</span></div><div id=c style="height:10px"></div>"#
+        )
+    };
+    let rects = |s: Rect| [("o", (8.0, 100.0, 100.0, 10.0)), ("s", s)];
+    check(
+        &around("padding:20px 0", "x"),
+        &rects((18.0, 80.0, 20.0, 50.0)),
+    );
+    check(
+        &around("border-top:5px solid;border-bottom:7px solid", "x"),
+        &rects((18.0, 95.0, 20.0, 22.0)),
+    );
+    check(
+        &around("width:50px;height:50px;padding:2px", "x"),
+        &rects((18.0, 98.0, 24.0, 14.0)),
+    );
+    check(
+        &around("padding:20px 0", ""),
+        &rects((8.0, 80.0, 20.0, 50.0)),
     );
 }

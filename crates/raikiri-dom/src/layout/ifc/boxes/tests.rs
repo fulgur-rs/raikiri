@@ -383,3 +383,58 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
     assert_eq!((layout.location.x, layout.location.y), (20.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (26.0, 10.0));
 }
+
+/// `div(100px wide) > [float, float, float, "aa"]`: the third float does not
+/// fit beside the first two, and nothing of the line comes before it.
+fn floats_then_text_positions() -> (Vec<(f32, f32)>, (f32, f32)) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let floats: Vec<usize> = (0..3)
+        .map(|_| {
+            doc.append_element(
+                Some(root),
+                "div",
+                Some("display:block;float:left;width:50px;height:20px"),
+            )
+        })
+        .collect();
+    doc.append_text(root, "aa");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+    let root_rect = absolute_rect(&doc, root);
+    let positions = floats
+        .iter()
+        .map(|&float| {
+            let rect = absolute_rect(&doc, float);
+            (rect.0 - root_rect.0, rect.1 - root_rect.1)
+        })
+        .collect();
+    let line = &doc.nodes[root].ifc_lines().expect("ifc lines")[0];
+    (
+        positions,
+        (line_start_x(line).unwrap(), line.block_offset()),
+    )
+}
+
+#[test]
+fn a_float_that_starts_its_line_goes_below_earlier_floats_before_the_line() {
+    // CSS 2.1 9.5.1: the third float is placed below the first two as soon as
+    // it is met; the text that follows it in the source wraps beside it.
+    let (floats, line) = floats_then_text_positions();
+    assert_eq!(floats, [(0.0, 0.0), (50.0, 0.0), (0.0, 20.0)]);
+    assert_eq!(line, (50.0, 20.0));
+}

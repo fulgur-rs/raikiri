@@ -612,3 +612,27 @@ fn a_document_with_pictures_and_a_pattern_asks_for_the_raster_which_cannot_draw_
         Err(SvgError::UnsupportedImages)
     ));
 }
+
+#[test]
+fn equal_url_text_shares_success_and_failure_but_distinct_urls_stay_apart() {
+    let pictures = Pictures::new()
+        .url("quad.png", Some(quad()))
+        .url("quad.png?other", Some(quad()));
+    let image = scene(
+        SvgImageAccess::Any,
+        r##"<image href="gone.png" width="10" height="10"/>
+            <image href="gone.png" width="10" height="10"/>
+            <image href="quad.png" width="10" height="10"/>
+            <image href="quad.png" width="10" height="10"/>
+            <image href="quad.png?other" width="10" height="10"/>"##,
+        &pictures,
+    );
+    let found = rasters(&image.root);
+    assert_eq!(found.len(), 3);
+    assert!(Arc::ptr_eq(&found[0].image, &found[1].image));
+    assert!(!Arc::ptr_eq(&found[0].image, &found[2].image));
+    assert_eq!(
+        pictures.asked(),
+        ["url gone.png", "url quad.png", "url quad.png?other"]
+    );
+}

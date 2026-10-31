@@ -394,18 +394,22 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
     crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let sized = doc.append_element(Some(body), "div", Some("width:400px"));
-    let half = doc.append_element(Some(sized), "div", Some("width:50%"));
-    let auto = doc.append_element(Some(half), "div", None::<&str>);
+    let sized = doc.append_element(Some(body), "div", Some("display:block;width:400px"));
+    let half = doc.append_element(Some(sized), "div", Some("display:block;width:50%"));
+    let auto = doc.append_element(Some(half), "div", Some("display:block"));
     let intrinsic = doc.append_element(
         Some(auto),
         "div",
         Some("width:min-content;position:absolute"),
     );
     let flex = doc.append_element(Some(intrinsic), "div", Some("display:flex"));
-    let vertical = doc.append_element(Some(flex), "div", Some("writing-mode:vertical-rl"));
-    let leaf = doc.append_element(Some(vertical), "div", None::<&str>);
-    let late_parent = doc.append_element(Some(body), "div", Some("width:30px"));
+    let vertical = doc.append_element(
+        Some(flex),
+        "div",
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let leaf = doc.append_element(Some(vertical), "div", Some("display:block"));
+    let late_parent = doc.append_element(Some(body), "div", Some("display:block;width:30px"));
     // Reparent under a later arena index and keep both DOM edge representations consistent.
     doc.detach_from_parent(half);
     doc.attach_child(late_parent, half);
@@ -485,8 +489,12 @@ fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
 fn multicol_min_constrained_child_requires_all_constraints() {
     let constrained = |child_css: &str| {
         let mut doc = Document::new();
-        let parent = doc.append_element(Some(0), "div", None::<&str>);
-        doc.append_element(Some(parent), "div", Some(child_css));
+        let parent = doc.append_element(Some(0), "div", Some("display:block"));
+        doc.append_element(
+            Some(parent),
+            "div",
+            Some(format!("display:block;{child_css}")),
+        );
         with_bridged_session(&mut doc, |session| {
             multicol_has_min_constrained_child(session, parent)
         })
@@ -4076,7 +4084,7 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
 }
 
 #[test]
-fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
+fn ancestor_width_table_ignores_the_width_of_an_inline_box() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -4088,7 +4096,7 @@ fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
     let inner = doc.append_element(Some(outer), "span", Some("display:inline;width:30px"));
     let block = doc.append_element(Some(inner), "div", Some("display:block"));
     let text = doc.append_text(block, "test");
-    // An inline box without a block keeps the width it is given.
+    // So does an inline box with no block in it: no width applies to it.
     let plain = doc.append_element(Some(body), "span", Some("display:inline;width:50px"));
     let plain_text = doc.append_text(plain, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -4098,8 +4106,8 @@ fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
     assert_eq!(widths.content_width[inner], 400.0);
     assert_eq!(widths.authored_containing_width(block), Some(400.0));
     assert_eq!(widths.authored_containing_width(text), Some(400.0));
-    assert_eq!(widths.content_width[plain], 50.0);
-    assert_eq!(widths.authored_containing_width(plain_text), Some(50.0));
+    assert_eq!(widths.content_width[plain], 400.0);
+    assert_eq!(widths.authored_containing_width(plain_text), Some(400.0));
 }
 
 #[test]
@@ -4194,9 +4202,9 @@ fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
 
     let mut doc = Document::new();
     let body = doc.append_element(Some(0), "body", None::<&str>);
-    let half = doc.append_element(Some(body), "div", Some("width:50%"));
+    let half = doc.append_element(Some(body), "div", Some("display:block;width:50%"));
     let text = doc.append_text(half, "percentage");
-    let ch = doc.append_element(Some(body), "div", Some("width:4ch"));
+    let ch = doc.append_element(Some(body), "div", Some("display:block;width:4ch"));
     let ch_text = doc.append_text(ch, "ch");
     doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -4526,7 +4534,7 @@ fn an_absolute_box_breaks_where_its_overflow_below_its_border_ends() {
     );
     let absolute = ids[0].1[0];
     // The child sits below the border, so the box reaches 105px down.
-    doc.append_element(Some(absolute), "div", Some("height:95px"));
+    doc.append_element(Some(absolute), "div", Some("display:block;height:95px"));
     layout_nested_flex_float_fixture(&mut doc);
     let columns: Vec<usize> = fragment_rects(&doc, absolute)
         .into_iter()
@@ -4803,11 +4811,15 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     let nested = "display:block;columns:2;height:50px";
     assert!(starts(DEFINITE_COLUMNS, None, nested));
     // Earlier content, a top margin or a top padding moves it down.
-    assert!(!starts(DEFINITE_COLUMNS, Some("height:40px"), nested));
+    assert!(!starts(
+        DEFINITE_COLUMNS,
+        Some("display:block;height:40px"),
+        nested
+    ));
     assert!(!starts(
         DEFINITE_COLUMNS,
         None,
-        "columns:2;height:50px;margin-top:10px"
+        "display:block;columns:2;height:50px;margin-top:10px"
     ));
     assert!(!starts(
         &format!("{DEFINITE_COLUMNS};padding-top:10px"),
@@ -4819,9 +4831,10 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some("margin:0"));
-        let parent = doc.append_element(Some(body), "div", Some(outer));
+        let parent = doc.append_element(Some(body), "div", Some(format!("display:block;{outer}")));
         doc.append_text(parent, text);
-        let nested = doc.append_element(Some(parent), "div", Some(nested));
+        let nested =
+            doc.append_element(Some(parent), "div", Some(format!("display:block;{nested}")));
         layout_nested_flex_float_fixture(&mut doc);
         with_bridged_session(&mut doc, |session| {
             lineless::starts_the_outer_columns(session, nested)
@@ -5373,7 +5386,8 @@ fn authored_box_reads_what_the_style_view_reads() {
         (a, b) => a == b,
     };
     // `(tag, css)` of a box inside a 200px wide parent. The parent and the
-    // body are plain blocks.
+    // body are plain blocks. An inline box is not asked: no size applies to
+    // it, and the width table leaves it out.
     let cases = [
         ("div", ""),
         ("div", "box-sizing:border-box;padding:10px;border:3px solid"),
@@ -5433,10 +5447,6 @@ fn authored_box_reads_what_the_style_view_reads() {
         (
             "div",
             "width:fit-content;border-left:4px solid;border-right:6px solid",
-        ),
-        (
-            "div",
-            "display:inline;width:fit-content;border-left:4px solid",
         ),
         (
             "div",
@@ -6087,7 +6097,11 @@ fn the_margins_of_the_children_of_a_spanner_stay_inside_it() {
         "",
         &[Part::Lines(1), Part::Spanner("height:auto"), Part::Lines(2)],
     );
-    doc.append_element(Some(boxes[0]), "div", Some("margin-top:10px;height:20px"));
+    doc.append_element(
+        Some(boxes[0]),
+        "div",
+        Some("display:block;margin-top:10px;height:20px"),
+    );
     lay_out_in_ahem(&mut doc, 180.0, 160.0);
     let spanner = doc.nodes[boxes[0]].layout;
     assert_eq!((spanner.location.y, spanner.size.height), (20.0, 30.0));

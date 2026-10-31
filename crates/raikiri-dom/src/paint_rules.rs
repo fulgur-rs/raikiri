@@ -2091,7 +2091,8 @@ pub fn sort_paint_children(
 
 /// The key [`sort_paint_children`] sorts a child by: its stacking bucket and
 /// z-index, then floats after other boxes of the same level, then the flex or
-/// grid `order`. A stacking context that is neither positioned nor a flex or
+/// grid `order`, or for a table's child, header and footer groups after the
+/// other children. A stacking context that is neither positioned nor a flex or
 /// grid item, such as an element with `opacity` below 1, paints at
 /// [`STACKING_CONTEXT_PAINT_KEY`].
 pub(crate) fn paint_child_key(
@@ -2127,6 +2128,17 @@ pub(crate) fn paint_child_key(
             PositionValue::Absolute | PositionValue::Fixed
         ) {
         computed.order
+    } else if matches!(
+        parent_display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        // The copies of a table's header and footer groups on its pages
+        // paint over the body content that runs under them, so the groups
+        // paint after the table's other children.
+        match computed.display {
+            DisplayValue::TableHeaderGroup | DisplayValue::TableFooterGroup => 1,
+            _ => 0,
+        }
     } else {
         0
     };

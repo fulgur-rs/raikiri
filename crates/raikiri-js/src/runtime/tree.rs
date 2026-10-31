@@ -983,6 +983,26 @@ fn replace_data_at(
     count: usize,
     data: &[u16],
 ) -> JsResult<()> {
+    if count == 0 && data.is_empty() {
+        // Conversions have already run. Offset zero needs no borrowed view;
+        // other offsets only inspect the UTF-16 prefix needed for validation.
+        let valid = offset == 0
+            || with_state(context, |s| {
+                s.host
+                    .document()
+                    .character_data(index)
+                    .map_or(0, |text| text.encode_utf16().take(offset).count())
+                    == offset
+            })?;
+        if !valid {
+            return Err(offset_error(context));
+        }
+        // An empty native append keeps storage intact while performing the
+        // same layout and stylesheet invalidation as the generic replacement.
+        return write_character_data(context, index, |document| {
+            document.append_character_data(index, "")
+        });
+    }
     let units = data_units(context, index)?;
     if offset > units.len() {
         return Err(offset_error(context));
