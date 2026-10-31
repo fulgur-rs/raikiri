@@ -26,6 +26,7 @@ pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
 mod intrinsic_keyword_tests;
 mod part_containing_block_tests;
+mod percent_column_width_tests;
 mod rowspan_tests;
 mod sparse_border_tests;
 mod visibility_collapse_column_tests;
@@ -97,7 +98,7 @@ fn resolve_column_widths_in_session(
     spacing: f32,
 ) -> Vec<f32> {
     with_layout_session(document, |session| {
-        super::resolve_column_widths(session, grid, inputs, padding_border_size, spacing)
+        super::resolve_column_widths(session, grid, inputs, padding_border_size, spacing, None)
     })
 }
 

@@ -884,6 +884,7 @@ fn compute_table_layout_checked(
                         height: 0.0,
                     },
                     border_spacing.0,
+                    None,
                 )
                 .iter()
                 .sum::<f32>()
@@ -987,6 +988,13 @@ fn compute_table_layout_checked(
             wrapper_maximum,
             inputs: inputs_for_columns,
             border_spacing_x: border_spacing.0,
+            // A vertical table takes its columns along the other axis, so
+            // its percentages do not widen it.
+            percent_width_limit: if vertical_writing {
+                Some(0.0)
+            } else {
+                max_w_outer
+            },
         };
         // A collapsed column leaves the table, but its cells still count toward
         // the row heights, which keep the widths the columns had before the
@@ -2424,6 +2432,10 @@ struct ColumnPass {
     wrapper_maximum: Option<f32>,
     inputs: LayoutInput,
     border_spacing_x: f32,
+    /// The most that percentage columns may widen an auto-width table to, as
+    /// an outer width: its `max-width`, or zero for a vertical table, which
+    /// they do not widen. `None` sets no limit.
+    percent_width_limit: Option<f32>,
 }
 
 /// The used size of a table with no rows or cells along one axis, from the size
@@ -2460,8 +2472,18 @@ fn resolve_table_columns(
         width: insets_width,
         height: 0.0,
     };
+    let percent_width_cap = pass
+        .percent_width_limit
+        .map(|limit| f32_max_compat(limit - insets_width, 0.0));
     if pass.table_layout != TableLayoutValue::Fixed {
-        return resolve_column_widths(doc, grid, pass.inputs, insets, pass.border_spacing_x);
+        return resolve_column_widths(
+            doc,
+            grid,
+            pass.inputs,
+            insets,
+            pass.border_spacing_x,
+            percent_width_cap,
+        );
     }
     // Fixed with an indefinite (auto/percent-of-indefinite) table width
     // has no basis for the §17.5.2.1 distribution — fall back to auto.
@@ -2477,7 +2499,14 @@ fn resolve_table_columns(
         f32_max_compat(width - insets_width, 0.0)
     });
     let Some(avail) = avail else {
-        return resolve_column_widths(doc, grid, pass.inputs, insets, pass.border_spacing_x);
+        return resolve_column_widths(
+            doc,
+            grid,
+            pass.inputs,
+            insets,
+            pass.border_spacing_x,
+            percent_width_cap,
+        );
     };
     for cell in &mut grid.cells {
         if cell.row != 0 {
@@ -2510,6 +2539,7 @@ fn resolve_column_widths(
     inputs: LayoutInput,
     padding_border_size: Size<f32>,
     spacing: f32,
+    percent_width_cap: Option<f32>,
 ) -> Vec<f32> {
     #[cfg(test)]
     tests::COLUMN_RESOLUTIONS.with(|count| count.set(count.get() + 1));
@@ -2738,7 +2768,22 @@ fn resolve_column_widths(
             AvailableSpace::MaxContent => col_max_full,
             AvailableSpace::Definite(avail_w) => {
                 let avail = f32_max_compat(avail_w - insets, 0.0);
-                if col_max_full.iter().sum::<f32>() <= avail {
+                let natural: f32 = col_max_full.iter().sum();
+                // Percentage columns can ask for more than the columns' own
+                // max-content widths add up to. The room and a `max-width`
+                // still cap that, but never below the natural total.
+                let widened = percent_columns_max_content_width(natural, &col_max_full, &col_pct)
+                    .min(avail)
+                    .min(percent_width_cap.unwrap_or(f32::INFINITY));
+                if widened > natural {
+                    distribute_columns_with_authored(
+                        widened,
+                        &col_min_full,
+                        &col_max_full,
+                        &col_pct,
+                        &authored_length,
+                    )
+                } else if natural <= avail {
                     col_max_full
                 } else {
                     distribute_columns_with_authored(
@@ -2752,6 +2797,40 @@ fn resolve_column_widths(
             }
         },
     }
+}
+
+/// The width of a table grid with percentage columns that keeps every column at
+/// its max-content width, which is `natural`, the columns' own max-content
+/// total, when no percentage asks for more.
+///
+/// A percentage column of max-content width `m` and share `p` takes `m / p`
+/// of the grid, and the other columns together need their max-content widths
+/// out of what the percentages leave, so the grid is at least that sum over
+/// `1 - total share` wide. When the shares take everything and the other
+/// columns have content, no width is enough and the result is infinite. Shares
+/// are taken in column order, and a column whose share is gone counts with the
+/// columns that have none.
+fn percent_columns_max_content_width(natural: f32, max: &[f32], pct: &[f32]) -> f32 {
+    let mut width = natural;
+    let mut left = 1.0f32;
+    let mut other = 0.0f32;
+    for (&max_content, &share) in max.iter().zip(pct) {
+        if share > 0.0 && left > 0.0 {
+            let taken = share.min(left);
+            width = f32_max_compat(width, max_content / taken);
+            left -= taken;
+        } else {
+            other += max_content;
+        }
+    }
+    if other > 0.0 {
+        width = if left > 0.0 {
+            f32_max_compat(width, other / left)
+        } else {
+            f32::INFINITY
+        };
+    }
+    width
 }
 
 fn distribute_columns_with_authored(
