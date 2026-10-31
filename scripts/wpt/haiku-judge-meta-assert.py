@@ -466,6 +466,10 @@ TEST_SUFFIXES = (".xht", ".xhtml", ".html", ".htm")
 # one screenshot. Mentions of scrollbars or a "scrolling mechanism" describe
 # what is painted, so they stay.
 SCROLL_ACTION_RE = re.compile(r"\bscroll(?:ed|ing)?\b(?!\s*(?:bar|mechanism))", re.I)
+# A condition that only asks for the absence of red is met by most broken
+# renderings too (calibration found pixel FAILs judged pass this way), so
+# such tests stay with human review.
+ABSENCE_ONLY_RE = re.compile(r"^(?:test )?passes? if (?:there is )?no red\b[\s.]*$", re.I)
 
 
 def is_judge_candidate(test_id: str, source: str, reftest: bool = False) -> bool:
@@ -490,7 +494,11 @@ def is_judge_candidate(test_id: str, source: str, reftest: bool = False) -> bool
     # Use the extractor itself, so a phrase it would not send (for example one
     # inside the meta assert) does not admit the test.
     condition = pass_condition(source)
-    return bool(condition) and not SCROLL_ACTION_RE.search(condition)
+    return (
+        bool(condition)
+        and not SCROLL_ACTION_RE.search(condition)
+        and not ABSENCE_ONLY_RE.match(condition)
+    )
 
 
 def command_list_tests(args) -> int:
@@ -646,11 +654,27 @@ def format_score(result: dict, model: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def suffix(test_id: str) -> str:
+    return Path(test_id).suffix.lstrip(".") or "(none)"
+
+
 def command_score(args) -> int:
-    result = score(read_report(args.report), read_reviews(args.review_dir / args.reviews))
+    outcomes = read_report(args.report)
+    decisions = read_reviews(args.review_dir / args.reviews)
+    result = score(outcomes, decisions)
     result["model"] = args.model
+    # The baseline supplies most PASS rows as .html while the judged tests are
+    # mostly .xht, so the overall numbers can hide how the judge does on the
+    # file type it is actually used for.
+    result["by_suffix"] = {
+        kind: score(outcomes, {t: d for t, d in decisions.items() if suffix(t) == kind})
+        for kind in sorted({suffix(t) for t in decisions if t in outcomes})
+    }
     (args.review_dir / "calibration.json").write_text(json.dumps(result, indent=1) + "\n")
     print(format_score(result, args.model), end="")
+    for kind, part in result["by_suffix"].items():
+        print()
+        print(format_score(part, f"{args.model}, .{kind} only"), end="")
     return 0
 
 

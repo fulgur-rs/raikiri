@@ -42,6 +42,17 @@ class CandidateTests(unittest.TestCase):
         ):
             self.assertFalse(judge.is_judge_candidate("css/a.xht", page(*links), reftest=True))
 
+    def test_absence_only_condition_is_not_a_candidate(self) -> None:
+        # Most broken renderings show no red either.
+        for condition in ("Test passes if there is no red.", "Test passes if there is no red ."):
+            source = page().replace("Test passes if there is a green square.", condition)
+            self.assertFalse(judge.is_judge_candidate("css/a.xht", source))
+        source = page().replace(
+            "Test passes if there is a green square.",
+            "Test passes if there is a filled green square and no red.",
+        )
+        self.assertTrue(judge.is_judge_candidate("css/a.xht", source))
+
     def test_calibration_candidate_still_excludes_script(self) -> None:
         source = page('<link rel="match" href="a-ref.xht">', "<script></script>")
         self.assertFalse(judge.is_judge_candidate("css/a.xht", source, reftest=True))
@@ -146,8 +157,11 @@ class CalibrationTests(unittest.TestCase):
         self.assertIn("n/a", judge.format_score(result, "m"))
 
     def test_score_command_writes_calibration_json(self) -> None:
-        report = self.write_report(["a\tFAIL\t"])
-        (self.dir / "reviews.jsonl").write_text(json.dumps({"test_id": "a", "decision": "pass"}) + "\n")
+        report = self.write_report(["a.xht\tFAIL\t", "b.html\tPASS\t"])
+        (self.dir / "reviews.jsonl").write_text(
+            json.dumps({"test_id": "a.xht", "decision": "pass"}) + "\n"
+            + json.dumps({"test_id": "b.html", "decision": "pass"}) + "\n"
+        )
         args = type(
             "Args", (), {"report": report, "review_dir": self.dir, "reviews": "reviews.jsonl", "model": "m"}
         )
@@ -155,7 +169,10 @@ class CalibrationTests(unittest.TestCase):
             judge.command_score(args)
         saved = json.loads((self.dir / "calibration.json").read_text())
         self.assertEqual(saved["false_pass_rate"], 1.0)
+        self.assertEqual(saved["pass_precision"], 0.5)
         self.assertEqual(saved["model"], "m")
+        self.assertEqual(saved["by_suffix"]["xht"]["false_pass_rate"], 1.0)
+        self.assertIsNone(saved["by_suffix"]["html"]["false_pass_rate"])
 
 
 if __name__ == "__main__":
