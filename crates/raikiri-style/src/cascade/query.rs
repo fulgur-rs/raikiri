@@ -23,6 +23,7 @@ use crate::{RaikiriSelectorImpl, StyleDom, StyleNode, StyleNodeId, parse_selecto
 #[doc(hidden)]
 pub struct SelectorQuery {
     list: SelectorList<RaikiriSelectorImpl>,
+    requires_ancestor_context: bool,
 }
 
 /// Cumulative logical selector work, independent of any DOM or query cache.
@@ -85,8 +86,8 @@ pub struct BoundedSelectorMatcher<'a, D: StyleDom> {
 }
 
 impl<D: StyleDom> BoundedSelectorMatcher<'_, D> {
-    /// Matches a subject using its real element ancestor chain. The subject
-    /// visit costs one unit before its node is read; inner matching uses the
+    /// Matches a subject with the ancestor contract of [`SelectorQuery::matches`].
+    /// The subject visit costs one unit before its node is read; inner matching uses the
     /// same cumulative budget. Failure never becomes a successful no-match.
     pub fn try_matches(
         &self,
@@ -119,7 +120,21 @@ impl SelectorQuery {
         {
             return Err("nested nth selectors inside an nth-of filter are unsupported".into());
         }
-        Ok(Self { list })
+        let requires_ancestor_context = list.slice().iter().any(selector_requires_ancestor_context);
+        Ok(Self {
+            list,
+            requires_ancestor_context,
+        })
+    }
+
+    /// Whether callers must supply the real element ancestor chain.
+    ///
+    /// A false result guarantees that an empty ancestor slice gives the same
+    /// matches: every selector uses only universal, type, ID, class or
+    /// unqualified attribute components. All other components conservatively
+    /// require the real chain, including every pseudo-class and combinator.
+    pub fn requires_ancestor_context(&self) -> bool {
+        self.requires_ancestor_context
     }
 
     /// Whether the element `elem_id` matches any selector in the list, with
@@ -127,8 +142,10 @@ impl SelectorQuery {
     /// semantics — see [`Self::matches_scoped`]).
     ///
     /// `ancestors` holds `elem_id`'s ancestor **element** ids only, root
-    /// side first and ending with `elem_id`'s parent element. The Document
-    /// node (and any other non-element ancestor) is excluded — CSS
+    /// side first and ending with `elem_id`'s parent element.
+    /// When [`Self::requires_ancestor_context`] is false, callers may instead
+    /// pass an empty slice: these selectors never inspect the chain.
+    /// The Document node (and any other non-element ancestor) is excluded — CSS
     /// Selectors L4 descendant/child combinators are defined over elements
     /// (e.g. <https://www.w3.org/TR/selectors-4/#descendant-combinators>),
     /// so a non-element node is never itself a combinator ancestor — which
@@ -201,7 +218,8 @@ impl SelectorQuery {
         self.bounded_with_caches(dom, scope, budget, false)
     }
 
-    /// Fallible one-subject matching. The caller supplies a cumulative budget;
+    /// Fallible one-subject matching, with the ancestor contract of
+    /// [`Self::matches`]. The caller supplies a cumulative budget;
     /// it is not reset by this call. Single-subject filtered nth matching scans
     /// directly instead of building a reusable rank cache.
     pub fn try_matches_scoped<D: StyleDom>(
@@ -298,6 +316,22 @@ impl<D: StyleDom> SelectorMatcher<'_, D> {
     pub(crate) fn cached_sibling_parents(&self) -> usize {
         self.caches.cached_sibling_parents()
     }
+}
+
+// Unknown components keep the full context. Do not infer locality from text:
+// escaped names can contain characters that look like selector syntax.
+fn selector_requires_ancestor_context(selector: &Selector<RaikiriSelectorImpl>) -> bool {
+    !selector.iter_raw_match_order().all(|component| {
+        matches!(
+            component,
+            Component::LocalName(_)
+                | Component::ExplicitUniversalType
+                | Component::ID(_)
+                | Component::Class(_)
+                | Component::AttributeInNoNamespaceExists { .. }
+                | Component::AttributeInNoNamespace { .. }
+        )
+    })
 }
 
 // Follow the rule-tree's nested-nth restriction without its unrelated
