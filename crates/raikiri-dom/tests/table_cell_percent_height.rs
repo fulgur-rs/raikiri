@@ -607,3 +607,97 @@ fn an_offset_of_a_positioned_child_is_not_part_of_the_content_height() {
         },
     ]);
 }
+
+#[test]
+fn a_cell_aligns_by_the_height_its_block_flow_gives_the_content() {
+    let middle = "vertical-align:middle;height:40px";
+    let float = |style: &str| {
+        format!("<div id=f style=\"float:left;{style};height:30px;width:10px\"></div>")
+    };
+    check(&[
+        // The positioned child is 20px high and its inset moves it a further
+        // 20px, which is no more content.
+        Case {
+            label: "a positioned child with a percentage height",
+            body: aligned(
+                "",
+                middle,
+                "<div id=p style=\"position:relative;top:50%;height:50%\">x</div>",
+            ),
+            expected: &[("p", [8.0, 38.0, 10.0, 20.0])],
+        },
+        // The float is 30px high and keeps the content that high; the
+        // percentage child beside it is 20px and changes nothing.
+        Case {
+            label: "a float beside a percentage child",
+            body: aligned("", middle, &format!("{}{HALF}", float(""))),
+            expected: &[
+                ("f", [8.0, 13.0, 10.0, 30.0]),
+                ("p", [8.0, 13.0, 10.0, 20.0]),
+            ],
+        },
+        Case {
+            label: "a positioned float beside a percentage child",
+            body: aligned("", middle, &format!("{}{HALF}", float("position:relative"))),
+            expected: &[
+                ("f", [8.0, 13.0, 10.0, 30.0]),
+                ("p", [8.0, 13.0, 10.0, 20.0]),
+            ],
+        },
+        // The negative margin takes the end of the content up to its top: it
+        // has no height before the percentage resolves, and none after.
+        Case {
+            label: "a negative bottom margin",
+            body: aligned(
+                "",
+                middle,
+                "<div id=p style=\"height:50%;margin-bottom:-30px\">x</div>\
+                 <div id=q style=\"height:10px\">y</div>",
+            ),
+            expected: &[
+                ("p", [8.0, 28.0, 10.0, 20.0]),
+                ("q", [8.0, 18.0, 10.0, 10.0]),
+            ],
+        },
+        Case {
+            label: "a negative top margin",
+            body: aligned(
+                "",
+                middle,
+                "<div id=p style=\"height:50%;margin-top:-5px\">x</div>",
+            ),
+            expected: &[("p", [8.0, 15.5, 10.0, 20.0])],
+        },
+        // The minimum height of the cell is part of the height it measured.
+        Case {
+            label: "a min-height",
+            body: aligned(
+                "",
+                "vertical-align:middle;height:40px;min-height:30px",
+                HALF,
+            ),
+            expected: &[("p", [8.0, 18.0, 10.0, 20.0])],
+        },
+        Case {
+            label: "bottom with padding on two sides",
+            body: aligned(
+                "",
+                "vertical-align:bottom;height:50px;padding:5px 3px",
+                HALF,
+            ),
+            expected: &[("p", [11.0, 33.0, 10.0, 20.0])],
+        },
+        Case {
+            label: "two percentage children",
+            body: aligned(
+                "",
+                middle,
+                "<div id=p style=\"height:25%\">x</div><div id=q style=\"height:25%\">y</div>",
+            ),
+            expected: &[
+                ("p", [8.0, 18.0, 10.0, 10.0]),
+                ("q", [8.0, 28.0, 10.0, 10.0]),
+            ],
+        },
+    ]);
+}

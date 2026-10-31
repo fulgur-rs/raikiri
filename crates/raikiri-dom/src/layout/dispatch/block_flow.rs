@@ -438,13 +438,15 @@ fn layout_context(
     if ctx.is_bfc_root() {
         natural_end = natural_end.max(ctx.floated_content_height_contribution());
     }
+    let auto_height = metrics.clamp_height(natural_end + metrics.inset.bottom);
+    tree.nodes[usize::from(node)].auto_block_size = Some(auto_height);
     let height = match metrics.preferred.height {
         // The content raises the height up to the maximum the box states,
         // not one carried over from its width.
         Some(height) if metrics.ratio_height => height
             .max((natural_end + metrics.inset.bottom).maybe_clamp(None, metrics.own_max.height)),
         Some(height) => height,
-        None => metrics.clamp_height(natural_end + metrics.inset.bottom),
+        None => auto_height,
     };
     // When `min-height` raises the used height above the content, the last
     // child's bottom margin no longer adjoins the bottom edge. As in

@@ -135,9 +135,6 @@ struct CellPlacement {
     specified_min_width: Dimension,
     resolved: Option<BoxLayout>,
     natural_height: f32,
-    /// Where the in-flow children ended when the cell was measured (see
-    /// [`FlowBottom`]), to tell what a height the row gives the cell moves.
-    flow_bottom: Option<FlowBottom>,
     baseline: f32,
     /// Whether the cell has something in flow to take its baseline from: a
     /// line, or a box with height of its own. A baseline-aligned cell without
@@ -147,14 +144,6 @@ struct CellPlacement {
     /// The row-height pass's layout, kept when the final layout at the row
     /// height would only repeat it (see [`row_pass_is_final`]).
     row_pass: Option<RowPassLayout>,
-}
-
-/// The lowest margin-box edge of the in-flow children of a block cell, from
-/// the top of its border box, in the pass that measured it at `width`.
-#[derive(Debug, Clone, Copy)]
-struct FlowBottom {
-    width: f32,
-    bottom: f32,
 }
 
 /// What the final cell placement needs from a reusable row-height pass.
@@ -2153,7 +2142,6 @@ fn build_table_grid(
                     specified_min_width,
                     resolved: None,
                     natural_height: 0.0,
-                    flow_bottom: None,
                     baseline: 0.0,
                     baseline_from_flow: false,
                     row_pass: None,
@@ -2493,7 +2481,6 @@ fn push_row(
             specified_min_width,
             resolved: None,
             natural_height: 0.0,
-            flow_bottom: None,
             baseline: 0.0,
             baseline_from_flow: false,
             row_pass: None,
@@ -3823,33 +3810,6 @@ fn share_span_deficit(heights: &mut [f32], fixed: &[bool], starts_span: &[bool],
     }
 }
 
-/// The lowest margin-box edge of the in-flow children of the block cell
-/// `cell`, from the top of its border box, as their last layout placed them.
-/// A cell laid out as a line box has no children to read it from, and only a
-/// cell that centres or bottom-aligns its content is moved by where the
-/// content ends. A positioned child is left out: its stored location has its
-/// inset in it, and an inset in a percentage moves when the height becomes
-/// definite although the content does not.
-fn cell_flow_bottom(doc: &LayoutSession<'_>, cell: usize) -> Option<f32> {
-    let root = doc.ifc_layout_node(cell).expect("table cell layout view");
-    if root.is_ifc_root()
-        || !matches!(
-            root.table_vertical_align,
-            VerticalAlign::Middle | VerticalAlign::Bottom
-        )
-    {
-        return None;
-    }
-    root.children
-        .iter()
-        .filter(|&&child| doc.nodes[child].layout_position() == Position::Static)
-        .map(|&child| {
-            let layout = &doc.nodes[child].layout;
-            layout.location.y + layout.size.height + layout.margin.bottom
-        })
-        .reduce(f32_max_compat)
-}
-
 /// Lay `cell` out at `cell_width` with no definite height, and record what the
 /// rows and the final placement need of it: the lines it can keep, its height
 /// and its baseline. Returns the height it asks of its rows.
@@ -3917,10 +3877,6 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         },
     );
     cell.natural_height = output.size.height;
-    cell.flow_bottom = cell_flow_bottom(doc, cell.node_id).map(|bottom| FlowBottom {
-        width: cell_width,
-        bottom,
-    });
     let style = doc.table_style(cell.node_id);
     let padding = style.padding().resolve_or_zero(Some(cell_width));
     let border = style.border().resolve_or_zero(Some(cell_width));
@@ -4107,53 +4063,49 @@ fn place_cells(
             .row_pass
             .filter(|pass| pass.width == cell_width)
             .map(|pass| pass.scrollable_overflow_rect);
-        let (scrollable_overflow_rect, mut child_candidates, resolved_flow_bottom) =
-            if let Some(rect) = reused {
-                (rect, OofCandidates::new(), None)
-            } else {
-                // The height the row gives the cell is a definite one for the
-                // percentage heights of its children only when the table or the
-                // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
-                // as in the pass that measured the row.
-                let cell_height_is_definite = height_is_definite
-                    || resolve_dimension(doc.table_style(cell.node_id).size().height, None)
-                        .is_some();
-                let output = doc.compute_child_layout(
-                    NodeId::from(cell.node_id),
-                    LayoutInput {
-                        run_mode: RunMode::PerformLayout,
-                        sizing_mode: SizingMode::InherentSize,
-                        axis: RequestedAxis::Horizontal,
-                        known_dimensions: Size {
-                            width: Some(cell_width),
-                            height: Some(cell_height),
-                        },
-                        parent_size: Size {
-                            width: Some(cell_width),
-                            height: height_is_definite.then_some(cell_height),
-                        },
-                        available_space: Size {
-                            width: AvailableSpace::Definite(cell_width),
-                            height: AvailableSpace::Definite(cell_height),
-                        },
-                        known_dimensions_are_definite: Size {
-                            width: true,
-                            height: cell_height_is_definite,
-                        },
-                        vertical_margins_are_collapsible: Line::FALSE,
+        let mut resolved_natural_height = None;
+        let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
+            (rect, OofCandidates::new())
+        } else {
+            // The height the row gives the cell is a definite one for the
+            // percentage heights of its children only when the table or the
+            // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
+            // as in the pass that measured the row.
+            let cell_height_is_definite = height_is_definite
+                || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
+            let output = doc.compute_child_layout(
+                NodeId::from(cell.node_id),
+                LayoutInput {
+                    run_mode: RunMode::PerformLayout,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Horizontal,
+                    known_dimensions: Size {
+                        width: Some(cell_width),
+                        height: Some(cell_height),
                     },
-                );
-                // Where the content now ends, if the row height made a percentage
-                // height of a child definite: the alignment below follows it.
-                let flow_bottom = cell_height_is_definite
-                    .then(|| cell_flow_bottom(doc, cell.node_id))
-                    .flatten();
-                (
-                    output.scrollable_overflow_rect,
-                    output.oof_candidates,
-                    flow_bottom,
-                )
-            };
+                    parent_size: Size {
+                        width: Some(cell_width),
+                        height: height_is_definite.then_some(cell_height),
+                    },
+                    available_space: Size {
+                        width: AvailableSpace::Definite(cell_width),
+                        height: AvailableSpace::Definite(cell_height),
+                    },
+                    known_dimensions_are_definite: Size {
+                        width: true,
+                        height: cell_height_is_definite,
+                    },
+                    vertical_margins_are_collapsible: Line::FALSE,
+                },
+            );
+            // The height the content has now that the row height made a
+            // percentage height of a child definite, which the alignment
+            // below follows.
+            resolved_natural_height = cell_height_is_definite
+                .then(|| doc.nodes[cell.node_id].auto_block_size)
+                .flatten();
+            (output.scrollable_overflow_rect, output.oof_candidates)
+        };
         child_candidates.translate(Point {
             x: cell_x,
             y: cell_y,
@@ -4192,19 +4144,10 @@ fn place_cells(
             border.left = 0.0;
             border.right = 0.0;
         }
-        // The height the content had when it was measured, moved by what the
-        // height of the row did to it (a child with `height: 50%` is taller
-        // once that percentage resolves).
-        let natural_height = match (cell.flow_bottom, resolved_flow_bottom) {
-            (Some(measured), Some(resolved)) if measured.width == cell_width => {
-                (cell.natural_height + resolved - measured.bottom).max(0.0)
-            }
-            _ => cell.natural_height,
-        };
         let extra = if vertical_cell {
             0.0
         } else {
-            (cell_height - natural_height).max(0.0)
+            (cell_height - resolved_natural_height.unwrap_or(cell.natural_height)).max(0.0)
         };
         let shift = match doc
             .ifc_layout_node(cell.node_id)
