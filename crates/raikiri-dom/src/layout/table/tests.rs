@@ -1746,7 +1746,11 @@ fn explicit_single_row_height_resolves_percentage_child() {
         "td",
         Some("display: table-cell; padding: 5px; border: 2px solid magenta"),
     );
-    let child = doc.append_element(Some(cell), "div", Some("width: 100%; height: 100%"));
+    let child = doc.append_element(
+        Some(cell),
+        "div",
+        Some("display: block; width: 100%; height: 100%"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -2050,11 +2054,11 @@ fn table_colspan_percent_distribution_uses_definite_table_width() {
 fn absolute_auto_table_uses_definite_containing_block_width() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Some("width: 100px; height: 100px; position: relative"),
+        Some("display: block; width: 100px; height: 100px; position: relative"),
     );
     let table = doc.append_element(
         Some(container),
@@ -3409,7 +3413,11 @@ fn compute_table_layout_max_width_never_shrinks_below_intrinsic_content() {
     let table = doc.append_element(Some(body), "table", Some("display: table; max-width: 60px"));
     let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td1 = doc.append_element(Some(tr), "td", Some("display: table-cell"));
-    doc.append_element(Some(td1), "div", Some("width: 100px; height: 10px"));
+    doc.append_element(
+        Some(td1),
+        "div",
+        Some("display: block; width: 100px; height: 10px"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3438,7 +3446,11 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
     );
     let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
-    doc.append_element(Some(td), "div", Some("width: 40px; height: 10px"));
+    doc.append_element(
+        Some(td),
+        "div",
+        Some("display: block; width: 40px; height: 10px"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3511,7 +3523,11 @@ fn fixed_auto_width_shrink_wraps_to_content() {
     );
     let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
-    doc.append_element(Some(td), "div", Some("width: 50px; height: 10px"));
+    doc.append_element(
+        Some(td),
+        "div",
+        Some("display: block; width: 50px; height: 10px"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3566,7 +3582,11 @@ fn auto_width_shrink_wraps_to_content_baseline() {
     );
     let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
-    doc.append_element(Some(td), "div", Some("width: 50px; height: 10px"));
+    doc.append_element(
+        Some(td),
+        "div",
+        Some("display: block; width: 50px; height: 10px"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3585,7 +3605,7 @@ fn sized_cell(doc: &mut Document, row: usize, width: f32, height: f32) -> usize 
     doc.append_element(
         Some(td),
         "div",
-        Some(format!("width: {width}px; height: {height}px").as_str()),
+        Some(format!("display: block; width: {width}px; height: {height}px").as_str()),
     );
     td
 }
@@ -3596,7 +3616,7 @@ fn separate_border_spacing_gaps_columns_rows_and_spanned_cells() {
     // covers the gaps between the tracks it spans.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let table = doc.append_element(
         Some(body),
         "table",
@@ -3682,7 +3702,7 @@ fn separate_border_spacing_widens_a_table_narrower_than_its_columns() {
     // so the cell keeps its gap on both sides instead of overflowing.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let table = doc.append_element(
         Some(body),
         "table",
@@ -3739,7 +3759,7 @@ fn separate_border_spacing_grows_a_table_shorter_than_its_rows() {
     // and their gaps still fit.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let table = doc.append_element(
         Some(body),
         "table",

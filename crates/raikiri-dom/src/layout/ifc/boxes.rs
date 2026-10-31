@@ -1628,8 +1628,7 @@ fn is_empty_closure(
 }
 
 /// Whether the inline box `node` has a padding or border on its top or bottom
-/// side, as authored: the style view of an inline box that holds a block reads
-/// none.
+/// side, as authored: the style view of an inline box reads none.
 fn has_edge_across_the_line(tree: &LayoutSession<'_>, node: usize) -> bool {
     if crate::generated_content::generated_origin(node).is_some() {
         return false;
