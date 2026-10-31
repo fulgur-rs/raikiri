@@ -10,6 +10,7 @@ fn placement(row: u16, col_span: u16, row_span: u16) -> CellPlacement {
         col_span,
         row_span,
         specified_width: Dimension::auto(),
+        percent_border_padding: 0.0,
         specified_min_width: Dimension::auto(),
         resolved: None,
         natural_height: 0.0,

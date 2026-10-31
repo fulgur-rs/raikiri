@@ -613,15 +613,18 @@ fn a_cell_beside_a_collapsed_column_breaks_its_lines_at_the_borders_it_keeps() {
         "display:table-column;visibility:collapse;width:40px",
         "display:table-column;width:40px",
     ];
-    let (doc, _, cells) = laid_out_rows("table-layout:fixed", 120, &columns, &rows);
-    let cell = cells[0][2];
-    let lines = doc.nodes[cell]
-        .ifc
-        .as_ref()
-        .and_then(|root| root.lines.as_ref())
-        .expect("the cell breaks its text into lines");
-    assert_eq!(doc.nodes[cell].layout.size.width, 40.0);
-    assert_eq!(lines.width, 40.0);
+    for (width, column_width) in [(120, 40.0), (180, 60.0)] {
+        let (doc, table, cells) = laid_out_rows("table-layout:fixed", width, &columns, &rows);
+        let cell = cells[0][2];
+        let lines = doc.nodes[cell]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .expect("the cell breaks its text into lines");
+        assert_eq!(doc.nodes[cell].layout.size.width, column_width);
+        assert_eq!(lines.width, column_width);
+        assert_eq!(doc.nodes[table].layout.size.width, column_width * 2.0);
+    }
 }
 
 #[test]
@@ -881,9 +884,9 @@ fn a_table_whose_rows_and_columns_all_collapse_has_no_height() {
 
 #[test]
 fn a_collapsed_column_lays_out_like_a_table_without_it() {
-    // Both border models: the table is as wide as one that never had the
+    // In auto layout, both border models are as wide as one that never had the
     // column, and the columns that remain sit where they would there.
-    for table_css in [SEPARATE, COLLAPSING, FIXED, MIN_WIDTH] {
+    for table_css in [SEPARATE, COLLAPSING, MIN_WIDTH] {
         for cell_css in ["", "border:2px solid black"] {
             let collapsed = table_with(
                 table_css,
@@ -1007,8 +1010,8 @@ fn a_vertical_table_keeps_its_collapsed_columns() {
 
 #[test]
 fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
-    // In a fixed table the two columns of `<colgroup span=2 width=50px>` take
-    // 50px each, not the 10px of their cells.
+    // The two 50px group columns and the 10px cell share the 160px room
+    // proportionally after their authored widths have been assigned.
     let fixture = table_with(
         FIXED,
         &[Column::EmptyGroup(
@@ -1021,8 +1024,10 @@ fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
         "",
     );
     let cells = &fixture.cells[0];
-    assert_eq!(column_box(&fixture.doc, cells[0]), (10.0, 50.0));
-    assert_eq!(column_box(&fixture.doc, cells[1]), (70.0, 50.0));
+    let share = 160.0 * 50.0 / 110.0;
+    assert!((column_box(&fixture.doc, cells[0]).1 - share).abs() < 0.02);
+    assert!((column_box(&fixture.doc, cells[1]).0 - (20.0 + share)).abs() < 0.02);
+    assert!((column_box(&fixture.doc, cells[1]).1 - share).abs() < 0.02);
 }
 
 #[test]
@@ -1082,8 +1087,8 @@ fn a_column_under_display_contents_in_a_group_collapses() {
 
 #[test]
 fn column_widths_under_display_contents_size_a_fixed_table() {
-    // The `<col>` widths reach the fixed table layout through the wrapper:
-    // 50px and 70px, not an even split of 200px.
+    // The `<col>` widths reach the fixed table layout through the wrapper
+    // and share the 170px room in their authored 50:70 ratio.
     let fixture = table_with(
         FIXED,
         &[Column::Contents(vec![
@@ -1096,8 +1101,8 @@ fn column_widths_under_display_contents_size_a_fixed_table() {
         "",
     );
     let cells = &fixture.cells[0];
-    assert_eq!(column_box(&fixture.doc, cells[0]).1, 50.0);
-    assert_eq!(column_box(&fixture.doc, cells[1]).1, 70.0);
+    assert!((column_box(&fixture.doc, cells[0]).1 - 70.83).abs() < 0.02);
+    assert!((column_box(&fixture.doc, cells[1]).1 - 99.17).abs() < 0.02);
 }
 
 #[test]
