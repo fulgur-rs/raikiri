@@ -382,6 +382,27 @@ fn a_horizontal_table_in_a_vertical_block_reads_its_physical_insets() {
 }
 
 #[test]
+fn an_intrinsic_keyword_or_calc_height_is_resolved_as_ever() {
+    check_boxes(&[
+        (
+            "min-content",
+            &captioned_table("top: 0; left: 0; height: min-content", ""),
+            &[("c", 0.0, 0.0, 30.0, 10.0), ("d", 0.0, 10.0, 30.0, 10.0)],
+        ),
+        (
+            "calc",
+            &captioned_table("top: 0; left: 0; height: calc(50% + 10px)", ""),
+            &[("c", 0.0, 0.0, 30.0, 10.0), ("d", 0.0, 10.0, 30.0, 60.0)],
+        ),
+        (
+            "calc from the bottom",
+            &captioned_table("bottom: 0; left: 0; height: calc(50% + 10px)", ""),
+            &[("c", 0.0, 30.0, 30.0, 10.0), ("d", 0.0, 40.0, 30.0, 60.0)],
+        ),
+    ]);
+}
+
+#[test]
 fn the_containing_block_may_be_any_kind_of_box() {
     let table = "<div id=t style='display: table; position: absolute; bottom: 0; left: 0; \
                  height: 40px'><div id=c style='display: table-caption; height: 10px; \

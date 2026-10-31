@@ -221,8 +221,12 @@ pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool
     // writing mode, wherever its containing block runs.
     let style = doc.table_style(table);
     let inset = style.inset();
-    !style.size().height.is_auto()
-        && (inset.top.is_auto() || inset.bottom.is_auto())
+    // A keyword height (`stretch`) is the library's to resolve against the
+    // containing block, and the table's own layout does not read it.
+    matches!(
+        style.size().height.expand(),
+        ExpandedDimension::Length(_) | ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
+    ) && (inset.top.is_auto() || inset.bottom.is_auto())
         && caption_in_flow(doc, table)
 }
 
