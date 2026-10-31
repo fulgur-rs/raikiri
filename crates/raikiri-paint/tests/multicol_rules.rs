@@ -233,6 +233,42 @@ fn rule_page_slices_do_not_leak_into_page_margins() {
 }
 
 #[test]
+fn rules_of_columns_that_fill_in_turn_run_between_the_columns_of_each_page() {
+    // The 380px box fills both 120px columns of the first page, then one column
+    // and 20px of the other on the second, so each page has a rule between its
+    // two columns. The rule runs the height of the page's columns.
+    let document = lay_out(
+        "<div class=mc><div style='height:380px;background:blue'></div></div>",
+        "@page{margin:20px}.mc{column-fill:auto;column-rule:2px solid red}",
+    );
+    assert_eq!(document.page_count(), 2);
+    for index in 0..2 {
+        let page = document.page(index).unwrap();
+        let (source, cascade, page_box, origin) = page.paint_inputs();
+        let mut scene = Scene::new();
+        raikiri_paint::paint_single_page_with_origin_and_page_context(
+            &mut scene, source, cascade, page_box, origin, index, 2, false, None,
+        )
+        .unwrap();
+        let pixels = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            180,
+            160,
+        );
+        let red = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, pixel)| *pixel == [255, 0, 0, 255])
+            .map(|(pixel, _)| (pixel % 180, pixel / 180))
+            .collect::<Vec<_>>();
+        let expected = (20..140)
+            .flat_map(|y| [(69, y), (70, y)])
+            .collect::<Vec<_>>();
+        assert_eq!(red, expected, "page {index}");
+    }
+}
+
+#[test]
 fn two_column_rules_center_in_the_gap_without_moving_text() {
     compare(
         "<div class=mc>A<br>B<br>C<br>D</div><p>E</p>",

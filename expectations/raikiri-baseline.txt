@@ -5495,3 +5495,7 @@ css/css-page/page-name-float-001-print.html
 # --- An absolute box across pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
 # An absolutely positioned box is laid out whole, and its background was painted over the margins of the pages it crosses. It is now cut to the page area where it goes on to the next page or comes from the page before, as the fragments of the box in the reference are (CSS Fragmentation 3, section 5.4). The test is a negative one: its subject has no effect, so `audit-vacuous-passes` reports it VACUOUS-UNSTYLED in two runs. It was FAIL before the change and stays as a guard, as the other monolithic-overflow guards do.
 css/css-page/monolithic-overflow-013-print.html
+
+# --- Columns that fill in turn across pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A multicol container with `column-fill: auto` and an auto height fills the columns of each page it crosses in turn, as tall as what the page has left, and goes on at the top of the next page (CSS Multi-column 1 sections 8.1 and 8.2; CSS Fragmentation 3 section 2). It kept one column per page before the change. The test was FAIL before and KEEP in the audit-vacuous-passes run.
+css/css-multicol/auto-fill-auto-size-002-print.html
