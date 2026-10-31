@@ -2061,10 +2061,11 @@ fn fill_item_rows(
 
 /// Lay out `children` (from [`supported`]) as one stream cut into columns.
 /// `minimum` is the authored minimum border-box height of the container,
-/// which also bounds its columns from below. `definite` says layout fixed
-/// the container's height; otherwise the columns balance, bounded by the
-/// content-box `maximum` when there is one. Returns the used
-/// border-box height of the container.
+/// which bounds columns that fill in turn from below and makes the container
+/// taller than balanced columns. `definite` says layout fixed the container's
+/// height; otherwise the columns balance, bounded by the content-box
+/// `maximum` when there is one. Returns the used border-box height of the
+/// container.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
     tree: &mut LayoutSession<'_>,
@@ -2184,15 +2185,22 @@ pub(super) fn layout(
         }
         None => balanced_height(&items, context.column_count, max_pieces),
     };
-    // A maximum height bounds the columns of an auto-height container.
+    let minimum_content = minimum - origin.y - block_end_inset;
+    // A maximum height bounds the columns of an auto-height container, though
+    // not below its minimum height, which wins over it (CSS 2, 10.7).
     let column_height = match (definite_height, maximum) {
-        (None, Some(maximum)) => column_height.min(maximum),
+        (None, Some(maximum)) => column_height.min(maximum.max(minimum_content)),
         _ => column_height,
     };
-    // Columns are as tall as the container's content box (CSS Multi-column
-    // 1, 2), so a minimum height makes them taller, whether the authored
-    // height is definite or not.
-    let column_height = column_height.max(minimum - origin.y - block_end_inset);
+    // Columns that fill in turn are as tall as the container's content box
+    // (CSS Multi-column 1, 2), so a minimum height makes them taller.
+    // Balanced columns are as tall as their content needs and leave the
+    // minimum height to the container, which grows below them.
+    let column_height = if context.column_fill == ColumnFillValue::Auto {
+        column_height.max(minimum_content)
+    } else {
+        column_height
+    };
     if !column_height.is_finite() || column_height <= 0.0 {
         return None;
     }
@@ -2257,10 +2265,12 @@ pub(super) fn layout(
             .then(|| context.column_count.saturating_sub(1)),
         max_pieces.saturating_sub(planned),
     )?;
+    // The caller applies the minimum to the height it sets as well; the check
+    // against the outer column below needs it here.
     let used_height = if definite_height.is_some() {
         border_box.height
     } else {
-        origin.y + column_height + block_end_inset
+        (origin.y + column_height + block_end_inset).max(minimum)
     };
     // Columns sliced here are not cut again at the end of an outer column,
     // so a nested container taller than the outer column is left to the

@@ -178,6 +178,17 @@ fn a_parent_minimum_preserves_space_after_the_balanced_child_paragraph() {
 }
 
 #[test]
+fn a_parent_minimum_keeps_balanced_blocks_without_lines_as_short_as_their_content() {
+    // The minimum height is the container's, so the blocks still share the two
+    // columns and the background of the container reaches the minimum.
+    compare(
+        "<div class=mc><div style='height:40px;background:red'></div><div style='height:40px;background:lime'></div></div><p>E</p>",
+        ".mc{min-height:100px;background:yellow}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:100px;background:yellow'></div><div style='position:absolute;left:0;top:0;width:40px;height:40px;background:red'></div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'></div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+}
+
+#[test]
 fn separate_column_boxes_match_absolute_literal_rectangles() {
     compare(
         "<div class=mc><p style='background:red'>A</p><p style='background:lime'>B</p><p style='background:blue'>C</p><p style='background:yellow'>D</p></div>",

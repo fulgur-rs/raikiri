@@ -339,6 +339,17 @@ fn rules_of_balanced_columns_cover_the_height_of_the_container() {
 }
 
 #[test]
+fn rules_of_balanced_blocks_cover_the_minimum_height_of_the_container() {
+    // The blocks share the columns and the container is as tall as its
+    // minimum, which the rule spans, as in Chromium.
+    compare(
+        "<div class=mc><div style='height:40px;background:blue'></div><div style='height:40px;background:lime'></div></div>",
+        ".mc{min-height:100px;column-rule:2px solid red}",
+        "<div style='position:absolute;left:49px;top:0;width:2px;height:100px;background:red'></div><div style='position:absolute;left:0;top:0;width:40px;height:40px;background:blue'></div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'></div>",
+    );
+}
+
+#[test]
 fn rules_wider_than_the_gap_paint_below_column_text() {
     compare(
         "<div class=mc>A<br>B<br>C<br>D</div>",
