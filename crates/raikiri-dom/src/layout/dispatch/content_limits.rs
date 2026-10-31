@@ -1919,7 +1919,8 @@ pub(super) fn stretch_fit_width(
 /// its margins out of the room; a block child keeps those its parent holds in
 /// (see [`HeldMargins`]). Without a definite height the keyword has no effect.
 /// An out-of-flow box stretches to the room between its insets instead.
-pub(super) fn stretch_fit_height(
+/// Shared with table sizing before the grid's height limits are applied.
+pub(in crate::layout) fn stretch_fit_height(
     tree: &LayoutSession<'_>,
     idx: usize,
     inputs: &LayoutInput,
@@ -1962,11 +1963,14 @@ impl HeldMargins {
     }
 }
 
-/// Whether the box `child` states a `stretch` height as a `min-height` or a
-/// `max-height`.
-pub(crate) fn has_stretch_height_limit(tree: &LayoutSession<'_>, child: usize) -> bool {
+/// Whether sizing needs the parent's held-margin context for a stretch
+/// height limit, or for a table's own stretch height before its grid limits.
+pub(crate) fn needs_stretch_height_room(tree: &LayoutSession<'_>, child: usize) -> bool {
     let limits = tree.nodes[child].content_limits;
-    is_stretch(limits.min.height) || is_stretch(limits.max.height)
+    is_stretch(limits.min.height)
+        || is_stretch(limits.max.height)
+        || (is_table_content_limits(tree, child)
+            && is_stretch(tree.physical_style(child).size().height))
 }
 
 /// Whether the box `child` states a `stretch` width as a `min-width` and as a

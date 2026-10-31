@@ -1,0 +1,573 @@
+{
+  "browser": "Chromium 152.0.7977.82 Arch Linux",
+  "conditions": "Headless --window-size=800,600; Ahem 10px/10px; body margin 0; parent width 200px; 20px top spacer keeps negative insets on the first page; rowspan cells use vertical-align:top",
+  "projection": "Chromium reports the caption wrapper for t; expected t is the grid fragment, excluding the in-flow caption height.",
+  "baseline_commit": "0dc6cc83aed010398c734dc31613cf777c4d8957",
+  "known_outer_box_differences": "Six pre-existing captionless absolute-table outer-box differences are tracked in RAIKIRI-1310. Only t is omitted in those cases; all rows, cells, and children remain asserted, and baseline/current/native boxes are recorded.",
+  "cases": [
+    {
+      "label": "flow-none",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-top",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-bottom",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:bottom\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 110, 30, 10], ["r", 0, 20, 30, 90], ["d", 0, 20, 30, 90], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 30, 90], ["c", 0, 110, 30, 10], ["r", 0, 20, 30, 90], ["d", 0, 20, 30, 90], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-none-edges",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;padding:2px;border:1px solid\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 16, 100], ["r", 3, 23, 10, 94], ["d", 3, 23, 10, 94], ["p", 3, 23, 10, 10]],
+      "expected": [["t", 0, 20, 16, 100], ["r", 3, 23, 10, 94], ["d", 3, 23, 10, 94], ["p", 3, 23, 10, 10]]
+    },
+    {
+      "label": "flow-none-margins",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;margin-top:5px;margin-bottom:7px\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 25, 10, 100], ["r", 0, 25, 10, 100], ["d", 0, 25, 10, 100], ["p", 0, 25, 10, 10]],
+      "expected": [["t", 0, 25, 10, 100], ["r", 0, 25, 10, 100], ["d", 0, 25, 10, 100], ["p", 0, 25, 10, 10]]
+    },
+    {
+      "label": "flow-none-percent-child",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50]]
+    },
+    {
+      "label": "flow-none-percent-row",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 10], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 10]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 10], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 10]]
+    },
+    {
+      "label": "flow-none-percent-both",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 15], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 35]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 15], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 35]]
+    },
+    {
+      "label": "flow-none-indefinite",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-none-min-parent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto;min-height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-none-auto-control",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;height:auto\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-top-edges",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;padding:2px;border:1px solid\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 3, 33, 24, 84], ["d", 3, 33, 24, 84], ["p", 3, 33, 10, 10]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 3, 33, 24, 84], ["d", 3, 33, 24, 84], ["p", 3, 33, 10, 10]]
+    },
+    {
+      "label": "flow-top-margins",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;margin-top:5px;margin-bottom:7px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 25, 30, 100], ["c", 0, 25, 30, 10], ["r", 0, 35, 30, 90], ["d", 0, 35, 30, 90], ["p", 0, 35, 10, 10]],
+      "expected": [["t", 0, 35, 30, 90], ["c", 0, 25, 30, 10], ["r", 0, 35, 30, 90], ["d", 0, 35, 30, 90], ["p", 0, 35, 10, 10]]
+    },
+    {
+      "label": "flow-top-percent-child",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 45]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 45]]
+    },
+    {
+      "label": "flow-top-percent-row",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 10], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 10]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 10], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 10]]
+    },
+    {
+      "label": "flow-top-percent-both",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 13.5], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 31.5]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 13.5], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 31.5]]
+    },
+    {
+      "label": "flow-top-indefinite",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-min-parent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto;min-height:100px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-auto-control",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;height:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-min-height",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;min-height:120px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 130], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 120], ["d", 0, 30, 30, 120], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 120], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 120], ["d", 0, 30, 30, 120], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-max-height",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;max-height:60px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 70], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 60], ["d", 0, 30, 30, 60], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 60], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 60], ["d", 0, 30, 30, 60], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-none",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "absolute-top",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-bottom",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:bottom\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 110, 30, 10], ["r", 0, 20, 30, 90], ["d", 0, 20, 30, 90], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 30, 90], ["c", 0, 110, 30, 10], ["r", 0, 20, 30, 90], ["d", 0, 20, 30, 90], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "absolute-none-edges",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;padding:2px;border:1px solid\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 16, 100], ["r", 3, 23, 10, 94], ["d", 3, 23, 10, 94], ["p", 3, 23, 10, 10]],
+      "expected": [["t", 0, 20, 16, 100], ["r", 3, 23, 10, 94], ["d", 3, 23, 10, 94], ["p", 3, 23, 10, 10]]
+    },
+    {
+      "label": "absolute-none-margins",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;margin-top:5px;margin-bottom:7px\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 25, 10, 88], ["r", 0, 25, 10, 88], ["d", 0, 25, 10, 88], ["p", 0, 25, 10, 10]],
+      "expected": [["t", 0, 25, 10, 88], ["r", 0, 25, 10, 88], ["d", 0, 25, 10, 88], ["p", 0, 25, 10, 10]]
+    },
+    {
+      "label": "absolute-none-percent-child",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50]]
+    },
+    {
+      "label": "absolute-none-percent-row",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 10], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 10]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 10], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 10]]
+    },
+    {
+      "label": "absolute-none-percent-both",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 15], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 35]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 30], ["d", 0, 20, 10, 30], ["p", 0, 20, 10, 15], ["r2", 0, 50, 10, 70], ["d2", 0, 50, 10, 70], ["p2", 0, 50, 10, 35]]
+    },
+    {
+      "label": "absolute-none-indefinite",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "known_outer_box_difference": {"issue": "RAIKIRI-1310", "reason": "The OOF parent preserves its known outer height instead of the table-computed grid height; this is unchanged from baseline.", "baseline_boxes": [["t", 0.0, 20.0, 10.0, 0.0], ["r", 0.0, 20.0, 10.0, 10.0], ["d", 0.0, 20.0, 10.0, 10.0], ["p", 0.0, 20.0, 10.0, 10.0]], "current_boxes": [["t", 0.0, 20.0, 10.0, 0.0], ["r", 0.0, 20.0, 10.0, 10.0], ["d", 0.0, 20.0, 10.0, 10.0], ["p", 0.0, 20.0, 10.0, 10.0]]}
+    },
+    {
+      "label": "absolute-none-min-parent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto;min-height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50]],
+      "expected": [["t", 0, 20, 10, 100], ["r", 0, 20, 10, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50]]
+    },
+    {
+      "label": "absolute-none-auto-control",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;height:auto\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "absolute-top-edges",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;padding:2px;border:1px solid\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 3, 33, 24, 84], ["d", 3, 33, 24, 84], ["p", 3, 33, 10, 10]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 3, 33, 24, 84], ["d", 3, 33, 24, 84], ["p", 3, 33, 10, 10]]
+    },
+    {
+      "label": "absolute-top-margins",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;margin-top:5px;margin-bottom:7px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 25, 30, 88], ["c", 0, 25, 30, 10], ["r", 0, 35, 30, 78], ["d", 0, 35, 30, 78], ["p", 0, 35, 10, 10]],
+      "expected": [["t", 0, 35, 30, 78], ["c", 0, 25, 30, 10], ["r", 0, 35, 30, 78], ["d", 0, 35, 30, 78], ["p", 0, 35, 10, 10]]
+    },
+    {
+      "label": "absolute-top-percent-child",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 45]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 45]]
+    },
+    {
+      "label": "absolute-top-percent-row",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 10], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 10]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 10], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 10]]
+    },
+    {
+      "label": "absolute-top-percent-both",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;height:30%\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div><div id=r2 style=\"display:table-row;\"><div id=d2 style=\"display:table-cell\"><div id=p2 style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 13.5], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 31.5]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 27], ["d", 0, 30, 30, 27], ["p", 0, 30, 10, 13.5], ["r2", 0, 57, 30, 63], ["d2", 0, 57, 30, 63], ["p2", 0, 57, 10, 31.5]]
+    },
+    {
+      "label": "absolute-top-indefinite",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-top-min-parent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:auto;min-height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 45]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 90], ["d", 0, 30, 30, 90], ["p", 0, 30, 10, 45]]
+    },
+    {
+      "label": "absolute-top-auto-control",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;height:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-top-min-height",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;min-height:120px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 130], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 120], ["d", 0, 30, 30, 120], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 120], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 120], ["d", 0, 30, 30, 120], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-top-max-height",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;max-height:60px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 70], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 60], ["d", 0, 30, 30, 60], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 60], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 60], ["d", 0, 30, 30, 60], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flex-basis-unflexed",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px;display:flex;flex-direction:column\"><div id=t style=\"display:table;height:stretch;flex:0 0 40px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 200, 50], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 40], ["d", 0, 30, 200, 40], ["p", 0, 30, 10, 20]],
+      "expected": [["t", 0, 30, 200, 40], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 40], ["d", 0, 30, 200, 40], ["p", 0, 30, 10, 20]]
+    },
+    {
+      "label": "flex-basis-grown",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px;display:flex;flex-direction:column\"><div id=t style=\"display:table;height:stretch;flex:1 0 40px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 200, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 90], ["d", 0, 30, 200, 90], ["p", 0, 30, 10, 45]],
+      "expected": [["t", 0, 30, 200, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 90], ["d", 0, 30, 200, 90], ["p", 0, 30, 10, 45]]
+    },
+    {
+      "label": "flex-basis-shrunk",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:30px;display:flex;flex-direction:column\"><div id=t style=\"display:table;height:stretch;flex:0 1 40px\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 200, 30], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 20], ["d", 0, 30, 200, 20], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 200, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 20], ["d", 0, 30, 200, 20], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "grid-stretched",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px;display:grid\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 200, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 90], ["d", 0, 30, 200, 90], ["p", 0, 30, 10, 45]],
+      "expected": [["t", 0, 30, 200, 90], ["c", 0, 20, 30, 10], ["r", 0, 30, 200, 90], ["d", 0, 30, 200, 90], ["p", 0, 30, 10, 45]]
+    },
+    {
+      "label": "flow-none-parent-0",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:0px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-none-parent-5",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:5px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-top-parent-0",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:0px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-parent-5",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:5px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-parent-zero-min-table",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:0px\"><div id=t style=\"display:table;height:stretch;min-height:100px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 110], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 100], ["d", 0, 30, 30, 100], ["p", 0, 30, 10, 50]],
+      "expected": [["t", 0, 30, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 100], ["d", 0, 30, 30, 100], ["p", 0, 30, 10, 50]]
+    },
+    {
+      "label": "flow-margins-zero-room",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;margin-top:50px;margin-bottom:50px;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 70, 10, 100], ["r", 0, 70, 10, 100], ["d", 0, 70, 10, 100], ["p", 0, 70, 10, 50]],
+      "expected": [["t", 0, 70, 10, 100], ["r", 0, 70, 10, 100], ["d", 0, 70, 10, 100], ["p", 0, 70, 10, 50]]
+    },
+    {
+      "label": "absolute-none-parent-0",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:0px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "known_outer_box_difference": {"issue": "RAIKIRI-1310", "reason": "The OOF parent preserves its known outer height instead of the table-computed grid height; this is unchanged from baseline.", "baseline_boxes": [["t", 0.0, 20.0, 10.0, 0.0], ["r", 0.0, 20.0, 10.0, 10.0], ["d", 0.0, 20.0, 10.0, 10.0], ["p", 0.0, 20.0, 10.0, 10.0]], "current_boxes": [["t", 0.0, 20.0, 10.0, 0.0], ["r", 0.0, 20.0, 10.0, 10.0], ["d", 0.0, 20.0, 10.0, 10.0], ["p", 0.0, 20.0, 10.0, 10.0]]}
+    },
+    {
+      "label": "absolute-none-parent-5",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:5px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "known_outer_box_difference": {"issue": "RAIKIRI-1310", "reason": "The OOF parent preserves its known outer height instead of the table-computed grid height; this is unchanged from baseline.", "baseline_boxes": [["t", 0.0, 20.0, 10.0, 5.0], ["r", 0.0, 20.0, 10.0, 10.0], ["d", 0.0, 20.0, 10.0, 10.0], ["p", 0.0, 20.0, 10.0, 10.0]], "current_boxes": [["t", 0.0, 20.0, 10.0, 5.0], ["r", 0.0, 20.0, 10.0, 10.0], ["d", 0.0, 20.0, 10.0, 10.0], ["p", 0.0, 20.0, 10.0, 10.0]]}
+    },
+    {
+      "label": "absolute-top-parent-0",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:0px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-top-parent-5",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:5px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-top-parent-zero-min-table",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:0px\"><div id=t style=\"display:table;height:stretch;min-height:100px;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 110], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 100], ["d", 0, 30, 30, 100], ["p", 0, 30, 10, 50]],
+      "expected": [["t", 0, 30, 30, 100], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 100], ["d", 0, 30, 30, 100], ["p", 0, 30, 10, 50]]
+    },
+    {
+      "label": "absolute-margins-zero-room",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;margin-top:50px;margin-bottom:50px;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 70, 10, 10], ["r", 0, 70, 10, 10], ["d", 0, 70, 10, 10], ["p", 0, 70, 10, 10]],
+      "expected": [["r", 0, 70, 10, 10], ["d", 0, 70, 10, 10], ["p", 0, 70, 10, 10]],
+      "known_outer_box_difference": {"issue": "RAIKIRI-1310", "reason": "The OOF parent preserves its known outer height instead of the table-computed grid height; this is unchanged from baseline.", "baseline_boxes": [["t", 0.0, 70.0, 10.0, 0.0], ["r", 0.0, 70.0, 10.0, 10.0], ["d", 0.0, 70.0, 10.0, 10.0], ["p", 0.0, 70.0, 10.0, 10.0]], "current_boxes": [["t", 0.0, 70.0, 10.0, 0.0], ["r", 0.0, 70.0, 10.0, 10.0], ["d", 0.0, 70.0, 10.0, 10.0], ["p", 0.0, 70.0, 10.0, 10.0]]}
+    },
+    {
+      "label": "flow-none-grid-10",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:10px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "flow-none-grid-11",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:11px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 11], ["r", 0, 20, 10, 11], ["d", 0, 20, 10, 11], ["p", 0, 20, 10, 5.5]],
+      "expected": [["t", 0, 20, 10, 11], ["r", 0, 20, 10, 11], ["d", 0, 20, 10, 11], ["p", 0, 20, 10, 5.5]]
+    },
+    {
+      "label": "flow-top-grid-10",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:20px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "flow-top-grid-11",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:21px\"><div id=t style=\"display:table;height:stretch;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 21], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 11], ["d", 0, 30, 30, 11], ["p", 0, 30, 10, 5.5]],
+      "expected": [["t", 0, 30, 30, 11], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 11], ["d", 0, 30, 30, 11], ["p", 0, 30, 10, 5.5]]
+    },
+    {
+      "label": "flow-other-cell-tall",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:50px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div><div id=other style=\"display:table-cell;height:100px;width:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 20, 100], ["r", 0, 20, 20, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50], ["other", 10, 20, 10, 100]],
+      "expected": [["t", 0, 20, 20, 100], ["r", 0, 20, 20, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50], ["other", 10, 20, 10, 100]]
+    },
+    {
+      "label": "absolute-none-grid-10",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:10px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]],
+      "expected": [["t", 0, 20, 10, 10], ["r", 0, 20, 10, 10], ["d", 0, 20, 10, 10], ["p", 0, 20, 10, 10]]
+    },
+    {
+      "label": "absolute-none-grid-11",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:11px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 11], ["r", 0, 20, 10, 11], ["d", 0, 20, 10, 11], ["p", 0, 20, 10, 5.5]],
+      "expected": [["t", 0, 20, 10, 11], ["r", 0, 20, 10, 11], ["d", 0, 20, 10, 11], ["p", 0, 20, 10, 5.5]]
+    },
+    {
+      "label": "absolute-top-grid-10",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:20px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 20], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]],
+      "expected": [["t", 0, 30, 30, 10], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 10], ["d", 0, 30, 30, 10], ["p", 0, 30, 10, 10]]
+    },
+    {
+      "label": "absolute-top-grid-11",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:21px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 21], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 11], ["d", 0, 30, 30, 11], ["p", 0, 30, 10, 5.5]],
+      "expected": [["t", 0, 30, 30, 11], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 11], ["d", 0, 30, 30, 11], ["p", 0, 30, 10, 5.5]]
+    },
+    {
+      "label": "absolute-other-cell-tall",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:50px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div><div id=other style=\"display:table-cell;height:100px;width:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 20, 100], ["r", 0, 20, 20, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50], ["other", 10, 20, 10, 100]],
+      "expected": [["r", 0, 20, 20, 100], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 50], ["other", 10, 20, 10, 100]],
+      "known_outer_box_difference": {"issue": "RAIKIRI-1310", "reason": "The OOF parent preserves its known outer height instead of the table-computed grid height; this is unchanged from baseline.", "baseline_boxes": [["t", 0.0, 20.0, 20.0, 50.0], ["r", 0.0, 20.0, 20.0, 100.0], ["d", 0.0, 20.0, 10.0, 100.0], ["p", 0.0, 20.0, 10.0, 10.0], ["other", 10.0, 20.0, 10.0, 100.0]], "current_boxes": [["t", 0.0, 20.0, 20.0, 50.0], ["r", 0.0, 20.0, 20.0, 100.0], ["d", 0.0, 20.0, 10.0, 100.0], ["p", 0.0, 20.0, 10.0, 50.0], ["other", 10.0, 20.0, 10.0, 100.0]]}
+    },
+    {
+      "label": "absolute-none-insets-top",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10px;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 10, 90], ["r", 0, 30, 10, 90], ["d", 0, 30, 10, 90], ["p", 0, 30, 10, 45]],
+      "expected": [["t", 0, 30, 10, 90], ["r", 0, 30, 10, 90], ["d", 0, 30, 10, 90], ["p", 0, 30, 10, 45]]
+    },
+    {
+      "label": "absolute-none-insets-bottom",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:auto;bottom:20px;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 10, 80], ["r", 0, 20, 10, 80], ["d", 0, 20, 10, 80], ["p", 0, 20, 10, 40]],
+      "expected": [["t", 0, 20, 10, 80], ["r", 0, 20, 10, 80], ["d", 0, 20, 10, 80], ["p", 0, 20, 10, 40]]
+    },
+    {
+      "label": "absolute-none-insets-both",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10px;bottom:20px;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 10, 70], ["r", 0, 30, 10, 70], ["d", 0, 30, 10, 70], ["p", 0, 30, 10, 35]],
+      "expected": [["t", 0, 30, 10, 70], ["r", 0, 30, 10, 70], ["d", 0, 30, 10, 70], ["p", 0, 30, 10, 35]]
+    },
+    {
+      "label": "absolute-none-insets-percent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10%;bottom:20%;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 10, 70], ["r", 0, 30, 10, 70], ["d", 0, 30, 10, 70], ["p", 0, 30, 10, 35]],
+      "expected": [["t", 0, 30, 10, 70], ["r", 0, 30, 10, 70], ["d", 0, 30, 10, 70], ["p", 0, 30, 10, 35]]
+    },
+    {
+      "label": "absolute-none-insets-negative",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:-10px;bottom:-20px;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 10, 10, 100], ["r", 0, 10, 10, 100], ["d", 0, 10, 10, 100], ["p", 0, 10, 10, 50]],
+      "expected": [["r", 0, 10, 10, 100], ["d", 0, 10, 10, 100], ["p", 0, 10, 10, 50]],
+      "known_outer_box_difference": {"issue": "RAIKIRI-1310", "reason": "The OOF parent preserves its known outer height instead of the table-computed grid height; this is unchanged from baseline.", "baseline_boxes": [["t", 0.0, 10.0, 10.0, 130.0], ["r", 0.0, 10.0, 10.0, 10.0], ["d", 0.0, 10.0, 10.0, 10.0], ["p", 0.0, 10.0, 10.0, 10.0]], "current_boxes": [["t", 0.0, 10.0, 10.0, 130.0], ["r", 0.0, 10.0, 10.0, 100.0], ["d", 0.0, 10.0, 10.0, 100.0], ["p", 0.0, 10.0, 10.0, 50.0]]}
+    },
+    {
+      "label": "absolute-none-insets-both-max",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10px;bottom:20px;max-height:60px;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 10, 60], ["r", 0, 30, 10, 60], ["d", 0, 30, 10, 60], ["p", 0, 30, 10, 30]],
+      "expected": [["t", 0, 30, 10, 60], ["r", 0, 30, 10, 60], ["d", 0, 30, 10, 60], ["p", 0, 30, 10, 30]]
+    },
+    {
+      "label": "absolute-top-insets-top",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 30, 90], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 80], ["d", 0, 40, 30, 80], ["p", 0, 40, 10, 40]],
+      "expected": [["t", 0, 40, 30, 80], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 80], ["d", 0, 40, 30, 80], ["p", 0, 40, 10, 40]]
+    },
+    {
+      "label": "absolute-top-insets-bottom",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:auto;bottom:20px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 80], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 70], ["d", 0, 30, 30, 70], ["p", 0, 30, 10, 35]],
+      "expected": [["t", 0, 30, 30, 70], ["c", 0, 20, 30, 10], ["r", 0, 30, 30, 70], ["d", 0, 30, 30, 70], ["p", 0, 30, 10, 35]]
+    },
+    {
+      "label": "absolute-top-insets-both",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10px;bottom:20px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 30, 70], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 60], ["d", 0, 40, 30, 60], ["p", 0, 40, 10, 30]],
+      "expected": [["t", 0, 40, 30, 60], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 60], ["d", 0, 40, 30, 60], ["p", 0, 40, 10, 30]]
+    },
+    {
+      "label": "absolute-top-insets-percent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10%;bottom:20%;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 30, 70], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 60], ["d", 0, 40, 30, 60], ["p", 0, 40, 10, 30]],
+      "expected": [["t", 0, 40, 30, 60], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 60], ["d", 0, 40, 30, 60], ["p", 0, 40, 10, 30]]
+    },
+    {
+      "label": "absolute-top-insets-negative",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:-10px;bottom:-20px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 10, 30, 100], ["c", 0, 10, 30, 10], ["r", 0, 20, 30, 90], ["d", 0, 20, 30, 90], ["p", 0, 20, 10, 45]],
+      "expected": [["t", 0, 20, 30, 90], ["c", 0, 10, 30, 10], ["r", 0, 20, 30, 90], ["d", 0, 20, 30, 90], ["p", 0, 20, 10, 45]]
+    },
+    {
+      "label": "absolute-top-insets-both-max",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:10px;bottom:20px;max-height:60px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 30, 30, 70], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 60], ["d", 0, 40, 30, 60], ["p", 0, 40, 10, 30]],
+      "expected": [["t", 0, 40, 30, 60], ["c", 0, 30, 30, 10], ["r", 0, 40, 30, 60], ["d", 0, 40, 30, 60], ["p", 0, 40, 10, 30]]
+    },
+    {
+      "label": "cell-edges-parent-16",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:16px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell;padding:2px;border:1px solid\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 16, 16], ["r", 0, 20, 16, 16], ["d", 0, 20, 16, 16], ["p", 3, 23, 10, 10]],
+      "expected": [["t", 0, 20, 16, 16], ["r", 0, 20, 16, 16], ["d", 0, 20, 16, 16], ["p", 3, 23, 10, 10]]
+    },
+    {
+      "label": "cell-edges-parent-17",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:17px\"><div id=t style=\"display:table;height:stretch;\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell;padding:2px;border:1px solid\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 16, 17], ["r", 0, 20, 16, 17], ["d", 0, 20, 16, 17], ["p", 3, 23, 10, 5.5]],
+      "expected": [["t", 0, 20, 16, 17], ["r", 0, 20, 16, 17], ["d", 0, 20, 16, 17], ["p", 3, 23, 10, 5.5]]
+    },
+    {
+      "label": "percent-child-table-edges",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;padding:2px;border:1px solid;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 100], ["c", 0, 20, 30, 10], ["r", 3, 33, 24, 84], ["d", 3, 33, 24, 84], ["p", 3, 33, 10, 42]],
+      "expected": [["t", 0, 30, 30, 90], ["c", 0, 20, 30, 10], ["r", 3, 33, 24, 84], ["d", 3, 33, 24, 84], ["p", 3, 33, 10, 42]]
+    },
+    {
+      "label": "rowspan-parent-10",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:10px\"><table id=t style=\"height:stretch;border-spacing:0;font:inherit\"><tr id=r><td id=d rowspan=2 style=\"padding:0;vertical-align:top\"><div id=p style=\"width:10px;height:25%\">x</div></td><td style=\"padding:0\"><div style=\"width:10px;height:10px\"></div></td></tr><tr id=r2><td style=\"padding:0\"><div style=\"width:10px;height:10px\"></div></td></tr></table></div></div>",
+      "chromium_boxes": [["t", 0, 20, 20, 20], ["r", 0, 20, 20, 10], ["d", 0, 20, 10, 20], ["p", 0, 20, 10, 5], ["r2", 0, 30, 20, 10]],
+      "expected": [["t", 0, 20, 20, 20], ["r", 0, 20, 20, 10], ["d", 0, 20, 10, 20], ["p", 0, 20, 10, 5], ["r2", 0, 30, 20, 10]]
+    },
+    {
+      "label": "rowspan-parent-100",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><table id=t style=\"height:stretch;border-spacing:0;font:inherit\"><tr id=r><td id=d rowspan=2 style=\"padding:0;vertical-align:top\"><div id=p style=\"width:10px;height:25%\">x</div></td><td style=\"padding:0\"><div style=\"width:10px;height:10px\"></div></td></tr><tr id=r2><td style=\"padding:0\"><div style=\"width:10px;height:10px\"></div></td></tr></table></div></div>",
+      "chromium_boxes": [["t", 0, 20, 20, 100], ["r", 0, 20, 20, 50], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 25], ["r2", 0, 70, 20, 50]],
+      "expected": [["t", 0, 20, 20, 100], ["r", 0, 20, 20, 50], ["d", 0, 20, 10, 100], ["p", 0, 20, 10, 25], ["r2", 0, 70, 20, 50]]
+    },
+    {
+      "label": "mixed",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:-10px;bottom:20px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 10, 30, 90], ["c", 0, 10, 30, 10], ["r", 0, 20, 30, 80], ["d", 0, 20, 30, 80], ["p", 0, 20, 10, 40]],
+      "expected": [["t", 0, 20, 30, 80], ["c", 0, 10, 30, 10], ["r", 0, 20, 30, 80], ["d", 0, 20, 30, 80], ["p", 0, 20, 10, 40]]
+    },
+    {
+      "label": "mixed-reverse",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;position:absolute;top:0;left:0;top:20px;bottom:-10px;\"><div id=c style=\"display:table-caption;height:10px;width:30px;caption-side:top\"></div><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:50%\">x</div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 40, 30, 90], ["c", 0, 40, 30, 10], ["r", 0, 50, 30, 80], ["d", 0, 50, 30, 80], ["p", 0, 50, 10, 40]],
+      "expected": [["t", 0, 50, 30, 80], ["c", 0, 40, 30, 10], ["r", 0, 50, 30, 80], ["d", 0, 50, 30, 80], ["p", 0, 50, 10, 40]]
+    },
+    {
+      "label": "held-border-parent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px;border:1px solid\"><div id=t style=\"display:table;height:stretch;margin-top:5px;margin-bottom:7px\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 1, 26, 10, 88], ["r", 1, 26, 10, 88], ["d", 1, 26, 10, 88], ["p", 1, 26, 10, 10]],
+      "expected": [["t", 1, 26, 10, 88], ["r", 1, 26, 10, 88], ["d", 1, 26, 10, 88], ["p", 1, 26, 10, 10]]
+    },
+    {
+      "label": "held-padding-parent",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px;padding:1px\"><div id=t style=\"display:table;height:stretch;margin-top:5px;margin-bottom:7px\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 1, 26, 10, 88], ["r", 1, 26, 10, 88], ["d", 1, 26, 10, 88], ["p", 1, 26, 10, 10]],
+      "expected": [["t", 1, 26, 10, 88], ["r", 1, 26, 10, 88], ["d", 1, 26, 10, 88], ["p", 1, 26, 10, 10]]
+    },
+    {
+      "label": "held-float-table",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;float:left;margin-top:5px;margin-bottom:7px\"><div id=r style=\"display:table-row;\"><div id=d style=\"display:table-cell\"><div id=p style=\"width:10px;height:10px\"></div></div></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 25, 10, 88], ["r", 0, 25, 10, 88], ["d", 0, 25, 10, 88], ["p", 0, 25, 10, 10]],
+      "expected": [["t", 0, 25, 10, 88], ["r", 0, 25, 10, 88], ["d", 0, 25, 10, 88], ["p", 0, 25, 10, 10]]
+    },
+    {
+      "label": "empty-flow-max",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;max-height:60px\"><div id=c style=\"display:table-caption;width:30px;height:10px\"></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 70], ["c", 0, 20, 30, 10]],
+      "expected": [["t", 0, 30, 30, 60], ["c", 0, 20, 30, 10]]
+    },
+    {
+      "label": "empty-flow-min",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:stretch;min-height:120px\"><div id=c style=\"display:table-caption;width:30px;height:10px\"></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 130], ["c", 0, 20, 30, 10]],
+      "expected": [["t", 0, 30, 30, 120], ["c", 0, 20, 30, 10]]
+    },
+    {
+      "label": "empty-flow-numeric",
+      "html": "<div style=\"padding-top:20px\"><div style=\"position:relative;width:200px;height:100px\"><div id=t style=\"display:table;height:40px\"><div id=c style=\"display:table-caption;width:30px;height:10px\"></div></div></div></div>",
+      "chromium_boxes": [["t", 0, 20, 30, 50], ["c", 0, 20, 30, 10]],
+      "expected": [["t", 0, 30, 30, 40], ["c", 0, 20, 30, 10]]
+    }
+  ]
+}

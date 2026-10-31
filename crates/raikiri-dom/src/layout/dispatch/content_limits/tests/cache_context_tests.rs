@@ -1,4 +1,4 @@
-use super::super::{Bounds, height_bounds, scoped};
+use super::super::{Bounds, HeldMargins, height_bounds, scoped};
 use super::*;
 use raikiri_layout_style::values::Dimension;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
@@ -27,6 +27,53 @@ fn input(width: f32, height: f32) -> LayoutInput {
         },
         vertical_margins_are_collapsible: Line::FALSE,
     }
+}
+
+#[test]
+fn table_stretch_remeasures_when_only_parent_held_margins_change() {
+    let mut table = 0;
+    let fixture = block_fixture_with_ahem("width:200px;height:100px", |doc, root| {
+        table = doc.append_element(
+            Some(root),
+            "div",
+            Some("display:table;height:stretch;max-height:80px;margin:5px 0 7px"),
+        );
+        doc.append_element(
+            Some(table),
+            "div",
+            Some("display:table-caption;width:30px;height:30px"),
+        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "div", Some("display:table-cell"));
+        doc.append_element(Some(cell), "div", Some("width:10px;height:10px"));
+    });
+    let mut doc = fixture.doc;
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.sync_layout_cache_mutations();
+    let inputs = LayoutInput {
+        parent_size: Size {
+            width: Some(200.0),
+            height: Some(100.0),
+        },
+        ..input(30.0, 80.0)
+    };
+    let heights = [false, true, false].map(|held| {
+        tree.context.held_margins.push(HeldMargins::new(
+            table,
+            Line {
+                start: held,
+                end: held,
+            },
+        ));
+        let height = tree
+            .compute_child_layout_with_block_ctx(NodeId::from(table), inputs, None)
+            .size
+            .height;
+        tree.context.held_margins.pop();
+        height
+    });
+    assert_eq!(heights, [100.0, 88.0, 100.0]);
 }
 
 #[test]
