@@ -5500,3 +5500,7 @@ css/css-page/monolithic-overflow-013-print.html
 # A float that starts its line goes below the floats it does not fit beside at once, and the text after it wraps beside it (CSS 2.1 section 9.5.1). After a forced break inside a paragraph, a float of the paragraph that starts the next page is moved there once, and the paragraph's box holds the lines that moved. Both tests were FAIL before the change and KEEP in two audit-vacuous-passes runs.
 css/css-page/page-size-007-print.html
 css/css-page/page-size-008-print.html
+
+# --- Table header and footer copies beside unbroken content (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A table whose body is in an anonymous row repeats its header group at the top of each page that a box of the body runs onto without breaking, and its footer group at the end of each page the box runs off, over the box. The header and footer groups paint after the body. The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-page/monolithic-overflow-016-print.html
