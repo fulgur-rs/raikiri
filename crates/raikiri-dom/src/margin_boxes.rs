@@ -8,7 +8,7 @@
 //! (counters, `string()`, `element()` and quotes) and shaped with the
 //! document's fonts.
 
-use crate::generated_content::{QuoteDepth, element_counters, format_counter};
+use crate::generated_content::{QuoteDepth, author_style_name, element_counters, format_counter};
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
 use crate::paint_rules::OverflowClipGeometry;
@@ -1268,7 +1268,7 @@ fn fallback_chains<'s>(
         let CounterStyle::Named(name) = style else {
             continue;
         };
-        let mut next = Some(name.clone());
+        let mut next = Some(SmolStr::new(author_style_name(registry, name)));
         while let Some(name) = next.take() {
             if chains.get(&name).is_some() {
                 break;

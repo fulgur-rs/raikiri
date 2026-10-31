@@ -90,12 +90,40 @@ fn format_counter_named_unknown_falls_back_to_decimal() {
 }
 
 #[test]
+fn every_predefined_counter_style_name_is_recognized_in_any_case() {
+    // All styles of CSS Counter Styles 3 sections 6 and 7.
+    for name in "decimal decimal-leading-zero arabic-indic armenian upper-armenian lower-armenian \
+        bengali cambodian khmer cjk-decimal devanagari georgian gujarati gurmukhi hebrew kannada lao \
+        malayalam mongolian myanmar oriya persian lower-roman upper-roman tamil telugu thai tibetan \
+        lower-alpha upper-alpha lower-latin upper-latin lower-greek hiragana hiragana-iroha katakana \
+        katakana-iroha disc circle square disclosure-open disclosure-closed cjk-earthly-branch \
+        cjk-heavenly-stem japanese-informal japanese-formal korean-hangul-formal \
+        korean-hanja-informal korean-hanja-formal simp-chinese-informal simp-chinese-formal \
+        trad-chinese-informal trad-chinese-formal cjk-ideographic ethiopic-numeric"
+        .split_whitespace()
+    {
+        assert!(is_predefined_counter_style(name), "{name}");
+        assert!(is_predefined_counter_style(&name.to_uppercase()), "{name}");
+    }
+    for name in [
+        "custom-style",
+        "none",
+        "",
+        "decimal-leading",
+        "lower-roman-x",
+    ] {
+        assert!(!is_predefined_counter_style(name), "{name}");
+    }
+}
+
+#[test]
 fn format_counter_decimal_leading_zero() {
     let style = CounterStyle::Named(SmolStr::new("decimal-leading-zero"));
     assert_eq!(format_counter(0, &style), "00");
     assert_eq!(format_counter(5, &style), "05");
     assert_eq!(format_counter(15, &style), "15");
-    assert_eq!(format_counter(-5, &style), "-05");
+    // The negative sign counts toward the padded length of two.
+    assert_eq!(format_counter(-5, &style), "-5");
     assert_eq!(format_counter(-100, &style), "-100");
 }
 
@@ -486,12 +514,24 @@ fn format_counter_cjk_heavenly_stem_full_range() {
 }
 
 #[test]
-fn format_counter_fixed_styles_exhausted_range_falls_back_to_decimal() {
+fn format_counter_fixed_styles_exhausted_range_falls_back_to_cjk_decimal() {
     // Once the 12/10-symbol list is exhausted, `fixed` "cannot
-    // represent" further values — decimal fallback, same as 0/negative.
-    assert_eq!(format_counter(13, &named("cjk-earthly-branch")), "13");
-    assert_eq!(format_counter(11, &named("cjk-heavenly-stem")), "11");
-    assert_eq!(format_counter(0, &named("cjk-earthly-branch")), "0");
+    // represent" further values and both styles fall back to
+    // `cjk-decimal`, which also renders zero (WPT css3-counter-styles-202).
+    assert_eq!(
+        format_counter(13, &named("cjk-earthly-branch")),
+        "\u{4e00}\u{4e09}"
+    ); // 一三
+    assert_eq!(
+        format_counter(11, &named("cjk-heavenly-stem")),
+        "\u{4e00}\u{4e00}"
+    ); // 一一
+    assert_eq!(format_counter(0, &named("cjk-earthly-branch")), "\u{3007}"); // 〇
+    assert_eq!(
+        format_counter(100, &named("cjk-heavenly-stem")),
+        "\u{4e00}\u{3007}\u{3007}"
+    ); // 一〇〇
+    // `cjk-decimal` rejects negative values in turn: plain decimal.
     assert_eq!(format_counter(-1, &named("cjk-heavenly-stem")), "-1");
 }
 
