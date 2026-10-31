@@ -129,6 +129,18 @@ pub(in crate::layout::multicol) fn paginate(
             });
         }
     };
+    // A scroll container taller than the page it lands on would run past the
+    // page edge with nothing to carry it on, so the content would be lost; the
+    // container keeps the single column, which the pages cut.
+    for (&child, pieces) in children.iter().zip(&placement.pieces) {
+        if is_monolithic_scroll_box(tree, child)
+            && pieces
+                .iter()
+                .any(|piece| piece.height > row_at(piece.column / columns).capacity() + EPSILON)
+        {
+            return Ok(None);
+        }
+    }
     work.charge(placement.pieces.iter().map(Vec::len).sum::<usize>())?;
     let natural_last = (placement.columns_used().max(1) - 1) / columns;
     // Past the last page the control allows there is nothing to cut.
