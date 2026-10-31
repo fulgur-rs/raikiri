@@ -4449,10 +4449,13 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, share_extra: bool) 
         let columns =
             cell_column_range(cell, n).expect("validated table cell spans existing columns");
         let share = width / columns.len() as f32;
+        let states_a_percentage =
+            matches!(cell.specified_width.expand(), ExpandedDimension::Percent(_));
         for column in columns {
             if fixed[column].is_none() {
                 fixed[column] = Some(share.max(floors[column]));
                 states_a_width[column] = true;
+                percent[column] = states_a_percentage;
                 span_fixed_column = true;
             }
         }

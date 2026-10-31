@@ -468,6 +468,36 @@ fn a_percentage_column_keeps_its_share_of_a_fixed_table_while_lengths_take_the_r
             ],
         ),
         (
+            "a spanning percentage shares the room with the percentage beside it",
+            row(
+                FIXED_300,
+                &[
+                    cell("a", "width: 20%; padding: 0; border: 0", "x"),
+                    "<td id=b colspan=2 style='width: 40%; padding: 0; border: 0'>y</td>".into(),
+                ],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 14.0),
+                ("a", 2.0, 2.0, 97.33, 10.0),
+                ("b", 101.33, 2.0, 196.67, 10.0),
+            ],
+        ),
+        (
+            "a spanning percentage keeps its share beside a length",
+            row(
+                FIXED_300,
+                &[
+                    cell("a", "width: 100px; padding: 0; border: 0", "x"),
+                    "<td id=b colspan=2 style='width: 40%; padding: 0; border: 0'>y</td>".into(),
+                ],
+            ),
+            &[
+                ("t", 0.0, 0.0, 300.0, 14.0),
+                ("a", 2.0, 2.0, 175.22, 10.0),
+                ("b", 179.22, 2.0, 118.78, 10.0),
+            ],
+        ),
+        (
             "a percentage on a col and one on a cell are both cut back",
             row_with_cols(
                 FIXED_300,
