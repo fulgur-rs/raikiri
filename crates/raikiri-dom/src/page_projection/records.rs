@@ -450,6 +450,8 @@ pub(crate) struct PageFragmentItem {
     pub(crate) is_repeat: bool,
     /// The complete repeat belongs only to this table's pages.
     pub(crate) is_table_header_repeat: bool,
+    /// The table repeat is of the table's footer group.
+    pub(crate) is_table_footer_repeat: bool,
     /// Optional line range for a text placement (`start..end`, end exclusive).
     /// Non-text placements leave this as `None`.
     pub(crate) line_range: Option<PageFragmentLineRange>,
@@ -579,6 +581,7 @@ impl PageFragmentItem {
             fragment_count,
             is_repeat,
             is_table_header_repeat: false,
+            is_table_footer_repeat: false,
             line_range: None,
             box_y: rect.y,
             box_height: rect.height,

@@ -229,3 +229,18 @@ fn text_in_a_positioned_box_leaves_the_flow_where_it_is() {
         );
     }
 }
+
+#[test]
+fn a_box_placed_by_its_insets_does_not_keep_the_lines_from_moving() {
+    // An absolutely positioned box with a block-axis inset sits where its
+    // insets put it, not with the lines, so the line after the block still
+    // starts the next page.
+    for inset in ["top:150px", "bottom:-150px"] {
+        let positioned = format!("<div style='position:absolute;{inset}'>a</div>");
+        assert_eq!(
+            lines(&format!("{positioned}{}z", spacer(80))),
+            [(1, 0.0, 5.0)],
+            "{inset}"
+        );
+    }
+}

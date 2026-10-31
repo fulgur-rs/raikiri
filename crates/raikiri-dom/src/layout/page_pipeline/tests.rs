@@ -34,6 +34,7 @@ mod sibling_adjacency_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod top_edge_tests;
+mod tree_order_tests;
 mod vertical_grid_tests;
 
 fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
@@ -422,8 +423,14 @@ fn repeated_header_columns_shift_shared_overflow_and_break_clips_together() {
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
     // Prepare real table ownership, then supply independently scheduled
     // repeated-header and column placements to the projection boundary.
-    doc.table_objects.headers =
-        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    doc.table_objects.headers = crate::layout::table::headers::HeaderRepeats::prepare(
+        &doc,
+        &cascade,
+        body,
+        600.0,
+        |_| 0.0,
+        |_| false,
+    );
     let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
     repeated.placements.insert(0, (0.0, 0.0));
     repeated.placements.insert(1, (100.0, 107.5));
@@ -10761,8 +10768,14 @@ fn repeated_header_copies_are_charged_to_the_projection_budget() {
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.table_objects.headers =
-        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    doc.table_objects.headers = crate::layout::table::headers::HeaderRepeats::prepare(
+        &doc,
+        &cascade,
+        body,
+        600.0,
+        |_| 0.0,
+        |_| false,
+    );
     let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
     let pages = 64;
     let slices: Vec<_> = (0..pages)
@@ -17228,8 +17241,14 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
     let anonymous_cell = doc.anonymous_table_cells(text_table).next().unwrap().0;
-    let headers =
-        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    let headers = crate::layout::table::headers::HeaderRepeats::prepare(
+        &doc,
+        &cascade,
+        body,
+        600.0,
+        |_| 0.0,
+        |_| false,
+    );
     assert!(headers.owner(header_cell).is_some());
 
     let pages = PageOrigins::new(&[], 100.0);
