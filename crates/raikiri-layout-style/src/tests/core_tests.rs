@@ -15,6 +15,46 @@ fn query(cv: &ComputedValues, flags: StyleFlags, f: impl FnOnce(LayoutStyleView<
 }
 
 #[test]
+fn cell_minimum_height_is_auto_but_other_boxes_keep_it() {
+    for display in [
+        DisplayValue::TableCell,
+        DisplayValue::Table,
+        DisplayValue::Block,
+    ] {
+        let mut cv = ComputedValues::initial();
+        cv.display = display;
+        cv.min_width = L::Px(12.0);
+        cv.min_height = L::Px(40.0);
+        cv.height = L::Px(20.0);
+        let flags = if display == DisplayValue::TableCell {
+            StyleFlags::TABLE_CELL
+        } else {
+            StyleFlags::default()
+        };
+        query(&cv, flags, |v| {
+            assert_eq!(v.min_size().width, LengthPercentageAuto::length(12.0));
+            assert_eq!(
+                v.min_size().height,
+                if display == DisplayValue::TableCell {
+                    LengthPercentageAuto::auto()
+                } else {
+                    LengthPercentageAuto::length(40.0)
+                }
+            );
+            assert_eq!(v.size().height, Dimension::length(20.0));
+            let transposed = v.with_context(ViewContext {
+                bridge_projection: BridgeProjection::BlockTranspose {
+                    right_to_left: false,
+                },
+                ..ViewContext::default()
+            });
+            assert_eq!(transposed.min_size().width, v.min_size().height);
+            assert_eq!(transposed.min_size().height, v.min_size().width);
+        });
+    }
+}
+
+#[test]
 fn flex_basis_override_can_replace_content() {
     let mut cv = ComputedValues::initial();
     cv.flex_basis = raikiri_style::ComputedFlexBasis::Content;
