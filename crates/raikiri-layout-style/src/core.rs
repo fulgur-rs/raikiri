@@ -135,10 +135,14 @@ impl LayoutStyleView<'_> {
     /// The minimum size.
     #[inline]
     pub fn min_size(&self) -> Size<LengthPercentageAuto> {
-        self.size_axes(
-            self.length(LengthProperty::MinWidth).auto(false),
-            self.library_height(LengthProperty::MinHeight).auto(false),
-        )
+        // CSS 2.1 section 10.7 leaves cell min-height undefined. Follow
+        // Chromium: it does not floor the cell's content or its row height.
+        let height = if self.flags().contains(StyleFlags::TABLE_CELL) {
+            LengthPercentageAuto::auto()
+        } else {
+            self.library_height(LengthProperty::MinHeight).auto(false)
+        };
+        self.size_axes(self.length(LengthProperty::MinWidth).auto(false), height)
     }
     /// The maximum size.
     #[inline]
