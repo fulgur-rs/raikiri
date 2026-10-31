@@ -1,6 +1,7 @@
 //! Page ownership of decorations from generated inline box pieces.
 
 use super::flow_pages::FlowPages;
+use super::line_ownership::LineOwnership;
 use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use super::text_runs::{RunContext, placement};
 use crate::{Document, GeneratedKind};
@@ -136,6 +137,7 @@ pub(super) fn prepare(
         prepared.push((*root, paint_shift, pieces));
     }
     let flow_pages = FlowPages::new(pages);
+    let mut line_ownership = LineOwnership::new(pages);
     let axis = pages
         .first()
         .map_or_else(Default::default, |page| page.flow_axis);
@@ -156,7 +158,7 @@ pub(super) fn prepare(
             let mut candidates = Vec::new();
             let spans = pieces.iter().map(|&(_, _, _, offset, _, top, height, _)| {
                 let top = root.y + offset.1 + top;
-                // The arithmetic of `PageFragment::owns_line`, so rounding
+                // The arithmetic of `LineOwnership::owns`, so rounding
                 // at large coordinates cannot prune an owning page. The
                 // extent holds the line's center; a block box, or a line
                 // taller than its page, goes to every page it reaches.
@@ -213,7 +215,7 @@ pub(super) fn prepare(
                     rect.height = high - low;
                     block_edges.0 &= low == line_top;
                     block_edges.1 &= high == line_bottom;
-                } else if !root.is_repeat && !page.owns_line(pages, line_top, line_bottom) {
+                } else if !root.is_repeat && !line_ownership.owns(page, line_top, line_bottom) {
                     continue;
                 }
                 // A pseudo-element moves by its own relative offset and with

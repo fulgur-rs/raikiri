@@ -165,6 +165,7 @@ impl PageFragment {
     /// than the slice of the page holding its center overflows it, and also
     /// belongs to every other page it reaches into, as the painter draws it
     /// there. A page without flow geometry owns no line.
+    #[cfg(test)]
     pub(crate) fn owns_line(&self, pages: &[PageFragment], top: f32, bottom: f32) -> bool {
         self.flow_range.is_some_and(|(start, end)| {
             crate::layout::line_center_on_page(top, bottom, start, end)
@@ -173,7 +174,11 @@ impl PageFragment {
                     && bottom > start + 0.01
                     && pages
                         .iter()
-                        .filter_map(|page| page.flow_range)
+                        .filter_map(|page| {
+                            #[cfg(test)]
+                            super::work_tests::line_owner_probe();
+                            page.flow_range
+                        })
                         .find(|&(start, end)| {
                             crate::layout::line_center_on_page(top, bottom, start, end)
                         })
@@ -279,7 +284,7 @@ impl FlowAxis {
     /// The extent along the flow that decides which page owns the line of
     /// `root` from `top` to `bottom`, which are the line's block-axis edges
     /// measured as `root.y` plus the line's offset from the content box's
-    /// block-start edge. [`PageFragment::owns_line`] tests it against a page.
+    /// block-start edge. [`super::line_ownership::LineOwnership::owns`] tests it against a page.
     ///
     /// Along x, the lines of a paragraph on vertical axes stack along the
     /// flow from the block-start edge of its content box; a paragraph on
