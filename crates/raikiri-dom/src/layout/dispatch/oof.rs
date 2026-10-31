@@ -217,23 +217,29 @@ impl LayoutSession<'_> {
     /// The library lays the root out, stores its layout, and only then positions
     /// the boxes it handed back, so this runs once its layout is stored.
     pub(crate) fn install_root_static_position_overrides(&mut self, root: NodeId) {
-        let Some(capture) = self
+        let Some((handed, available_space)) = self
             .context
             .root_oof_capture
-            .as_ref()
+            .as_mut()
             .filter(|capture| capture.root == root && capture.checkpoint.is_none())
+            .map(|capture| {
+                (
+                    std::mem::take(&mut capture.candidates),
+                    capture.available_space,
+                )
+            })
         else {
             return;
         };
-        let overrides = root_static_position_overrides(
-            self,
-            root,
-            &capture.candidates,
-            capture.available_space,
-        );
+        let overrides = root_static_position_overrides(self, root, &handed, available_space);
         let checkpoint = self.override_checkpoint();
         self.push_overrides(overrides);
         if let Some(capture) = self.context.root_oof_capture.as_mut() {
+            // The measures that size the tables among `handed` lay out boxes
+            // inside the root, never the root itself, which is the only layout
+            // that records candidates.
+            debug_assert!(capture.candidates.is_empty());
+            capture.candidates = handed;
             capture.checkpoint = Some(checkpoint);
         }
     }
@@ -261,8 +267,12 @@ impl LayoutSession<'_> {
 /// positions against the initial containing block: the page area, the available
 /// space less the scrollbars of the root, anchored at the origin of the canvas
 /// as the library anchors it. The page area is definite in both axes.
+///
+/// The tables among them keep the `max-width` floor of
+/// [`super::content_limits::table_max_width_floors`], as the tables a box
+/// contains do.
 fn root_static_position_overrides(
-    tree: &LayoutSession<'_>,
+    tree: &mut LayoutSession<'_>,
     root: NodeId,
     handed: &OofCandidates,
     available_space: Size<AvailableSpace>,
@@ -286,17 +296,54 @@ fn root_static_position_overrides(
             },
         });
     area.map_or_else(Vec::new, |area| {
-        static_position_overrides(
+        let batch = oof_batch(tree, handed.iter());
+        let mut overrides = static_position_overrides(
             tree,
             root,
-            &oof_batch(tree, handed.iter()),
+            &batch,
             area,
             ContainingBlockClaims {
                 absolute: true,
                 fixed: true,
             },
-        )
+        );
+        let nodes = batch
+            .iter()
+            .map(|candidate| candidate.node)
+            .collect::<Vec<_>>();
+        overrides.extend(table_max_width_floors(tree, root, &nodes, area.size.width));
+        overrides
     })
+}
+
+/// [`super::content_limits::table_max_width_floors`] for the `candidates` that
+/// `owner` positions against a containing block `containing_width` wide.
+///
+/// A grid container places a box that names a grid area in that area, so the
+/// percentages of the box resolve against the width of the area rather than
+/// against `containing_width`, which the floor is decided by; those boxes keep
+/// the `max-width` they state.
+fn table_max_width_floors(
+    tree: &mut LayoutSession<'_>,
+    owner: NodeId,
+    candidates: &[NodeId],
+    containing_width: f32,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let in_containing_block =
+        if tree.nodes[usize::from(owner)].formatting_context == FormattingContext::Grid {
+            candidates
+                .iter()
+                .copied()
+                .filter(|&candidate| {
+                    !tree
+                        .query_style(usize::from(candidate), ReadRole::Oof)
+                        .has_grid_placement()
+                })
+                .collect()
+        } else {
+            candidates.to_vec()
+        };
+    super::content_limits::table_max_width_floors(tree, &in_containing_block, containing_width)
 }
 
 /// Run `layout` with the boxes it positions aligned on the axes of `container`,
@@ -333,13 +380,15 @@ pub(super) fn layout_candidates(
     let result = with_oof_axes(tree, owner, |tree| {
         super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
             let span: OofSpan<'_> = candidates.all();
+            let floors = table_max_width_floors(tree, owner, &candidate_ids, area.size.width);
             match grid {
-                Some(axes) => {
+                Some(axes) => tree.with_overrides(floors, |tree| {
                     grid_oof::compute_oof_layout(tree, owner, span, area, direction, claims, axes)
-                }
+                }),
                 None => {
-                    let overrides =
+                    let mut overrides =
                         static_position_overrides(tree, owner, candidates, area, claims);
+                    overrides.extend(floors);
                     if overrides.is_empty() {
                         compute_oof_layout_for_area(tree, owner, span, area, direction, claims)
                     } else {
