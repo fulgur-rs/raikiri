@@ -4979,9 +4979,10 @@ fn follow_moved_ifc_text(
     };
     lines.shifts.push(first.line, delta);
     let boxes: Vec<(usize, IfcBoxKind)> = ifc.boxes.iter().map(|b| (b.node, b.kind)).collect();
-    // The root holds the lines that moved, as it does when a line moves.
-    document.table_layout_node_mut(root).layout.size.height += delta;
-    for (b, kind) in boxes {
+    let last_line_end = lines.lines.last().map(|line| {
+        line.block_offset() + line.block_size() + lines.shifts.of(lines.lines.len() - 1)
+    });
+    for &(b, kind) in &boxes {
         // A float before the text in the source is a page candidate of its
         // own and was placed in the paginated flow before the text was.
         if kind == IfcBoxKind::Float && precedes_in_tree(document, b, text) {
@@ -4991,6 +4992,37 @@ fn follow_moved_ifc_text(
         if location.y >= old_top - 0.01 {
             location.y += delta;
         }
+    }
+    // The root holds the lines that moved, and the floats of the paragraph
+    // when it establishes a formatting context of its own.
+    let node = &document.nodes[root];
+    let contains_floats = matches!(
+        node.display(),
+        DisplayValue::FlowRoot
+            | DisplayValue::InlineBlock
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+    ) || matches!(
+        node.position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    );
+    let floats_end = boxes
+        .iter()
+        .filter(|&&(_, kind)| contains_floats && kind == IfcBoxKind::Float)
+        .map(|&(b, _)| {
+            let layout = document.nodes[b].layout;
+            layout.location.y + layout.size.height + layout.margin.bottom
+        })
+        .fold(f32::NEG_INFINITY, f32::max);
+    let layout = &mut document.table_layout_node_mut(root).layout;
+    if let Some(end) = last_line_end {
+        let height = (layout.border.top
+            + layout.padding.top
+            + end
+            + layout.padding.bottom
+            + layout.border.bottom)
+            .max(floats_end + layout.padding.bottom + layout.border.bottom);
+        layout.size.height = layout.size.height.max(height);
     }
 }
 
