@@ -1415,6 +1415,7 @@ fn compute_table_layout_checked(
                 row_origins: &row_origins,
                 row_spacing: border_spacing.1,
                 vertical_writing,
+                height_is_definite: vertical_writing || specified_height.is_some(),
             },
             &mut oof_candidates,
         )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
@@ -3758,6 +3759,9 @@ struct CellPlacementTracks<'a> {
     row_origins: &'a [f32],
     row_spacing: f32,
     vertical_writing: bool,
+    /// The table states its own height, so the height of a cell is definite
+    /// for the percentage heights of the cell's children.
+    height_is_definite: bool,
 }
 
 fn place_cells(
@@ -3777,6 +3781,7 @@ fn place_cells(
         row_origins: row_y,
         row_spacing,
         vertical_writing,
+        height_is_definite,
     } = tracks;
     // A cell belongs to the row it starts in. One starting in a collapsed row
     // has no block extent, so it sets no baseline for the rows it spans.
@@ -3841,6 +3846,12 @@ fn place_cells(
                 .filter(|gap| **gap != 0.0)
                 .count() as f32
                 * row_spacing;
+        // The height the row gives the cell is a definite one for the
+        // percentage heights of its children only when the table or the cell
+        // states a height (CSS 2.1 §10.5); otherwise they are `auto`, as in the
+        // pass that measured the row.
+        let cell_height_is_definite = height_is_definite
+            || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
         // Final layout for cell contents with definite size. A cell whose
         // content does not depend on its height keeps its row-pass lines.
         let reused = cell
@@ -3862,7 +3873,7 @@ fn place_cells(
                     },
                     parent_size: Size {
                         width: Some(cell_width),
-                        height: Some(cell_height),
+                        height: height_is_definite.then_some(cell_height),
                     },
                     available_space: Size {
                         width: AvailableSpace::Definite(cell_width),
@@ -3870,7 +3881,7 @@ fn place_cells(
                     },
                     known_dimensions_are_definite: Size {
                         width: true,
-                        height: true,
+                        height: cell_height_is_definite,
                     },
                     vertical_margins_are_collapsible: Line::FALSE,
                 },
