@@ -841,7 +841,10 @@ fn run_boxes_segment(
         let Some(result) = result else { break };
         match result {
             LineResult::FloatEncountered {
-                node, float_cursor, ..
+                node,
+                float_cursor,
+                inline_position,
+                ..
             } => {
                 let node = node.0 as usize;
                 cursor = Some(float_cursor);
@@ -877,6 +880,44 @@ fn run_boxes_segment(
                         && ctx
                             .cleared_threshold(float.clear)
                             .is_some_and(|bottom| bottom > top_edge + line_y));
+                // A float with nothing of the line before it does not wait
+                // for the next line: it goes below the floats it does not
+                // fit beside, and the content after it in the source wraps
+                // beside it there (CSS 2.1 9.5.1 rules 6 and 8). The floats
+                // already met on this line come before it in the source and
+                // have no content before them either, so they are final too.
+                let text_indent = line_options.text_indent;
+                let indent = if (first_line || (text_indent.each_line && after_forced))
+                    != text_indent.hanging
+                {
+                    text_indent.length
+                } else {
+                    0.0
+                };
+                let starts_line = inline_position <= indent + 0.01;
+                if (!fits || below)
+                    && starts_line
+                    && deferred.is_empty()
+                    && !withdrawn.contains(&node)
+                {
+                    for float in tentative.drain(..).chain(std::iter::once(float)) {
+                        ceiling = ceiling.max(commit_fragmented_float(
+                            tree,
+                            ctx,
+                            float,
+                            line_y,
+                            geometry,
+                            FragmentedFloatOutput {
+                                perform,
+                                adjoins_top_margin: false,
+                                fragmentainer,
+                                placements: &mut fragment_box_placements,
+                                oof_candidates: &mut oof_candidates,
+                            },
+                        ));
+                    }
+                    continue;
+                }
                 // Floats are placed in source order (CSS 2.1 9.5.1 rule 5):
                 // once one of this line waits for the next line, the later
                 // ones wait too.
