@@ -78,6 +78,10 @@ bitflags::bitflags! {
         const HIDDEN_BY_TEXT_OVERFLOW = 1 << 7;
         /// The document element, whose principal box establishes a BFC.
         const IS_ROOT_ELEMENT = 1 << 8;
+        /// A block-level HTML `fieldset`, which roots its own block formatting
+        /// context whatever its style says. Set by
+        /// [`Node::set_box_properties`] from the display it captures.
+        const ROOTS_BLOCK_CONTEXT = 1 << 9;
     }
 }
 
@@ -720,7 +724,7 @@ impl Node {
     /// The display layout sees for this box, derived from its CSS identity.
     pub(crate) fn layout_display(&self) -> Display {
         self.box_properties.layout_display(
-            self.multicol.is_some(),
+            self.multicol.is_some() || self.roots_block_context(),
             self.kind(),
             self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
         )
@@ -733,6 +737,10 @@ impl Node {
 
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
+        self.flags.set(
+            NodeFlags::ROOTS_BLOCK_CONTEXT,
+            display == DisplayValue::Block && self.is_html_fieldset(),
+        );
         self.box_properties = BoxProperties::new(display, position);
         if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
             self.box_properties.blockify_root();
@@ -1327,6 +1335,21 @@ impl Node {
     #[inline]
     pub(crate) fn is_html_button(&self) -> bool {
         self.tag_name() == Some("button") && self.namespace_uri().is_none()
+    }
+
+    /// Whether this is an HTML `fieldset`.
+    #[inline]
+    fn is_html_fieldset(&self) -> bool {
+        self.tag_name() == Some("fieldset") && self.namespace_uri().is_none()
+    }
+
+    /// Whether this is a block-level HTML `fieldset`, which roots its own block
+    /// formatting context (HTML Standard §15.5.12): it keeps clear of floats,
+    /// holds its floats and does not collapse its margins with those of its
+    /// children.
+    #[inline]
+    pub(crate) fn roots_block_context(&self) -> bool {
+        self.flags.contains(NodeFlags::ROOTS_BLOCK_CONTEXT)
     }
 
     /// Return a null-namespace element attribute value, if present.
