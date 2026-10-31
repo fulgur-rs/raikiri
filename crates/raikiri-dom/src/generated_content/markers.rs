@@ -125,7 +125,6 @@ fn list_marker_text_with_ordinal(
     ordinal: i32,
 ) -> Option<String> {
     match list_style_type {
-        ListStyleType::Disc => Some("• ".to_string()),
         ListStyleType::None => None,
         ListStyleType::String(value) => Some(value.as_str().to_string()),
         ListStyleType::Named(name) => {
@@ -157,8 +156,9 @@ fn list_marker_text_with_ordinal(
                 raikiri_traits::page::predefined_counter_suffix(name)
             ))
         }
-        // cov:ignore: non-exhaustive enum fallback is not constructible here
-        _ => Some(format!("{ordinal}. ")),
+        // `disc`, which is the initial value of `list-style-type`, and so
+        // also the marker for a style this match does not know about.
+        _ => Some("• ".to_string()),
     }
 }
 
