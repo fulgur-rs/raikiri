@@ -1685,6 +1685,101 @@ fn engine_fragments_of(
         .collect()
 }
 
+/// The page names, and the `(page, y)` of the text of each of `boxes`, of a
+/// body with a block per `(style, floats)` pair, on 100x50 pages.
+fn pages_of_blocks(boxes: &[(&str, bool)]) -> (Vec<Option<String>>, Vec<(u32, f32)>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let texts: Vec<usize> = boxes
+        .iter()
+        .map(|&(style, floats)| {
+            let float = if floats { "float:left;width:20px;" } else { "" };
+            let block = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("display:block;{float}{style}")),
+            );
+            doc.append_text(block, "x")
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+    let positions = texts
+        .iter()
+        .map(|&text| {
+            fragments
+                .iter()
+                .flat_map(|p| p.items.iter())
+                .find(|item| item.node_id == NodeId::new(text as u64))
+                .map(|item| (item.page_index, item.rect.y))
+                .expect("fragment")
+        })
+        .collect();
+    let names = slices.iter().map(|slice| slice.page_name.clone()).collect();
+    (names, positions)
+}
+
+#[test]
+fn a_page_name_after_only_a_float_names_the_first_page() {
+    // The page-name-float-001 shape: a float, then a box that names a page.
+    // The float is not part of the page flow, so the box is the first in the
+    // flow: it names the first page and starts level with the float instead of
+    // opening a page below it. The float's own name is of no account, and
+    // neither is its lack of one.
+    for float_style in ["page:a", ""] {
+        assert_eq!(
+            pages_of_blocks(&[(float_style, true), ("page:b", false)]),
+            (vec![Some("b".to_owned())], vec![(0, 0.0), (0, 0.0)]),
+            "float with `{float_style}`"
+        );
+    }
+}
+
+#[test]
+fn a_float_after_a_named_box_stays_on_the_page_of_that_box() {
+    // A float is no part of the page flow, so the box after it is compared
+    // with the box before it. A change of page name between the two opens
+    // the next page for the box after the float, not for the float; without
+    // one the box stays on the page level with the float, and nothing clears
+    // it.
+    let cases = [
+        // (float, box after it, page names, page of the box after it, its y)
+        ("", "", vec![Some("a"), None], 1, 0.0),
+        ("page:b", "", vec![Some("a"), None], 1, 0.0),
+        ("", "page:b", vec![Some("a"), Some("b")], 1, 0.0),
+        ("", "page:a", vec![Some("a")], 0, 10.0),
+        ("page:a", "page:a", vec![Some("a")], 0, 10.0),
+    ];
+    for (float_style, after_style, names, page, y) in cases {
+        let (page_names, positions) =
+            pages_of_blocks(&[("page:a", false), (float_style, true), (after_style, false)]);
+        let names: Vec<Option<String>> = names
+            .into_iter()
+            .map(|name| name.map(str::to_owned))
+            .collect();
+        assert_eq!(
+            (page_names, positions),
+            (names, vec![(0, 0.0), (0, 10.0), (page, y)]),
+            "float with `{float_style}`, then a box with `{after_style}`"
+        );
+    }
+}
+
 #[test]
 fn a_nested_inline_element_is_located_on_its_line() {
     // "aaaa " (50px) then <b>"bb " (30px) <a>"cc"</a></b>: the <a> starts at

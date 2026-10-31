@@ -1876,6 +1876,24 @@ fn pipeline_clears_a_named_page_after_leading_generated_content() {
 }
 
 #[test]
+fn pipeline_names_the_first_page_after_generated_white_space_that_collapses() {
+    // White space that collapses away makes no line, so the box on page `b`
+    // after the float names the first page. Preserved white space is
+    // content on the unnamed page, and the box starts a new page.
+    for (white_space, slices) in [("normal", 1), ("pre", 2)] {
+        let doc = parse(&format!(
+            "<style>@page {{ size: 400px 400px; margin: 0 }} body {{ margin: 0 }}\
+             body::before {{ content: ' '; white-space: {white_space} }}\
+             .f {{ float: right; width: 100px; height: 100px }}</style>\
+             <div class='f'></div>\
+             <div style='page:b'>a</div>"
+        ));
+        let out = run(&doc);
+        assert_eq!(out.slices.len(), slices, "{white_space}");
+    }
+}
+
+#[test]
 fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
     // The wrapper generates no box, but its `::before` content still takes
     // the body's page before the box on page `b`.
@@ -1898,24 +1916,46 @@ fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
 }
 
 #[test]
-fn pipeline_clears_a_named_page_after_a_float_on_the_parent_page() {
-    // The float between the boxes on page `b` takes the body's page, so the
-    // second box on page `b` starts a new page clear of it.
+fn pipeline_clears_a_named_page_after_a_float_on_the_previous_page() {
+    // A float is no part of the page flow, so the one after the box on page
+    // `b` stays on that page, and the box on page `c` after it starts a new
+    // page clear of it.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
          <div style='page:b'>a</div><div class='f'></div>\
-         <div style='page:b'><div class='f'></div></div>",
+         <div style='page:c'><div class='f'></div></div>",
     );
     let out = run(&doc);
-    assert_eq!(out.slices.len(), 3);
-    let (document, _) = out.layout_for_page(2);
-    let xs: Vec<f32> = document
-        .page_fragments(2)
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let positions: Vec<(f32, f32)> = document
+        .page_fragments(1)
         .filter(|fragment| fragment.rect().width == 100.0)
-        .map(|fragment| fragment.rect().x)
+        .map(|fragment| (fragment.rect().x, fragment.rect().y))
         .collect();
-    assert_eq!(xs, vec![300.0]);
+    assert_eq!(positions, vec![(300.0, 0.0)]);
+}
+
+#[test]
+fn pipeline_keeps_a_named_page_after_a_float_on_its_page() {
+    // The float between the boxes on page `b` is no part of the page flow,
+    // so they share the page, and the second box lines up beside the float
+    // instead of clearing it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'>a</div><div class='f'></div>\
+         <div style='page:b; display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let block = document
+        .page_fragments(0)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the first page");
+    assert_eq!(block.rect().width, 300.0);
 }
 
 #[test]
@@ -1945,11 +1985,12 @@ fn pipeline_clears_a_named_page_after_preserved_white_space() {
     // Pagination takes no page value from white space, even preserved, so
     // the parent starts on page `b` with its named child. The parent then
     // starts the new page clear of the float before it, and its white space
-    // and child go to that page together.
+    // and child go to that page together. The box before the float is what
+    // the parent's page differs from.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
-         <div class='f'></div>\
+         <div>x</div><div class='f'></div>\
          <div style='white-space:pre'>   <div style='page:b; display:flow-root; height:50px'>b</div></div>",
     );
     let out = run(&doc);

@@ -5481,3 +5481,7 @@ css/css-multicol/multicol-span-all-005.html
 # A block-level box in ruby content, or in a ruby-internal box, is inlinized: it is an atomic inline-level box in the line it sits in, so a block, a table or a flex container in `rb` or `rt` no longer breaks the line around itself (CSS Ruby 1 section 2.2). Both tests were FAIL before the change and KEEP in two audit-vacuous-passes runs.
 css/css-ruby/ruby-inlinize-blocks-002.html
 css/css-ruby/ruby-line-breaking-002.html
+
+# --- A page name after only a float (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A float is no part of the page flow (CSS Page 3, section 4.1), so a box that names a page after only floats names the first page, and no page changes. Layout took the float for the page before the box and cleared the box below it. The test is a negative one: its subject has no effect, so `audit-vacuous-passes` reports it VACUOUS-UNSTYLED in two runs. It was FAIL before the change and stays as a guard, as the other named-page guards do.
+css/css-page/page-name-float-001-print.html

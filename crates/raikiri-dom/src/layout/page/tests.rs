@@ -570,6 +570,65 @@ fn first_page_name_reads_the_body_before_a_footer_written_first() {
 }
 
 #[test]
+fn first_page_name_is_unnamed_when_generated_content_leads_the_body() {
+    use crate::layout::ifc::test_support::sheet_fixture;
+
+    // Generated content before the first box is the first content of the
+    // body, which has no page name, so the box does not name the first page.
+    // Empty generated content and white space that collapses away make no
+    // line, so they are not content. Preserved white space, a box of its own
+    // and a padding box are.
+    for (sheet, expected) in [
+        ("", Some("b")),
+        (r#"body::before { content: "" }"#, Some("b")),
+        (r#"body::before { content: " " }"#, Some("b")),
+        (r#"body::before { content: " "; white-space: pre }"#, None),
+        (r#"body::before { content: " "; display: block }"#, None),
+        (r#"body::before { content: " "; padding: 1px }"#, None),
+        (r#"body::before { content: "x" }"#, None),
+    ] {
+        let fixture = sheet_fixture(sheet, "page:b", |doc, root| {
+            doc.append_text(root, "b");
+        });
+        assert_eq!(
+            first_page_name(&fixture.doc, &fixture.cascade).as_deref(),
+            expected,
+            "{sheet}"
+        );
+    }
+}
+
+#[test]
+fn first_page_name_is_the_page_of_a_box_whose_generated_content_leads() {
+    use crate::layout::ifc::test_support::sheet_fixture;
+
+    // The wrapper's generated content comes before its named child, so it is
+    // the wrapper that starts the first page, on the page of the body.
+    for (sheet, expected) in [
+        ("", Some("b")),
+        (r#"[data-wrapper]::before { content: "" }"#, Some("b")),
+        (r#"[data-wrapper]::before { content: " " }"#, Some("b")),
+        (
+            r#"[data-wrapper]::before { content: " "; white-space: pre }"#,
+            None,
+        ),
+        (r#"[data-wrapper]::before { content: "x" }"#, None),
+    ] {
+        let fixture = sheet_fixture(sheet, "", |doc, root| {
+            doc.set_element_attribute(root, "data-wrapper", "")
+                .expect("attribute");
+            let named = doc.append_element(Some(root), "div", Some("display:block;page:b"));
+            doc.append_text(named, "b");
+        });
+        assert_eq!(
+            first_page_name(&fixture.doc, &fixture.cascade).as_deref(),
+            expected,
+            "{sheet}"
+        );
+    }
+}
+
+#[test]
 fn first_page_name_reads_the_body_before_a_footer_inside_a_contents_wrapper() {
     use raikiri_style::{build_rule_tree, cascade};
 

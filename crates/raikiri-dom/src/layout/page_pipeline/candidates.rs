@@ -1118,7 +1118,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             CandidateFlowContext {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: out_of_flow_subtree,
-                                page_name_in_flow: !inside_float
+                                page_name_in_flow: !float_subtree
                                     && (!out_of_flow_subtree || own_page_name.is_some()),
                                 lines_closing_edges: 0.0,
                             },

@@ -11,6 +11,7 @@ use crate::Document;
 use crate::target::{CompactCounterSnapshots, CounterSnapshot, CounterSnapshots};
 use raikiri_style::property::{
     ContentComponent, CounterStyle, DisplayValue, FloatValue, PositionValue, QuoteKeyword,
+    WhiteSpaceCollapse,
 };
 use raikiri_style::{
     CascadeResult, ComputedValues, CounterStyleRegistry, PseudoElem, StyleNodeId,
@@ -247,16 +248,27 @@ pub fn is_in_flow_generated_text(
         })
 }
 
-/// Whether the `pseudo` of `element` is in-flow generated text that makes
-/// no line: an inline box whose `content` is only empty strings and that has
-/// no margin, border or padding. It holds nothing a line could show, so it
-/// neither is the first formatted line nor comes before content that is
-/// (CSS 2.1 §9.4.2). A `content` that is resolved while the paragraph is laid
-/// out, such as a counter, a quote or an attribute, is not judged here.
-pub(crate) fn is_blank_inline_generated_text(
+/// Whether `text` is white space that `collapse` removes from the line it is
+/// on, so that it alone makes no line (CSS Text 3 §4.1.1, CSS 2.1 §9.4.2).
+/// White space that the style preserves still generates lines.
+pub(crate) fn is_collapsed_white_space(text: &str, collapse: WhiteSpaceCollapse) -> bool {
+    text.chars()
+        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+        && match collapse {
+            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard => true,
+            WhiteSpaceCollapse::PreserveBreaks => !text.contains(['\n', '\r']),
+            _ => text.is_empty(),
+        }
+}
+
+/// Whether the `pseudo` of `element` is an in-flow inline box with no margin,
+/// border or padding whose `content` is only strings that `blank` accepts
+/// under the box's `white-space-collapse`.
+fn is_inline_generated_text_of_blanks(
     cascade: &CascadeResult,
     element: usize,
     pseudo: PseudoElem,
+    blank: fn(&str, WhiteSpaceCollapse) -> bool,
 ) -> bool {
     use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, Sides};
     is_in_flow_generated_text(cascade, element, pseudo)
@@ -265,9 +277,10 @@ pub(crate) fn is_blank_inline_generated_text(
             .get(&(StyleNodeId::new(element as u64), pseudo))
             .is_some_and(|cv| {
                 matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents)
-                    && cv.content.iter().all(
-                        |part| matches!(part, ContentComponent::Literal(text) if text.is_empty()),
-                    )
+                    && cv.content.iter().all(|part| {
+                        matches!(part, ContentComponent::Literal(text)
+                            if blank(text, cv.effective_white_space_collapse))
+                    })
                     && cv.padding == Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
                     && cv.margin == Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))
                     && [
@@ -279,6 +292,34 @@ pub(crate) fn is_blank_inline_generated_text(
                     .iter()
                     .all(|side| side.width().0 == 0.0)
             })
+}
+
+/// Whether the `pseudo` of `element` is in-flow generated text that makes
+/// no line: an inline box whose `content` is only empty strings and that has
+/// no margin, border or padding. It holds nothing a line could show, so it
+/// neither is the first formatted line nor comes before content that is
+/// (CSS 2.1 §9.4.2). A `content` that is resolved while the paragraph is laid
+/// out, such as a counter, a quote or an attribute, is not judged here.
+pub(crate) fn is_blank_inline_generated_text(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    is_inline_generated_text_of_blanks(cascade, element, pseudo, |text, _| text.is_empty())
+}
+
+/// Whether the `pseudo` of `element` is in-flow generated text that takes
+/// part in the page flow, as a text node with a line of its own does: in-flow
+/// generated text (see [`is_in_flow_generated_text`]) other than an inline box
+/// that holds only empty strings or white space that collapses away, which
+/// makes no line (see [`is_blank_inline_generated_text`]).
+pub(crate) fn is_page_flow_generated_text(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    is_in_flow_generated_text(cascade, element, pseudo)
+        && !is_inline_generated_text_of_blanks(cascade, element, pseudo, is_collapsed_white_space)
 }
 
 /// Whether the `pseudo` of `element` is in-flow generated text that can make
