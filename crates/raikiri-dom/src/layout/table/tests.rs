@@ -15,6 +15,7 @@ use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentage
 
 mod absolute_table_caption_tests;
 mod absolute_table_width_tests;
+mod alignment_height_tests;
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
 mod authored_length_tests;
