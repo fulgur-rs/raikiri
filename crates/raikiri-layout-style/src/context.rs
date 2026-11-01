@@ -87,13 +87,17 @@ impl LengthProperty {
                 | Self::MinBlock
         )
     }
-    /// The value a non-atomic inline box in a horizontal writing mode takes
-    /// for a property that does not apply to it, or `None` for one that does.
+    /// The value a non-atomic inline box takes for a property that does not
+    /// apply to it, or `None` for one that does.
     ///
-    /// The sizes are `auto`; the vertical margins, padding and border are
-    /// zero, so they neither move the box nor change the height of the
+    /// The sizes are `auto`; the block-axis margins, padding and border are
+    /// zero, so they neither move the box nor change the size of the
     /// lines around it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1).
-    pub(crate) fn inline_box_value(self) -> Option<raikiri_style::ComputedLengthPercentageOrAuto> {
+    /// The axis belongs to the source box, before query projection.
+    pub(crate) fn inline_box_value(
+        self,
+        vertical: bool,
+    ) -> Option<raikiri_style::ComputedLengthPercentageOrAuto> {
         use raikiri_style::ComputedLengthPercentageOrAuto as L;
         match self {
             Self::Width
@@ -107,7 +111,21 @@ impl LengthProperty {
             | Self::PaddingTop
             | Self::PaddingBottom
             | Self::BorderTop
-            | Self::BorderBottom => Some(L::Px(0.0)),
+            | Self::BorderBottom
+                if !vertical =>
+            {
+                Some(L::Px(0.0))
+            }
+            Self::MarginLeft
+            | Self::MarginRight
+            | Self::PaddingLeft
+            | Self::PaddingRight
+            | Self::BorderLeft
+            | Self::BorderRight
+                if vertical =>
+            {
+                Some(L::Px(0.0))
+            }
             _ => None,
         }
     }
@@ -173,9 +191,8 @@ impl StyleFlags {
     pub const BLOCK_TABLE: Self = Self(1 << 19);
     /// CSS table identity in out-of-flow layout.
     pub const OOF_TABLE: Self = Self(1 << 20);
-    /// A non-atomic inline box in a horizontal writing mode: the sizes, the
-    /// vertical margins and the vertical padding and border do not apply to
-    /// it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1).
+    /// A non-atomic inline box: sizes and block-axis margins, padding and
+    /// border do not apply to it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1).
     pub const INLINE_BOX: Self = Self(1 << 21);
     /// A block-level box that keeps its border box clear of the margin boxes
     /// of the floats in its formatting context without establishing one: a

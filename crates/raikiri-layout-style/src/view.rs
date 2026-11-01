@@ -241,7 +241,8 @@ impl<'a> LayoutStyleView<'a> {
     pub(crate) fn base_length(&self, property: LengthProperty) -> LengthValue<'a> {
         use LengthProperty::*;
         if self.flags().contains(StyleFlags::INLINE_BOX)
-            && let Some(value) = property.inline_box_value()
+            && let Some(value) =
+                property.inline_box_value(self.prepared.metadata.used_writing_mode.is_vertical())
         {
             return LengthValue {
                 value: Cow::Owned(value),

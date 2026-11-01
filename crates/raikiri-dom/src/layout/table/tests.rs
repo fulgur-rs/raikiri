@@ -1353,8 +1353,18 @@ fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
     let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let first = doc.append_element(Some(row), "td", Some("display: table-cell"));
     let second = doc.append_element(Some(row), "td", Some("display: table-cell"));
-    let _first_child = doc.append_element(Some(first), "div", Some("width: 50px; height: 100px"));
-    let _second_child = doc.append_element(Some(second), "div", Some("width: 50px; height: 100px"));
+    // This programmatic document has no UA stylesheet; request block boxes
+    // explicitly so their dimensions apply in every writing mode.
+    let _first_child = doc.append_element(
+        Some(first),
+        "div",
+        Some("display: block; width: 50px; height: 100px"),
+    );
+    let _second_child = doc.append_element(
+        Some(second),
+        "div",
+        Some("display: block; width: 50px; height: 100px"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade");
