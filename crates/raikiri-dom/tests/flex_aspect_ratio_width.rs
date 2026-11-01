@@ -733,6 +733,44 @@ fn a_grid_item_whose_edges_follow_its_area_or_that_is_hidden_keeps_the_ratio_wid
 }
 
 #[test]
+fn a_minimum_height_above_the_maximum_height_stays_the_height_of_a_grid_item() {
+    // The minimum wins over the maximum, so the item is 80px high and its row
+    // too, and the item after it starts below.
+    let next = "<div id=p style=\"width:30px;height:10px\"></div>";
+    for (css, items) in [
+        (
+            "aspect-ratio:2/1;height:100px;min-height:80px;max-height:20px",
+            "<div id=i style=\"width:10px;height:10px\"></div>",
+        ),
+        (
+            "aspect-ratio:2/1;height:100px;min-height:80px;max-height:20px;border:solid 25px green",
+            "<div id=i style=\"width:300px;height:10px\"></div>",
+        ),
+    ] {
+        assert_boxes(
+            &format!(
+                "<div style=\"display:grid;grid-template-columns:max-content\">\
+                 <div id=o style=\"{css}\">{items}</div>{next}</div>"
+            ),
+            &[("p", [8.0, 88.0, 30.0, 10.0])],
+        );
+    }
+    // A maximum the minimum fits under leaves the minimum width of the content
+    // to the item: 90px high, and 350px wide for the child and the border.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;grid-template-columns:max-content\">\
+             <div id=o style=\"aspect-ratio:2/1;height:100px;min-height:80px;max-height:90px;{BORDER}\">\
+             <div id=i style=\"width:300px;height:10px\"></div></div>{next}</div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 350.0, 90.0]),
+            ("p", [8.0, 98.0, 30.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
 fn a_grid_item_that_scrolls_or_has_a_limit_keeps_the_width_the_limit_gives() {
     let template = "grid-template-columns:max-content";
     assert_boxes(

@@ -766,8 +766,9 @@ pub(super) fn ratio_stated_size_clamps(
 }
 
 /// Whether the `min-height` of the box `idx`, if it states one, is no taller
-/// than the border-box height the box states. Such a minimum leaves
-/// the height as it is, and so the width the ratio gives for it.
+/// than the border-box height the box states, and no taller than its
+/// `max-height` either, which would leave the minimum as the height. Such a
+/// minimum leaves the height as it is, and so the width the ratio gives for it.
 fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size<f32>) -> bool {
     let style = tree.physical_style(idx);
     if style.min_size().height.is_auto() {
@@ -780,7 +781,11 @@ fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size
         style.min_size().height.maybe_resolve(basis),
         style.size().height.maybe_resolve(basis),
     ) {
-        (Some(minimum), Some(height)) => minimum + adjustment <= (height + adjustment).max(edges),
+        (Some(minimum), Some(height)) => {
+            let maximum = style.max_size().height.maybe_resolve(basis);
+            minimum + adjustment <= (height + adjustment).max(edges)
+                && maximum.is_none_or(|maximum| minimum <= maximum)
+        }
         _ => false,
     }
 }
