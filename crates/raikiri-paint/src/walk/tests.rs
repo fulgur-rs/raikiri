@@ -7,6 +7,7 @@ use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use raikiri_traits::PaintRect;
 
 mod canvas_sharing_tests;
+mod conic_budget_tests;
 mod gradient_tests;
 mod image_sharing_tests;
 
@@ -5731,7 +5732,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
         a: 255,
     };
     let Some(gradient::GradientFill::Brush(gradient, _)) =
-        conic_to_peniko(&center_conic, center, current)
+        conic_to_peniko(&ImageBrushCache::default(), &center_conic, center, current)
     else {
         panic!("expected a sweep brush");
     };
@@ -5740,9 +5741,12 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     let default_center = conic_center(&angle_conic.position, positioning);
     assert!((default_center.x - 100.0).abs() < 0.01);
     assert!((default_center.y - 100.0).abs() < 0.01);
-    let Some(gradient::GradientFill::Brush(angle_gradient, _)) =
-        conic_to_peniko(&angle_conic, default_center, current)
-    else {
+    let Some(gradient::GradientFill::Brush(angle_gradient, _)) = conic_to_peniko(
+        &ImageBrushCache::default(),
+        &angle_conic,
+        default_center,
+        current,
+    ) else {
         panic!("expected a sweep brush");
     };
     assert_eq!(angle_gradient.stops.len(), 8);
@@ -5768,10 +5772,18 @@ fn conic_paint_covers_empty_and_square_boxes() {
     let mut scene = Scene::new();
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let painting = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
-    paint_conic_gradient(&mut scene, &square, positioning, painting, current);
+    paint_conic_gradient(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &square,
+        positioning,
+        painting,
+        current,
+    );
     assert!(!scene.commands.is_empty());
     let before = scene.commands.len();
     paint_conic_gradient(
+        &ImageBrushCache::default(),
         &mut scene,
         &square,
         kurbo::Rect::new(0.0, 0.0, 0.0, 0.0),

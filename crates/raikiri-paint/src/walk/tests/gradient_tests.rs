@@ -1474,7 +1474,14 @@ fn out_of_gamut_conic_stops_clip_after_interpolation() {
     };
     let area = Rect::new(0.0, 0.0, 200.0, 200.0);
     let mut scene = Scene::new();
-    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
+    paint_conic_gradient(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &conic,
+        area,
+        area,
+        cv.color,
+    );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         200,
@@ -1649,7 +1656,14 @@ fn raster_conic(style: &str, width: u32, height: u32) -> Vec<u8> {
     };
     let area = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
     let mut scene = Scene::new();
-    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
+    paint_conic_gradient(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &conic,
+        area,
+        area,
+        cv.color,
+    );
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         width,
