@@ -314,6 +314,7 @@ impl CompactBuilder {
 }
 
 /// Build compact named-counter snapshots without expanding any owned maps.
+#[doc(hidden)]
 pub fn compact_counter_snapshots(
     doc: &Document,
     cascade: &CascadeResult,
@@ -324,6 +325,7 @@ pub fn compact_counter_snapshots(
 /// Build compact snapshots against a caller-owned cumulative retained estimate.
 /// Arena spare capacity, obsolete entries, roots, tables and names count once.
 /// Temporary walk state and output strings are not retained snapshot storage.
+#[doc(hidden)]
 pub fn compact_counter_snapshots_with_budget(
     doc: &Document,
     cascade: &CascadeResult,

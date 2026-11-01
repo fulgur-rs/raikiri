@@ -36,6 +36,7 @@ pub struct SelectorQuery {
 /// their outer traversal before inspecting or enqueueing nodes. Class-token
 /// index source bytes are reserved before construction. Other string bytes,
 /// selector parsing and arbitrary DOM implementations are outside this bound.
+#[doc(hidden)]
 pub struct SelectorWorkBudget {
     work: Rc<SelectorWork>,
     failed: RefCell<Option<CascadeError>>,
@@ -80,13 +81,14 @@ impl SelectorWorkBudget {
 ///
 /// It has no bool matching method. Every call checks terminal failure before
 /// reading the DOM, including after an internal bulk reservation failed.
+#[doc(hidden)]
 pub struct BoundedSelectorMatcher<'a, D: StyleDom> {
     matcher: SelectorMatcher<'a, D>,
     budget: &'a SelectorWorkBudget,
 }
 
 impl<D: StyleDom> BoundedSelectorMatcher<'_, D> {
-    /// Matches a subject with the ancestor contract of [`SelectorQuery::matches`].
+    /// Matches a subject with the ancestor contract of `SelectorQuery::matches`.
     /// The subject visit costs one unit before its node is read; inner matching uses the
     /// same cumulative budget. Failure never becomes a successful no-match.
     pub fn try_matches(
