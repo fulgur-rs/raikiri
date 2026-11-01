@@ -477,6 +477,7 @@ impl LayoutSession<'_> {
         };
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
+            context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
         }
         if matches!(role, ReadRole::GridItem) {
             context.grid_item_ratio = self.grid_item_ratio(idx);
@@ -568,6 +569,63 @@ impl LayoutSession<'_> {
             align_self: alignment,
             justify_self: justify,
         }
+    }
+
+    /// The limits on the cross size of the flex item `idx` that its stated cross
+    /// size holds, where `item` is the view of the item the flex algorithm reads.
+    ///
+    /// The flex algorithm carries a `min-*` or `max-*` size of the main axis
+    /// across the aspect ratio into a limit on the cross size of an item that has
+    /// none of its own, and clamps the cross size the item states with it. A
+    /// cross size the item states is the one it has whatever the limits of the
+    /// main axis are: a `max-width` of 30px on a box that states its height of
+    /// 50px and has a ratio of 1 leaves the box 50px high. Only a cross size that
+    /// is `auto` follows the ratio.
+    ///
+    /// A limit the item has on the cross axis itself is left as it is, so that it
+    /// clamps the cross size it states. A minimum is held in place only when the
+    /// item has no maximum on that axis, as a held minimum would win over it.
+    fn held_cross_size(
+        &self,
+        idx: usize,
+        item: raikiri_layout_style::LayoutStyleView<'_>,
+    ) -> Option<raikiri_layout_style::HeldCrossSize> {
+        use raikiri_layout_style::{Axis, HeldCrossSize};
+        if item.aspect_ratio().is_none() || self.container_is_vertical(idx) {
+            return None;
+        }
+        let is_row = self
+            .taffy_parent_of(idx)
+            .is_none_or(|container| self.physical_style(container).flex_direction_is_row());
+        let (size, min, max) = (item.size(), item.min_size(), item.max_size());
+        let (cross, main_min, main_max, cross_min, cross_max, axis) = if is_row {
+            (
+                size.height,
+                min.width,
+                max.width,
+                min.height,
+                max.height,
+                Axis::Y,
+            )
+        } else {
+            (
+                size.width,
+                min.height,
+                max.height,
+                min.width,
+                max.width,
+                Axis::X,
+            )
+        };
+        if !states_a_size(cross) {
+            return None;
+        }
+        let held = HeldCrossSize {
+            axis,
+            min: !main_min.is_auto() && cross_min.is_auto() && cross_max.is_auto(),
+            max: !main_max.is_auto() && cross_max.is_auto(),
+        };
+        (held.min || held.max).then_some(held)
     }
 
     /// The aspect ratio the flex algorithm is told about the flex item `idx`.

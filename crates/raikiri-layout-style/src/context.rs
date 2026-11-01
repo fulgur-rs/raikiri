@@ -282,6 +282,25 @@ pub enum FlexItemRatio {
     BasisFromCross,
 }
 
+/// The limits on the cross size of a flex item that the cross size it states
+/// holds in place.
+///
+/// The flex algorithm carries a `min-*` or `max-*` size of the main axis across
+/// the aspect ratio into a limit on the cross size, and clamps the cross size
+/// the item states with it. An item that states its cross size keeps it: only
+/// the cross size that is `auto` follows the ratio. The limit that would be
+/// carried across is reported as the cross size itself, which clamps nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct HeldCrossSize {
+    /// The cross axis of the item.
+    pub axis: Axis,
+    /// Whether the minimum size of the cross axis is held.
+    pub min: bool,
+    /// Whether the maximum size of the cross axis is held.
+    pub max: bool,
+}
+
 /// How a grid parent reads the preferred aspect ratio of an item.
 #[derive(Clone, Copy, Debug, Default)]
 #[doc(hidden)]
@@ -323,6 +342,8 @@ pub struct ViewContext {
     pub percent_basis: PercentBasis,
     /// The aspect ratio the view reports for a flex item.
     pub flex_item_ratio: FlexItemRatio,
+    /// The limits on the cross size of a flex item that the size it states holds.
+    pub held_cross_size: Option<HeldCrossSize>,
     /// Whether a grid item's automatic height is measured by the item itself.
     pub grid_item_ratio: GridItemRatio,
 }
@@ -337,6 +358,7 @@ impl Default for ViewContext {
             align_axis_is_inline: false,
             percent_basis: PercentBasis::Taffy,
             flex_item_ratio: FlexItemRatio::Declared,
+            held_cross_size: None,
             grid_item_ratio: GridItemRatio::Declared,
         }
     }
