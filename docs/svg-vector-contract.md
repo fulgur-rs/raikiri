@@ -11,7 +11,7 @@ conformance.
 | Piece | Today |
 | --- | --- |
 | `raikiri-svg` | Parses a bounded SVG (32 MiB input, 1,000,000 XML nodes, depth 128, 1,000,000 nodes after `use` expansion) into a private `usvg` tree, prepares styles (`styled_source*`), and rasterizes with `resvg` under an output byte limit (32 MiB by default). No backend type is public. |
-| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, an `feImage` that refers to an element, a filter that holds more elements than D4 allows or asks for more memory or time than its budgets allow, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
+| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, an `feImage` that refers to an element, a cycle or a long chain of references between `mask`, `clipPath`, `pattern` and `marker` resources, a filter that holds more elements than D4 allows or asks for more memory or time than its budgets allow, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
 | `<img src=*.svg>`, `background-image`, list markers, `content: url()` | `raikiri-net` keeps the SVG bytes and rasterizes lazily at the size paint asks for (1 pixel per CSS pixel of the drawn box), with a per-source LRU of sizes under a shared byte budget. Consumers receive `DecodedImage` pixels through `ImagePixelSource`. |
 | Inline `<svg>` | `Page::inline_svg(fragment)` returns the picture of the root as an `ImageContent`: a vector scene, or pixels where D4 and D6 call for them. The scene is built from the standalone source (viewport, root color, root font and descendant declarations resolved by the cascade) with the fonts of the page. `fulgur-raikiri` draws what it is given. The built-in painter in `raikiri-paint` does not use it and rasterizes the subtree with `raikiri-svg`. |
 
@@ -157,6 +157,32 @@ uses that same filter, but two filters whose pictures use one another's
 elements overflow its stack while it reads them, and a process cannot recover
 from that. Other `feImage` pictures are not refused here; the raster path is
 given no images, so none of them is drawn.
+
+The references between `mask`, `clipPath`, `pattern` and `marker` resources
+are bounded the same way, because `usvg` converts a resource by converting the
+elements in it and then the resource they refer to, without counting depth. The
+parse builds a graph of the references that the attributes, the `style`
+attributes, the matching rules of the `<style>` elements, the `use` copies, the
+`fill` and `stroke` a resource inherits and the `href` of a pattern make, and
+fails with `SvgError::InvalidDocument` when it holds a cycle that `usvg` does
+not break, or a chain deeper than 512 levels of element nesting (a reference
+counts as four levels on top of the nesting of the element that makes it). A
+resource that refers to itself, and two resources of one kind that refer to
+each other through the property `usvg` looks at (`mask`, `clip-path`, or
+`fill` / `stroke` in a pattern), are left to `usvg`, which removes the
+reference, and so is a cycle through a marker, which `usvg` does not draw
+inside itself. A shape or text in a resource counts as inheriting the `fill` and
+`stroke` above the resource unless the shape, or an element between it and the
+resource, sets that property itself with an attribute or a `style` attribute.
+The graph otherwise takes what an element could inherit or match, so a document
+whose `fill` is overridden by a nearer ancestor, or by a style rule, before it
+reaches a pattern that the paint refers to can be refused too.
+
+The declarations a host resolves for descendants of an inline SVG can refer to
+resources the document does not. The source that preparing builds from them is
+checked again, so the same error is returned from rasterizing, from the scene
+path and from the `styled_source*` methods that hand the prepared source to a
+consumer outside the crate.
 
 A document that holds both a filter and an `<image>` has no picture: only a
 scene draws images (the raster path fails with `SvgError::UnsupportedImages`)
