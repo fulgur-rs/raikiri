@@ -18379,6 +18379,17 @@ fn unpaginated_paragraph_after_a_spacer(
     root_css: &str,
     spacer_height: f32,
 ) -> (Document, CascadeResult, usize, usize, usize) {
+    unpaginated_paragraph_with_boxes_after_a_spacer(text, root_css, spacer_height, |_, _| {})
+}
+
+/// [`unpaginated_paragraph_after_a_spacer`] with `add_boxes` run on the
+/// document and the root once the text is in it.
+fn unpaginated_paragraph_with_boxes_after_a_spacer(
+    text: &str,
+    root_css: &str,
+    spacer_height: f32,
+    add_boxes: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize, usize, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
@@ -18389,6 +18400,7 @@ fn unpaginated_paragraph_after_a_spacer(
     );
     let root = doc.append_element(Some(body), "div", Some(&root_css));
     let text = doc.append_text(root, text);
+    add_boxes(&mut doc, root);
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     doc.set_font_collection_with_limits(
@@ -18555,8 +18567,20 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
 #[test]
 fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once() {
     // The 20px root starts 95px down a 100px page: its first line ends at 105.
-    let (mut doc, cascade, body, root, text) =
-        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "height:20px", 95.0);
+    // A box among its lines keeps them from moving down inside it, so the
+    // block moves as a unit.
+    let (mut doc, cascade, body, root, text) = unpaginated_paragraph_with_boxes_after_a_spacer(
+        "aaaa bbbb",
+        "height:20px",
+        95.0,
+        |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("display:inline-block;width:10px;height:10px"),
+            );
+        },
+    );
     let pages = PageOrigins::new(&[], 100.0);
     let lines = TextLineIndex::default();
     let node_count = doc.nodes.len();
@@ -18730,7 +18754,16 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     // break moves up a line, which the text grows by.
     let (_, (moved, text), state, root, _) = keep("aaaa bbbb cccc dddd", 70.0, 100.0);
     moved.unwrap();
-    assert_eq!(state.deferred_shifts.line_splits, [(root, 2, 10.0, 1)]);
+    assert_eq!(
+        state.deferred_shifts.line_splits,
+        [LineSplit {
+            root,
+            first_moved: 2,
+            shift: 10.0,
+            growth: 10.0,
+            page: 1,
+        }]
+    );
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 70.0));
     assert_eq!(text.height, 50.0);
 

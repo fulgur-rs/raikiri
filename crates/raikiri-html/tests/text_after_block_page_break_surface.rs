@@ -660,3 +660,191 @@ fn a_block_laid_out_after_the_lines_keeps_the_padding_from_the_last_line() {
         [vec![5.0, 35.0, 65.0]]
     );
 }
+
+/// The tops of the lines of a 20px-wide paragraph of `lines` words that
+/// follows a block `height` tall and is followed by a one-line marker, on each
+/// page from the first to the last one with a line.
+fn paragraph_and_marker_tops(height: u32, style: &str, lines: usize) -> Vec<Vec<f32>> {
+    let mut tops = tops_per_page(&format!(
+        "{}{}<div style='width:20px'>Y</div>",
+        spacer(height),
+        paragraph(lines, style)
+    ));
+    for page in &mut tops {
+        page.sort_by(f32::total_cmp);
+    }
+    tops
+}
+
+#[test]
+fn a_paragraph_with_a_set_height_keeps_the_height_and_breaks_between_its_lines() {
+    // The box is 100px tall and starts at 30px, so it crosses the page end,
+    // and the lines it holds there break like those of a box that grows.
+    for style in ["height:100px", "min-height:100px", "max-height:100px"] {
+        assert_eq!(
+            paragraph_tops(30, style, 4),
+            [vec![35.0, 65.0], vec![5.0, 35.0]],
+            "{style}"
+        );
+    }
+    // The lines that overflow a box too short for them go on at the top of
+    // the next page.
+    assert_eq!(
+        paragraph_tops(0, "height:45px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    // With the orphans and widows of two, the fourth line takes the third
+    // with it, and a box that starts on the second page does the same.
+    assert_eq!(
+        paragraph_tops(30, "height:45px", 4),
+        [vec![35.0, 65.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(
+        paragraph_tops(60, "height:45px", 4),
+        [vec![], vec![5.0, 35.0], vec![5.0, 35.0]]
+    );
+    // A box that holds its lines is not touched.
+    assert_eq!(
+        paragraph_tops(0, "height:100px;orphans:1;widows:1", 6),
+        [vec![5.0, 35.0, 65.0], vec![5.0, 35.0, 65.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "min-height:60px", 3),
+        [vec![5.0, 35.0, 65.0]]
+    );
+}
+
+#[test]
+fn the_padding_below_a_paragraph_with_a_set_height_does_not_pull_its_lines_along() {
+    // The padding sits at the end of the 150px box, far below the lines, so
+    // it does not make the third line move to the next page with it, as it
+    // would for a box that ends with its lines.
+    assert_eq!(
+        paragraph_tops(0, "height:150px;padding-bottom:15px", 4),
+        [vec![5.0, 35.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "height:150px;padding-bottom:15px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_tops(
+            30,
+            "box-sizing:border-box;height:100px;padding-bottom:15px;orphans:1;widows:1",
+            4
+        ),
+        [vec![35.0, 65.0], vec![5.0, 35.0]]
+    );
+    // A box exactly as tall as its lines ends with them, but its padding does
+    // not make the third line follow the fourth: the lines cross the end of
+    // the first page and the box keeps its height.
+    assert_eq!(
+        paragraph_tops(0, "height:120px;padding-bottom:15px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+}
+
+#[test]
+fn a_block_after_the_lines_of_a_paragraph_follows_the_lines_that_move() {
+    let block = "<div style='height:20px'></div>";
+    // The lines break as those of a paragraph that is all text, and the block
+    // after them goes along.
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div style='width:20px'>z z z{block}</div>",
+            spacer(30)
+        )),
+        [vec![35.0, 65.0], vec![5.0]]
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div style='width:20px;orphans:1;widows:1'>z z z{block}</div>",
+            spacer(60)
+        )),
+        [vec![65.0], vec![5.0, 35.0]]
+    );
+}
+
+#[test]
+fn an_out_of_flow_child_at_the_top_of_a_paragraph_does_not_stop_its_lines_moving() {
+    // The child sits at a fixed distance from the top of the paragraph, so the
+    // lines can move down without it.
+    let child = "<span style='position:absolute;left:0;top:0'></span>";
+    for orphans_widows in ["", "orphans:1;widows:1"] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}<div style='width:20px;position:relative;{orphans_widows}'>z z z z{child}</div>",
+                spacer(30)
+            )),
+            [vec![35.0, 65.0], vec![5.0, 35.0]],
+            "{orphans_widows}"
+        );
+    }
+}
+
+#[test]
+fn the_box_after_a_paragraph_with_a_set_height_stays_where_the_box_ends() {
+    // The lines that overflow the 45px box do not push the marker after it
+    // away: it sits at the end of the box, before the overflowing line that
+    // starts the next page.
+    assert_eq!(
+        paragraph_and_marker_tops(0, "height:45px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 50.0, 65.0], vec![5.0]]
+    );
+    // A box that grows with the lines it moves pushes the marker down with
+    // it.
+    assert_eq!(
+        paragraph_and_marker_tops(30, "min-height:150px;orphans:1;widows:1", 4),
+        [vec![35.0, 65.0], vec![5.0, 35.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_and_marker_tops(30, "max-height:90px;orphans:1;widows:1", 4),
+        [vec![35.0, 65.0], vec![5.0, 25.0, 35.0]]
+    );
+}
+
+#[test]
+fn a_set_height_paragraph_with_a_block_after_its_lines_breaks_between_the_lines() {
+    let block = "<div style='height:20px'></div>";
+    // The block after the lines is an overflow of a box that keeps its
+    // height, or one that has grown to its `min-height` or stopped at its
+    // `max-height`, and the lines break as in a paragraph that is all text.
+    for style in [
+        "height:100px",
+        "height:45px",
+        "min-height:150px",
+        "max-height:90px",
+    ] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}<div style='width:20px;{style}'>z z z z{block}</div>",
+                spacer(30)
+            )),
+            [vec![35.0, 65.0], vec![5.0, 35.0]],
+            "{style}"
+        );
+    }
+    assert_eq!(
+        tops_per_page(&format!(
+            "<div style='width:20px;height:100px;orphans:1;widows:1'>z z z z{block}</div>"
+        )),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div style='width:20px;min-height:150px;orphans:1;widows:1'>z z z{block}</div>",
+            spacer(60)
+        )),
+        [vec![65.0], vec![5.0, 35.0]]
+    );
+    // The block after the lines ends the content that the moved lines push
+    // past the `min-height`, so the box grows to hold it and the next block
+    // starts on the page after.
+    assert_eq!(
+        tops_per_page(&format!(
+            "<div style='width:20px;min-height:150px'>z z z z{block}</div>\
+             <div style='width:20px'>Y</div>"
+        )),
+        [vec![5.0, 35.0], vec![5.0, 35.0], vec![5.0]]
+    );
+}
