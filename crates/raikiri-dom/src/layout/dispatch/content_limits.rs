@@ -964,16 +964,14 @@ fn depends_on_containing_block(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// the content has a say, as it does for an out-of-flow box. An item whose sizes
 /// depend on the grid area keeps its authored sizes: the area is not known until
 /// the tracks are.
+///
+/// The overrides are written for a width along the columns, so the caller does
+/// not ask for them for a grid that runs its algorithm on the axes of its own
+/// writing mode.
 fn grid_item_ratio_overrides(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
 ) -> (Vec<usize>, Vec<(BoxKey, OwnedPropertyOverride)>) {
-    // A vertical container runs its algorithm on the axes of its writing mode,
-    // which these overrides, written for a width along the columns, do not
-    // follow.
-    if super::grid_oof::right_to_left(tree, usize::from(node_id)).is_some() {
-        return (Vec::new(), Vec::new());
-    }
     let items = tree
         .child_ids(node_id)
         .filter(|&child| {
@@ -1007,7 +1005,8 @@ fn grid_item_ratio_overrides(
 /// [`grid_item_ratio_overrides`] in place for the items they name.
 ///
 /// The overrides change the sizes of the items and so what their boxes measure,
-/// so each item's caches are kept apart while they last.
+/// so each item's caches are kept apart while they last. A grid that runs its
+/// algorithm on the axes of its own writing mode is not laid out with them.
 pub(super) fn with_grid_item_ratio_overrides(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
