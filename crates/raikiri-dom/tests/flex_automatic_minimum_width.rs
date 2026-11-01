@@ -672,3 +672,92 @@ fn a_content_keyword_is_no_height_the_container_gives_and_a_calc_resolves_agains
         &[("i", [33.0, 33.0, 30.0, 30.0])],
     );
 }
+
+/// A container of the height of `TALL_ROW` that wraps its items.
+const TALL_WRAP: &str = "display:inline-flex;height:100px;border:solid 25px green;flex-wrap:wrap";
+
+#[test]
+fn a_container_that_wraps_does_not_take_the_height_it_stretches_an_item_to_as_definite() {
+    // The height of a line is not known before the items are stretched, so the
+    // minimum width of an item does not follow the ratio from the 50px it gets.
+    for (container, item) in [
+        (TALL_WRAP, "flex:0 0 0px;aspect-ratio:1/1"),
+        (TALL_WRAP, "flex:0 0 10px;aspect-ratio:1/1"),
+        (TALL_WRAP, "aspect-ratio:1/1"),
+        (TALL_WRAP, ""),
+        (TALL_WRAP, "flex:0 0 0px;aspect-ratio:1/1;max-width:30px"),
+        (
+            "display:inline-flex;height:100px;border:solid 25px green;flex-wrap:wrap-reverse",
+            "flex:0 0 0px;aspect-ratio:1/1",
+        ),
+    ] {
+        assert_boxes(
+            &image(container, item),
+            [70.0, 100.0],
+            &[("i", [33.0, 33.0, 20.0, 50.0])],
+        );
+    }
+    assert_boxes(
+        &format!(
+            "<div id=o style=\"{TALL_WRAP}\">\
+             <img id=i src=\"https://flex.test/portrait.png\" style=\"flex:0 0 0px;aspect-ratio:1/1\">\
+             <img id=j src=\"https://flex.test/portrait.png\" style=\"flex:0 0 0px;aspect-ratio:1/1\"></div>"
+        ),
+        [90.0, 100.0],
+        &[
+            ("i", [33.0, 33.0, 20.0, 50.0]),
+            ("j", [53.0, 33.0, 20.0, 50.0]),
+        ],
+    );
+    assert_boxes(
+        "<div style=\"height:400px\"><div id=o style=\"display:inline-flex;height:25%;border:solid 25px green;flex-wrap:wrap\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"flex:0 0 0px;aspect-ratio:1/1\"></div></div>",
+        [70.0, 100.0],
+        &[("i", [33.0, 33.0, 20.0, 50.0])],
+    );
+}
+
+#[test]
+fn an_item_of_a_container_that_wraps_keeps_the_height_it_states_or_is_aligned_to() {
+    for (item, container, size) in [
+        (
+            "flex:0 0 0px;aspect-ratio:1/1;height:30px",
+            [80.0, 100.0],
+            30.0,
+        ),
+        (
+            "flex:0 0 auto;aspect-ratio:1/1;height:40px",
+            [90.0, 100.0],
+            40.0,
+        ),
+        (
+            "flex:0 0 0px;aspect-ratio:1/1;min-width:80px",
+            [130.0, 100.0],
+            80.0,
+        ),
+    ] {
+        assert_boxes(
+            &image(TALL_WRAP, item),
+            container,
+            &[("i", [33.0, 33.0, size, size])],
+        );
+    }
+    assert_boxes(
+        &image(
+            &format!("{TALL_WRAP};align-items:center"),
+            "flex:0 0 0px;aspect-ratio:1/1",
+        ),
+        [70.0, 100.0],
+        &[("i", [33.0, 48.0, 20.0, 20.0])],
+    );
+    // An item that grows takes the width of its container, and its height along
+    // the ratio.
+    assert_boxes(
+        &image(
+            "display:flex;width:200px;height:100px;border:solid 25px green;flex-wrap:wrap",
+            "flex:1 1 0px;aspect-ratio:1/1",
+        ),
+        [200.0, 100.0],
+        &[("i", [33.0, 33.0, 150.0, 150.0])],
+    );
+}

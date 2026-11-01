@@ -2834,13 +2834,15 @@ fn compute_inline_block_shrink_wrap(
     // An item of a row flex container whose height is fixed before its width is
     // measured, because it states the height or the container stretches it to a
     // definite one, takes its width from that height along its ratio, say for its
-    // automatic minimum size.
+    // automatic minimum size. A container that wraps its items does not take the
+    // height it stretches an item to as definite then.
     let row_height = inputs.known_dimensions.height.filter(|_| {
         leaf_intrinsic.is_some()
             && !in_column_flex
             && inputs.sizing_mode == SizingMode::ContentSize
             && inputs.known_dimensions_are_definite.height
             && tree.in_row_flex_container(idx)
+            && !tree.is_wrapping_stretch_hint(idx, &leaf_style, inputs.known_dimensions)
     });
     // The height that `height: stretch` gave a box with an aspect ratio is as
     // good as one it states, so the width follows from it through the ratio.
