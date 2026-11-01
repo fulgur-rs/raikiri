@@ -518,8 +518,54 @@ pub(crate) fn with_oof_content_limits<R>(
     })
 }
 
-/// The `max-width` overrides that keep the absolutely positioned tables among
-/// `candidates` at least as wide as their min-content width.
+/// Used percentage padding and intrinsic width floors for tables positioned
+/// against a physical containing area. Padding refers to its inline size;
+/// width constraints continue to refer to its physical width.
+pub(super) fn table_size_overrides(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_size: Size<f32>,
+    vertical: bool,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let mut overrides = Vec::new();
+    if vertical {
+        for &candidate in candidates {
+            let idx = usize::from(candidate);
+            if !is_table_content_limits(tree, idx) {
+                continue;
+            }
+            let padding = tree.physical_style(idx).padding();
+            let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
+            for (property, edge) in [
+                (LengthProperty::PaddingTop, padding.top),
+                (LengthProperty::PaddingRight, padding.right),
+                (LengthProperty::PaddingBottom, padding.bottom),
+                (LengthProperty::PaddingLeft, padding.left),
+            ] {
+                if super::edge_depends_on_basis(edge) {
+                    let used = edge.resolve_or_zero(Some(containing_size.height));
+                    let entry = OwnedPropertyOverride::length(
+                        property,
+                        raikiri_style::ComputedLengthPercentageOrAuto::Px(used),
+                        true,
+                    )
+                    .expect("resolved pixel padding");
+                    overrides.push((key, entry));
+                }
+            }
+        }
+    }
+    let floors = tree.with_overrides(overrides.clone(), |tree| {
+        table_width_floors(tree, candidates, containing_size)
+    });
+    overrides.extend(floors);
+    overrides
+}
+
+/// Width bounds that preserve the intrinsic width of positioned tables.
+/// Horizontal tables whose used padding differs also need a minimum before
+/// the parent fixes an authored width; their intrinsic border box is kept
+/// while final column layout subtracts the used edges.
 ///
 /// A table is never narrower than its columns can be, whatever its `max-width`
 /// says (CSS Tables 3 §3, csswg-drafts#5336), but the library clamps every
@@ -528,13 +574,15 @@ pub(crate) fn with_oof_content_limits<R>(
 /// its min-content width, without its own `width`, `min-width` and `max-width`,
 /// and a `max-width` below that width is raised to it. A `max-width` the
 /// content fits in stays as it is: the library also offers the table that room
-/// to wrap its content in. `containing_width` is the width of the containing
-/// block, which the percentages resolve against.
-pub(super) fn table_max_width_floors(
+/// to wrap its content in. Width percentages use the physical width of
+/// `containing_size`; percentage padding has already been resolved by
+/// [`table_size_overrides`].
+fn table_width_floors(
     tree: &mut LayoutSession<'_>,
     candidates: &[NodeId],
-    containing_width: f32,
+    containing_size: Size<f32>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let containing_width = containing_size.width;
     let limited = candidates
         .iter()
         .copied()
@@ -543,14 +591,19 @@ pub(super) fn table_max_width_floors(
             if !is_table_content_limits(tree, idx) || ignores_content_for_width(tree, idx) {
                 return None;
             }
+            let style = tree.physical_style(idx);
+            let minimum_floor = !tree.has_vertical_writing_mode(idx)
+                && style.padding() != style.intrinsic_table_padding();
             let adjustment = box_sizing_adjustment(tree, idx, containing_width);
-            let maximum = tree
-                .physical_style(idx)
+            let maximum = style
                 .max_size()
                 .width
-                .maybe_resolve(Some(containing_width))?
-                + adjustment;
-            Some((candidate, maximum, adjustment))
+                .maybe_resolve(Some(containing_width))
+                .map(|maximum| maximum + adjustment);
+            if maximum.is_none() && !minimum_floor {
+                return None;
+            }
+            Some((candidate, maximum, adjustment, minimum_floor))
         })
         .collect::<Vec<_>>();
     if limited.is_empty() {
@@ -559,7 +612,7 @@ pub(super) fn table_max_width_floors(
     scoped(tree, |tree| {
         limited
             .into_iter()
-            .filter_map(|(node_id, maximum, adjustment)| {
+            .flat_map(|(node_id, maximum, adjustment, minimum_floor)| {
                 let idx = usize::from(node_id);
                 let along = LayoutInput {
                     run_mode: RunMode::ComputeSize,
@@ -589,18 +642,44 @@ pub(super) fn table_max_width_floors(
                     along,
                     neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
                 );
-                (minimum > maximum).then(|| {
-                    let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
-                    let floor = OwnedPropertyOverride::length(
-                        MaxWidth,
-                        raikiri_style::ComputedLengthPercentageOrAuto::Px(
-                            (minimum - adjustment).max(0.0),
-                        ),
-                        true,
-                    )
-                    .expect("resolved pixel bound");
-                    (key, floor)
-                })
+                let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
+                let mut floors = Vec::new();
+                if minimum_floor {
+                    let authored_minimum = tree
+                        .physical_style(idx)
+                        .min_size()
+                        .width
+                        .maybe_resolve(Some(containing_width))
+                        .unwrap_or(0.0)
+                        + adjustment;
+                    if minimum > authored_minimum {
+                        floors.push((
+                            key,
+                            OwnedPropertyOverride::length(
+                                MinWidth,
+                                raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                                    (minimum - adjustment).max(0.0),
+                                ),
+                                true,
+                            )
+                            .expect("resolved pixel bound"),
+                        ));
+                    }
+                }
+                if maximum.is_some_and(|maximum| minimum > maximum) {
+                    floors.push((
+                        key,
+                        OwnedPropertyOverride::length(
+                            MaxWidth,
+                            raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                                (minimum - adjustment).max(0.0),
+                            ),
+                            true,
+                        )
+                        .expect("resolved pixel bound"),
+                    ));
+                }
+                floors
             })
             .collect()
     })

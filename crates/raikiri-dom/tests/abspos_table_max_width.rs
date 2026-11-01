@@ -468,3 +468,58 @@ fn a_fixed_table_with_a_width_ignores_its_content_for_the_floor() {
         ),
     ]);
 }
+
+#[test]
+fn percentage_padding_of_an_absolute_table_uses_the_containing_inline_size() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let outer = format!(
+            "<div style='position:relative;width:200px;height:100px;writing-mode:{mode}'>{{}}</div>"
+        );
+        check_boxes(&[(
+            mode,
+            &table_in(&outer, "box-sizing:content-box;padding:10%;max-width:5px"),
+            &[("t", 0.0, 0.0, 30.0, 30.0), ("d", 10.0, 10.0, 10.0, 10.0)],
+        )]);
+    }
+}
+
+#[test]
+fn percentage_padding_and_width_limits_keep_their_own_containing_bases() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/table-absolute-padding.json"))
+            .expect("Chromium oracle");
+    let source = oracle["cases"].as_array().expect("cases");
+    let expected: Vec<Vec<_>> = source
+        .iter()
+        .map(|case| {
+            case["boxes"]
+                .as_array()
+                .expect("boxes")
+                .iter()
+                .map(|entry| {
+                    let values = entry.as_array().expect("box");
+                    let number = |index: usize| values[index].as_f64().expect("coordinate") as f32;
+                    (
+                        values[0].as_str().expect("id"),
+                        number(1),
+                        number(2),
+                        number(3),
+                        number(4),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let cases: Vec<Case<'_>> = source
+        .iter()
+        .zip(&expected)
+        .map(|(case, expected)| {
+            (
+                case["label"].as_str().expect("label"),
+                case["body"].as_str().expect("markup"),
+                expected.as_slice(),
+            )
+        })
+        .collect();
+    check_boxes(&cases);
+}
