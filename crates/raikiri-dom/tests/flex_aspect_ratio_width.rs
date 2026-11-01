@@ -744,3 +744,189 @@ fn ratio_width_minima_keep_authored_height_bounds_and_content_opt_outs() {
         }
     }
 }
+
+#[test]
+fn absolute_intrinsic_widths_use_the_border_box_height_before_the_ratio() {
+    for width in ["min-content", "max-content"] {
+        for display in ["flex", "inline-flex", "grid", "inline-grid"] {
+            let css = format!("display:{display};grid-auto-flow:column;{RATIO};width:{width}");
+            assert_boxes(
+                &absolute(&css, "XXXX XXXX"),
+                &[("o", [8.0, 8.0, 100.0, 50.0])],
+            );
+            assert_boxes(&absolute(&css, ITEMS), &[("o", [8.0, 8.0, 120.0, 50.0])]);
+        }
+    }
+}
+
+#[test]
+fn absolute_stated_widths_keep_the_content_minimum_without_a_ratio_width_floor() {
+    for (width, expected) in [
+        (0, 120.0),
+        (30, 120.0),
+        (80, 120.0),
+        (100, 120.0),
+        (200, 200.0),
+    ] {
+        let css = format!("display:flex;{RATIO};width:{width}px");
+        assert_boxes(&absolute(&css, ITEMS), &[("o", [8.0, 8.0, expected, 50.0])]);
+        let expected = (width as f32).max(90.0);
+        assert_boxes(
+            &absolute(&css, "XXXX XXXX"),
+            &[("o", [8.0, 8.0, expected, 50.0])],
+        );
+    }
+}
+
+#[test]
+fn an_absolute_zero_width_ratio_box_keeps_its_content_minimum_with_padding() {
+    let html = format!(
+        "<div style=\"position:relative;width:300px;height:300px\">\
+        <div id=o style=\"position:absolute;display:flex;width:0;height:40px;aspect-ratio:2/1;padding:10px\">{ITEMS}</div></div>"
+    );
+    assert_boxes(&html, &[("o", [8.0, 8.0, 90.0, 40.0])]);
+}
+
+#[test]
+fn absolute_width_content_floors_keep_their_opt_outs_and_own_bounds() {
+    let tiny = "<div style=\"width:5px;height:5px\"></div>";
+    for (width, modifier, sizes) in [
+        (
+            "30px",
+            "min-width:0",
+            [[50.0, 50.0], [50.0, 50.0], [50.0, 50.0]],
+        ),
+        (
+            "30px",
+            "overflow:hidden",
+            [[50.0, 50.0], [50.0, 50.0], [50.0, 50.0]],
+        ),
+        (
+            "30px",
+            "max-width:90px",
+            [[90.0, 50.0], [90.0, 50.0], [55.0, 50.0]],
+        ),
+        (
+            "30px",
+            "min-height:51px",
+            [[90.0, 51.0], [120.0, 51.0], [55.0, 51.0]],
+        ),
+        (
+            "30px",
+            "box-sizing:content-box",
+            [[90.0, 90.0], [120.0, 90.0], [80.0, 90.0]],
+        ),
+        (
+            "min-content",
+            "min-width:0",
+            [[100.0, 50.0], [100.0, 50.0], [100.0, 50.0]],
+        ),
+        (
+            "min-content",
+            "overflow:hidden",
+            [[100.0, 50.0], [100.0, 50.0], [100.0, 50.0]],
+        ),
+        (
+            "min-content",
+            "max-width:90px",
+            [[90.0, 50.0], [90.0, 50.0], [90.0, 50.0]],
+        ),
+        (
+            "min-content",
+            "min-height:51px",
+            [[102.0, 51.0], [120.0, 51.0], [102.0, 51.0]],
+        ),
+        (
+            "min-content",
+            "box-sizing:content-box",
+            [[130.0, 90.0], [130.0, 90.0], [130.0, 90.0]],
+        ),
+        (
+            "max-content",
+            "min-width:0",
+            [[100.0, 50.0], [100.0, 50.0], [100.0, 50.0]],
+        ),
+        (
+            "max-content",
+            "overflow:hidden",
+            [[100.0, 50.0], [100.0, 50.0], [100.0, 50.0]],
+        ),
+        (
+            "max-content",
+            "max-width:90px",
+            [[90.0, 50.0], [90.0, 50.0], [90.0, 50.0]],
+        ),
+        (
+            "max-content",
+            "min-height:51px",
+            [[102.0, 51.0], [120.0, 51.0], [102.0, 51.0]],
+        ),
+        (
+            "max-content",
+            "box-sizing:content-box",
+            [[130.0, 90.0], [130.0, 90.0], [130.0, 90.0]],
+        ),
+        (
+            "50%",
+            "min-width:0",
+            [[150.0, 50.0], [150.0, 50.0], [150.0, 50.0]],
+        ),
+        (
+            "50%",
+            "overflow:hidden",
+            [[150.0, 50.0], [150.0, 50.0], [150.0, 50.0]],
+        ),
+        (
+            "50%",
+            "max-width:90px",
+            [[90.0, 50.0], [90.0, 50.0], [90.0, 50.0]],
+        ),
+        (
+            "50%",
+            "min-height:51px",
+            [[150.0, 51.0], [150.0, 51.0], [150.0, 51.0]],
+        ),
+        (
+            "50%",
+            "box-sizing:content-box",
+            [[200.0, 90.0], [200.0, 90.0], [200.0, 90.0]],
+        ),
+    ] {
+        let css = format!("display:flex;{RATIO};width:{width};{modifier}");
+        for (items, size) in ["XXXX XXXX", ITEMS, tiny].into_iter().zip(sizes) {
+            assert_boxes(
+                &absolute(&css, items),
+                &[("o", [8.0, 8.0, size[0], size[1]])],
+            );
+        }
+    }
+}
+
+#[test]
+fn fixed_width_content_floors_are_limited_to_positioned_ratio_boxes() {
+    for make in [in_flow, absolute] {
+        let css = "display:flex;width:30px;height:40px";
+        assert_boxes(&make(css, ITEMS), &[("o", [8.0, 8.0, 50.0, 50.0])]);
+    }
+    assert_boxes(
+        &in_flow(
+            "display:flex;width:30px;height:40px;aspect-ratio:2/1",
+            ITEMS,
+        ),
+        &[("o", [8.0, 8.0, 50.0, 50.0])],
+    );
+}
+
+#[test]
+fn absolute_content_floors_work_in_each_parent_formatting_context() {
+    for parent in ["block", "flex", "grid"] {
+        for (display, width) in [("block", 90.0), ("flex", 120.0), ("grid", 120.0)] {
+            let html = format!(
+                "<div style=\"position:relative;display:{parent};width:300px;height:300px\">\
+                 <div id=o style=\"position:absolute;display:{display};grid-auto-flow:column;\
+                 width:30px;{RATIO};{BORDER}\">{ITEMS}</div></div>"
+            );
+            assert_boxes(&html, &[("o", [8.0, 8.0, width, 50.0])]);
+        }
+    }
+}
