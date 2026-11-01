@@ -1266,6 +1266,25 @@ impl PaginationState {
                 }
             }
             let block_height = document.nodes[block_id].layout.size.height;
+            // The padding and border of the paragraph below its last line.
+            // They follow the line only when the lines are all of the content
+            // of the box: a block laid out after the last line, such as a
+            // block-level `::after`, or a height taller than the lines, is
+            // what they follow instead. Half a pixel absorbs the rounding of
+            // the line boxes.
+            let own_closing_edges = if blocks.paragraph_root == Some(block_id) {
+                let layout = &document.nodes[block_id].layout;
+                let edges = layout.padding.bottom + layout.border.bottom;
+                let content = block_height - edges - layout.padding.top - layout.border.top;
+                let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
+                if (content - lines).abs() <= 0.5 {
+                    edges
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
             let mut page = self.current_page;
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
@@ -1280,6 +1299,7 @@ impl PaginationState {
                     page_start + page_step,
                     cascade.computed[block_id].orphans,
                     cascade.computed[block_id].widows,
+                    own_closing_edges,
                 );
                 // The block is measured from where it is now.
                 let block_effective_y = block_effective_y(
@@ -1451,6 +1471,7 @@ impl PaginationState {
                 page_start + page_step,
                 cascade.computed[root].orphans,
                 cascade.computed[root].widows,
+                0.0,
             );
             let run_top = text.effective_y + metrics[0].0;
             let run_height = metrics[metrics.len() - 1].1 - metrics[0].0;

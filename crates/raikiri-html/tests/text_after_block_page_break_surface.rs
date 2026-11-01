@@ -3,7 +3,7 @@
 //! ones Chromium prints for the same documents.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
+    FontCollectionBuilder, FragmentKind, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
@@ -449,5 +449,156 @@ fn widows_are_taken_from_lines_of_different_heights() {
     assert_eq!(
         tops_per_page(&mixed_paragraph(3, 2, "")),
         [vec![5.0, 35.0, 65.0], vec![10.0, 50.0]]
+    );
+}
+
+/// The page, top and height of every border box 20px wide in `body`: the
+/// paragraphs made by [`paragraph`], on each page they have a part of.
+fn paragraph_boxes(body: &str) -> Vec<(u32, f32, f32)> {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let html = format!(
+        "<!doctype html><style>@page{{size:100px 100px;margin:0}}\
+         body{{margin:0;font:20px/30px Ahem}}</style><body>{body}</body>"
+    );
+    let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &document,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("layout must complete")
+    };
+    let mut boxes: Vec<(u32, f32, f32)> = Vec::new();
+    for index in 0..8 {
+        let Some(page) = result.page(index) else {
+            continue;
+        };
+        for fragment in page.fragments() {
+            let rect = fragment.rect();
+            let found = (index, rect.y, rect.height);
+            if fragment.kind() == FragmentKind::Box
+                && (rect.width - 20.0).abs() < 0.01
+                && !boxes.contains(&found)
+            {
+                boxes.push(found);
+            }
+        }
+    }
+    boxes
+}
+
+#[test]
+fn the_last_line_goes_with_the_padding_and_border_below_it() {
+    // Three lines end at 90 on a page of 100px. The 15px of padding below them
+    // do not fit, so the last line starts the next page, where the padding
+    // follows it: two lines and then one, as in Chromium, with the box ending
+    // 45px down the second page.
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:15px", 3),
+        [vec![5.0, 35.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_boxes(&paragraph(3, "padding-bottom:15px")),
+        [(0, 0.0, 100.0), (1, 0.0, 45.0)]
+    );
+    // Two lines are split the same way: the break is not one the lines need,
+    // so the orphans do not move the paragraph whole.
+    assert_eq!(
+        paragraph_tops(30, "padding-bottom:15px", 2),
+        [vec![35.0], vec![5.0]]
+    );
+    // A border does the same, and so does padding above the lines.
+    assert_eq!(
+        paragraph_tops(10, "border-bottom:3px solid red", 3),
+        [vec![15.0, 45.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "padding:7px 0;border-top:3px solid red", 3),
+        [vec![15.0, 45.0], vec![5.0]]
+    );
+    // Edges that fit leave the lines where they are.
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:10px", 3),
+        [vec![5.0, 35.0, 65.0]]
+    );
+}
+
+#[test]
+fn the_edges_below_a_paragraph_follow_the_breaks_its_lines_need() {
+    // Three orphans do not move a paragraph whose lines fit.
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:15px;orphans:3", 3),
+        [vec![5.0, 35.0], vec![5.0]]
+    );
+    // Six lines break after three, which leaves the two widows their lines.
+    // The padding under the last line does not fit the second page, so that
+    // line starts a third one.
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:15px", 6),
+        [vec![5.0, 35.0, 65.0], vec![5.0, 35.0], vec![5.0]]
+    );
+    // Three widows take a line from the first page, and the padding then puts
+    // the last line on the page after the second.
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:15px;widows:3", 5),
+        [vec![5.0, 35.0], vec![5.0, 35.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:15px;widows:4", 6),
+        [vec![5.0, 35.0], vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    // With one orphan the second page gives up lines for the three widows,
+    // and the padding then takes the last line of the third.
+    assert_eq!(
+        paragraph_tops(0, "padding-bottom:15px;orphans:1;widows:3", 7),
+        [vec![5.0, 35.0, 65.0], vec![5.0], vec![5.0, 35.0], vec![5.0]]
+    );
+}
+
+#[test]
+fn the_padding_of_a_box_around_a_paragraph_gets_the_same_break() {
+    // The padding that closes the box around the paragraph is judged like the
+    // paragraph's own: three lines with one orphan and three widows cannot
+    // keep both, so the last line goes alone. The same holds with padding on
+    // both.
+    for (outer, inner) in [
+        ("padding-bottom:15px", ""),
+        ("padding-bottom:15px", ";padding-bottom:8px"),
+        ("padding-bottom:8px", ";padding-bottom:8px"),
+    ] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "<div style='{outer}'><div style='width:20px;orphans:1;widows:3{inner}'>z z z</div></div>"
+            )),
+            [vec![5.0, 35.0], vec![5.0]],
+            "{outer} {inner}"
+        );
+    }
+}
+
+#[test]
+fn a_block_laid_out_after_the_lines_keeps_the_padding_from_the_last_line() {
+    // The padding follows the block after the lines, not the last line, so no
+    // line moves for it: the three lines stay on the first page.
+    let style = "<style>.a::after{content:'';display:block;height:20px}</style>";
+    assert_eq!(
+        tops_per_page(&format!(
+            "{style}<div class=a style='width:20px;padding-bottom:15px'>z z z</div>"
+        )),
+        [vec![5.0, 35.0, 65.0]]
+    );
+    // A box taller than its lines is no different.
+    assert_eq!(
+        paragraph_tops(0, "min-height:150px;padding-bottom:15px", 3),
+        [vec![5.0, 35.0, 65.0]]
     );
 }
