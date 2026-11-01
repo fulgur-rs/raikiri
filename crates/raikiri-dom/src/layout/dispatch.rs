@@ -4148,9 +4148,27 @@ fn with_ratio_width(
     }
     let metrics =
         block_flow::Metrics::resolve(&style, false, tree.nodes[idx].ratio_in_content_box, inputs);
-    let Some(width) = metrics.preferred.width.filter(|_| metrics.ratio_width) else {
+    let stated_height = inputs.sizing_mode == SizingMode::InherentSize
+        && style.size.width.is_auto()
+        && style
+            .size
+            .height
+            .maybe_resolve(inputs.parent_size.height)
+            .is_some();
+    let Some(width) = metrics
+        .preferred
+        .width
+        .filter(|_| metrics.ratio_width || stated_height)
+    else {
         return inputs;
     };
+    if !metrics.ratio_width {
+        // An explicit minimum or scrolling opts out of the content minimum,
+        // but the width still settles before the authored height is laid out.
+        inputs.known_dimensions.width = Some(width);
+        inputs.known_dimensions_are_definite.width = true;
+        return inputs;
+    }
     // A horizontal container is probed without an imposed height. In a
     // vertical container that height is its inline size, which its lines
     // and tracks still need while their block-axis width is measured.
@@ -4200,10 +4218,11 @@ fn laid_out_with_ratio_height(
         original.known_dimensions.height.is_none() && inputs.known_dimensions.height.is_some();
     let both_settled =
         inputs.known_dimensions.width.is_some() && inputs.known_dimensions.height.is_some();
-    let drop_ratio = (height_from_ratio || both_settled)
-        && block_flow::style_input::physical(tree, usize::from(node_id))
-            .aspect_ratio
-            .is_some();
+    let drop_ratio =
+        (height_from_ratio || both_settled || ratio_dimensions_are_settled(tree, node_id, &inputs))
+            && block_flow::style_input::physical(tree, usize::from(node_id))
+                .aspect_ratio
+                .is_some();
     if !drop_ratio {
         return sized(tree, node_id, inputs);
     }
