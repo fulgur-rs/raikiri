@@ -41,7 +41,8 @@ pub(super) fn with_saved_probe_caches<R>(
 /// a single line (CSS Flexbox §9.9.1). The container's `max-width` is dropped
 /// for the probe; the caller clamps the result by it. The items are bounded by
 /// their flex base sizes while the container lays them out
-/// ([`with_flex_item_basis_bounds`]).
+/// ([`with_flex_item_basis_bounds`]), as they are when the container is asked
+/// for its min-content or max-content width without this probe.
 ///
 /// A container with no `max-width` has nothing to drop, and the probe leaves
 /// its style alone. A container with one drops it in a scope that keeps the
@@ -235,9 +236,12 @@ fn automatic_minimum_width(
 ///
 /// Taffy takes the `width` of an item as its contribution without measuring
 /// the item, so a `width` the flex base size bounds is set to the bounded
-/// width instead of installing a bound. Where Taffy measures the item it
-/// clamps the contribution with the item's margins counted in, so the margins
-/// are counted in the upper bound as well and survive it.
+/// width instead of installing a bound. The width the item states caps its
+/// automatic minimum size, so a width that is lowered would lower that size
+/// too: it is measured first and installed as the `min-width` of the item.
+/// Where Taffy measures the item it clamps the contribution with the item's
+/// margins counted in, so the margins are counted in the upper bound as well
+/// and survive it.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
 pub(super) fn with_flex_item_basis_bounds<R>(
@@ -307,29 +311,37 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             });
             let new_max = (cannot_grow && preferred.is_none())
                 .then(|| max_length.map_or(basis, |m| m.min(basis)) + margins);
-            let new_width = preferred
-                .filter(|_| cannot_shrink || cannot_grow)
-                .map(|preferred| {
-                    let floored = if cannot_shrink {
-                        preferred.max(basis)
-                    } else {
-                        preferred
-                    };
-                    Dimension::length(if cannot_grow {
-                        floored.min(basis)
-                    } else {
-                        floored
-                    })
-                });
+            let bounded_width =
+                preferred
+                    .filter(|_| cannot_shrink || cannot_grow)
+                    .map(|preferred| {
+                        let floored = if cannot_shrink {
+                            preferred.max(basis)
+                        } else {
+                            preferred
+                        };
+                        if cannot_grow {
+                            floored.min(basis)
+                        } else {
+                            floored
+                        }
+                    });
+            let new_width = bounded_width.map(Dimension::length);
+            let width_lowered = matches!(
+                (bounded_width, preferred),
+                (Some(bounded), Some(stated)) if bounded < stated
+            );
             // A bound installed as `min-width` or `max-width` is an explicit one,
             // which leaves the item no automatic minimum size. The contribution
             // of an item with one is no less than that size however far its flex
-            // base size would bound it.
+            // base size would bound it. So is that of an item whose width is
+            // lowered, though no bound is installed for it otherwise.
             let automatic = automatic_minimum
-                .filter(|_| new_min.is_some() || new_max.is_some())
+                .filter(|_| new_min.is_some() || new_max.is_some() || width_lowered)
                 .map(|inputs| automatic_minimum_width(tree, child, inputs));
-            let new_min =
-                new_min.map(|value| automatic.map_or(value, |minimum| value.max(minimum)));
+            let new_min = new_min
+                .map(|value| automatic.map_or(value, |minimum| value.max(minimum)))
+                .or(automatic.filter(|_| width_lowered));
             let new_max = new_max
                 .map(|value| automatic.map_or(value, |minimum| value.max(minimum + margins)));
             if new_min.is_none() && new_max.is_none() && new_width.is_none() {
