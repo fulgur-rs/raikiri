@@ -399,6 +399,68 @@ fn div_widths(out: &PipelineOutput, page_index: u32) -> Vec<f32> {
         .collect()
 }
 
+/// The widths and block positions of the `div` boxes on page `page_index`.
+fn div_boxes(out: &PipelineOutput, page_index: u32) -> Vec<(f32, f32)> {
+    let (document, _) = out.layout_for_page(page_index);
+    document
+        .page_fragments(page_index)
+        .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+        .filter(|fragment| {
+            document
+                .get_node(fragment.node().0 as usize)
+                .and_then(|node| node.tag_name())
+                == Some("div")
+        })
+        .map(|fragment| (fragment.rect().width, fragment.rect().y))
+        .collect()
+}
+
+const PAGE_WIDTHS: &str = "<style>\
+    @page { size: 200px 200px; margin: 0 }\
+    @page wide { size: 400px 200px }\
+    body { margin: 0 } div { font: 10px/10px Ahem }\
+    </style>";
+
+#[test]
+fn a_box_after_a_forced_break_keeps_its_margin_at_the_width_of_its_page() {
+    // The relayout breaks before the box where the forced break was, and an
+    // unforced break would cut the margin the forced break kept.
+    let out = run(&format!(
+        "{PAGE_WIDTHS}<div style='page:wide'>first</div>\
+         <div style='break-before:page;margin-top:30px'>second</div>"
+    ));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_boxes(&out, 1), vec![(200.0, 30.0)]);
+}
+
+#[test]
+fn a_box_after_a_page_name_change_keeps_the_margin_of_its_first_child() {
+    // The margin of the inner box collapses through the outer one, which
+    // starts the unnamed page after the wide one.
+    let out = run(&format!(
+        "{PAGE_WIDTHS}<div style='page:wide'>first</div>\
+         <div><div style='margin-top:30px'>second</div></div>"
+    ));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_boxes(&out, 1), vec![(200.0, 30.0), (200.0, 30.0)]);
+}
+
+#[test]
+fn a_named_page_keeps_the_margin_of_the_first_child_of_its_box() {
+    let out = run(&format!(
+        "{PAGE_WIDTHS}<div>first</div>\
+         <div style='page:wide'><div style='margin-top:30px'>second</div></div>"
+    ));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_boxes(&out, 1), vec![(400.0, 30.0), (400.0, 30.0)]);
+}
+
 #[test]
 fn a_named_page_after_a_tall_first_page_is_laid_out_at_its_own_width_within_the_page_limit() {
     // The content before the named page is taller than the measuring room

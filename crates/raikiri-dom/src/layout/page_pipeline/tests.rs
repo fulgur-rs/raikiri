@@ -11013,6 +11013,99 @@ fn a_forced_break_keeps_the_top_margin() {
     );
 }
 
+/// Lays out one `div` per entry of `before` and then a `div` styled `parent`
+/// that holds one `div` styled `child`, in a zero-margin body on 100px tall
+/// pages. Returns the block positions of the parent and of its child with the
+/// page count.
+fn wrapped_box_positions(before: &[&str], parent: &str, child: &str) -> (f32, f32, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    for style in before {
+        doc.append_element(
+            Some(body),
+            "div",
+            Some(&format!("display:block;width:100px;{style}")),
+        );
+    }
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Some(&format!("display:block;width:100px;{parent}")),
+    );
+    let inner = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some(&format!("display:block;{child}")),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let y = |id| doc.get_node(id).unwrap().layout.location.y;
+    (y(wrapper), y(wrapper) + y(inner), pages.len())
+}
+
+#[test]
+fn a_forced_break_keeps_the_margin_of_a_first_child_that_collapses_through() {
+    // CSS 2 §8.3.1: the 30px margin of the child and the box's own 10px
+    // collapse into one 30px margin above the box, which the forced break
+    // keeps.
+    let before = ["height:60px;break-after:page"];
+    assert_eq!(
+        wrapped_box_positions(&before, "margin-top:10px", "margin-top:30px;height:20px"),
+        (130.0, 130.0, 2)
+    );
+    assert_eq!(
+        wrapped_box_positions(&before, "margin-top:30px", "margin-top:10px;height:20px"),
+        (130.0, 130.0, 2)
+    );
+    // A negative margin is added to the largest positive one.
+    assert_eq!(
+        wrapped_box_positions(&before, "margin-top:10px", "margin-top:-4px;height:20px"),
+        (106.0, 106.0, 2)
+    );
+}
+
+#[test]
+fn a_forced_break_before_the_box_keeps_the_margin_of_its_first_child() {
+    assert_eq!(
+        wrapped_box_positions(
+            &["height:60px"],
+            "break-before:page",
+            "margin-top:30px;height:20px"
+        ),
+        (130.0, 130.0, 2)
+    );
+}
+
+#[test]
+fn a_forced_break_keeps_no_margin_of_a_child_that_padding_separates() {
+    // The padding keeps the child's margin inside the box.
+    assert_eq!(
+        wrapped_box_positions(
+            &["height:60px;break-after:page"],
+            "padding-top:1px",
+            "margin-top:30px;height:20px"
+        ),
+        (100.0, 131.0, 2)
+    );
+}
+
+#[test]
+fn an_unforced_break_still_truncates_the_margin_of_a_first_child() {
+    assert_eq!(
+        wrapped_box_positions(&["height:90px"], "", "margin-top:30px;height:20px"),
+        (100.0, 100.0, 2)
+    );
+}
+
 #[test]
 fn a_forced_break_keeps_a_margin_collapsed_through_an_empty_box() {
     assert_eq!(
@@ -17667,6 +17760,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         margins_collapse_through: false,
         collapses_with_previous_block: false,
         pending_break_applies: false,
+        keeps_continuation_margin: false,
     }
 }
 
@@ -18774,6 +18868,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         margins_collapse_through: true,
         collapses_with_previous_block: true,
         pending_break_applies: forced,
+        keeps_continuation_margin: false,
     }
 }
 
