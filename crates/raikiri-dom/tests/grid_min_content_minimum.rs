@@ -390,6 +390,11 @@ fn image_items_contribute_their_minimum_but_keep_their_intrinsic_ratio() {
 }
 
 #[test]
+fn calculated_minimums_resolve_cyclic_percentages_only_after_the_intrinsic_measure() {
+    assert_oracle(include_str!("data/grid-minimum-calc.json"));
+}
+
+#[test]
 fn nested_ratio_grids_preserve_content_height_without_repeating_intrinsic_work() {
     let depth = 24;
     let nested =

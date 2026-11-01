@@ -519,6 +519,7 @@ impl LayoutSession<'_> {
                         item.min_size().width.expand(),
                         ExpandedLengthPercentageAuto::Length(_)
                             | ExpandedLengthPercentageAuto::Percent(_)
+                            | ExpandedLengthPercentageAuto::Calc(_)
                     ))
             {
                 GridItemRatio::Replaced
@@ -534,7 +535,9 @@ impl LayoutSession<'_> {
             )
             || !matches!(
                 item.min_size().width.expand(),
-                ExpandedLengthPercentageAuto::Length(_) | ExpandedLengthPercentageAuto::Percent(_)
+                ExpandedLengthPercentageAuto::Length(_)
+                    | ExpandedLengthPercentageAuto::Percent(_)
+                    | ExpandedLengthPercentageAuto::Calc(_)
             )
         {
             return GridItemRatio::Declared;

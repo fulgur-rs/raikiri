@@ -871,12 +871,17 @@ fn items_held_to_minimum_width(
             if !style.size().width.is_auto() || super::is_scroll_container(style.overflow()) {
                 return None;
             }
-            // A percentage has nothing to resolve against while the container
-            // is sized by its content, so the minimum it states is `0`. A
-            // `calc()` can mix the two, which this leaves as it was.
+            // Cyclic minimum-size percentages resolve against zero for the
+            // intrinsic contribution, including those inside calc(). The
+            // authored expression is restored for the final track-based size
+            // (CSS Sizing 3 section 5.2.1).
             let minimum = match style.min_size().width.expand() {
                 ExpandedLengthPercentageAuto::Length(minimum) => minimum,
                 ExpandedLengthPercentageAuto::Percent(_) => 0.0,
+                ExpandedLengthPercentageAuto::Calc(_) => {
+                    crate::layout::used_style_length_percentage_auto(style.min_size().width, 0.0)?
+                        .max(0.0)
+                }
                 _ => return None,
             };
             Some((idx, minimum))
