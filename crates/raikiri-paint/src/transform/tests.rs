@@ -10,6 +10,67 @@ fn adapter(scene: &mut Scene) -> TransformScene<'_, Scene> {
 }
 
 #[test]
+fn appending_a_captured_gradient_moves_its_stop_storage() {
+    use anyrender::recording::RenderCommand;
+    use kurbo::{Point, Rect};
+    use peniko::{Fill, Gradient};
+
+    for active_capture in [false, true] {
+        // More than four stops force heap storage: inline SmallVec storage
+        // changes address even when the command is moved without a copy.
+        let stops: Vec<_> = (0..8)
+            .map(|index| (index as f32 / 7.0, Color::from_rgba8(index * 30, 0, 0, 255)))
+            .collect();
+        let gradient = Gradient::new_sweep(Point::ZERO, 0.0, 6.0).with_stops(stops.as_slice());
+        let local = Affine::scale_non_uniform(3.0, 2.0);
+        let brush_transform = Some(Affine::translate((1.0, 2.0)));
+        let mut source = Scene::new();
+        source.fill(
+            Fill::NonZero,
+            local,
+            &gradient,
+            brush_transform,
+            &Rect::new(0.0, 0.0, 10.0, 10.0),
+        );
+        let RenderCommand::Fill(fill) = &source.commands[0] else {
+            panic!("fill")
+        };
+        let anyrender::Paint::Gradient(gradient) = &fill.brush else {
+            panic!("gradient")
+        };
+        let storage = gradient.stops.as_ptr();
+
+        let outer = Affine::scale(2.0);
+        let inner = Affine::translate((11.0, 13.0));
+        let mut target = Scene::new();
+        {
+            let mut capture = crate::capture::CaptureScene::new(&mut target);
+            if active_capture {
+                capture.begin_capture();
+            }
+            TransformScene {
+                scene: &mut capture,
+                transform: outer,
+            }
+            .append_scene(source, inner);
+            if active_capture {
+                let held = capture.end_capture();
+                capture.append_scene(held, Affine::IDENTITY);
+            }
+        }
+        let RenderCommand::Fill(fill) = &target.commands[0] else {
+            panic!("fill")
+        };
+        let anyrender::Paint::Gradient(gradient) = &fill.brush else {
+            panic!("gradient")
+        };
+        assert_eq!(gradient.stops.as_ptr(), storage);
+        assert_eq!(fill.transform, outer * inner * local);
+        assert_eq!(fill.brush_transform, brush_transform);
+    }
+}
+
+#[test]
 fn affine_adapter_reports_unimplemented_custom_resource() {
     let mut inner = Scene::new();
     let mut wrapped = adapter(&mut inner);

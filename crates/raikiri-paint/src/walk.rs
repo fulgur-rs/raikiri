@@ -4030,8 +4030,11 @@ fn conic_center(position: &CssPosition, positioning: Rect) -> Point {
 /// peniko zero points right in a y-down space, hence the minus 90 shift.
 /// Non-repeating sweeps pad beyond their stops. Repeating ones have their
 /// periods laid out as stops over the turn, or paint their average color
-/// when the periods are too short to tell apart.
+/// when the periods are too short to tell apart. Allocation budgets cover
+/// intermediate buffers and owned stop copies; exhaustion paints the final
+/// authored stop without any further expansion.
 fn conic_to_peniko(
+    image_cache: &ImageBrushCache,
     conic: &ConicGradient,
     center: Point,
     current_color: CssColor,
@@ -4040,28 +4043,48 @@ fn conic_to_peniko(
     if conic.stops.len() < 2 {
         return None;
     }
-    let raw: Vec<gradient::RawStop> = conic
-        .stops
-        .iter()
-        .map(|stop| gradient::RawStop {
-            position: angular_stop_offset(stop.position),
-            hint: angular_stop_offset(stop.hint),
-            color: gradient_stop_dynamic(stop.color, current_color),
-        })
-        .collect();
-    let mut fixed = gradient::fixed_up_stops(&raw, &conic.interpolation);
+    let budget = image_cache.conic_budget();
+    Some(
+        try_conic_to_peniko(conic, center, current_color, &budget).unwrap_or_else(|| {
+            // A bounded fallback must not enter the stop-expanding average path.
+            let color =
+                gradient_stop_dynamic(conic.stops[conic.stops.len() - 1].color, current_color);
+            let CssColor { r, g, b, a } = dynamic_to_css_color(color);
+            gradient::GradientFill::Solid(Color::from_rgba8(r, g, b, a))
+        }),
+    )
+}
+
+fn try_conic_to_peniko(
+    conic: &ConicGradient,
+    center: Point,
+    current_color: CssColor,
+    budget: &gradient::ConicBudget<'_>,
+) -> Option<gradient::GradientFill> {
+    let mut raw = budget.vector(conic.stops.len())?;
+    for stop in conic.stops.iter() {
+        budget.push(
+            &mut raw,
+            gradient::RawStop {
+                position: angular_stop_offset(stop.position),
+                hint: angular_stop_offset(stop.hint),
+                color: gradient_stop_dynamic(stop.color, current_color),
+            },
+        )?;
+    }
+    let mut fixed = gradient::try_fixed_up_stops(&raw, &conic.interpolation, Some(budget))?;
     if conic.repeating {
-        match gradient::repeat_over_turn(fixed, &conic.interpolation) {
+        match gradient::try_repeat_over_turn(fixed, &conic.interpolation, budget)? {
             gradient::RepeatedTurn::Solid(color) => {
                 return Some(gradient::GradientFill::Solid(color));
             }
             gradient::RepeatedTurn::Stops(stops) => fixed = stops,
         }
     }
-    let peniko_stops: Vec<(f32, DynamicColor)> = fixed
-        .into_iter()
-        .map(|(offset, color)| (offset as f32, color))
-        .collect();
+    let mut peniko_stops = budget.vector(fixed.len())?;
+    for (offset, color) in fixed {
+        budget.push(&mut peniko_stops, (offset as f32, color))?;
+    }
     let from_degrees = if conic.angle.0.is_finite() {
         conic.angle.0
     } else {
@@ -4082,16 +4105,29 @@ fn conic_to_peniko(
     // a sweep with a stop outside it gets clipped sRGB stops sampled from
     // the ramp in its own space instead. It also takes no stop outside the
     // turn it draws, so those are cut from the sampled ramp the same way.
-    let brush =
+    let (mut gradient, stops) =
         if gradient::any_out_of_gamut(&peniko_stops) || gradient::any_outside_turn(&peniko_stops) {
-            let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
-            gradient.with_stops(gradient::clip_to_one_turn(stops).as_slice())
+            let stops =
+                gradient::try_expand_stops(&peniko_stops, space, direction, false, Some(budget))?;
+            (gradient, gradient::try_clip_to_one_turn(stops, budget)?)
         } else {
-            gradient
-                .with_interpolation_cs(space)
-                .with_hue_direction(direction)
-                .with_stops(peniko_stops.as_slice())
+            (
+                gradient
+                    .with_interpolation_cs(space)
+                    .with_hue_direction(direction),
+                peniko_stops,
+            )
         };
+    // Peniko owns its stops; a recording scene owns another copy on fill.
+    // Allow the next power of two for each SmallVec's capacity growth.
+    let copy_capacity = stops.len().max(1).checked_next_power_of_two()?;
+    budget.charge::<peniko::ColorStop>(copy_capacity)?;
+    budget.charge::<peniko::ColorStop>(copy_capacity)?;
+    budget.charge::<PenikoGradient>(1)?;
+    // with_stops pushes each entry separately. Reserve once so its implicit
+    // SmallVec growth cannot perform additional unaccounted allocations.
+    gradient.stops.try_reserve_exact(copy_capacity).ok()?;
+    let brush = gradient.with_stops(stops.as_slice());
     Some(gradient::GradientFill::Brush(Box::new(brush), None))
 }
 
@@ -4102,6 +4138,7 @@ fn conic_to_peniko(
 /// for solid and image backgrounds. A rounded box is clipped to its curve by
 /// the caller, around the background color and the sweep together.
 fn paint_conic_gradient(
+    image_cache: &ImageBrushCache,
     scene: &mut impl PaintScene,
     conic: &ConicGradient,
     positioning: Rect,
@@ -4113,7 +4150,7 @@ fn paint_conic_gradient(
     }
     let center = conic_center(&conic.position, positioning);
     // cov:ignore: parser guarantees at least two valid stops, so the sweep always builds
-    let Some(fill) = conic_to_peniko(conic, center, current_color) else {
+    let Some(fill) = conic_to_peniko(image_cache, conic, center, current_color) else {
         return;
     };
     match fill {

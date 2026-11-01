@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// seams to.
 #[derive(Default)]
 pub(crate) struct ImageBrushCache {
+    conic_budget: super::gradient::ConicPaintBudget,
     brushes: RefCell<HashMap<(usize, PixelCrop), CachedBrush>>,
     averaged: RefCell<HashMap<AveragedKey, CachedBrush>>,
     base_url: Option<url::Url>,
@@ -40,9 +41,15 @@ impl AsRef<[u8]> for SharedPixels {
 }
 
 impl ImageBrushCache {
+    /// Work for one conic, charged to every background in this paint call.
+    pub(super) fn conic_budget(&self) -> super::gradient::ConicBudget<'_> {
+        self.conic_budget.for_gradient()
+    }
+
     /// A cache for one paint call over `document`.
     pub(crate) fn for_document(document: &raikiri_dom::Document) -> Self {
         Self {
+            conic_budget: super::gradient::ConicPaintBudget::default(),
             brushes: RefCell::default(),
             averaged: RefCell::default(),
             base_url: document.base_url().cloned(),
