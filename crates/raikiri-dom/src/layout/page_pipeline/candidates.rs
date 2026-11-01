@@ -8,14 +8,15 @@ use super::{
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
     PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head,
     box_forces_break_after, boxes_are_tied, breaks_only_around, candidate_ancestor_constraints,
-    clears_float_side, closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
-    pagination_child_order, pagination_child_parent_y, paragraph_lines_keep_together,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
+    clears_float_side, closing_edges_of, container_item_tail, first_owned_text_line_top,
+    height_follows_content, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
+    is_plain_block_box, is_plain_container_box, leading_piece_end, lone_box_tail,
+    moves_later_siblings, nested_run_units, normal_flow_bottom, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -78,6 +79,12 @@ pub(super) struct ElementContext {
     /// it goes and they do not fit after the box, the avoided break giving way
     /// (see [`super::run_tail_move`]).
     pub(super) run_tail_edges: f32,
+    /// For the last item of a flex container that stacks its items, or the
+    /// last row of a table: the block size of the bottom padding, border and
+    /// margin that close the container and the blocks it ends, which follow
+    /// the item. The box moves to the next page with them when they do not fit
+    /// after it (see [`super::item_tail_move`]).
+    pub(super) item_tail_edges: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -182,6 +189,11 @@ impl BoxContext {
     pub(super) fn run_tail_edges(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.run_tail_edges)
+    }
+
+    pub(super) fn item_tail_edges(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.item_tail_edges)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -439,6 +451,22 @@ struct CandidateFrame<'name> {
     /// to, from a free break on, and ends its block: `closing_edges` follows
     /// it.
     run_tail: bool,
+    /// The last item of the flex container, or the last row of the table, that
+    /// the node is in, when the edges that close the container follow it.
+    item_tail: Option<ItemTail>,
+}
+
+/// The last item of a flex container that stacks its items, or the last row of
+/// a table, with the edges that follow it.
+#[derive(Clone, Copy)]
+struct ItemTail {
+    /// The item or row.
+    item: usize,
+    /// Where the border box of the container ends, in source coordinates.
+    container_bottom: f32,
+    /// The block size of the bottom padding and border of the blocks that the
+    /// container ends, and of the margin below it.
+    inherited: f32,
 }
 
 /// How a box is tied by avoided page breaks to the others of the run that ends
@@ -481,6 +509,7 @@ impl CandidateFrame<'_> {
             tie: AvoidTie::None,
             run_unit: None,
             run_tail: false,
+            item_tail: None,
         }
     }
 }
@@ -751,6 +780,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.tie = AvoidTie::None;
                         child_frame.run_unit = None;
                         child_frame.run_tail = false;
+                        child_frame.item_tail = None;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -1216,6 +1246,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 } else {
                                     0.0
                                 },
+                                item_tail_edges: frame
+                                    .item_tail
+                                    .filter(|tail| tail.item == node_id)
+                                    .map_or(0.0, |tail| {
+                                        (tail.container_bottom
+                                            - (candidate_raw_y + candidate_height)
+                                            + tail.inherited)
+                                            .max(0.0)
+                                    }),
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1272,6 +1311,37 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let closing_chain = own_closing_edges
                     .map(|own| own + inherited_edges)
                     .filter(|&edges| edges > 0.0);
+                // The last item of a flex container that stacks its items, or
+                // the last row of a table, is the box that the edges closing
+                // the container follow: its own bottom padding and border, and
+                // those of the blocks it ends. The page may break between the
+                // items or rows instead of between the last of them and the
+                // edges.
+                let item_tail = (in_flow_container
+                    && !is_body
+                    && !document.context.pagination_on_transposed_axes
+                    && height_follows_content(document, node_id)
+                    && node.layout.padding.bottom + node.layout.border.bottom + inherited_edges
+                        > 0.0)
+                    .then(|| container_item_tail(document, cascade, node_id, self.has_named_pages))
+                    .flatten()
+                    .filter(|_| {
+                        let (side_by_side, bounded) =
+                            candidate_ancestor_constraints(document, cascade, node_id, body_id);
+                        !side_by_side && !bounded
+                    })
+                    .map(|item| ItemTail {
+                        item,
+                        container_bottom: raw_y + node.layout.size.height,
+                        inherited: inherited_edges,
+                    });
+                // The row groups of a table pass its last row on.
+                let child_item_tail =
+                    if document.nodes[node_id].display() == DisplayValue::TableRowGroup {
+                        frame.item_tail
+                    } else {
+                        item_tail
+                    };
                 // For each child of a block container, its last in-flow box and
                 // whether it floats: they tell the box before each child, and
                 // the last box that the closing edges follow.
@@ -1494,6 +1564,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
                             run_tail,
+                            item_tail: child_item_tail,
                         },
                     )?;
                 }
