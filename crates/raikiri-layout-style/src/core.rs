@@ -303,11 +303,29 @@ impl LayoutStyleView<'_> {
     /// The padding edges.
     #[inline]
     pub fn padding(&self) -> Edges<LengthPercentage> {
-        if let Some(padding) = self.context.resolved_padding {
-            return padding.map(LengthPercentage::length);
-        }
         use LengthProperty::*;
-        self.percentage_edges([PaddingTop, PaddingRight, PaddingBottom, PaddingLeft])
+        let properties = [PaddingTop, PaddingRight, PaddingBottom, PaddingLeft];
+        if let Some(padding) = self.context.resolved_padding {
+            // A frozen frame has already resolved its baseline edges. Late
+            // overrides replace only their projected sides, leaving the other
+            // sides on the basis the frame captured.
+            let from = self.edges(PaddingTop, PaddingRight, PaddingBottom, PaddingLeft);
+            let current = self.percentage_edges(properties);
+            let edge = |property, used, fallback| {
+                if self.scoped_length(property).is_some() {
+                    used
+                } else {
+                    LengthPercentage::length(fallback)
+                }
+            };
+            return Edges {
+                top: edge(from.top, current.top, padding.top),
+                right: edge(from.right, current.right, padding.right),
+                bottom: edge(from.bottom, current.bottom, padding.bottom),
+                left: edge(from.left, current.left, padding.left),
+            };
+        }
+        self.percentage_edges(properties)
     }
     /// The border edges.
     #[inline]

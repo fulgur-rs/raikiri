@@ -46,6 +46,17 @@ impl OwnedPropertyOverride {
         )
     }
 
+    /// Whether the entry sets physical padding. A positioning pass can hold
+    /// used padding in a scope so its measurements and final placement use the
+    /// same containing-block inline basis. It is not a sizing override.
+    pub fn is_physical_padding(&self) -> bool {
+        use LengthProperty::*;
+        matches!(
+            self.as_borrowed().0,
+            OverrideKind::Length(PaddingTop | PaddingRight | PaddingBottom | PaddingLeft, _)
+        )
+    }
+
     /// Whether the entry sets a self-alignment. A positioning pass holds such
     /// an entry in a scope, next to the insets it sets, to align a box inside
     /// the area those insets bound; like an inset it is not a sizing override.

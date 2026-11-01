@@ -377,3 +377,72 @@ fn a_replaced_grid_item_keeps_its_identity_and_bounds_while_sizing_its_own_ratio
         assert_eq!(parent.bridge_justify_self(), own.bridge_justify_self());
     });
 }
+
+#[test]
+fn late_padding_changes_only_its_projected_edge_of_resolved_padding() {
+    let cv = ComputedValues::initial();
+    let prepared = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+    let resolved = raikiri_layout_geometry::Edges {
+        top: 11.0,
+        right: 13.0,
+        bottom: 17.0,
+        left: 19.0,
+    };
+    let baseline =
+        [OwnedPropertyOverride::length(LengthProperty::PaddingTop, L::Px(91.0), true).unwrap()];
+    let late =
+        [OwnedPropertyOverride::length(LengthProperty::PaddingTop, L::Px(7.0), true).unwrap()];
+    for (mode, projection, expected) in [
+        (
+            WritingMode::HorizontalTb,
+            BridgeProjection::Identity,
+            raikiri_layout_geometry::Edges {
+                top: 7.0,
+                ..resolved
+            },
+        ),
+        (
+            WritingMode::VerticalRl,
+            BridgeProjection::Identity,
+            raikiri_layout_geometry::Edges {
+                left: 7.0,
+                ..resolved
+            },
+        ),
+        (
+            WritingMode::VerticalLr,
+            BridgeProjection::BlockTranspose {
+                right_to_left: false,
+            },
+            raikiri_layout_geometry::Edges {
+                top: 7.0,
+                ..resolved
+            },
+        ),
+        (
+            WritingMode::VerticalRl,
+            BridgeProjection::BlockTranspose {
+                right_to_left: true,
+            },
+            raikiri_layout_geometry::Edges {
+                bottom: 7.0,
+                ..resolved
+            },
+        ),
+    ] {
+        let context = ViewContext {
+            layout_wm: mode,
+            bridge_projection: projection,
+            resolved_padding: Some(resolved),
+            ..ViewContext::default()
+        };
+        assert_eq!(
+            LayoutStyleView::with_owned_overrides(&prepared, context, &baseline, &[]).padding(),
+            resolved.map(LengthPercentage::length)
+        );
+        assert_eq!(
+            LayoutStyleView::with_owned_overrides(&prepared, context, &baseline, &late).padding(),
+            expected.map(LengthPercentage::length)
+        );
+    }
+}

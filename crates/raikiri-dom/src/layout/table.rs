@@ -671,12 +671,24 @@ fn compute_table_layout_checked(
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
-    let (table_padding, table_border_widths) = {
-        let table_style = doc.table_style(table_idx);
-        (table_style.padding(), table_style.border())
+    let table_style = doc.table_style(table_idx);
+    let used_padding = table_style.padding();
+    let intrinsic_padding = table_style.intrinsic_table_padding();
+    let used_pad = resolve_table_rect(&used_padding, inputs.parent_size);
+    // Intrinsic width belongs to the table's own inline axis. The block
+    // extent always uses the edges the containing block resolved for layout.
+    let pad = if absolute_table && !vertical_writing && inputs.run_mode == RunMode::ComputeSize {
+        let intrinsic = resolve_table_rect(&intrinsic_padding, inputs.parent_size);
+        Edges {
+            top: used_pad.top,
+            bottom: used_pad.bottom,
+            ..intrinsic
+        }
+    } else {
+        used_pad
     };
-    let pad = resolve_table_rect(&table_padding, inputs.parent_size);
-    let table_border = resolve_table_rect(&table_border_widths, inputs.parent_size);
+    let table_border = resolve_table_rect(&table_style.border(), inputs.parent_size);
+    let has_used_padding = used_padding != intrinsic_padding;
     let prepared = cache::prepared_borders(
         doc,
         table_idx,
@@ -799,7 +811,7 @@ fn compute_table_layout_checked(
         let max_h = resolve_dimension(authored_max.height.into(), inputs.parent_size.height);
         let is_content_box = box_sizing == BoxSizing::ContentBox;
         let lift_w = if is_content_box {
-            padding_border_size.width
+            used_pad.left + used_pad.right + collapsed.outer_left + collapsed.outer_right
         } else {
             0.0
         };
@@ -1258,11 +1270,13 @@ fn compute_table_layout_checked(
                 constrained_available_space,
             )
         };
+        let assigned_wrapper_width =
+            parent_is_flex_or_grid || (absolute_table && has_used_padding && !vertical_writing);
         let inputs_for_columns = LayoutInput {
             known_dimensions: Size {
                 width: match (
                     specified_width.or(stretch_ratio_width),
-                    parent_is_flex_or_grid,
+                    assigned_wrapper_width,
                 ) {
                     (Some(_), _) | (_, true) => effective_known.width.map(|width| {
                         apply_wrapper_width_bounds(
@@ -1284,9 +1298,10 @@ fn compute_table_layout_checked(
         // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
         // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
         // width keeps the fill basis.
-        let table_width_basis = if parent_is_flex_or_grid || stretch_ratio_width.is_some() {
-            // Flex/grid supplies a used item width even when the table's own
-            // width is auto. Keep that width instead of shrink-wrapping again.
+        let table_width_basis = if assigned_wrapper_width || stretch_ratio_width.is_some() {
+            // A parent can supply a measured wrapper width even when the
+            // table's width is auto. Allocate it with the used padding instead
+            // of shrink-wrapping again with the intrinsic edge basis.
             effective_known.width
         } else {
             match specified_width {

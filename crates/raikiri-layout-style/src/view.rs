@@ -195,6 +195,23 @@ impl<'a> LayoutStyleView<'a> {
             .into_iter()
             .flatten()
     }
+    /// Padding before the positioning pass installs used physical edges.
+    /// Intrinsic table measurements keep their own percentage basis; final
+    /// layout consumes the scoped edges supplied by the containing block.
+    pub fn intrinsic_table_padding(mut self) -> Edges<LengthPercentage> {
+        self.scoped = OverrideLayer::Owned(&[]);
+        self.has_overrides = self.pass.len() != 0;
+        self.padding()
+    }
+
+    pub(crate) fn scoped_length(&self, property: LengthProperty) -> Option<LengthValue<'a>> {
+        (0..self.scoped.len())
+            .rev()
+            .find_map(|index| match self.scoped.get(index).0 {
+                OverrideKind::Length(p, value) if p == property => Some(value),
+                _ => None,
+            })
+    }
     #[inline]
     pub(crate) fn flags(&self) -> StyleFlags {
         self.prepared.metadata.flags
