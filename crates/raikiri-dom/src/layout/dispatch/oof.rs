@@ -120,6 +120,21 @@ pub(super) fn layout_local_oof(
     node: NodeId,
     output: &mut LayoutOutput,
 ) {
+    if tree.nodes[usize::from(node)]
+        .flags
+        .contains(crate::node::NodeFlags::FINAL_VERTICAL_TABLE_CELL)
+    {
+        return;
+    }
+    layout_local_oof_now(tree, node, output);
+}
+
+/// Complete a deferred cell's positioning after its flow alignment.
+pub(super) fn layout_local_oof_now(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    output: &mut LayoutOutput,
+) {
     let Some(area) = output.oof_positioning_area else {
         return;
     };

@@ -2433,6 +2433,12 @@ fn vertical_cell_alignment_keeps_relative_insets_out_of_natural_size() {
                     "display:block;width:10px;height:10px;position:relative;{insets};background:green"
                 ),
             );
+            // Chromium gives the block-start inset priority in vertical flow.
+            let offset = if mode == "vertical-rl" && insets == "left:3px;right:7px" {
+                -7
+            } else {
+                offset
+            };
             let left = normal_left + offset;
             let (mut reference, body) = document();
             element(
@@ -2488,6 +2494,13 @@ fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() 
                 10,
             ),
         ] {
+            // The block axis follows writing mode; RTL reverses the inline axis.
+            let (raw_left, painted_left, painted_top) = if cell_direction == "direction:rtl" {
+                let left = if mode == "vertical-lr" { 3 } else { -10 };
+                (left, left, 20)
+            } else {
+                (raw_left, painted_left, 0)
+            };
             let (mut doc, body) = document();
             let table = element(
                 &mut doc,
@@ -2527,7 +2540,7 @@ fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() 
                 &mut reference,
                 body,
                 &format!(
-                    "position:absolute;left:{painted_left}px;top:0;width:{width}px;height:10px;background:green"
+                    "position:absolute;left:{painted_left}px;top:{painted_top}px;width:{width}px;height:10px;background:green"
                 ),
             );
             let expected = layout(&mut reference);
@@ -3206,5 +3219,44 @@ fn third_review_hidden_cell_descendants_only_count_restored_visible_boxes() {
             raster(scene(&doc, &computed)),
             raster(scene(&reference, &expected)),
         );
+    }
+}
+
+#[test]
+fn an_absolute_child_does_not_change_vertical_cell_flow() {
+    for (mode, left) in [("vertical-rl", 8.0), ("vertical-lr", 18.0)] {
+        for (direction, top) in [("ltr", 0.0), ("rtl", 20.0)] {
+            for absolute in [false, true] {
+                let (mut doc, body) = document();
+                let table = element(
+                    &mut doc,
+                    body,
+                    &format!(
+                        "display:table;position:relative;writing-mode:{mode};direction:{direction};width:40px;height:30px;border-spacing:0"
+                    ),
+                );
+                let row = element(&mut doc, table, "display:table-row");
+                let cell = element(
+                    &mut doc,
+                    row,
+                    "display:table-cell;width:40px;height:30px;vertical-align:middle",
+                );
+                let child = element(
+                    &mut doc,
+                    cell,
+                    "display:block;width:10px;height:10px;position:relative;left:3px;right:7px",
+                );
+                if absolute {
+                    element(&mut doc, cell, "position:absolute;width:0;height:0");
+                }
+                let _computed = layout(&mut doc);
+                let location = doc.get_node(child).unwrap().layout().location;
+                assert_eq!(
+                    (location.x, location.y),
+                    (left, top),
+                    "{mode}/{direction}/{absolute}"
+                );
+            }
+        }
     }
 }

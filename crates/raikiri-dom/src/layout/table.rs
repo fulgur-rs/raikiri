@@ -1706,7 +1706,7 @@ fn compute_table_layout_checked(
         };
         let col_origins = track_origins(&column_widths, &col_steps, x_origin);
         let row_origins = track_origins(&row_heights, &row_steps, y_origin);
-        place_cells(
+        let cell_candidates = place_cells(
             doc,
             &mut grid,
             CellPlacementTracks {
@@ -1762,7 +1762,7 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_first_baseline =
             (!collapsed_rows.is_empty()).then(|| row_origins[0] + first_row_baseline);
         if vertical_writing {
-            reposition_cells_for_vertical_writing(
+            let mut final_candidates = reposition_cells_for_vertical_writing(
                 doc,
                 &mut grid,
                 &vertical_tracks,
@@ -1772,7 +1772,9 @@ fn compute_table_layout_checked(
                     y: y_origin,
                 },
                 border_spacing.1,
+                cell_candidates,
             );
+            oof_candidates.append(&mut final_candidates);
         }
         let projected = projects_source_parts(doc, table_idx, &grid);
         let part_claimants = table_part_claimants(doc, table_idx, &oof_candidates);
@@ -4121,7 +4123,7 @@ fn place_cells(
     grid: &mut TableGrid,
     tracks: CellPlacementTracks<'_>,
     oof_candidates: &mut OofCandidates,
-) -> Result<(), raikiri_traits::LayoutError> {
+) -> Result<Vec<(usize, OofCandidates)>, raikiri_traits::LayoutError> {
     let CellPlacementTracks {
         column_widths,
         column_gaps: col_gaps,
@@ -4138,6 +4140,7 @@ fn place_cells(
     } = tracks;
     // A cell belongs to the row it starts in. One starting in a collapsed row
     // has no block extent, so it sets no baseline for the rows it spans.
+    let mut cell_candidates = Vec::new();
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
         let row = cell.row as usize;
@@ -4270,7 +4273,6 @@ fn place_cells(
             x: cell_x,
             y: cell_y,
         });
-        oof_candidates.append(&mut child_candidates);
         // A cell laid out by the inline engine has no child layouts: its
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
@@ -4338,6 +4340,14 @@ fn place_cells(
             shift,
             laid_out_definite,
         });
+        // Retained candidates start before alignment, just like the flow.
+        // The final pass later applies only the change of this initial shift.
+        if vertical_writing && !child_candidates.is_empty() {
+            child_candidates.translate(Point { x: 0.0, y: shift });
+            cell_candidates.push((cell.node_id, child_candidates));
+        } else {
+            oof_candidates.append(&mut child_candidates);
+        }
         padding.top += shift;
         padding.bottom += (extra - shift).max(0.0);
         for child in doc
@@ -4398,7 +4408,7 @@ fn place_cells(
             }
         }
     }
-    Ok(())
+    Ok(cell_candidates)
 }
 
 /// The heights of the columns of a vertical table, which stack along its
@@ -4456,13 +4466,26 @@ fn reposition_cells_for_vertical_writing(
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
-) {
-    // Columns of no height are valid: the cells still take their place, with
-    // the height of their column, and not the one a taller row gave them.
+    cell_candidates: Vec<(usize, OofCandidates)>,
+) -> OofCandidates {
+    let mut final_candidates = OofCandidates::new();
+    // Zero-height columns still place their cells, as in the measurement pass.
     if !tracks.iter().sum::<f32>().is_finite() {
-        return; // cov:ignore: defensive empty/invalid vertical track fallback.
+        for (_, mut candidates) in cell_candidates {
+            final_candidates.append(&mut candidates);
+        }
+        return final_candidates; // cov:ignore: defensive invalid vertical track fallback.
     }
+    let mut batches = cell_candidates.into_iter().peekable();
     for cell in &mut grid.cells {
+        let mut candidates = if batches
+            .peek()
+            .is_some_and(|(node, _)| *node == cell.node_id)
+        {
+            batches.next().unwrap().1
+        } else {
+            OofCandidates::new()
+        };
         let col_start = usize::from(cell.col_start).min(tracks.len());
         let col_end = col_start
             .saturating_add(usize::from(cell.col_span))
@@ -4474,6 +4497,7 @@ fn reposition_cells_for_vertical_writing(
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };
+        let old_location = layout.location;
         layout.location = Point { x: origin.x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
@@ -4484,21 +4508,28 @@ fn reposition_cells_for_vertical_writing(
             // of its column and no longer the one the row pass measured. What
             // depends on that height is laid out again, and the room around
             // the content is spread again.
+            let mut candidate_offset = Point {
+                x: origin.x - old_location.x,
+                y: y - old_location.y,
+            };
             if let Some(alignment) = cell.alignment {
                 let relaid = match alignment.laid_out_definite {
                     Some(definite) if (alignment.height - height).abs() > SAME_EDGE_TOLERANCE => {
-                        Some(relayout_horizontal_cell(
+                        let (natural, fresh) = relayout_horizontal_cell(
                             doc,
                             cell.node_id,
                             cell.natural_height,
                             cell_width,
                             definite,
                             layout,
-                        ))
+                        );
+                        candidates = fresh;
+                        candidate_offset = Point { x: origin.x, y };
+                        Some(natural)
                     }
                     _ => None,
                 };
-                realign_horizontal_cell(
+                candidate_offset.y += realign_horizontal_cell(
                     doc,
                     cell.node_id,
                     alignment,
@@ -4507,46 +4538,68 @@ fn reposition_cells_for_vertical_writing(
                     layout,
                 );
             }
+            candidates.translate(candidate_offset);
+            final_candidates.append(&mut candidates);
             doc.store_layout(cell.node_id, layout);
             continue;
         }
         // Re-layout at the final physical dimensions before distributing
         // block-axis free space; the earlier horizontal measurement cannot
         // determine vertical content's occupied block extent.
-        doc.compute_child_layout(
-            NodeId::from(cell.node_id),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: RequestedAxis::Both,
-                known_dimensions: Size {
-                    width: Some(cell_width),
-                    height: Some(height),
-                },
-                parent_size: Size {
-                    width: Some(cell_width),
-                    height: Some(height),
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(cell_width),
-                    height: AvailableSpace::Definite(height),
-                },
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: true,
-                },
-                vertical_margins_are_collapsible: Line::FALSE,
+        let inputs = LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(cell_width),
+                height: Some(height),
             },
-        );
-        align_vertical_cell_on_block_axis(doc, cell.node_id, cell_writing_mode, cell_width, layout);
+            parent_size: Size {
+                width: Some(cell_width),
+                height: Some(height),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(cell_width),
+                height: AvailableSpace::Definite(height),
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let output = super::dispatch::with_final_vertical_table_cell(doc, cell.node_id, |doc| {
+            let mut output = doc.compute_child_layout(NodeId::from(cell.node_id), inputs);
+            let shift = align_vertical_cell_on_block_axis(
+                doc,
+                cell.node_id,
+                cell_writing_mode,
+                cell_width,
+                layout,
+            );
+            output.oof_candidates.translate(Point { x: shift, y: 0.0 });
+            super::dispatch::finish_vertical_block_oof(
+                doc,
+                NodeId::from(cell.node_id),
+                &inputs,
+                output,
+            )
+        });
+        // Replace the earlier batch: the final physical dimensions can change
+        // both static-position areas and which descendants the cell claims.
+        layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
+        candidates = output.oof_candidates;
+        candidates.translate(Point { x: origin.x, y });
+        final_candidates.append(&mut candidates);
         doc.store_layout(cell.node_id, layout);
     }
+    final_candidates
 }
 
 /// Lays a horizontal cell out again at the final size in `layout`, the way the
 /// row pass did at the height of its row, so that what depends on the height
 /// (a child with a percentage height) follows it. Returns the block size of the
-/// content to align.
+/// content to align and the new pending out-of-flow candidates.
 fn relayout_horizontal_cell(
     doc: &mut LayoutSession<'_>,
     cell_node: usize,
@@ -4554,7 +4607,7 @@ fn relayout_horizontal_cell(
     cell_width: f32,
     (table_height_is_definite, cell_height_is_definite): (bool, bool),
     layout: &mut BoxLayout,
-) -> f32 {
+) -> (f32, OofCandidates) {
     let height = layout.size.height;
     doc.nodes[cell_node].auto_block_size = None;
     let output = doc.compute_child_layout(
@@ -4589,10 +4642,11 @@ fn relayout_horizontal_cell(
             .table_vertical_align,
         VerticalAlign::Middle | VerticalAlign::Bottom
     );
-    (cell_height_is_definite && aligned_by_its_end)
+    let natural = (cell_height_is_definite && aligned_by_its_end)
         .then(|| doc.nodes[cell_node].auto_block_size)
         .flatten()
-        .unwrap_or(natural_height)
+        .unwrap_or(natural_height);
+    (natural, output.oof_candidates)
 }
 
 /// Spreads the room a horizontal cell has around its content again, once the
@@ -4600,7 +4654,7 @@ fn relayout_horizontal_cell(
 /// it in: the content moves by the change of the shift, and the padding that
 /// carries the room follows. `relaid` is the block size of the content when the
 /// cell was laid out again, which put its children back where no alignment has
-/// moved them.
+/// moved them. Returns the shift also applied to pending static positions.
 fn realign_horizontal_cell(
     doc: &mut LayoutSession<'_>,
     cell_node: usize,
@@ -4608,7 +4662,7 @@ fn realign_horizontal_cell(
     baseline_from_flow: bool,
     relaid: Option<f32>,
     layout: &mut BoxLayout,
-) {
+) -> f32 {
     let node = doc
         .ifc_layout_node(cell_node)
         .expect("table cell layout view");
@@ -4639,6 +4693,7 @@ fn realign_horizontal_cell(
             doc.store_layout(child, &child_layout);
         }
     }
+    shift - placed
 }
 
 /// Aligns the content of a vertical cell on the block axis of the cell, which
@@ -4651,7 +4706,7 @@ fn align_vertical_cell_on_block_axis(
     cell_writing_mode: WritingMode,
     cell_width: f32,
     layout: &mut BoxLayout,
-) {
+) -> f32 {
     let node = doc
         .ifc_layout_node(cell_node)
         .expect("table cell layout view");
@@ -4684,7 +4739,17 @@ fn align_vertical_cell_on_block_axis(
                 let inset = child_style.inset();
                 let left = inset.left.maybe_resolve(Some(inner_width));
                 let right = inset.right.maybe_resolve(Some(inner_width));
-                if direction == Direction::Rtl {
+                // Transposition resolves overconstraints from the block-start
+                // side, while the legacy physical pass uses direction.
+                let reverse = if doc.nodes[cell_node]
+                    .flags
+                    .contains(crate::node::NodeFlags::FINAL_VERTICAL_TABLE_CELL)
+                {
+                    rtl
+                } else {
+                    direction == Direction::Rtl
+                };
+                if reverse {
                     right.map(|right| -right).or(left).unwrap_or(0.0)
                 } else {
                     left.or(right.map(|right| -right)).unwrap_or(0.0)
@@ -4753,6 +4818,7 @@ fn align_vertical_cell_on_block_axis(
     }
     layout.padding = padding;
     layout.border = border;
+    child_shift
 }
 
 // ---------------------------------------------------------------------------
