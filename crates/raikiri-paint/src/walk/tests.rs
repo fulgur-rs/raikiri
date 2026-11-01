@@ -8543,3 +8543,23 @@ fn a_fragment_clip_on_a_fractional_column_edge_does_not_dim_the_first_ink_column
         "the wrapped paragraph paints differently from the direct one"
     );
 }
+
+#[test]
+fn programmatic_fixed_comparison_insets_resolve_against_the_page_area() {
+    let mut values = gradient_tests::computed_for("width:min(30px,calc(10px + 5%))");
+    values.position = PositionValue::Fixed;
+    values.left = values.width.clone();
+    assert_eq!(
+        fixed_position_px(
+            &values,
+            &BoxLayout::new(),
+            (8.0, 48.0),
+            false,
+            800.0,
+            1000.0,
+            200.0,
+            100.0
+        ),
+        Some((20.0, 1048.0))
+    );
+}

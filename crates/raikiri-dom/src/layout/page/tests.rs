@@ -1658,3 +1658,27 @@ fn page_sizing_comparisons_resolve_against_paper_before_auto_margin_distribution
         assert_eq!(margins.bottom, 190.0, "{source}");
     }
 }
+
+#[test]
+fn page_calc_margin_sanitization_and_comparison_overflow_keep_geometry_finite() {
+    for (percent, px, expected) in [
+        (5.0, 10.0, 20.0),
+        (f32::NAN, 10.0, 10.0),
+        (5.0, f32::NAN, 10.0),
+    ] {
+        let value = LengthOrAuto::Calc(CalcLengthPercentage { percent, px });
+        assert_eq!(page_margin_length(&value, 200.0), expected);
+    }
+    let mut doc = Document::new();
+    doc.append_element(Some(0), "html", None::<&str>);
+    let mut rules = raikiri_style::RuleTree::empty();
+    rules.add_stylesheet(
+        "@page {width:max(3e38px,calc(3e38px + 3e38px + 5%))}",
+        raikiri_style::Origin::Author,
+    );
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    assert_eq!(
+        page_dimension(cascade.page.declarations(), PropertyKey::Width, 500.0),
+        None
+    );
+}

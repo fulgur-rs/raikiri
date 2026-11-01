@@ -1391,3 +1391,12 @@ fn a_formatting_root_block_of_very_many_lines_is_measured_in_full() {
         rect(0.0, 10.0, 20.0, 300_000.0)
     );
 }
+
+#[test]
+fn comparisons_need_a_definite_basis_and_vertical_widths_separate_margins() {
+    let value = crate::layout::test_support::compared_length("min(30px, calc(10px + 5%))");
+    assert_eq!(length_or_auto(&value, None), None);
+    assert_eq!(length_or_auto(&value, Some(100.0)), Some(15.0));
+    assert!(block("width:20px").separates_margins(100.0, true));
+    assert!(!block("width:0;height:0").separates_margins(100.0, true));
+}

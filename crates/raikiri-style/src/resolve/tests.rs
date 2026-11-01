@@ -2860,3 +2860,78 @@ fn comparison_line_height_leaves_follow_the_existing_unresolved_size_policy() {
     assert_eq!(value.resolve(100.0), 15.0);
     assert_eq!(value.resolve(1000.0), 20.0);
 }
+
+#[test]
+fn affine_flex_basis_forms_keep_unresolved_and_nonnegative_policies() {
+    let ctx = ResolveContext::new(ComputedLength(16.0));
+    for specified in [
+        FlexBasisValue::Length(Length::Rlh(1.0)),
+        FlexBasisValue::RelativeCalc(relative_calc_plus_1px(1.0, "lh")),
+    ] {
+        assert_eq!(
+            resolve_flex_basis(specified, ComputedLength(10.0), None, &ctx),
+            ComputedFlexBasis::Auto
+        );
+    }
+    assert_eq!(
+        resolve_flex_basis(
+            FlexBasisValue::Calc(CalcLengthPercentage {
+                px: -10.0,
+                percent: 0.0
+            }),
+            ComputedLength(10.0),
+            None,
+            &ctx
+        ),
+        ComputedFlexBasis::Px(0.0)
+    );
+}
+
+#[test]
+fn programmatic_comparison_margins_remain_signed_and_unresolved_ones_use_zero() {
+    for (source, expected) in [("min(-10px, 5%)", Some(-10.0)), ("min(1lh, 5%)", None)] {
+        let mut input = cssparser::ParserInput::new(source);
+        let specified =
+            crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+        let value = resolve_margin_length_or_auto(
+            LengthOrAuto::Math(specified),
+            ComputedLength(10.0),
+            None,
+            &ResolveContext::new(ComputedLength(16.0)),
+        );
+        match (value, expected) {
+            (ComputedLengthPercentageOrAuto::Math(value), Some(expected)) => {
+                assert_eq!(value.resolve(100.0), expected)
+            }
+            (ComputedLengthPercentageOrAuto::Px(value), None) => assert_eq!(value, 0.0),
+            other => panic!("unexpected margin: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn lifting_comparison_background_sizes_keeps_absolute_leaves_and_branches() {
+    let mut input = cssparser::ParserInput::new("min(3em, calc(1em + 5%))");
+    let specified =
+        crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+    let value = resolve_size_length_percentage_or_auto(
+        LengthOrAuto::Math(specified),
+        ComputedLength(10.0),
+        None,
+        &CTX,
+    );
+    let lifted = lift_background_size(ComputedBackgroundSize::Explicit {
+        width: value,
+        height: ComputedLengthPercentageOrAuto::Auto,
+    });
+    let resolved = resolve_background_size(lifted, ComputedLength(100.0), None, &CTX);
+    let ComputedBackgroundSize::Explicit {
+        width: ComputedLengthPercentageOrAuto::Math(expression),
+        ..
+    } = resolved
+    else {
+        panic!("comparison branches must survive lifting")
+    };
+    assert_eq!(expression.resolve(100.0), 15.0);
+    assert_eq!(expression.resolve(1000.0), 30.0);
+}

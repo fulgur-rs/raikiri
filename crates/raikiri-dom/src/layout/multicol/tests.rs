@@ -8391,3 +8391,19 @@ fn comparison_widths_supply_the_containing_width_of_descendants() {
         );
     }
 }
+
+#[test]
+fn authored_comparison_limits_resolve_against_the_requested_basis() {
+    let mut doc = Document::new();
+    let id = doc.append_element(
+        Some(0),
+        "div",
+        Some("min-width:min(30px,calc(10px + 5%));max-width:max(20px,10%)"),
+    );
+    let cascade = cascaded(&doc);
+    let authored = AuthoredBox::new(&doc, &cascade, id);
+    assert_eq!(authored.min_width(100.0), Some(15.0));
+    assert_eq!(authored.max_width(100.0), Some(20.0));
+    assert_eq!(authored.min_width(1000.0), Some(30.0));
+    assert_eq!(authored.max_width(1000.0), Some(100.0));
+}

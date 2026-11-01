@@ -16,7 +16,7 @@
 //! value (a sequence lock), so a handle that races with the reuse of its slot
 //! is rejected rather than read torn.
 
-use crate::calc::CalcValue;
+use crate::calc::{CalcExpression, CalcValue};
 use raikiri_style::property::ComputedLengthMath;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
@@ -160,18 +160,23 @@ impl Table {
         } else {
             0
         };
-        if let Some(bits) = value.to_bits() {
-            entry.value.store(bits, Ordering::Relaxed);
-            entry.state.store(free | LIVE | range, Ordering::Release);
-        } else if let Some(expression) = value.math() {
-            // Writers always take the table mutex before a slot lock. Publish
-            // only after its owning Arc is installed, under that same lock.
-            let lock = entry.math.get_or_init(|| Box::new(RwLock::new(None)));
-            let mut payload = lock.write().unwrap_or_else(PoisonError::into_inner);
-            *payload = Some(expression.clone());
-            entry
-                .state
-                .store(free | LIVE | MATH | range, Ordering::Release);
+        match value.expression() {
+            CalcExpression::Affine(value) => {
+                let bits =
+                    (u64::from(value.px.to_bits()) << 32) | u64::from(value.percent.to_bits());
+                entry.value.store(bits, Ordering::Relaxed);
+                entry.state.store(free | LIVE | range, Ordering::Release);
+            }
+            CalcExpression::Math(expression) => {
+                // Writers always take the table mutex before a slot lock. Publish
+                // only after its owning Arc is installed, under that same lock.
+                let lock = entry.math.get_or_init(|| Box::new(RwLock::new(None)));
+                let mut payload = lock.write().unwrap_or_else(PoisonError::into_inner);
+                *payload = Some(expression.clone());
+                entry
+                    .state
+                    .store(free | LIVE | MATH | range, Ordering::Release);
+            }
         }
         Some(handle(free >> GENERATION_SHIFT, index))
     }

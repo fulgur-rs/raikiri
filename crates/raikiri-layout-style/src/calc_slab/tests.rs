@@ -45,7 +45,7 @@ fn a_value_keeps_its_expression_and_range_policy() {
     assert_eq!(unsigned.resolve(0.0), 0.0);
     assert!(!signed.non_negative() && unsigned.non_negative());
     assert!(signed.has_percentage());
-    assert_eq!(signed.to_bits(), unsigned.to_bits());
+    assert_eq!(signed.expression(), unsigned.expression());
 }
 
 #[test]

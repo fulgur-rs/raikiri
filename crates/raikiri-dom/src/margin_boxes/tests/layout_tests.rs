@@ -2115,3 +2115,10 @@ fn horizontal_text_taller_than_its_box_overflows_away_from_its_alignment() {
     assert_eq!(origin_y("middle"), (30.0, 25.0));
     assert_eq!(origin_y("bottom"), (30.0, 20.0));
 }
+
+#[test]
+fn programmatic_margin_box_comparisons_keep_the_used_percentage_basis() {
+    let value = crate::layout::test_support::compared_length("min(30px, calc(10px + 5%))");
+    assert_eq!(length_or_auto_px(&value, 100.0), Some(15.0));
+    assert_eq!(length_or_auto_px(&value, 1000.0), Some(30.0));
+}

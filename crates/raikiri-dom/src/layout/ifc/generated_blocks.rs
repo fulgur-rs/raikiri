@@ -523,11 +523,7 @@ pub(super) fn length_or_auto(
         (ComputedLengthPercentageOrAuto::Calc(calc), None) if calc.percent == 0.0 => {
             crate::layout::page::used_computed_length_percentage_or_auto(value, 0.0)
         }
-        (ComputedLengthPercentageOrAuto::Math(expression), None)
-            if !expression.has_percentage() =>
-        {
-            crate::layout::page::used_computed_length_percentage_or_auto(value, 0.0)
-        }
+        // Percentage-free comparisons are already folded to Px by the resolver.
         (_, Some(basis)) => {
             crate::layout::page::used_computed_length_percentage_or_auto(value, basis)
         }

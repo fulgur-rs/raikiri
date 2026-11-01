@@ -544,3 +544,20 @@ fn a_rounded_tile_size_is_unchanged_by_rounding_it_again() {
         rounded
     );
 }
+
+#[test]
+fn programmatic_comparison_background_size_uses_the_positioning_area() {
+    let size = ComputedBackgroundSize::Explicit {
+        width: crate::layout::test_support::compared_length("min(30px, calc(10px + 5%))"),
+        height: ComputedLengthPercentageOrAuto::Px(10.0),
+    };
+    let natural = ImageIntrinsicSize::new(Some(10.0), Some(10.0), Some(1.0));
+    assert_eq!(
+        background_image_dimensions(&size, 200.0, 100.0, natural),
+        Some((20.0, 10.0))
+    );
+    assert_eq!(
+        background_image_dimensions(&size, 1000.0, 100.0, natural),
+        Some((30.0, 10.0))
+    );
+}

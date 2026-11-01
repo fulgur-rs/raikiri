@@ -210,3 +210,20 @@ fn lifting_a_computed_affine_leaf_preserves_both_coefficients() {
         );
     }
 }
+
+#[test]
+fn computed_comparisons_roundtrip_every_serialized_node_kind() {
+    for source in [
+        "max(10px, 5%)",
+        "clamp(5px, calc(10px + 5%), 20px)",
+        "calc(min(10px, 5%) * 2)",
+    ] {
+        let original = computed(source);
+        assert!(original.has_percentage());
+        let restored = computed(&original.to_css());
+        for basis in [0.0, 10.0, 1000.0] {
+            assert_eq!(original.resolve(basis), restored.resolve(basis), "{source}");
+        }
+    }
+    assert!(specified("calc((1e38 + 1e38 + 1e38 + 1e38) * min(10px, 5%))").is_none());
+}

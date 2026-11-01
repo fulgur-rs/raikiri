@@ -593,3 +593,9 @@ pub(crate) fn ahem_table_with_only_text(
     let cascade = cascaded(&doc);
     (doc, cascade, table)
 }
+
+pub(crate) fn compared_length(source: &str) -> raikiri_style::ComputedLengthPercentageOrAuto {
+    let mut doc = Document::new();
+    let id = doc.append_element(Some(0), "div", Some(format!("width:{source}").as_str()));
+    cascaded(&doc).computed[id].width.clone()
+}

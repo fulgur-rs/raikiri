@@ -116,3 +116,16 @@ fn unprepared_math_and_wrong_override_range_are_rejected() {
         Err(OverrideError::WrongRange)
     ));
 }
+
+#[test]
+fn a_percentage_in_a_losing_comparison_branch_keeps_intrinsic_aspect_ratio_policy() {
+    let width = L::Math(comparison("min(1px, calc(10px + 5%))"));
+    let height = L::Px(10.0);
+    let mut ratio = raikiri_style::property::AspectRatioValue::AUTO;
+    ratio.auto = false;
+    ratio.ratio = Some((2.0, 1.0));
+    assert_eq!(
+        preferred_aspect_ratio(ratio, &width, &height, None, false),
+        Some(2.0)
+    );
+}

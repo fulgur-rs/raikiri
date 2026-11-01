@@ -99,20 +99,8 @@ impl CalcValue {
     pub(crate) const fn non_negative(&self) -> bool {
         self.non_negative
     }
-    pub(crate) fn math(&self) -> Option<&Arc<ComputedLengthMath>> {
-        match &self.expression {
-            CalcExpression::Math(value) => Some(value),
-            _ => None,
-        }
-    }
-    /// The affine coefficient bits, or none for an owning comparison.
-    pub(crate) fn to_bits(&self) -> Option<u64> {
-        match self.expression {
-            CalcExpression::Affine(value) => {
-                Some((u64::from(value.px.to_bits()) << 32) | u64::from(value.percent.to_bits()))
-            }
-            CalcExpression::Math(_) => None,
-        }
+    pub(crate) fn expression(&self) -> &CalcExpression {
+        &self.expression
     }
     pub(crate) fn from_bits(bits: u64, non_negative: bool) -> Self {
         Self::new(
@@ -147,7 +135,7 @@ pub struct AlignedCalc {
 impl AlignedCalc {
     /// The immutable expression, without cloning its owner.
     pub fn expression(&self) -> &CalcExpression {
-        &self.value.expression
+        self.value.expression()
     }
     /// Whether the final result is clamped to the non-negative range.
     pub const fn non_negative(&self) -> bool {

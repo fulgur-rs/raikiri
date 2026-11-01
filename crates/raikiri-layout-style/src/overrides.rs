@@ -49,10 +49,7 @@ impl<'a> LengthValue<'a> {
     /// # Errors
     /// Rejects inline calc expressions. Use the calc constructor for those.
     pub fn computed(value: L) -> Result<Self, OverrideError> {
-        if matches!(
-            &value,
-            L::Calc(_) | L::Math(_) | L::FitContentOf(P::Calc(_))
-        ) {
+        if matches!(value, L::Calc(_) | L::Math(_) | L::FitContentOf(P::Calc(_))) {
             return Err(OverrideError::UnpreparedCalc);
         }
         Ok(Self {

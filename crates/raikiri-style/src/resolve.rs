@@ -3363,11 +3363,11 @@ fn resolve_conic_gradient(
 /// using this node's basis).
 ///
 /// Pass `content` through as a keyword (see [`ComputedFlexBasis::Content`] and
-/// the scope notes in [`crate::property::FlexBasisValue`]). Delegate the `auto`
-/// / `<length-percentage>` branch to [`resolve_size_length_percentage_or_auto`],
-/// matching the `<'width'>` grammar exactly, including its `Auto` fallback for
-/// unresolved `Lh`/`Rlh` and its clamp of a math function to `[0,∞]`. Do not
-/// duplicate the implementation.
+/// the scope notes in [`crate::property::FlexBasisValue`]). Resolve the affine
+/// length forms with the shared leaf and relative-calc helpers. Apply the same
+/// unresolved `Lh`/`Rlh` fallback and nonnegative math range policy as
+/// [`resolve_size_length_percentage_or_auto`]. Comparison trees remain outside
+/// the current flex-basis grammar.
 #[doc(hidden)]
 pub fn resolve_flex_basis(
     specified: FlexBasisValue,

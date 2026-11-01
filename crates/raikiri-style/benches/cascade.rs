@@ -978,6 +978,7 @@ fn workload(n_rules: usize, n_elems: usize, wrapped: bool) -> (BenchDoc, RuleTre
             // Text node: `margin` / `padding` are not inherited.
             continue;
         }
+        // cov:ignore: benchmark-only setup assertions; cargo test does not build this harness.
         for (name, got) in [
             ("margin-top", &cv.margin.top),
             ("margin-right", &cv.margin.right),
