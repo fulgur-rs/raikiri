@@ -4063,14 +4063,12 @@ fn try_conic_to_peniko(
 ) -> Option<gradient::GradientFill> {
     let mut raw = budget.vector(conic.stops.len())?;
     for stop in conic.stops.iter() {
-        budget.push(
-            &mut raw,
-            gradient::RawStop {
-                position: angular_stop_offset(stop.position),
-                hint: angular_stop_offset(stop.hint),
-                color: gradient_stop_dynamic(stop.color, current_color),
-            },
-        )?;
+        // The entire raw buffer was reserved above, so these pushes cannot grow it.
+        raw.push(gradient::RawStop {
+            position: angular_stop_offset(stop.position),
+            hint: angular_stop_offset(stop.hint),
+            color: gradient_stop_dynamic(stop.color, current_color),
+        });
     }
     let mut fixed = gradient::try_fixed_up_stops(&raw, &conic.interpolation, Some(budget))?;
     if conic.repeating {

@@ -1,5 +1,28 @@
 use super::*;
 
+fn srgb_interpolation() -> raikiri_style::property::GradientColorInterpolation {
+    use raikiri_dom::Document;
+    use raikiri_style::property::{BackgroundImage, Gradient};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let node = document.append_element(
+        Some(0),
+        "div",
+        Some("background-image:conic-gradient(in srgb,red,blue)"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let BackgroundImage::Gradient(gradient) = &cascade.computed[node].background_layers()[0].image
+    else {
+        panic!("gradient");
+    };
+    let Gradient::Conic(conic) = &**gradient else {
+        panic!("conic");
+    };
+    conic.interpolation
+}
+
 #[test]
 fn vector_limit_is_inclusive_and_overflow_is_rejected_without_a_charge() {
     let paint = ConicPaintBudget::default();
@@ -91,28 +114,9 @@ fn growth_can_use_the_exact_remaining_budget() {
 fn gamut_samples_and_the_average_use_the_same_finite_budget() {
     use super::super::{try_expand_stops, try_ramp_average_color};
     use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
-    use raikiri_dom::Document;
-    use raikiri_style::property::{BackgroundImage, Gradient};
-    use raikiri_style::{build_rule_tree, cascade};
-
     let red = DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([2.0, 0.0, 0.0, 1.0]));
     let black = DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([0.0, 0.0, 0.0, 1.0]));
-    let mut document = Document::new();
-    let node = document.append_element(
-        Some(0),
-        "div",
-        Some("background-image:conic-gradient(in srgb,red,blue)"),
-    );
-    let rules = build_rule_tree(&document);
-    let cascade = cascade(&document, &rules).expect("cascade");
-    let BackgroundImage::Gradient(gradient) = &cascade.computed[node].background_layers()[0].image
-    else {
-        panic!("gradient");
-    };
-    let Gradient::Conic(conic) = &**gradient else {
-        panic!("conic");
-    };
-    let interpolation = conic.interpolation;
+    let interpolation = srgb_interpolation();
     for average in [false, true] {
         let paint = ConicPaintBudget::default();
         let budget = paint.for_gradient();
@@ -140,5 +144,72 @@ fn gamut_samples_and_the_average_use_the_same_finite_budget() {
         }
         assert!(paint.used.get().bytes <= MAX_PAINT_BYTES);
         assert!(budget.bytes.get() <= MAX_GRADIENT_BYTES);
+    }
+}
+
+#[test]
+fn finite_gamut_expansion_respects_quotas_at_each_sampling_stage() {
+    use super::super::{try_expand_stops, try_repeat_over_turn};
+    use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
+
+    let interpolation = srgb_interpolation();
+    let paint = ConicPaintBudget::default();
+    let budget = paint.for_gradient();
+    assert!(
+        try_expand_stops(
+            &[],
+            ColorSpaceTag::Srgb,
+            HueDirection::Shorter,
+            false,
+            Some(&budget)
+        )
+        .expect("empty stop list")
+        .is_empty()
+    );
+    let black = DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([0.0, 0.0, 0.0, 1.0]));
+    for red_channel in [1.3, 1.7, 4.3] {
+        let red =
+            DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([red_channel, 0.0, 0.0, 1.0]));
+        for repeating in [false, true] {
+            let mut rejected = false;
+            let mut completed = false;
+            // Moving the quota across the work needed by a clipped ramp
+            // exercises exhaustion during refinement and final sample copies.
+            for allowance in [
+                128, 256, 384, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 3072,
+                4096, 5120, 6144, 7168, 8192, 12288, 16384, 32768,
+            ] {
+                let paint = ConicPaintBudget::default();
+                let budget = paint.for_gradient();
+                let prior = MAX_GRADIENT_BYTES - allowance;
+                budget
+                    .charge::<[u8; 1024]>(prior / 1024)
+                    .expect("prior work");
+                budget.charge::<u8>(prior % 1024).expect("prior remainder");
+                let success = if repeating {
+                    try_repeat_over_turn(
+                        vec![(0.0, red), (1.0 / 8192.0, black)],
+                        &interpolation,
+                        &budget,
+                    )
+                    .is_some()
+                } else {
+                    try_expand_stops(
+                        &[(0.0, red), (1.0, black)],
+                        ColorSpaceTag::Srgb,
+                        HueDirection::Shorter,
+                        false,
+                        Some(&budget),
+                    )
+                    .is_some()
+                };
+                completed |= success;
+                rejected |= !success;
+                assert!(budget.bytes.get() <= MAX_GRADIENT_BYTES);
+                assert!(paint.used.get().bytes <= MAX_PAINT_BYTES);
+                assert!(paint.used.get().entries <= MAX_PAINT_ENTRIES);
+            }
+            assert!(rejected && completed);
+        }
     }
 }
