@@ -834,6 +834,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         // Adding a variant here asserts that it has no expansion target.
         PropertyValue::All(_)
         | PropertyValue::Color(_)
+        | PropertyValue::ModernColor(_)
         | PropertyValue::ContextualColor(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)

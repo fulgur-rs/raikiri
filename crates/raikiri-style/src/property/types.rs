@@ -8054,6 +8054,15 @@ impl ContextualColor {
     pub(crate) fn resolved_value(&self, current: CssColor) -> Option<PropertyValue> {
         let color = crate::property::resolve_contextual_color(&self.source, current)?;
         Some(match self.key {
+            // `currentcolor` alone keeps the syntax of the color it stands for,
+            // which a plain `Color` cannot say, so it is the inherited class
+            // that the caller keeps (see `apply_value`).
+            PropertyKey::Color
+                if crate::property::source_color_syntax(&self.source)
+                    == crate::property::ColorSyntax::Modern =>
+            {
+                PropertyValue::ModernColor(color)
+            }
             PropertyKey::Color => PropertyValue::Color(color),
             PropertyKey::BackgroundColor => PropertyValue::BackgroundColor(color),
             PropertyKey::BorderTopColor => {
@@ -8965,6 +8974,16 @@ pub struct GradientColorInterpolation {
     /// polar (`Lch`/`Oklch`); otherwise `Shorter` is always stored (see
     /// [`parse_gradient_color_interpolation`]).
     pub hue_method: HueInterpolationMethod,
+    /// Whether `color_space` is only a placeholder for the default that the
+    /// element's `color` decides. It is set when the gradient has no `in
+    /// <color-space>` clause, every stop that is not `currentcolor` is written
+    /// in a legacy color syntax, and at least one stop is `currentcolor`: that
+    /// stop takes the syntax of the computed `color` (CSS Color 4,
+    /// "Interpolation"), so the default is sRGB for a legacy `color` and Oklab
+    /// for any other. `color_space` holds sRGB meanwhile, and resolving the
+    /// gradient against the element (see `ResolveContext::current_color_modern`)
+    /// replaces it and clears this flag.
+    pub follows_current_color: bool,
 }
 
 /// Color payload of a gradient stop containing `<color>`: distinguishes
@@ -10472,6 +10491,14 @@ pub enum PropertyValue {
     ContextualShorthand(Box<ContextualShorthand>),
     /// `color: <color>` — inherited, initial: black.
     Color(CssColor),
+    /// `color: <color>` written in a modern color syntax: anything but hex, a
+    /// named color, `rgb()`, `hsl()` and `hwb()` (CSS Color 4 §4), such as
+    /// `oklch()`, `color()` or `color-mix()`. It sets the same color as
+    /// [`Self::Color`] and also marks the computed `color` as modern (see
+    /// [`ComputedValues::color_modern`](crate::ComputedValues::color_modern)),
+    /// which a `currentcolor` gradient stop takes into the default
+    /// interpolation space. Inherited, initial: black.
+    ModernColor(CssColor),
     /// `background-color: <color>` — **non-inherited**, initial: `transparent`.
     /// CSS Backgrounds 3 §2.2 "Base Color: the background-color property"
     /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>.
@@ -12884,6 +12911,15 @@ impl PropertyValue {
         })
     }
 
+    /// The color of a `color` declaration, whichever syntax it is written in
+    /// ([`Self::Color`] or [`Self::ModernColor`]); `None` for any other value.
+    pub fn element_color(&self) -> Option<CssColor> {
+        match self {
+            PropertyValue::Color(color) | PropertyValue::ModernColor(color) => Some(*color),
+            _ => None,
+        }
+    }
+
     /// Returns the property key for this value.
     ///
     /// Used as the discriminant for selecting one winner per property in the
@@ -12895,10 +12931,10 @@ impl PropertyValue {
             PropertyValue::Deferred(value) => value.key,
             PropertyValue::ContextualColor(value) => value.key,
             PropertyValue::ContextualShorthand(value) => value.value.key(),
+            PropertyValue::Color(_) | PropertyValue::ModernColor(_) => PropertyKey::Color,
             PropertyValue::Grid(_) => PropertyKey::Grid,
             PropertyValue::GridArea(_) => PropertyKey::GridArea,
             PropertyValue::GridTemplate(_) => PropertyKey::GridTemplate,
-            PropertyValue::Color(_) => PropertyKey::Color,
             PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
             PropertyValue::FontSize(_) => PropertyKey::FontSize,

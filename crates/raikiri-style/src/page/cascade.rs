@@ -419,6 +419,9 @@ impl PageMarginBoxCascadeResult {
                     resolve_css_wide_color_font(
                         value,
                         inherited.color,
+                        // A margin box does not keep the syntax of the color it
+                        // inherits, so it counts as legacy there.
+                        false,
                         inherited.background_color,
                         inherited.background_color_expression.as_ref(),
                         inherited.font_size,
@@ -432,7 +435,7 @@ impl PageMarginBoxCascadeResult {
             .declarations
             .iter()
             .find_map(|declaration| match &declaration.value {
-                PropertyValue::Color(color) => Some(*color),
+                PropertyValue::Color(color) | PropertyValue::ModernColor(color) => Some(*color),
                 PropertyValue::ContextualColor(color) if color.key == PropertyKey::Color => {
                     crate::property::resolve_contextual_color(&color.source, inherited.color)
                 }
@@ -1978,7 +1981,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
         .get(&PropertyKey::Color)
         .map(ResolvedAgainstInherited::as_property_value)
     {
-        Some(PropertyValue::Color(color)) => *color,
+        Some(PropertyValue::Color(color) | PropertyValue::ModernColor(color)) => *color,
         Some(PropertyValue::ContextualColor(color)) => {
             crate::property::resolve_contextual_color(&color.source, inherited.color)
                 .unwrap_or(inherited.color)
@@ -2062,7 +2065,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
             .get(&PropertyKey::Color)
             .map(ResolvedAgainstInherited::as_property_value)
         {
-            Some(PropertyValue::Color(color)) => *color,
+            Some(PropertyValue::Color(color) | PropertyValue::ModernColor(color)) => *color,
             _ => inherited.color,
         },
         background_color: match resolved

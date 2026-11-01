@@ -25,6 +25,7 @@ const CTX: ResolveContext = ResolveContext {
     viewport_height: 288.0,
     vertical_root: false,
     border_width_device_scale: None,
+    current_color_modern: false,
 };
 
 /// Fixture passed as `parent: &ComputedValues` to `finalize`, with only its font size changed
@@ -159,6 +160,7 @@ fn parent_fixture() -> ComputedValues {
             b: 50,
             a: 255,
         },
+        color_modern: true,
         background_color_expression: None,
         background_color: CssColor {
             r: 10,

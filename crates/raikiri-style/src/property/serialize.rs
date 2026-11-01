@@ -557,6 +557,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         PropertyValue::CustomProperty(..)
         | PropertyValue::Deferred(..)
         | PropertyValue::Color(..)
+        | PropertyValue::ModernColor(..)
         | PropertyValue::BackgroundColor(..)
         | PropertyValue::FontSizeRelative(..)
         | PropertyValue::FontWeight(..)

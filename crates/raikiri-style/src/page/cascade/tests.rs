@@ -108,7 +108,7 @@ fn page_context_currentcolor_uses_page_color() {
     };
     assert_eq!(
         result.declarations.get(&PropertyKey::Color),
-        Some(&PropertyValue::Color(purple))
+        Some(&PropertyValue::ModernColor(purple))
     );
     assert_eq!(
         result.declarations.get(&PropertyKey::BackgroundColor),
@@ -142,7 +142,7 @@ fn margin_context_currentcolor_resolves_after_its_own_color() {
             margin
                 .declarations
                 .iter()
-                .any(|declaration| declaration.value == PropertyValue::Color(expected))
+                .any(|declaration| declaration.value.element_color() == Some(expected))
         );
         assert!(
             margin
@@ -4530,7 +4530,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 195;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 196;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -5391,6 +5391,7 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         CssWideKeyword, DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand,
     };
     vec![
+        PropertyValue::ModernColor(RED),
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::Small),
         PropertyValue::FontSizeCalc(
@@ -5542,6 +5543,7 @@ property_value_variant_registry! {
     ContextualColor,
     ContextualShorthand,
     Color,
+    ModernColor,
     BackgroundColor,
     FontFamily,
     FontSize,
@@ -6399,6 +6401,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             }
             // Layer-independent payloads: keywords, colors, identifier lists, counters.
             PropertyValue::Color(_)
+            | PropertyValue::ModernColor(_)
             | PropertyValue::BackgroundColor(_)
             | PropertyValue::FontFamily(_)
             | PropertyValue::Display(_)
