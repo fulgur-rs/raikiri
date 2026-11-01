@@ -19709,6 +19709,41 @@ fn a_replaced_block_that_fits_the_page_exactly_stays() {
 }
 
 #[test]
+fn a_positioned_replaced_block_keeps_its_place_and_does_not_push_the_flow() {
+    // Taken out of the flow, a replaced box sits where its offsets say
+    // whatever its size; it does not move to the next page or shift the boxes
+    // that follow it. An ordinary box with the same offsets is the reference.
+    let positioned = |tag: &str, position: &str| {
+        paginated_ys(
+            |doc, body| {
+                let positioned = doc.append_element(
+                    Some(body),
+                    tag,
+                    Some(&format!(
+                        "display:block;position:{position};top:30px;left:0;width:100px;height:120px"
+                    )),
+                );
+                let after = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:10px"),
+                );
+                vec![positioned, after]
+            },
+            &[],
+        )
+    };
+    for position in ["absolute", "fixed"] {
+        assert_eq!(
+            positioned("img", position),
+            positioned("div", position),
+            "{position}"
+        );
+        assert_eq!(positioned("img", position)[1], 0.0, "{position}");
+    }
+}
+
+#[test]
 fn a_nested_replaced_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
     let ys = paginated_ys(
         |doc, body| {

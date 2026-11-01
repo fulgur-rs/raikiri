@@ -6390,9 +6390,15 @@ fn box_avoids_page_break_inside(
 ///
 /// A box with inline outer display is left out: it takes part in the lines of
 /// its paragraph, which move it (see [`unplaced_line`]), and moving it on its
-/// own as well would shift it twice.
+/// own as well would shift it twice. So is a positioned box taken out of the
+/// flow: its offsets place it in its containing block, and moving it would
+/// push the boxes that follow it.
 fn box_is_unbreakable(document: &Document, node_id: usize) -> bool {
-    !document.nodes[node_id].display().is_inline_level()
+    let node = &document.nodes[node_id];
+    matches!(
+        node.position(),
+        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+    ) && !node.display().is_inline_level()
         && is_replaced_for_pagination(document, node_id)
 }
 
