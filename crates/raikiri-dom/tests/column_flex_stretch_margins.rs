@@ -427,3 +427,110 @@ fn the_stretch_height_is_not_below_the_padding_and_border() {
         &[("i", [8.0, 38.0, 100.0, 8.0])],
     );
 }
+
+#[test]
+fn inline_svgs_with_stretch_heights_can_shrink_inside_a_column() {
+    let items = "<svg id=i viewBox=\"0 0 20 50\" style=\"height:stretch\"></svg>\
+                 <svg id=j viewBox=\"0 0 20 50\" style=\"height:stretch\"></svg>";
+    check(
+        "default SVG overflow",
+        &column(
+            "display:flex;flex-direction:column;height:200px;width:100px",
+            items,
+        ),
+        &[
+            ("i", [8.0, 8.0, 100.0, 100.0]),
+            ("j", [8.0, 108.0, 100.0, 100.0]),
+        ],
+    );
+}
+
+#[test]
+fn explicit_svg_overflow_controls_the_automatic_column_minimum() {
+    for (overflow, height) in [
+        ("hidden", 100.0),
+        ("auto", 100.0),
+        ("visible", 200.0),
+        ("clip", 200.0),
+    ] {
+        let items = format!(
+            "<svg id=i viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:{overflow}\"></svg>\
+                            <svg id=j viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:{overflow}\"></svg>"
+        );
+        check(
+            overflow,
+            &column(
+                "display:flex;flex-direction:column;height:200px;width:100px",
+                &items,
+            ),
+            &[
+                ("i", [8.0, 8.0, 100.0, height]),
+                ("j", [8.0, 8.0 + height, 100.0, height]),
+            ],
+        );
+    }
+}
+
+#[test]
+fn svg_and_image_stretch_minima_follow_their_computed_overflow() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/inline-svg-stretch-overflow.json")).unwrap();
+    for case in oracle["cases"].as_array().unwrap() {
+        let expected = case["expected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry[0].as_str().unwrap(),
+                    [
+                        entry[1].as_f64().unwrap() as f32,
+                        entry[2].as_f64().unwrap() as f32,
+                        entry[3].as_f64().unwrap() as f32,
+                        entry[4].as_f64().unwrap() as f32,
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        check(
+            case["label"].as_str().unwrap(),
+            case["html"].as_str().unwrap(),
+            &expected,
+        );
+    }
+}
+
+#[test]
+fn svg_overflow_attributes_yield_to_author_stylesheets() {
+    for attribute in ["visible", "hidden", "clip", "auto"] {
+        for author in [None, Some("visible"), Some("hidden")] {
+            let overflow = author.unwrap_or(attribute);
+            let height = if matches!(overflow, "hidden" | "auto") {
+                100.0
+            } else {
+                200.0
+            };
+            let css = author
+                .map(|value| format!("<style>svg{{overflow:{value}}}</style>"))
+                .unwrap_or_default();
+            let items = format!(
+                "<svg id=i viewBox=\"0 0 20 50\" overflow=\"{attribute}\" style=\"height:stretch\"></svg>\
+                                <svg id=j viewBox=\"0 0 20 50\" overflow=\"{attribute}\" style=\"height:stretch\"></svg>"
+            );
+            check(
+                attribute,
+                &format!(
+                    "{css}{}",
+                    column(
+                        "display:flex;flex-direction:column;height:200px;width:100px",
+                        &items
+                    )
+                ),
+                &[
+                    ("i", [8.0, 8.0, 100.0, height]),
+                    ("j", [8.0, 8.0 + height, 100.0, height]),
+                ],
+            );
+        }
+    }
+}

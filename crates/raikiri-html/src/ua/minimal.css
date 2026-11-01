@@ -2,7 +2,7 @@
  * raikiri-html — Minimal UA stylesheet for HTML documents
  *
  * Cleanroom implementation derived from CSS 2.1 Appendix D "Default style
- * sheet for HTML 4" and HTML Living Standard "Rendering" section.
+ * sheet for HTML 4", HTML Living Standard "Rendering", and SVG 2 section 6.8.
  * Browser-specific UA stylesheets (Chromium html.css, Firefox
  * layout/style/res/html.css, WebKit UA CSS, blitz bundled UA CSS) are
  * intentionally NOT referenced, so this implementation stays independent
@@ -10,8 +10,8 @@
  *
  * Scope: the minimal rule set required for a hello-world visual
  * regression test (<p style="color:red">Hi</p> → PNG) to succeed. Button
- * box/font defaults are included; other form controls and native appearance
- * remain deferred. Margins
+ * box/font defaults and inline SVG overflow are included; other form controls
+ * and native appearance remain deferred. Margins
  * are only partially landed (`hr` and the
  * `blockquote`/`figure`/`listing`/`p`/`plaintext`/`pre`/`xmp` group below)
  * — most other elements' margins (headings and form controls, etc.) remain deferred.
@@ -523,6 +523,12 @@ img, video, audio, canvas, iframe, embed, object {
   overflow: clip;
   overflow-clip-margin: content-box;
 }
+
+/* SVG 2 section 6.8 gives non-document-root SVG viewports hidden overflow.
+ * Besides clipping their viewport, this leaves flex items a zero automatic
+ * minimum in the scrollable axis. Author declarations can restore visible
+ * overflow and its content-based minimum. */
+svg:not(:root) { overflow: hidden; }
 
 /* HTML Living Standard "Rendering" §tables (15.3.8) + CSS 2.1 §17.2 / Appendix D
  * — table model display types. Each HTML table-related element maps to its
