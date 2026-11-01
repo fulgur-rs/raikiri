@@ -2255,6 +2255,33 @@ fn used_padding_for_paint(cv: &raikiri_style::ComputedValues, layout: &BoxLayout
     }
 }
 
+/// Return the padding that positions the background layers of a laid-out box.
+///
+/// Layout adds the room a table cell's `vertical-align` spreads over the
+/// cell to its padding, so that the lines and the generated content of the cell
+/// follow its content. That room belongs to the content box of the cell, which
+/// the background clip and origin of `content-box` follow, so a cell takes its
+/// own padding here. A cell without room, and a cell whose edges layout
+/// collapsed, has no more than its own padding to give.
+fn background_padding_for_paint(
+    cv: &raikiri_style::ComputedValues,
+    layout: &BoxLayout,
+    used: Edges<f32>,
+) -> Edges<f32> {
+    if cv.display != DisplayValue::TableCell {
+        return used;
+    }
+    let own = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc, used: f32| {
+        value.resolve(layout.size.width).min(used)
+    };
+    Edges {
+        top: own(cv.padding.top, used.top),
+        right: own(cv.padding.right, used.right),
+        bottom: own(cv.padding.bottom, used.bottom),
+        left: own(cv.padding.left, used.left),
+    }
+}
+
 /// Draws a replaced element after asking the source for pixels at the concrete
 /// CSS object size selected by `object-fit`. The caller clips it (see
 /// [`raikiri_dom::paint_rules::replaced_content_clip`]).
