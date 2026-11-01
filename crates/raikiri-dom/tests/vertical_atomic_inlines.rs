@@ -24,8 +24,9 @@ const AHEM: &[u8] = include_bytes!(concat!(
 /// A border box `(x, y, width, height)`.
 type Rect = (f32, f32, f32, f32);
 
-/// The border boxes of the elements of `body` with an `id` on the first page.
-fn border_boxes(body: &str) -> Vec<(String, Rect)> {
+/// The border boxes of the elements of `body` with an `id` on the page with
+/// the index `page`.
+fn border_boxes_on(body: &str, page: usize) -> Vec<(String, Rect)> {
     let html = format!(
         "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
          body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
@@ -46,7 +47,7 @@ fn border_boxes(body: &str) -> Vec<(String, Rect)> {
     let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete layout");
     };
-    let page = result.pages().next().expect("a page");
+    let page = result.pages().nth(page).expect("a page");
     let dom = page.dom();
     page.fragments()
         .filter_map(|fragment| {
@@ -61,7 +62,12 @@ fn border_boxes(body: &str) -> Vec<(String, Rect)> {
 const TOLERANCE: f32 = 0.02;
 
 fn check(body: &str, expected: &[(&str, Rect)]) {
-    let actual = border_boxes(body);
+    check_on(0, body, expected);
+}
+
+/// Like [`check`], for the page with the index `page`.
+fn check_on(page: usize, body: &str, expected: &[(&str, Rect)]) {
+    let actual = border_boxes_on(body, page);
     for &(id, (x, y, width, height)) in expected {
         let found = actual
             .iter()
@@ -374,16 +380,20 @@ fn a_vertical_inline_flex_in_a_horizontal_line_takes_the_page_less_its_margins()
     // A horizontal line sets no limit on the height of the vertical box, so
     // the page height stands in for it, and the box takes what the margins
     // leave of it. The 790px of text wrap to two lines.
+    // With the body margin of 8px the line does not fit what is left of the
+    // first page, so it starts the second, where the margin above the box
+    // stays.
     let words = ["wwwwwwwww"; 8].join(" ");
-    check(
+    check_on(
+        1,
         &format!(
             "<div id=p style=\"width:300px\"><span id=s \
              style=\"display:inline-flex;writing-mode:vertical-rl;margin:30px 0\">\
              <div id=a>{words}</div></span></div>"
         ),
         &[
-            ("s", (8.0, 38.0, 20.0, 540.0)),
-            ("a", (8.0, 38.0, 20.0, 540.0)),
+            ("s", (8.0, 30.0, 20.0, 540.0)),
+            ("a", (8.0, 30.0, 20.0, 540.0)),
         ],
     );
 }
@@ -410,8 +420,13 @@ fn a_float_around_a_vertical_atomic_measures_its_min_content_size() {
 /// Checks `body`, where `MODE` stands for the vertical writing mode, against
 /// `lr` under `vertical-lr` and against `rl` under `vertical-rl`.
 fn check_modes(body: &str, lr: &[(&str, Rect)], rl: &[(&str, Rect)]) {
-    check(&body.replace("MODE", "vertical-lr"), lr);
-    check(&body.replace("MODE", "vertical-rl"), rl);
+    check_modes_on(0, body, lr, rl);
+}
+
+/// Like [`check_modes`], for the page with the index `page`.
+fn check_modes_on(page: usize, body: &str, lr: &[(&str, Rect)], rl: &[(&str, Rect)]) {
+    check_on(page, &body.replace("MODE", "vertical-lr"), lr);
+    check_on(page, &body.replace("MODE", "vertical-rl"), rl);
 }
 
 /// A float whose `aa` and inline-block `bbbb` (styled by `atomic_css`) set the
@@ -1459,20 +1474,22 @@ fn a_vertical_inline_block_in_a_horizontal_line_wraps_at_the_page_height() {
         &fitted,
         &fitted,
     );
-    // With the body margin of 8px, the page cuts the box 8px short of its
-    // 600px.
-    let cut = [
-        ("p", (8.0, 8.0, 300.0, 592.0)),
-        ("o", (8.0, 8.0, 20.0, 592.0)),
+    // With the body margin of 8px, the box does not start the first page and
+    // does not fit what is left of it, so it starts the second, as in
+    // Chromium: the first page is left empty.
+    let moved = [
+        ("p", (8.0, 0.0, 300.0, 600.0)),
+        ("o", (8.0, 0.0, 20.0, 600.0)),
     ];
-    check_modes(
+    check_modes_on(
+        1,
         &format!(
             "<div id=p style=\"width:300px\"><span id=o \
              style=\"display:inline-block;writing-mode:MODE\">{}</span></div>",
             eight_words()
         ),
-        &cut,
-        &cut,
+        &moved,
+        &moved,
     );
 }
 

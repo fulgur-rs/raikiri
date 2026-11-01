@@ -12203,6 +12203,26 @@ fn paginated_ys(
     build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
     page_steps: &[f32],
 ) -> Vec<f32> {
+    paginated_reading(build, page_steps, |doc, id| {
+        doc.get_node(id).unwrap().layout.location.y
+    })
+}
+
+/// Like [`paginated_ys`], but reads where each box starts in the page flow
+/// rather than below its parent, which a margin that collapses through the
+/// body moves.
+fn paginated_flow_ys(
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+    page_steps: &[f32],
+) -> Vec<f32> {
+    paginated_reading(build, page_steps, current_abs_y)
+}
+
+fn paginated_reading(
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+    page_steps: &[f32],
+    read: impl Fn(&Document, usize) -> f32,
+) -> Vec<f32> {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -12230,9 +12250,7 @@ fn paginated_ys(
         },
     )
     .unwrap();
-    ids.into_iter()
-        .map(|id| doc.get_node(id).unwrap().layout.location.y)
-        .collect()
+    ids.into_iter().map(|id| read(&doc, id)).collect()
 }
 
 #[test]
@@ -17269,6 +17287,7 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
 fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
     let overflow = |table_row_lead: f32| BoxOverflow {
         page: false,
+        unbreakable: false,
         avoided_run: false,
         table_row: false,
         table_row_lead,
@@ -17770,6 +17789,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         relative_offset: 0.0,
         overflow: BoxOverflow {
             page: false,
+            unbreakable: false,
             avoided_run: false,
             table_row: false,
             table_row_lead: 0.0,
@@ -18877,6 +18897,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         relative_offset: 0.0,
         overflow: BoxOverflow {
             page: !forced,
+            unbreakable: false,
             avoided_run: false,
             table_row: false,
             table_row_lead: 0.0,
@@ -19571,10 +19592,10 @@ fn generated_content_alone_moves_past_the_page_edge() {
 }
 
 #[test]
-fn a_line_of_an_atomic_inline_alone_is_left_in_the_flow() {
-    // The line holds no text, generated or not, so the rule for lines of
-    // generated text does not reach it: the third line, from 78 to 117,
-    // stays across the edge.
+fn a_line_of_an_atomic_inline_alone_moves_past_the_page_edge() {
+    // The line holds no text, generated or not, and no page break goes
+    // through the atomic inline: the third line, from 78 to 117, starts the
+    // next page.
     let ys = paginated_ys(
         |doc, body| {
             (0..4)
@@ -19591,7 +19612,261 @@ fn a_line_of_an_atomic_inline_alone_is_left_in_the_flow() {
         },
         &[],
     );
-    assert_eq!(ys, [0.0, 39.0, 78.0, 117.0]);
+    assert_eq!(ys, [0.0, 39.0, 100.0, 139.0]);
+}
+
+/// `div(60px)`, `tag` as a block 60px tall, `div(10px)` on 100px pages: the
+/// page-flow y of each.
+fn replaced_block_after_a_box(tag: &str, css: &str) -> Vec<f32> {
+    paginated_ys(
+        |doc, body| {
+            let before = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:60px"),
+            );
+            let replaced = doc.append_element(
+                Some(body),
+                tag,
+                Some(&format!("display:block;width:100px;height:60px;{css}")),
+            );
+            let after = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:10px"),
+            );
+            vec![before, replaced, after]
+        },
+        &[],
+    )
+}
+
+#[test]
+fn a_replaced_block_crossing_the_page_edge_moves_whole_to_the_next_page() {
+    // The box could be cut anywhere, but a replaced element has no place to
+    // break inside it: it starts the next page, and the flow follows.
+    for tag in ["img", "svg", "canvas", "video"] {
+        assert_eq!(
+            replaced_block_after_a_box(tag, ""),
+            [0.0, 100.0, 160.0],
+            "{tag}"
+        );
+    }
+    // Whatever `break-inside` says.
+    assert_eq!(
+        replaced_block_after_a_box("img", "break-inside:auto"),
+        [0.0, 100.0, 160.0]
+    );
+    // An ordinary box breaks where it falls: the next one follows it.
+    assert_eq!(replaced_block_after_a_box("div", ""), [0.0, 60.0, 120.0]);
+    // One that fits stays.
+    assert_eq!(
+        replaced_block_after_a_box("img", "height:40px"),
+        [0.0, 60.0, 100.0]
+    );
+}
+
+#[test]
+fn a_replaced_block_taller_than_the_page_moves_to_the_next_page_unless_it_starts_the_page() {
+    let tall = |before: &str| {
+        paginated_ys(
+            |doc, body| {
+                let div = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some(&format!("display:block;width:100px;{before}")),
+                );
+                let image = doc.append_element(
+                    Some(body),
+                    "img",
+                    Some("display:block;width:100px;height:250px"),
+                );
+                vec![div, image]
+            },
+            &[],
+        )
+    };
+    // After content, the box starts the next page and is cut there.
+    assert_eq!(tall("height:30px"), [0.0, 100.0]);
+    // At the top of the first page, it stays where it is.
+    assert_eq!(tall("height:0"), [0.0, 0.0]);
+}
+
+#[test]
+fn a_replaced_block_that_fits_the_page_exactly_stays() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let image = doc.append_element(
+                Some(body),
+                "img",
+                Some("display:block;width:100px;height:100px"),
+            );
+            vec![image]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0]);
+}
+
+#[test]
+fn a_positioned_replaced_block_keeps_its_place_and_does_not_push_the_flow() {
+    // Taken out of the flow, a replaced box sits where its offsets say
+    // whatever its size; it does not move to the next page or shift the boxes
+    // that follow it. An ordinary box with the same offsets is the reference.
+    let positioned = |tag: &str, position: &str| {
+        paginated_ys(
+            |doc, body| {
+                let positioned = doc.append_element(
+                    Some(body),
+                    tag,
+                    Some(&format!(
+                        "display:block;position:{position};top:30px;left:0;width:100px;height:120px"
+                    )),
+                );
+                let after = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:10px"),
+                );
+                vec![positioned, after]
+            },
+            &[],
+        )
+    };
+    for position in ["absolute", "fixed"] {
+        assert_eq!(
+            positioned("img", position),
+            positioned("div", position),
+            "{position}"
+        );
+        assert_eq!(positioned("img", position)[1], 0.0, "{position}");
+    }
+}
+
+#[test]
+fn a_nested_replaced_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
+    let ys = paginated_ys(
+        |doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:60px"),
+            );
+            let wrapper = doc.append_element(Some(body), "div", Some("display:block;width:100px"));
+            let image = doc.append_element(
+                Some(wrapper),
+                "img",
+                Some("display:block;width:100px;height:60px"),
+            );
+            vec![wrapper, image]
+        },
+        &[],
+    );
+    assert_eq!(ys[0] + ys[1], 100.0);
+}
+
+#[test]
+fn a_replaced_block_with_a_margin_at_the_start_of_the_document_does_not_start_the_page() {
+    // The margin above the first box of the document is kept, so a box that
+    // crosses the page edge because of it has a page to move to, unlike a
+    // block that only avoids a break inside it.
+    let first = |tag: &str, css: &str| {
+        paginated_flow_ys(
+            |doc, body| {
+                let first = doc.append_element(
+                    Some(body),
+                    tag,
+                    Some(&format!(
+                        "display:block;width:100px;height:95px;margin-top:8px;{css}"
+                    )),
+                );
+                vec![first]
+            },
+            &[],
+        )
+    };
+    assert_eq!(first("img", ""), [100.0]);
+    assert_eq!(first("div", "break-inside:avoid"), [8.0]);
+    // One that fits with its margin stays.
+    assert_eq!(first("img", "height:90px"), [8.0]);
+}
+
+#[test]
+fn a_margin_cut_at_the_page_edge_does_not_move_a_replaced_block_again() {
+    // The margin of 30px falls across the edge and is truncated: the box
+    // starts the second page, and moving it on would only leave that page
+    // empty.
+    let ys = paginated_ys(
+        |doc, body| {
+            let before = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:100px"),
+            );
+            let image = doc.append_element(
+                Some(body),
+                "img",
+                Some("display:block;width:100px;height:150px;margin-top:30px"),
+            );
+            vec![before, image]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_line_with_an_image_alone_moves_past_the_page_edge() {
+    // An image in a paragraph of its own is an atomic inline, which the
+    // paragraph's line carries to the next page whole.
+    let ys = paginated_ys(
+        |doc, body| {
+            let before = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:60px"),
+            );
+            let paragraph =
+                doc.append_element(Some(body), "div", Some("display:block;width:100px"));
+            doc.append_element(
+                Some(paragraph),
+                "img",
+                Some("width:100px;height:60px;vertical-align:top"),
+            );
+            vec![before, paragraph]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_flex_container_with_a_border_and_an_orthogonal_item_moves_whole_to_the_next_page() {
+    // The item is in the orthogonal flow of its container, so no page break
+    // goes through it: the first piece of the container, below its border,
+    // is the whole item and does not fit what is left of the page.
+    let ys = paginated_flow_ys(
+        |doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:60px"),
+            );
+            let container = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:flex;width:100px;border-top:1px solid"),
+            );
+            let item = doc.append_element(
+                Some(container),
+                "div",
+                Some("writing-mode:vertical-lr;width:50px;height:60px"),
+            );
+            vec![container, item]
+        },
+        &[],
+    );
+    assert_eq!(ys, [100.0, 101.0]);
 }
 
 #[test]

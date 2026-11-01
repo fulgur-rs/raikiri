@@ -6,16 +6,16 @@ use super::super::context::LayoutSession;
 use super::{
     AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head,
-    box_forces_break_after, boxes_are_tied, breaks_only_around, candidate_ancestor_constraints,
-    clears_float_side, closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination,
+    PositionValue, TextLineIndex, UnplacedBlockLine, avoid_chain_before_last_box, avoided_run_head,
+    box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
+    candidate_ancestor_constraints, clears_float_side, closing_edges_of, first_owned_text_line_top,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
     page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
     pagination_child_order, pagination_child_parent_y, paragraph_lines_keep_together,
     positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
+    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line,
 };
 use std::collections::HashMap;
 
@@ -45,9 +45,12 @@ pub(super) struct ElementContext {
     pub(super) is_grid_item: bool,
     pub(super) is_named: bool,
     pub(super) deferred_named_break_after: bool,
-    /// How far below the border-box top the line of a paragraph of one line
-    /// of generated text ends: the box is kept whole by that line.
-    pub(super) unplaced_line_end: Option<f32>,
+    /// The line of a paragraph of one line of generated text or of atomic
+    /// inlines that no text places: the box is kept whole by that line.
+    pub(super) unplaced_line: Option<UnplacedBlockLine>,
+    /// The box is a replaced element or an atomic inline-level box that no
+    /// page break goes through (see [`super::box_is_unbreakable`]).
+    pub(super) unbreakable: bool,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
     /// stayed on a page they do not fit (see [`super::closing_edges_move`]).
@@ -149,9 +152,14 @@ impl BoxContext {
             .is_some_and(|attributes| attributes.is_grid_item)
     }
 
-    pub(super) fn unplaced_line_end(self) -> Option<f32> {
+    pub(super) fn unplaced_line(self) -> Option<UnplacedBlockLine> {
         self.element_attributes()
-            .and_then(|attributes| attributes.unplaced_line_end)
+            .and_then(|attributes| attributes.unplaced_line)
+    }
+
+    pub(super) fn is_unbreakable(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.unbreakable)
     }
 
     pub(super) fn closing_edges(self) -> f32 {
@@ -923,13 +931,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // follow it. Tables and flex containers keep their own
                 // item-level candidates.
                 let is_block_flow_box = is_block_level_flow_box(document.nodes[node_id].display());
-                // The one line of generated text of a block is placed by no
-                // text candidate, so the block moves whole instead. Content
-                // placed by the rules of a float, an out-of-flow box, or a
-                // flex, grid or table keeps them, and so does a document
-                // paginated on transposed axes, whose lines do not run
-                // along y.
-                let unplaced_line_end = (!inside_float
+                // The one line of generated text or of atomic inlines of a
+                // block is placed by no text candidate, so the block moves
+                // whole instead. Content placed by the rules of a float, an
+                // out-of-flow box, or a flex, grid or table keeps them, and
+                // so does a document paginated on transposed axes, whose
+                // lines do not run along y.
+                let unplaced_line = (!inside_float
                     && !inside_out_of_flow
                     && !inside_flex
                     && !inside_table
@@ -937,13 +945,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !grid_item_candidate
                     && !is_rendered_leaf
                     && !document.context.pagination_on_transposed_axes)
-                    .then(|| unplaced_line_end(document, cascade, node_id))
+                    .then(|| unplaced_line(document, cascade, node_id))
                     .flatten();
+                let unbreakable_box = box_is_unbreakable(document, node_id);
                 let avoids_break = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid
                         | raikiri_style::property::BreakInside::AvoidPage
-                ) || unplaced_line_end.is_some();
+                ) || unplaced_line.is_some()
+                    || unbreakable_box;
                 let clears_float = !inline_level
                     && is_block_flow_box
                     && [FloatValue::Left, FloatValue::Right]
@@ -1196,7 +1206,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_grid_item: grid_item_candidate,
                                 is_named: own_page_name.is_some(),
                                 deferred_named_break_after,
-                                unplaced_line_end,
+                                unplaced_line,
+                                unbreakable: unbreakable_box,
                                 closing_edges: if closing_edges_candidate
                                     || lone_box_candidate.is_some()
                                 {
