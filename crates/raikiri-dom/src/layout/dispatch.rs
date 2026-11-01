@@ -2802,12 +2802,35 @@ fn compute_inline_block_shrink_wrap(
     // width.
     let in_column_flex = leaf_intrinsic.is_some() && tree.in_column_flex_container(idx);
     let stretches_height = matches!(leaf_style.size.height.expand(), ExpandedDimension::Stretch);
-    let flexed_height = inputs.known_dimensions.height.filter(|_| {
+    // While the container's width is measured, which Taffy says by offering the
+    // item a min-content or max-content width, a stretched item contributes the
+    // width of the height it stretches to, the definite height of the
+    // container less its margins, whatever height the container flexes it to:
+    // the width of the container does not shrink with its items.
+    let stretch_room = inputs.parent_size.height.filter(|_| {
         in_column_flex
+            && stretches_height
             && inputs.sizing_mode == SizingMode::ContentSize
-            && (stretches_height
-                || matches!(inputs.available_space.width, AvailableSpace::Definite(_)))
+            && inputs.axis == RequestedAxis::Horizontal
+            && inputs.run_mode == RunMode::ComputeSize
+            && inputs.known_dimensions.height.is_some()
+            && inputs.known_dimensions_are_definite.height
+            && !matches!(inputs.available_space.width, AvailableSpace::Definite(_))
     });
+    let flexed_height = if let Some(room) = stretch_room {
+        // A percentage margin counts as zero in the width the item contributes.
+        let margin = leaf_style
+            .margin
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
+        Some((room - margin.top - margin.bottom).max(0.0))
+    } else {
+        inputs.known_dimensions.height.filter(|_| {
+            in_column_flex
+                && inputs.sizing_mode == SizingMode::ContentSize
+                && (stretches_height
+                    || matches!(inputs.available_space.width, AvailableSpace::Definite(_)))
+        })
+    };
     // An item of a row flex container whose height is fixed before its width is
     // measured, because it states the height or the container stretches it to a
     // definite one, takes its width from that height along its ratio, say for its
