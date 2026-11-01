@@ -806,26 +806,6 @@ fn ratio_stated_size_clamp(
     None
 }
 
-/// Whether the `min-height` of the out-of-flow box `idx`, if it states one, is
-/// no taller than the border-box height the box states. Such a minimum leaves
-/// the height as it is, and so the width the ratio gives for it.
-fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size<f32>) -> bool {
-    let style = tree.physical_style(idx);
-    if style.min_size().height.is_auto() {
-        return true;
-    }
-    let basis = Some(containing_size.height);
-    let adjustment = box_sizing_height_adjustment(tree, idx, containing_size.width);
-    let edges = padding_border_sum(tree, idx, Some(containing_size.width)).height;
-    match (
-        style.min_size().height.maybe_resolve(basis),
-        style.size().height.maybe_resolve(basis),
-    ) {
-        (Some(minimum), Some(height)) => minimum + adjustment <= (height + adjustment).max(edges),
-        _ => false,
-    }
-}
-
 /// The automatic minimum width of the out-of-flow `candidates` whose width
 /// follows from a height they state through their aspect ratio: their
 /// min-content width, which the content raises that width to unless the box
@@ -836,9 +816,10 @@ fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size
 /// so a box whose content needs more room is narrower than its content. It
 /// clamps that width to the `min-width` of the box, so the floor goes there. A
 /// minimum width carries across the ratio into a minimum height, which a box
-/// that states its height must not get, so the minimum height is `0`. A box
-/// that states a `min-height` taller than its height keeps the minimum width
-/// that carries across the ratio from it, and is left alone.
+/// that states its height must not get. An automatic minimum height is set
+/// to `0`, even when an authored minimum width opts out of the content floor.
+/// An authored minimum height remains intact, including the legitimate width
+/// minimum it transfers through the ratio.
 ///
 /// The width is measured without the `width`, `min-width`, `max-width` and
 /// aspect ratio of the box, at its min-content size.
@@ -863,9 +844,6 @@ pub(super) fn ratio_width_floors(
             let style = tree.physical_style(idx);
             style.stated_aspect_ratio().is_some()
                 && style.size().width.is_auto()
-                && style.min_size().width.is_auto()
-                && min_height_is_met(tree, idx, containing_size)
-                && !style.overflow().x.is_scroll_container()
                 && style
                     .size()
                     .height
@@ -881,30 +859,50 @@ pub(super) fn ratio_width_floors(
             .into_iter()
             .flat_map(|node_id| {
                 let idx = usize::from(node_id);
-                // The height of the box is no part of its intrinsic width: a
-                // wrapping column container breaks its items into columns at
-                // the room it is given, not at the height it ends up with.
-                let mut unlimited = vec![OwnedPropertyOverride::aspect_ratio(None)];
-                unlimited.extend(neutral_size_overrides(&[
-                    LengthProperty::Height,
-                    LengthProperty::MinHeight,
-                    LengthProperty::MaxHeight,
-                ]));
-                let minimum =
-                    min_content_width_without_limits(tree, node_id, containing_width, unlimited);
-                let adjustment = box_sizing_adjustment(tree, idx, containing_width);
-                let maximum = tree
-                    .physical_style(idx)
-                    .max_size()
-                    .width
-                    .maybe_resolve(Some(containing_width))
-                    .map(|maximum| maximum + adjustment);
-                let floor = maximum.map_or(minimum, |maximum| minimum.min(maximum));
+                let style = tree.physical_style(idx);
+                let content_minimum =
+                    style.min_size().width.is_auto() && !style.overflow().x.is_scroll_container();
+                let automatic_height = style.min_size().height.is_auto();
+                let mut floors = Vec::with_capacity(2);
+                if content_minimum {
+                    // Intrinsic width is measured without height constraints:
+                    // a wrapping column breaks at the room it is offered.
+                    let mut unlimited = vec![OwnedPropertyOverride::aspect_ratio(None)];
+                    unlimited.extend(neutral_size_overrides(&[
+                        LengthProperty::Height,
+                        LengthProperty::MinHeight,
+                        LengthProperty::MaxHeight,
+                    ]));
+                    let minimum = min_content_width_without_limits(
+                        tree,
+                        node_id,
+                        containing_width,
+                        unlimited,
+                    );
+                    let style = super::block_flow::style_input::physical(tree, idx);
+                    let metrics = super::block_flow::Metrics::resolve(
+                        &style,
+                        false,
+                        tree.nodes[idx].ratio_in_content_box,
+                        LayoutInput {
+                            parent_size: containing_size.map(Some),
+                            ..LayoutInput::HIDDEN
+                        },
+                    );
+                    // Installing a content floor must preserve a minimum
+                    // legitimately transferred from an authored min-height.
+                    let minimum = minimum.max(metrics.min.width.unwrap_or(0.0));
+                    let adjustment = box_sizing_adjustment(tree, idx, containing_width);
+                    let floor = metrics
+                        .own_max
+                        .width
+                        .map_or(minimum, |max| minimum.min(max));
+                    floors.push((LengthProperty::MinWidth, (floor - adjustment).max(0.0)));
+                }
+                if automatic_height {
+                    floors.push((LengthProperty::MinHeight, 0.0));
+                }
                 let key = tree.nodes.box_key(idx).expect("live out-of-flow box");
-                let floors = [
-                    (LengthProperty::MinWidth, (floor - adjustment).max(0.0)),
-                    (LengthProperty::MinHeight, 0.0),
-                ];
                 floors.into_iter().map(move |(property, size)| {
                     let entry = OwnedPropertyOverride::length(
                         property,

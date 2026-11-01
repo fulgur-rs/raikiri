@@ -695,3 +695,52 @@ fn vertical_ratio_containers_keep_the_height_the_grid_parent_imposes() {
         }
     }
 }
+
+#[test]
+fn a_minimum_width_does_not_raise_a_stated_height_through_the_ratio() {
+    for make in [in_flow, absolute] {
+        for display in ["flex", "inline-flex", "grid", "inline-grid"] {
+            let css = format!("display:{display};grid-auto-flow:column;{RATIO};min-width:200px");
+            let mut expected = row(200.0);
+            if display.contains("grid") {
+                expected[2].1[0] = 103.0;
+            }
+            assert_boxes(&make(&css, ITEMS), &expected);
+        }
+    }
+}
+
+#[test]
+fn a_minimum_height_keeps_the_automatic_content_width_of_an_absolute_ratio_box() {
+    for display in ["flex", "inline-flex", "grid", "inline-grid"] {
+        for (items, width) in [
+            (ITEMS, 120.0),
+            ("<div id=i style=\"width:200px;height:20px\"></div>", 250.0),
+        ] {
+            let css = format!("display:{display};grid-auto-flow:column;{RATIO};min-height:51px");
+            assert_boxes(&absolute(&css, items), &[("o", [8.0, 8.0, width, 51.0])]);
+        }
+    }
+}
+
+#[test]
+fn ratio_width_minima_keep_authored_height_bounds_and_content_opt_outs() {
+    let wide = "<div style=\"width:200px;height:20px\"></div>";
+    for make in [in_flow, absolute] {
+        for display in ["flex", "inline-flex", "grid", "inline-grid"] {
+            for (limits, small_width, wide_width, height) in [
+                ("min-height:51px", 120.0, 250.0, 51.0),
+                ("min-height:80px;max-height:60px", 160.0, 250.0, 80.0),
+                ("min-height:0", 120.0, 250.0, 50.0),
+                ("min-width:0", 100.0, 100.0, 50.0),
+                ("min-height:51px;max-width:90px", 90.0, 90.0, 51.0),
+                ("min-width:200px", 200.0, 200.0, 50.0),
+            ] {
+                let css = format!("display:{display};grid-auto-flow:column;{RATIO};{limits}");
+                for (items, width) in [(ITEMS, small_width), (wide, wide_width)] {
+                    assert_boxes(&make(&css, items), &[("o", [8.0, 8.0, width, height])]);
+                }
+            }
+        }
+    }
+}
