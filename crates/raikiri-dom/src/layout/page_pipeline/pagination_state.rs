@@ -719,7 +719,7 @@ impl PaginationState {
         position: &mut BoxPosition,
     ) -> Result<bool, Halt> {
         let node_id = candidate.node_id;
-        let page_transition = self.saw_child && page_break.is_page_transition();
+        let mut page_transition = self.saw_child && page_break.is_page_transition();
         if self.saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
@@ -762,6 +762,14 @@ impl PaginationState {
                 }
                 _ => 0,
             };
+            // A box that no page break goes through and that crosses the end
+            // of the first page moves to the second, though nothing comes
+            // before it: the margin above it at the start of the document is
+            // kept, so it does not start the page.
+            if page_break.overflow.unbreakable {
+                page_transition = true;
+                self.open_page_for_box(document, env, candidate, entry, page_break, position)?;
+            }
         }
         Ok(page_transition)
     }
