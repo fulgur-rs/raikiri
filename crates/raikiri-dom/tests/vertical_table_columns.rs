@@ -573,3 +573,78 @@ fn a_horizontal_cell_in_a_vertical_table_aligns_in_the_height_of_its_column() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// Like [`mixed_row`], with the horizontal cell holding a block `pd` of 20px
+/// that is `percent` high, and the table styled by `style`.
+fn mixed_row_with_percent(
+    mode: &str,
+    first: &str,
+    height: u32,
+    align: &str,
+    style: &str,
+    percent: &str,
+) -> String {
+    mixed_row(
+        mode,
+        first,
+        height,
+        align,
+        &format!("<div id=pd style='width: 20px; height: {percent}'></div>"),
+    )
+    .replacen("display: table;", &format!("display: table; {style};"), 1)
+}
+
+#[test]
+fn a_horizontal_cell_lays_out_percentage_heights_at_the_height_of_its_column() {
+    let mut mismatches = Vec::new();
+    for mode in MODES {
+        // 50% of the 30px of the column, not of the 50px of the row.
+        for (align, top) in [("top", 58.0), ("middle", 65.5), ("bottom", 73.0)] {
+            mismatches.extend(check(
+                &format!("{mode}, 50%, {align}"),
+                &mixed_row_with_percent(mode, "c", 30, align, "", "50%"),
+                &[
+                    ("d", [8.0, 58.0, 60.0, 30.0]),
+                    ("pd", [8.0, top, 20.0, 15.0]),
+                ],
+            ));
+        }
+        mismatches.extend(check(
+            &format!("{mode}, 100%"),
+            &mixed_row_with_percent(mode, "c", 30, "middle", "", "100%"),
+            &[("pd", [8.0, 58.0, 20.0, 30.0])],
+        ));
+        mismatches.extend(check(
+            &format!("{mode}, 50%, first"),
+            &mixed_row_with_percent(mode, "d", 30, "middle", "", "50%"),
+            &[
+                ("d", [8.0, 8.0, 60.0, 30.0]),
+                ("pd", [8.0, 15.5, 20.0, 15.0]),
+                ("c", [8.0, 38.0, 60.0, 50.0]),
+            ],
+        ));
+        // A table with a height shares it, 125px and 75px for the columns.
+        for (align, top) in [("top", 133.0), ("middle", 151.75)] {
+            mismatches.extend(check(
+                &format!("{mode}, 50% in a table of 200px, {align}"),
+                &mixed_row_with_percent(mode, "c", 30, align, "height: 200px", "50%"),
+                &[
+                    ("d", [8.0, 133.0, 60.0, 75.0]),
+                    ("pd", [8.0, top, 20.0, 37.5]),
+                ],
+            ));
+        }
+        // A cell with no height of its own gives its child nothing to resolve
+        // the percentage against.
+        mismatches.extend(check(
+            &format!("{mode}, 50% of a cell with no height"),
+            &mixed_row_with_percent(mode, "c", 0, "middle", "", "50%"),
+            &[
+                ("t", [8.0, 8.0, 60.0, 50.0]),
+                ("d", [8.0, 58.0, 60.0, 0.0]),
+                ("pd", [8.0, 58.0, 20.0, 0.0]),
+            ],
+        ));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
