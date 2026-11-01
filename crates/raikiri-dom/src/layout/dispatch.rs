@@ -2887,10 +2887,16 @@ fn compute_inline_block_shrink_wrap(
             && !matches!(inputs.available_space.width, AvailableSpace::Definite(_))
     });
     let flexed_height = if let Some(room) = stretch_room {
-        // A percentage margin counts as zero in the width the item contributes.
+        // A horizontal parent's inline width is cyclic in this contribution,
+        // but a vertical parent's definite inline height resolves the margins.
+        let margin_basis = if tree.container_is_vertical(idx) {
+            vertical_block::containing_inline_size(tree, idx, &inputs)
+        } else {
+            Some(0.0)
+        };
         let margin = leaf_style
             .margin
-            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
+            .map(|edge| edge.resolve(margin_basis).unwrap_or(0.0));
         Some((room - margin.top - margin.bottom).max(0.0))
     } else {
         inputs.known_dimensions.height.filter(|_| {

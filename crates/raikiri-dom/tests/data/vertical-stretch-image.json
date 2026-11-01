@@ -1,0 +1,747 @@
+{
+  "description": "Chromium 152.0.7977.82 border boxes; natural image 20x50, 8px body margin, div border-box. Parent inline size supplies percentage margins.",
+  "cases": [
+    {
+      "label": "horizontal-tb/row/0",
+      "html": "<div id=o style=\"display:flex;flex-direction:row;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          8,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/row/10% 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:row;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          56,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/row/5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:row;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          13,
+          13,
+          76,
+          190
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/column/0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/column/10% 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/column/5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          13,
+          13,
+          290,
+          190
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/column/0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:0\"></div>",
+      "expected": [
+        [
+          "i",
+          228,
+          8,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/column/10% 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          244,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/column/5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          227,
+          13,
+          76,
+          190
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/column/0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          8,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/column/10% 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/column/5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          13,
+          13,
+          76,
+          190
+        ]
+      ]
+    },
+    {
+      "label": "sideways-rl/column/0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:sideways-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:0\"></div>",
+      "expected": [
+        [
+          "i",
+          228,
+          8,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "sideways-rl/column/10% 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:sideways-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          244,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "sideways-rl/column/5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:sideways-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          227,
+          13,
+          76,
+          190
+        ]
+      ]
+    },
+    {
+      "label": "sideways-lr/column/0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:sideways-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          8,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "sideways-lr/column/10% 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:sideways-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "sideways-lr/column/5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:sideways-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          13,
+          13,
+          76,
+          190
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/writing-mode:horizontal-tb",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;writing-mode:horizontal-tb\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/writing-mode:vertical-rl",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;writing-mode:vertical-rl\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/max-height:100px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;max-height:100px\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/min-height:180px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;min-height:180px\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          180
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/padding:5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;padding:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/border:5px solid red",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;border:5px solid red\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/flex-basis:0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;flex-basis:0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/flex-grow:1",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;flex-grow:1\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          38,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/margin:calc(10% + 5px) 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;margin:calc(10% + 5px) 0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          43,
+          300,
+          130
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/parent:padding:10px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px;padding:10px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          46,
+          280,
+          124
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/parent:border:10px solid green",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px;border:10px solid green\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          46,
+          280,
+          124
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/parent:padding:10px;box-sizing:content-box",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px;padding:10px;box-sizing:content-box\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          48,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb/parent:border:10px solid green;box-sizing:content-box",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:horizontal-tb;height:200px;width:300px;border:10px solid green;box-sizing:content-box\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          48,
+          300,
+          140
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/writing-mode:horizontal-tb",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;writing-mode:horizontal-tb\"></div>",
+      "expected": [
+        [
+          "i",
+          244,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/writing-mode:vertical-rl",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;writing-mode:vertical-rl\"></div>",
+      "expected": [
+        [
+          "i",
+          244,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/max-height:100px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;max-height:100px\"></div>",
+      "expected": [
+        [
+          "i",
+          268,
+          28,
+          40,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/min-height:180px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;min-height:180px\"></div>",
+      "expected": [
+        [
+          "i",
+          236,
+          28,
+          72,
+          180
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/padding:5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;padding:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          238,
+          28,
+          70,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/border:5px solid red",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;border:5px solid red\"></div>",
+      "expected": [
+        [
+          "i",
+          238,
+          28,
+          70,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/flex-basis:0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;flex-basis:0\"></div>",
+      "expected": [
+        [
+          "i",
+          244,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/flex-grow:1",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;flex-grow:1\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          300,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/margin:calc(10% + 5px) 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;margin:calc(10% + 5px) 0\"></div>",
+      "expected": [
+        [
+          "i",
+          248,
+          33,
+          60,
+          150
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/parent:padding:10px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px;padding:10px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          240.40625,
+          36,
+          57.59375,
+          144
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/parent:border:10px solid green",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px;border:10px solid green\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          240.40625,
+          36,
+          57.59375,
+          144
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/parent:padding:10px;box-sizing:content-box",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px;padding:10px;box-sizing:content-box\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          254,
+          38,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl/parent:border:10px solid green;box-sizing:content-box",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px;border:10px solid green;box-sizing:content-box\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          254,
+          38,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/writing-mode:horizontal-tb",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;writing-mode:horizontal-tb\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/writing-mode:vertical-rl",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;writing-mode:vertical-rl\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/max-height:100px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;max-height:100px\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          40,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/min-height:180px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;min-height:180px\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          72,
+          180
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/padding:5px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;padding:5px\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          70,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/border:5px solid red",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;border:5px solid red\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          70,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/flex-basis:0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;flex-basis:0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/flex-grow:1",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;flex-grow:1\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          28,
+          300,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/margin:calc(10% + 5px) 0",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0;margin:calc(10% + 5px) 0\"></div>",
+      "expected": [
+        [
+          "i",
+          8,
+          33,
+          60,
+          150
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/parent:padding:10px",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px;padding:10px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          36,
+          57.59375,
+          144
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/parent:border:10px solid green",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px;border:10px solid green\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          36,
+          57.59375,
+          144
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/parent:padding:10px;box-sizing:content-box",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px;padding:10px;box-sizing:content-box\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          38,
+          64,
+          160
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr/parent:border:10px solid green;box-sizing:content-box",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;writing-mode:vertical-lr;height:200px;width:300px;border:10px solid green;box-sizing:content-box\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;margin:10% 0\"></div>",
+      "expected": [
+        [
+          "i",
+          18,
+          38,
+          64,
+          160
+        ]
+      ]
+    }
+  ],
+  "baseline_comparison": "Selected 57 matching cases from 72 Chromium measurements. The patch fixes 26 baseline differences and introduces none. Twelve vertical-row cases and three indefinite-height cases retain identical baseline differences and are recorded in RAIKIRI-1360 evidence."
+}
