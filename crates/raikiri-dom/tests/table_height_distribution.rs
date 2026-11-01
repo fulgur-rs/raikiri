@@ -273,37 +273,81 @@ fn min_height_shares_the_extra_like_a_height() {
     check_rows(cases);
 }
 
-/// Rows removed by `visibility: collapse` take no part. The expected boxes are Chromium's for the same markup with `display: none` rows: CSS Tables 3 removes a collapsed row the same way, though Chromium shares the extra with the collapsed row first and then shrinks the table by it.
+/// Rows removed by `display: none` take no part.
 #[test]
-fn collapsed_rows_take_no_part_in_the_sharing() {
+fn removed_rows_take_no_part_in_the_sharing() {
+    let cases: &[Case<'_>] = &[
+        (
+            "the last row is removed",
+            "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2 style='display:none'><td id=c2><div style='height:10px'></div></td></tr></table>",
+            &[("t", 8.0, 200.0), ("r0", 8.0, 160.0), ("r1", 168.0, 40.0)],
+        ),
+        (
+            "the middle row is removed",
+            "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='display:none'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2 style='height:40px'><td id=c2><div style='height:10px'></div></td></tr></table>",
+            &[("t", 8.0, 200.0), ("r0", 8.0, 160.0), ("r2", 168.0, 40.0)],
+        ),
+        (
+            "a removed row with an authored height",
+            "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px;display:none'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("r0", 8.0, 133.33),
+                ("r2", 141.33, 66.67),
+            ],
+        ),
+        (
+            "a removed row beside two free rows",
+            "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='display:none'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("r0", 8.0, 133.33),
+                ("r2", 141.33, 66.67),
+            ],
+        ),
+    ];
+    check_rows(cases);
+}
+
+/// Rows removed by `visibility: collapse` take their share first, as the rows
+/// that stay do, and give it up: the table ends up lower than the height it
+/// states, as much lower as the collapsed rows took.
+#[test]
+fn collapsed_rows_share_and_then_leave() {
     let cases: &[Case<'_>] = &[
         (
             "the last row is collapsed",
             "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2 style='visibility:collapse'><td id=c2><div style='height:10px'></div></td></tr></table>",
-            &[("t", 8.0, 200.0), ("r0", 8.0, 160.0), ("r1", 168.0, 40.0)],
+            &[
+                ("t", 8.0, 146.66),
+                ("r0", 8.0, 106.66),
+                ("r1", 114.66, 40.0),
+                ("r2", 154.66, 0.0),
+            ],
         ),
         (
             "the middle row is collapsed",
             "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='visibility:collapse'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2 style='height:40px'><td id=c2><div style='height:10px'></div></td></tr></table>",
-            &[("t", 8.0, 200.0), ("r0", 8.0, 160.0), ("r2", 168.0, 40.0)],
+            &[
+                ("t", 8.0, 146.66),
+                ("r0", 8.0, 106.66),
+                ("r1", 114.66, 0.0),
+                ("r2", 114.66, 40.0),
+            ],
         ),
         (
             "a collapsed row with an authored height",
             "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px;visibility:collapse'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></table>",
             &[
-                ("t", 8.0, 200.0),
-                ("r0", 8.0, 133.33),
-                ("r2", 141.33, 66.67),
+                ("t", 8.0, 160.0),
+                ("r0", 8.0, 106.66),
+                ("r2", 114.66, 53.34),
             ],
         ),
         (
             "a collapsed row beside two free rows",
             "<table id=t style='height:200px'><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='visibility:collapse'><td id=c1><div style='height:10px'></div></td></tr><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></table>",
-            &[
-                ("t", 8.0, 200.0),
-                ("r0", 8.0, 133.33),
-                ("r2", 141.33, 66.67),
-            ],
+            &[("t", 8.0, 150.0), ("r0", 8.0, 100.0), ("r2", 108.0, 50.0)],
         ),
     ];
     check_rows(cases);

@@ -22,6 +22,11 @@ fn hidden_empty_cells_keep_row_heights_spacing_and_height_distribution() {
             "<tr id=r1><td></td></tr><tr id=r2><td style='height:20px'></td></tr>",
             [("t", 8.0, 100.0), ("r1", 8.0, 80.0), ("r2", 88.0, 20.0)],
         ),
+        (
+            "border-spacing:0;height:100px",
+            "<tr id=r1><td style='height:20px'></td></tr><tr style='visibility:collapse'><td style='height:20px'></td></tr><tr id=r2><td><div style='height:10px'></div></td></tr>",
+            [("t", 8.0, 80.0), ("r1", 8.0, 20.0), ("r2", 28.0, 60.0)],
+        ),
     ] {
         let html = format!(
             "<!doctype html><style>@page{{size:800px 600px;margin:0}}body{{margin:8px}}td{{padding:0}}table{{empty-cells:hide;{css}}}</style><table id=t>{rows}</table>"
