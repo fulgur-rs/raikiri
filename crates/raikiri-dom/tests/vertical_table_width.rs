@@ -251,6 +251,53 @@ fn a_table_that_states_a_width_keeps_it() {
 }
 
 #[test]
+fn a_cell_that_spans_columns_keeps_its_whole_width() {
+    // The columns of a table share the width of a cell that spans them, so the
+    // table is as wide as the cell, not as the share of one column. Only the
+    // width of the table is compared: the heights of spanning cells are not as
+    // in Chromium yet.
+    let cases = [
+        (
+            "a cell of 60px over two columns",
+            "<tr><td colspan=2 style='width: 60px; height: 80px; padding: 0'>x</td></tr>",
+            60.0,
+        ),
+        (
+            "a cell of 90px over three columns",
+            "<tr><td colspan=3 style='width: 90px; height: 60px; padding: 0'>x</td></tr>",
+            90.0,
+        ),
+        (
+            "a cell over two columns and one of 40px",
+            "<tr><td colspan=2 style='width: 60px; height: 40px; padding: 0'>x</td>\
+             <td style='width: 40px; height: 30px; padding: 0'>y</td></tr>",
+            60.0,
+        ),
+        (
+            "a cell over two columns narrower than the one after it",
+            "<tr><td colspan=2 style='width: 20px; height: 40px; padding: 0'>x</td>\
+             <td style='width: 50px; height: 30px; padding: 0'>y</td></tr>",
+            50.0,
+        ),
+    ];
+    for mode in MODES {
+        for (label, rows, width) in cases {
+            for display in ["table", "inline-table"] {
+                let markup = format!(
+                    "<table id=t style='display: {display}; writing-mode: {mode}; \
+                     border-spacing: 0'>{rows}</table>"
+                );
+                let found = border_box(&markup, "t")[2];
+                assert!(
+                    (found - width).abs() <= TOLERANCE,
+                    "{label} in {mode} as {display}: the table is {found}px wide, expected {width}px"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn the_cells_of_a_vertical_row_share_the_extent_of_the_row() {
     check(
         "two cells of 30px by 50px",

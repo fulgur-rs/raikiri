@@ -1353,9 +1353,22 @@ fn compute_table_layout_checked(
         // height, so the physical spacing applies across that stack: the
         // vertical gap between and around the stacked tracks, the horizontal gap
         // on both sides of the single physical column. Every stacked track is as
-        // wide as that column, so it is as wide as the widest of them.
-        let vertical_content_width =
-            column_widths.iter().copied().fold(0.0, f32::max) + border_spacing.0 * 2.0;
+        // wide as its cell, so the column is as wide as the widest cell. The
+        // columns share the width of a cell that spans several of them, less the
+        // spacing between them, so the cell is as wide as those columns and that
+        // spacing.
+        let vertical_cell_width = grid
+            .cells
+            .iter()
+            .map(|cell| {
+                let start = usize::from(cell.col_start).min(column_widths.len());
+                let end = (start + usize::from(cell.col_span)).min(column_widths.len());
+                column_widths[start..end].iter().sum::<f32>()
+                    + border_spacing.0 * (end - start).saturating_sub(1) as f32
+            })
+            .chain(column_widths.iter().copied())
+            .fold(0.0, f32::max);
+        let vertical_content_width = vertical_cell_width + border_spacing.0 * 2.0;
         // CSS 2.1 §17.5.2: the used table width is at least the columns plus
         // the spacing and borders, even when the specified width is smaller.
         let min_table_width = content_width + padding_border_size.width;
