@@ -9,17 +9,18 @@
 //! is emptied and its generation changes, so every handle that is still around
 //! finds an empty slot or another generation and resolves to nothing.
 //!
-//! Resolving takes no lock, so independent documents laid out on different
-//! threads share nothing but read-only cache lines. A slot is written only
+//! Affine resolution takes no lock. A comparison tree uses a per-slot read
+//! lock only while cloning its owning snapshot, then evaluates after unlock. A slot is written only
 //! while it is free, under the lock that creating and dropping payloads take,
 //! and a reader checks the slot's state word before and after it reads the
 //! value (a sequence lock), so a handle that races with the reuse of its slot
 //! is rejected rather than read torn.
 
-use crate::calc::CalcValue;
+use crate::calc::{CalcExpression, CalcValue};
+use raikiri_style::property::ComputedLengthMath;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
 /// The low bits of a handle that the layout library keeps for its own tag; a
 /// handle has them clear.
@@ -36,10 +37,11 @@ const GENERATION_MASK: u64 = (1 << GENERATION_BITS) - 1;
 const _: () = assert!(TAG_BITS + INDEX_BITS + GENERATION_BITS == usize::BITS);
 
 /// The state word of a slot: bit 0 is set while the slot holds a payload, bit 1
-/// records the payload's range policy, and the rest is the generation.
+/// records its range policy, bit 2 marks a comparison, and the rest is the generation.
 const LIVE: u64 = 1;
 const NON_NEGATIVE: u64 = 2;
-const GENERATION_SHIFT: u32 = 2;
+const MATH: u64 = 4;
+const GENERATION_SHIFT: u32 = 3;
 
 /// The slots live in chunks that double in size, so a chunk never moves once
 /// it exists and the first holds `1 << FIRST_CHUNK_BITS` slots.
@@ -81,6 +83,7 @@ pub(crate) fn lookup(handle: usize) -> Option<CalcValue> {
 struct Entry {
     state: AtomicU64,
     value: AtomicU64,
+    math: OnceLock<Box<RwLock<Option<Arc<ComputedLengthMath>>>>>,
 }
 
 impl Entry {
@@ -89,6 +92,7 @@ impl Entry {
         Self {
             state: AtomicU64::new(1 << GENERATION_SHIFT),
             value: AtomicU64::new(0),
+            math: OnceLock::new(),
         }
     }
 }
@@ -151,13 +155,29 @@ impl Table {
         // The slot was freed by a store of its state, which must be visible to
         // a reader before the new value is.
         fence(Ordering::Release);
-        entry.value.store(value.to_bits(), Ordering::Relaxed);
         let range = if value.non_negative() {
             NON_NEGATIVE
         } else {
             0
         };
-        entry.state.store(free | LIVE | range, Ordering::Release);
+        match value.expression() {
+            CalcExpression::Affine(value) => {
+                let bits =
+                    (u64::from(value.px.to_bits()) << 32) | u64::from(value.percent.to_bits());
+                entry.value.store(bits, Ordering::Relaxed);
+                entry.state.store(free | LIVE | range, Ordering::Release);
+            }
+            CalcExpression::Math(expression) => {
+                // Writers always take the table mutex before a slot lock. Publish
+                // only after its owning Arc is installed, under that same lock.
+                let lock = entry.math.get_or_init(|| Box::new(RwLock::new(None)));
+                let mut payload = lock.write().unwrap_or_else(PoisonError::into_inner);
+                *payload = Some(expression.clone());
+                entry
+                    .state
+                    .store(free | LIVE | MATH | range, Ordering::Release);
+            }
+        }
         Some(handle(free >> GENERATION_SHIFT, index))
     }
 
@@ -169,9 +189,23 @@ impl Table {
         if let Some(entry) = self.entry(index) {
             let state = entry.state.load(Ordering::Relaxed);
             let generation = next_generation(state >> GENERATION_SHIFT);
-            entry
-                .state
-                .store(generation << GENERATION_SHIFT, Ordering::Release);
+            if state & MATH != 0 {
+                // Invalidate the generation and release the Arc before making
+                // the slot reusable. A reader cloning the Arc holds this lock.
+                let lock = entry
+                    .math
+                    .get()
+                    .expect("live math slots own a payload lock");
+                let mut payload = lock.write().unwrap_or_else(PoisonError::into_inner);
+                entry
+                    .state
+                    .store(generation << GENERATION_SHIFT, Ordering::Release);
+                *payload = None;
+            } else {
+                entry
+                    .state
+                    .store(generation << GENERATION_SHIFT, Ordering::Release);
+            }
             writer.free.push_back(index);
         }
     }
@@ -181,13 +215,28 @@ impl Table {
         let entry = self.entry(identity & INDEX_MASK)?;
         let issued = (identity >> INDEX_BITS) as u64;
         let before = entry.state.load(Ordering::Acquire);
+        if before & MATH != 0 {
+            let lock = entry.math.get()?;
+            let payload = lock.read().unwrap_or_else(PoisonError::into_inner);
+            // The first state was only a hint. Revalidate after acquiring the
+            // lock, then clone the expression and its range as one snapshot.
+            let state = entry.state.load(Ordering::Acquire);
+            if handle & TAG_MASK != 0
+                || state & (LIVE | MATH) != (LIVE | MATH)
+                || state >> GENERATION_SHIFT != issued
+            {
+                return None;
+            }
+            let expression = payload.as_ref()?.clone();
+            return Some(CalcValue::new(expression, state & NON_NEGATIVE != 0));
+        }
         let current = before & LIVE != 0 && before >> GENERATION_SHIFT == issued;
         let bits = entry.value.load(Ordering::Relaxed);
         fence(Ordering::Acquire);
         // The slot was not reused while the value was read.
         let stable = entry.state.load(Ordering::Relaxed) == before;
         let untagged = handle & TAG_MASK == 0;
-        (current && stable && untagged)
+        (current && stable && untagged && before & MATH == 0)
             .then(|| CalcValue::from_bits(bits, before & NON_NEGATIVE != 0))
     }
 }

@@ -409,7 +409,67 @@
           10.5
         ]
       ]
+    },
+    {
+      "label": "min(30px, calc(10px + 5%))",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:min(30px, calc(10px + 5%))\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "max(10px, 5%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:max(10px, 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "clamp(5px, calc(10px + 5%), 20px)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:clamp(5px, calc(10px + 5%), 20px)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ]
+      ]
     }
   ],
-  "scope": "Affine calc() and controls. Mixed length/percentage comparison functions are rejected before layout and tracked separately in RAIKIRI-1317; their computed-Auto probes and full Chromium reproductions are retained in that issue."
+  "scope": "Affine calc(), min()/max()/clamp() length-percentage comparisons, and controls. Comparison cases reproduce RAIKIRI-1317: cyclic percentages use zero for intrinsic contribution and the actual track width for final used values."
 }

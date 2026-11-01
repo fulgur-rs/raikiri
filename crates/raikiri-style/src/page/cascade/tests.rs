@@ -4056,7 +4056,7 @@ fn absolutize_in_page_context_covers_background_size_cover_and_contain_arms() {
         assert_eq!(
             absolutize_in_page_context(
                 ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(Arc::from([
-                    size
+                    size.clone()
                 ]))),
                 fs,
                 None,
@@ -4064,7 +4064,7 @@ fn absolutize_in_page_context_covers_background_size_cover_and_contain_arms() {
                 PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
-            PropertyValue::BackgroundSize(Arc::from([size])),
+            PropertyValue::BackgroundSize(Arc::from([size.clone()])),
             "background-size: {size:?}",
         );
     }
@@ -4091,7 +4091,9 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(Arc::from([size]))),
+            ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(Arc::from([
+                size.clone()
+            ]))),
             fs,
             None,
             &ctx,
@@ -5937,6 +5939,40 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
     fn length_or_auto(l: LengthOrAuto) -> Option<&'static str> {
         match l {
+            LengthOrAuto::Math(value) => {
+                fn residue(input: &mut cssparser::Parser<'_, '_>) -> Option<&'static str> {
+                    while let Ok(token) = input.next().cloned() {
+                        match token {
+                            cssparser::Token::Dimension { unit, .. }
+                                if !unit.eq_ignore_ascii_case("px") =>
+                            {
+                                return Some("Math non-px length");
+                            }
+                            cssparser::Token::Function(_) | cssparser::Token::ParenthesisBlock => {
+                                let found = input
+                                    .parse_nested_block(|nested| {
+                                        let found = residue(nested);
+                                        while nested
+                                            .next_including_whitespace_and_comments()
+                                            .is_ok()
+                                        {}
+                                        Ok::<_, cssparser::ParseError<'_, ()>>(found)
+                                    })
+                                    .ok()
+                                    .flatten();
+                                if found.is_some() {
+                                    return found;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    None
+                }
+                let text = value.to_css();
+                let mut input = cssparser::ParserInput::new(&text);
+                residue(&mut cssparser::Parser::new(&mut input))
+            }
             LengthOrAuto::Auto
             | LengthOrAuto::MinContent
             | LengthOrAuto::MaxContent
@@ -6064,16 +6100,13 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             TextAlign::InternalCenter => Some("text-align: -internal-center"),
         }
     }
-    fn sides<T: Copy>(s: Sides<T>, f: impl Fn(T) -> Option<&'static str>) -> Option<&'static str> {
+    fn sides<T>(s: Sides<T>, f: impl Fn(T) -> Option<&'static str>) -> Option<&'static str> {
         [s.top, s.right, s.bottom, s.left].into_iter().find_map(f)
     }
     /// Two-value ([`StartEnd<T>`]) sibling of [`sides`]: for the
     /// `margin-inline` / `margin-block` / `padding-inline` / `padding-block`
     /// shorthands, either start/end component makes the whole value residue.
-    fn start_end<T: Copy>(
-        p: StartEnd<T>,
-        f: impl Fn(T) -> Option<&'static str>,
-    ) -> Option<&'static str> {
+    fn start_end<T>(p: StartEnd<T>, f: impl Fn(T) -> Option<&'static str>) -> Option<&'static str> {
         f(p.start).or_else(|| f(p.end))
     }
     /// One offset of a `<position>`: `Start` and `End` both wrap a plain
@@ -6298,18 +6331,18 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MaxInlineSize(l)
             | PropertyValue::MaxBlockSize(l)
             | PropertyValue::InlineSize(l)
-            | PropertyValue::BlockSize(l) => length_or_auto(*l),
+            | PropertyValue::BlockSize(l) => length_or_auto((*l).clone()),
             PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
             PropertyValue::Padding(s) => sides(**s, length_percentage_or_calc),
-            PropertyValue::Margin(s) => sides(**s, length_or_auto),
+            PropertyValue::Margin(s) => sides((**s).clone(), length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
                 start_end(*p, length_percentage_or_calc)
             }
             PropertyValue::MarginInline(p)
             | PropertyValue::MarginBlock(p)
             | PropertyValue::InsetInline(p)
-            | PropertyValue::InsetBlock(p) => start_end(*p, length_or_auto),
-            PropertyValue::Inset(s) => sides(**s, length_or_auto),
+            | PropertyValue::InsetBlock(p) => start_end(p.clone(), length_or_auto),
+            PropertyValue::Inset(s) => sides((**s).clone(), length_or_auto),
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
             PropertyValue::BorderTop(b) => length(b.width),
             PropertyValue::BorderRight(b) => length(b.width),
@@ -6654,7 +6687,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::BackgroundSize(sizes) => sizes.iter().find_map(|size| match size {
                 BackgroundSize::Cover | BackgroundSize::Contain => None,
                 BackgroundSize::Explicit { width, height } => {
-                    length_or_auto(*width).or_else(|| length_or_auto(*height))
+                    length_or_auto((*width).clone()).or_else(|| length_or_auto((*height).clone()))
                 }
             }),
             // `background-position` stores a `<length-percentage>` per
@@ -6727,10 +6760,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                     }
                 };
-                let size_residue = match layer.size {
+                let size_residue = match &layer.size {
                     BackgroundSize::Cover | BackgroundSize::Contain => None,
                     BackgroundSize::Explicit { width, height } => {
-                        length_or_auto(width).or_else(|| length_or_auto(height))
+                        length_or_auto(width.clone()).or_else(|| length_or_auto(height.clone()))
                     }
                 };
                 image_residue
@@ -9266,7 +9299,7 @@ fn margin_box_logical_sizes_compete_with_physical_ones_in_declaration_order() {
             .unwrap();
         result.margin_box_style(&rule, None)
     };
-    let sizes = |style: &ComputedValues| (style.width, style.height);
+    let sizes = |style: &ComputedValues| (style.width.clone(), style.height.clone());
     // In `vertical-rl` the inline size is the height.
     let vertical = "@page { @top-left { content: 'X'; writing-mode: vertical-rl; ";
     assert_eq!(
@@ -9965,7 +9998,7 @@ fn margin_box_logical_sizes_take_the_css_wide_keywords() {
                 "width: 5px; height: 6px; min-height: 7px; inline-size: {keyword}; \
                  block-size: {keyword}; min-block-size: {keyword}"
             )),
-            [Auto; 4],
+            [const { Auto }; 4],
             "{keyword}"
         );
     }
@@ -10146,7 +10179,7 @@ fn page_context_min_block_size_rolls_back_and_substitutes() {
 #[test]
 fn margin_box_min_block_size_rolls_back_and_substitutes() {
     use ComputedLengthPercentageOrAuto::{Auto, Px};
-    let min_height = |css: &str| margin_box_sizes(css)[3];
+    let min_height = |css: &str| margin_box_sizes(css)[3].clone();
     assert_eq!(
         min_height(
             "@layer a { @page { @top-left { content: 'X'; min-block-size: 8px } } } \
@@ -10220,7 +10253,7 @@ fn margin_box_logical_limits_take_the_css_wide_keywords() {
                  min-inline-size: {keyword}; max-inline-size: {keyword}; \
                  max-block-size: {keyword}"
             )),
-            [Auto; 4],
+            [const { Auto }; 4],
             "{keyword}"
         );
     }
@@ -10271,11 +10304,11 @@ fn margin_box_logical_limits_compete_with_the_physical_limit_on_their_axis() {
     // order and computes to the initial value.
     assert_eq!(
         limits("max-width: 10px; max-inline-size: var(--missing)"),
-        [Auto; 4]
+        [const { Auto }; 4]
     );
     assert_eq!(
         limits("max-inline-size: 5px; max-width: var(--missing)"),
-        [Auto; 4]
+        [const { Auto }; 4]
     );
 }
 
@@ -10334,4 +10367,26 @@ fn page_context_logical_limits_take_the_css_wide_keywords() {
             "{keyword}"
         );
     }
+}
+
+#[test]
+fn comparison_residue_detector_sees_relative_leaves_but_accepts_absolutized_trees() {
+    let mut input = cssparser::ParserInput::new("min(3em, calc(1em + 5%))");
+    let specified =
+        crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+    let raw = PropertyValue::Width(LengthOrAuto::Math(specified.clone()));
+    assert_eq!(specified_layer_residue(&raw), Some("Math non-px length"));
+    let computed = crate::resolve_size_length_percentage_or_auto(
+        LengthOrAuto::Math(specified),
+        ComputedLength(10.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let ComputedLengthPercentageOrAuto::Math(computed) = computed else {
+        panic!("percentage must survive")
+    };
+    let lifted = PropertyValue::Width(LengthOrAuto::Math(
+        crate::property::LengthMath::from_computed(&computed),
+    ));
+    assert_eq!(specified_layer_residue(&lifted), None);
 }

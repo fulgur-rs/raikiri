@@ -35,7 +35,7 @@ fn size_of(
         .find(|&node| out.document.element_attribute(node, "id") == Some(id))
         .expect("element");
     let computed = &out.cascade.computed[node];
-    (computed.width, computed.height)
+    (computed.width.clone(), computed.height.clone())
 }
 
 #[test]

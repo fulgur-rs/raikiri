@@ -193,7 +193,7 @@ fn computed_height(
                 .unwrap_or(false)
         })
         .expect("the element");
-    cascade.computed[index].height
+    cascade.computed[index].height.clone()
 }
 
 #[test]

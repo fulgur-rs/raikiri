@@ -84,15 +84,12 @@ impl PageLengthBasis<'_> {
     /// [`resolve_size_length_percentage_or_auto`] so a negative mixed `calc()`
     /// clamps to zero.
     fn size_lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
-        match resolve_size_length_percentage_or_auto(
+        lift_length_percentage_or_auto(resolve_size_length_percentage_or_auto(
             specified,
             self.font_size,
             self.own_line_height,
             self.ctx,
-        ) {
-            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
-            _ => self.lpa(specified),
-        }
+        ))
     }
     /// `<length-percentage> | auto` for `margin-*` specifically —
     /// same mapping as [`Self::lpa`] but
@@ -356,6 +353,9 @@ fn lift_length_percentage_or_auto(computed: ComputedLengthPercentageOrAuto) -> L
         ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
         ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
         ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+        ComputedLengthPercentageOrAuto::Math(value) => {
+            LengthOrAuto::Math(crate::property::LengthMath::from_computed(&value))
+        }
         ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
         ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::FitContent,
@@ -907,7 +907,7 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::InsetBlock(pair) => PropertyValue::InsetBlock(pair.map(|l| basis.lpa(l))),
         // ── background-size / background-position ───────────────────────
         PropertyValue::BackgroundSize(v) => PropertyValue::BackgroundSize(
-            v.iter().map(|size| basis.background_size(*size)).collect(),
+            v.iter().map(|size| basis.background_size(size.clone())).collect(),
         ),
         PropertyValue::BackgroundPosition(v) => {
             PropertyValue::BackgroundPosition(v.iter().map(|p| basis.css_position(*p)).collect())
@@ -927,7 +927,7 @@ pub(super) fn absolutize_in_page_context(
                     ctx,
                 );
                 layer.position = basis.css_position(layer.position);
-                layer.size = basis.background_size(layer.size);
+                layer.size = basis.background_size(layer.size.clone());
             }
             PropertyValue::Background(shorthand)
         }

@@ -212,7 +212,7 @@ fn measured_table_stretch_height_does_not_stretch_a_second_time() {
         for swapped in [false, true] {
             let mut cv = ComputedValues::initial();
             cv.width = L::Px(20.0);
-            cv.height = height;
+            cv.height = height.clone();
             cv.margin.top = L::Auto;
             cv.margin.bottom = L::Auto;
             cv.margin.left = L::Auto;

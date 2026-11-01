@@ -128,7 +128,7 @@ pub(in crate::layout) fn sizing_flags(
     }
     let cv = &cascade.computed[idx];
     let mut flags = F::EMPTY;
-    let content_keyword = |size| {
+    let content_keyword = |size: &ComputedLengthPercentageOrAuto| {
         matches!(
             size,
             ComputedLengthPercentageOrAuto::MaxContent
@@ -137,8 +137,8 @@ pub(in crate::layout) fn sizing_flags(
         )
     };
     let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
+    let width = logical.as_ref().map_or(&cv.width, |size| &size.width);
+    let height = logical.as_ref().map_or(&cv.height, |size| &size.height);
     if logical.is_some() {
         flags = flags.union(F::VERTICAL_LOGICAL_SIZE);
     }
@@ -158,7 +158,7 @@ pub(in crate::layout) fn sizing_flags(
     if !honors_content_limits(doc, cascade, idx, cv) {
         flags = flags.union(F::IGNORE_LIMIT_KEYWORDS);
     }
-    if cv.min_block_size.is_some_and(is_sizing_keyword)
+    if cv.min_block_size.as_ref().is_some_and(is_sizing_keyword)
         && (is_supported_flex_grid_item(doc, cascade, idx, cv)
             || is_supported_flex_grid_container(doc, idx, cv))
     {
@@ -240,17 +240,17 @@ pub(in crate::layout) fn is_replaced(doc: &Document, cascade: &CascadeResult, id
     let cv = &cascade.computed[idx];
     let flags = sizing_flags(doc, cascade, idx);
     let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
+    let width = logical.as_ref().map_or(&cv.width, |size| &size.width);
+    let height = logical.as_ref().map_or(&cv.height, |size| &size.height);
     let width = if flags.contains(F::IGNORE_WIDTH_KEYWORD)
-        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO) && width == L::MinContent)
+        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO) && *width == L::MinContent)
     {
-        L::Auto
+        &L::Auto
     } else {
         width
     };
     let height = if flags.contains(F::IGNORE_HEIGHT_KEYWORD) {
-        L::Auto
+        &L::Auto
     } else {
         height
     };

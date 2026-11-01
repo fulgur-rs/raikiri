@@ -440,10 +440,11 @@ fn block_border_box_end(
                 }
             })
     };
-    let used = |value: ComputedLengthPercentageOrAuto| {
+    let used = |value: &ComputedLengthPercentageOrAuto| {
         match value {
-            ComputedLengthPercentageOrAuto::Px(value) => Some(value),
+            ComputedLengthPercentageOrAuto::Px(value) => Some(*value),
             ComputedLengthPercentageOrAuto::Percent(_)
+            | ComputedLengthPercentageOrAuto::Math(_)
             | ComputedLengthPercentageOrAuto::Calc(_) => {
                 root_height.and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
             }
@@ -466,7 +467,7 @@ fn block_border_box_end(
             content + edges_top + edges_bottom
         }
     };
-    let min_height = used(computed.min_height).unwrap_or(0.0);
+    let min_height = used(&computed.min_height).unwrap_or(0.0);
     // Text of the root's own paragraph is located by its lines, which are
     // not measured here, but a block-level `::before` or `::after` between
     // or after them takes room of its own: the paragraph then ends where
@@ -482,8 +483,8 @@ fn block_border_box_end(
         .unwrap_or(f32::NEG_INFINITY);
     // A definite height, even zero, fixes the border box; content
     // overflowing it is measured on its own.
-    if let Some(height) = used(computed.height) {
-        let height = used(computed.max_height).map_or(height, |max| height.min(max));
+    if let Some(height) = used(&computed.height) {
+        let height = used(&computed.max_height).map_or(height, |max| height.min(max));
         return border_box_end(height.max(min_height)).max(generated_end);
     }
     let min_end = if min_height > 0.0 {
@@ -491,7 +492,7 @@ fn block_border_box_end(
     } else {
         f32::NEG_INFINITY
     };
-    let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
+    let max_end = used(&computed.max_height).map_or(f32::INFINITY, border_box_end);
     // Without block-end edges or a `min-height` an auto-height body ends
     // with its content, which the flow already paginated.
     let edges_end = edges_bottom > 0.0 || min_height > 0.0;
@@ -4174,7 +4175,7 @@ fn avoided_run_ends(
         if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
             let margin_bottom =
-                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+                used_computed_length_percentage_or_auto(&computed.margin.bottom, content_width)
                     .unwrap_or(0.0)
                     .max(0.0);
             run_lasts.insert(start, (candidate, margin_bottom));
@@ -4926,7 +4927,7 @@ fn has_explicit_block_axis_inset(
     matches!(
         document.nodes[node_id].position(),
         PositionValue::Absolute | PositionValue::Fixed
-    ) && (!inset_is_auto(computed.top) || !inset_is_auto(computed.bottom))
+    ) && (!inset_is_auto(&computed.top) || !inset_is_auto(&computed.bottom))
 }
 
 fn in_inset_out_of_flow_subtree(
@@ -8065,12 +8066,12 @@ fn break_margins(
     let block_axis = document.block_axis(node_id);
     let computed = &cascade.computed[node_id];
     let margin_top = used_style_length_percentage_auto(block_axis.margin_top(), content_width)
-        .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
+        .or_else(|| used_computed_length_percentage_or_auto(&computed.margin.top, content_width))
         .unwrap_or(0.0);
     let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
         used_style_length_percentage_auto(block_axis.margin_bottom(), content_width)
             .or_else(|| {
-                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+                used_computed_length_percentage_or_auto(&computed.margin.bottom, content_width)
             })
             .unwrap_or(0.0)
             .max(0.0)
@@ -9572,8 +9573,8 @@ fn max_border_box_height(
     let basis = BoxTree::for_layout(document)
         .parent(node_id, BoxParentScope::Document)
         .and_then(|parent| definite_content_height(document, parent));
-    let max = match cascade.computed[node_id].max_height {
-        ComputedLengthPercentageOrAuto::Px(max) => Some(max),
+    let max = match &cascade.computed[node_id].max_height {
+        ComputedLengthPercentageOrAuto::Px(max) => Some(*max),
         value => basis.and_then(|basis| used_computed_length_percentage_or_auto(value, basis)),
     }?;
     let layout = &document.nodes[node_id].layout;

@@ -189,7 +189,7 @@ pub(crate) fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
 /// Keep `value` in the document arena and return a reference to it.
 pub(crate) fn push_calc(
     arena: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
-    value: raikiri_style::property::CalcLengthPercentage,
+    value: impl Into<raikiri_layout_style::CalcExpression>,
     non_negative: bool,
 ) -> CalcRef {
     let payload = std::sync::Arc::new(raikiri_layout_style::AlignedCalc::new(value, non_negative));

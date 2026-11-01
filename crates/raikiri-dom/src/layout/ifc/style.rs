@@ -68,16 +68,16 @@ pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
     }
     // `Ok(Some(px))` for a length, `Ok(None)` for `auto`, `Err` for a
     // percentage or calc().
-    let inset = |value: LengthOrAuto| match value {
+    let inset = |value: &LengthOrAuto| match value {
         LengthOrAuto::Auto => Ok(None),
-        LengthOrAuto::Px(px) => Ok(Some(px)),
+        LengthOrAuto::Px(px) => Ok(Some(*px)),
         _ => Err(()),
     };
     let (left, right, top, bottom) = (
-        inset(cv.left).ok()?,
-        inset(cv.right).ok()?,
-        inset(cv.top).ok()?,
-        inset(cv.bottom).ok()?,
+        inset(&cv.left).ok()?,
+        inset(&cv.right).ok()?,
+        inset(&cv.top).ok()?,
+        inset(&cv.bottom).ok()?,
     );
     let dx = left.or(right.map(|r| -r)).unwrap_or(0.0);
     let dy = top.or(bottom.map(|b| -b)).unwrap_or(0.0);
@@ -134,17 +134,22 @@ impl InlineRelativeInsets {
         if properties.position() != &p::PositionValue::Relative {
             return None;
         }
-        let terms = |value: LengthOrAuto| match value {
-            LengthOrAuto::Px(px) => Some(InsetTerms { px, percent: None }),
+        let terms = |value: &LengthOrAuto| match value {
+            LengthOrAuto::Px(px) => Some(InsetTerms {
+                px: *px,
+                percent: None,
+            }),
             LengthOrAuto::Percent(percent) => Some(InsetTerms {
                 px: 0.0,
-                percent: Some(percent),
+                percent: Some(*percent),
             }),
             LengthOrAuto::Calc(calc) => Some(InsetTerms {
                 px: calc.px,
                 percent: Some(calc.percent),
             }),
-            LengthOrAuto::Auto
+            // Insets retain their existing affine-only grammar.
+            LengthOrAuto::Math(_)
+            | LengthOrAuto::Auto
             | LengthOrAuto::MinContent
             | LengthOrAuto::MaxContent
             | LengthOrAuto::FitContent
@@ -152,10 +157,10 @@ impl InlineRelativeInsets {
             | LengthOrAuto::Stretch => None,
         };
         Some(Self {
-            left: terms(cv.left),
-            right: terms(cv.right),
-            top: terms(cv.top),
-            bottom: terms(cv.bottom),
+            left: terms(&cv.left),
+            right: terms(&cv.right),
+            top: terms(&cv.top),
+            bottom: terms(&cv.bottom),
         })
     }
 
@@ -871,17 +876,22 @@ pub(crate) fn inline_edges(
             (px, percent)
         }
     };
-    let margin = |value: LengthOrAuto| match value {
-        LengthOrAuto::Px(value) => (value, 0.0),
-        LengthOrAuto::Percent(percent) => (0.0, percent / 100.0),
-        LengthOrAuto::Calc(calc) => (calc.px, calc.percent / 100.0),
-        // `auto` inline margins are zero (CSS 2.1 §10.3.1).
-        LengthOrAuto::Auto
-        | LengthOrAuto::MinContent
-        | LengthOrAuto::MaxContent
-        | LengthOrAuto::FitContent
-        | LengthOrAuto::FitContentOf(_)
-        | LengthOrAuto::Stretch => (0.0, 0.0),
+    let margin = |value: &LengthOrAuto| {
+        Ok(match value {
+            LengthOrAuto::Px(value) => (*value, 0.0),
+            LengthOrAuto::Percent(percent) => (0.0, percent / 100.0),
+            LengthOrAuto::Calc(calc) => (calc.px, calc.percent / 100.0),
+            LengthOrAuto::Math(_) => {
+                return Err(unsupported("comparison margin is not represented by shodo"));
+            }
+            // `auto` inline margins are zero (CSS 2.1 §10.3.1).
+            LengthOrAuto::Auto
+            | LengthOrAuto::MinContent
+            | LengthOrAuto::MaxContent
+            | LengthOrAuto::FitContent
+            | LengthOrAuto::FitContentOf(_)
+            | LengthOrAuto::Stretch => (0.0, 0.0),
+        })
     };
     let writing_mode = match cv.cssom_writing_mode {
         p::WritingMode::HorizontalTb => WritingMode::HorizontalTb,
@@ -951,10 +961,10 @@ pub(crate) fn inline_edges(
         ))
     };
     let (margin_px, margin_percent) = sides(
-        margin(cv.margin.top),
-        margin(cv.margin.right),
-        margin(cv.margin.bottom),
-        margin(cv.margin.left),
+        margin(&cv.margin.top)?,
+        margin(&cv.margin.right)?,
+        margin(&cv.margin.bottom)?,
+        margin(&cv.margin.left)?,
     )?;
     let (padding_px, padding_percent) = sides(
         padding(cv.padding.top),

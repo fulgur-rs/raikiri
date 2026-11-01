@@ -98,9 +98,13 @@ impl FlowAxes {
         }
     }
 
-    fn style_sides<T: Copy>(self, sides: &mut raikiri_style::property::Sides<T>) {
-        let (top, right, bottom, left) =
-            self.sides(sides.top, sides.right, sides.bottom, sides.left);
+    fn style_sides<T: Clone>(self, sides: &mut raikiri_style::property::Sides<T>) {
+        let (top, right, bottom, left) = self.sides(
+            sides.top.clone(),
+            sides.right.clone(),
+            sides.bottom.clone(),
+            sides.left.clone(),
+        );
         *sides = raikiri_style::property::Sides {
             top,
             right,
@@ -186,8 +190,8 @@ impl FlowAxes {
         // A box on vertical axes has its physical sizes in its vertical
         // mapping; every other box has them in `width` and `height`.
         if let Some(size) = crate::layout::bridge::vertical_logical_size(cascade, idx) {
-            values.width = size.width;
-            values.height = size.height;
+            values.width = size.width.clone();
+            values.height = size.height.clone();
         }
         values.vertical_logical_size = None;
         std::mem::swap(&mut values.width, &mut values.height);
@@ -196,8 +200,12 @@ impl FlowAxes {
         self.style_sides(&mut values.margin);
         self.style_sides(&mut values.padding);
         self.style_sides(&mut values.border);
-        let (top, right, bottom, left) =
-            self.sides(values.top, values.right, values.bottom, values.left);
+        let (top, right, bottom, left) = self.sides(
+            values.top.clone(),
+            values.right.clone(),
+            values.bottom.clone(),
+            values.left.clone(),
+        );
         values.top = top;
         values.right = right;
         values.bottom = bottom;

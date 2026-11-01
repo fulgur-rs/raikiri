@@ -636,9 +636,9 @@ fn canvas_background_color(
 
 /// The item of an `@page` per-layer background list for layer `index`: a
 /// list with too few items repeats (CSS Backgrounds 3 §2.1).
-fn page_layer_item<T: Copy>(list: Option<&[T]>, index: usize, initial: T) -> T {
+fn page_layer_item<T: Clone>(list: Option<&[T]>, index: usize, initial: T) -> T {
     match list {
-        Some(list) if !list.is_empty() => list[index % list.len()],
+        Some(list) if !list.is_empty() => list[index % list.len()].clone(),
         _ => initial,
     }
 }
@@ -901,7 +901,7 @@ fn paint_page_background_image(
     for (index, image) in painted.iter().enumerate().rev() {
         let mut layer = initial_layer.clone();
         layer.image = image.clone();
-        layer.size = sizes.map_or(initial_layer.size, |sizes| {
+        layer.size = sizes.map_or(initial_layer.size.clone(), |sizes| {
             resolve_background_size(
                 page_layer_item(Some(sizes), index, BackgroundLayerSpec::initial().size),
                 page_font_size,
@@ -4344,20 +4344,21 @@ fn fixed_position_px(
         return None;
     }
     // Percentages resolve against the fixed containing block, the page area.
-    let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto, basis: f32| {
+    let to_px = |v: &raikiri_style::resolve::ComputedLengthPercentageOrAuto, basis: f32| {
         use raikiri_style::resolve::ComputedLengthPercentageOrAuto as Inset;
         let px = match v {
-            Inset::Px(px) => px,
+            Inset::Px(px) => *px,
             Inset::Percent(percent) => basis * percent / 100.0,
+            Inset::Math(value) => value.resolve(basis),
             Inset::Calc(calc) => basis * calc.percent / 100.0 + calc.px,
             _ => return None,
         };
         px.is_finite().then_some(px)
     };
-    let left = to_px(cv.left, content_width);
-    let right = to_px(cv.right, content_width);
-    let top = to_px(cv.top, content_height);
-    let bottom = to_px(cv.bottom, content_height);
+    let left = to_px(&cv.left, content_width);
+    let right = to_px(&cv.right, content_width);
+    let top = to_px(&cv.top, content_height);
+    let bottom = to_px(&cv.bottom, content_height);
     let (width, height, margin) = (layout.size.width, layout.size.height, layout.margin);
     // Layout puts the margin box against the insets.
     let from_right = |value: f32| content_width - value - width - margin.right;

@@ -52,7 +52,10 @@ impl LayoutStyleView<'_> {
         if matches!(c.box_sizing, BoxSizing::BorderBox)
             || (side_borders
                 && vertical_clean
-                && matches!(self.base_length(LengthProperty::Width).value, L::Auto))
+                && matches!(
+                    self.base_length(LengthProperty::Width).value.as_ref(),
+                    L::Auto
+                ))
         {
             values::BoxSizing::BorderBox
         } else {
@@ -241,18 +244,25 @@ impl LayoutStyleView<'_> {
             let width = self.base_length(LengthProperty::Width).value;
             let height = self.base_length(LengthProperty::Height).value;
             let contained = self.flags().contains(StyleFlags::CONTAIN_WIDTH);
-            preferred_aspect_ratio_with(c.aspect_ratio, width, height, None, contained, false)
-                .or_else(|| {
-                    preferred_aspect_ratio_with(
-                        c.aspect_ratio,
-                        width,
-                        height,
-                        None,
-                        contained,
-                        true,
-                    )
-                    .filter(|_| keep_for_percentage())
-                })
+            preferred_aspect_ratio_with(
+                c.aspect_ratio,
+                width.as_ref(),
+                height.as_ref(),
+                None,
+                contained,
+                false,
+            )
+            .or_else(|| {
+                preferred_aspect_ratio_with(
+                    c.aspect_ratio,
+                    width.as_ref(),
+                    height.as_ref(),
+                    None,
+                    contained,
+                    true,
+                )
+                .filter(|_| keep_for_percentage())
+            })
         };
         if self.geometry_transposed() {
             ratio.map(|r| 1.0 / r)
@@ -382,8 +392,8 @@ pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> values::Clear
 #[doc(hidden)]
 pub fn preferred_aspect_ratio(
     ratio: raikiri_style::property::AspectRatioValue,
-    width: L,
-    height: L,
+    width: &L,
+    height: &L,
     natural: Option<f32>,
     size_contained: bool,
 ) -> Option<f32> {
@@ -396,16 +406,17 @@ pub fn preferred_aspect_ratio(
 /// resolves both sizes and leaves the ratio nothing to do.
 fn preferred_aspect_ratio_with(
     ratio: raikiri_style::property::AspectRatioValue,
-    width: L,
-    height: L,
+    width: &L,
+    height: &L,
     natural: Option<f32>,
     size_contained: bool,
     cyclic_percentage: bool,
 ) -> Option<f32> {
-    let cyclic = |size: L| match size {
+    let cyclic = |size: &L| match size {
         L::Auto => true,
         L::Percent(_) => cyclic_percentage,
         L::Calc(calc) => cyclic_percentage && calc.percent != 0.0,
+        L::Math(expression) => cyclic_percentage && expression.has_percentage(),
         _ => false,
     };
     // A `stretch` height fills a containing block that may have no definite

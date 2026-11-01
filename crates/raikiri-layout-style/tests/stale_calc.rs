@@ -191,7 +191,7 @@ fn a_stale_reference_does_not_resolve_a_payload_that_took_over_its_storage() {
     for successor in &successors {
         let live = CalcRef::retained(successor);
         assert_ne!(live, stale);
-        assert_eq!(live.resolve(0.0), successor.expression().px);
+        assert_eq!(live.resolve(0.0), successor.resolve(0.0));
     }
 }
 

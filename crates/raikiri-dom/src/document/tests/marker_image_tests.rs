@@ -334,7 +334,7 @@ fn content_image_size_follows_the_default_sizing_algorithm() {
         assert_eq!(size(intrinsic, None), expected, "{intrinsic:?}");
     }
     // Absolute `width` and `height` of a replacing image.
-    let auto = Length::Auto;
+    const AUTO: Length = Length::Auto;
     for (intrinsic, style, expected) in [
         (
             natural(Some(8.0), Some(4.0), None),
@@ -343,32 +343,32 @@ fn content_image_size_follows_the_default_sizing_algorithm() {
         ),
         (
             natural(Some(8.0), Some(4.0), None),
-            sized(Length::Px(16.0), auto),
+            sized(Length::Px(16.0), AUTO),
             (16.0, 8.0),
         ),
         (
             natural(None, Some(4.0), None),
-            sized(Length::Px(16.0), auto),
+            sized(Length::Px(16.0), AUTO),
             (16.0, 4.0),
         ),
         (
             natural(None, None, None),
-            sized(Length::Px(16.0), auto),
+            sized(Length::Px(16.0), AUTO),
             (16.0, 150.0),
         ),
         (
             natural(Some(8.0), Some(4.0), None),
-            sized(auto, Length::Px(10.0)),
+            sized(AUTO, Length::Px(10.0)),
             (20.0, 10.0),
         ),
         (
             natural(Some(8.0), None, None),
-            sized(auto, Length::Px(10.0)),
+            sized(AUTO, Length::Px(10.0)),
             (8.0, 10.0),
         ),
         (
             natural(None, None, None),
-            sized(auto, Length::Px(10.0)),
+            sized(AUTO, Length::Px(10.0)),
             (300.0, 10.0),
         ),
         // Percentages and negative lengths do not size the image.
@@ -538,121 +538,121 @@ fn replacing_content_images_obey_min_and_max_sizes() {
     };
     let wide = natural(Some(100.0), Some(50.0), None);
     let px = Length::Px;
-    let auto = Length::Auto;
+    const AUTO: Length = Length::Auto;
     // (width, height, min-width, max-width, min-height, max-height)
     for (intrinsic, [width, height, min_width, max_width, min_height, max_height], expected) in [
         // Both dimensions auto: the CSS 2.1 §10.4 table keeps the ratio.
-        (wide, [auto, auto, auto, px(20.0), auto, auto], (20.0, 10.0)),
+        (wide, [AUTO, AUTO, AUTO, px(20.0), AUTO, AUTO], (20.0, 10.0)),
         (
             wide,
-            [auto, auto, auto, auto, px(100.0), auto],
+            [AUTO, AUTO, AUTO, AUTO, px(100.0), AUTO],
             (200.0, 100.0),
         ),
         (
             wide,
-            [auto, auto, px(150.0), auto, auto, auto],
+            [AUTO, AUTO, px(150.0), AUTO, AUTO, AUTO],
             (150.0, 75.0),
         ),
-        (wide, [auto, auto, auto, auto, auto, px(10.0)], (20.0, 10.0)),
+        (wide, [AUTO, AUTO, AUTO, AUTO, AUTO, px(10.0)], (20.0, 10.0)),
         (
             wide,
-            [auto, auto, auto, px(20.0), px(40.0), auto],
+            [AUTO, AUTO, AUTO, px(20.0), px(40.0), AUTO],
             (20.0, 40.0),
         ),
         (
             wide,
-            [auto, auto, px(150.0), auto, auto, px(40.0)],
+            [AUTO, AUTO, px(150.0), AUTO, AUTO, px(40.0)],
             (150.0, 40.0),
         ),
         (
             wide,
-            [auto, auto, auto, px(20.0), auto, px(5.0)],
+            [AUTO, AUTO, AUTO, px(20.0), AUTO, px(5.0)],
             (10.0, 5.0),
         ),
         (
             wide,
-            [auto, auto, auto, px(40.0), auto, px(5.0)],
+            [AUTO, AUTO, AUTO, px(40.0), AUTO, px(5.0)],
             (10.0, 5.0),
         ),
         (
             wide,
-            [auto, auto, auto, px(20.0), auto, px(30.0)],
+            [AUTO, AUTO, AUTO, px(20.0), AUTO, px(30.0)],
             (20.0, 10.0),
         ),
         (
             wide,
-            [auto, auto, px(200.0), auto, px(200.0), auto],
+            [AUTO, AUTO, px(200.0), AUTO, px(200.0), AUTO],
             (400.0, 200.0),
         ),
         (
             wide,
-            [auto, auto, px(400.0), auto, px(150.0), auto],
+            [AUTO, AUTO, px(400.0), AUTO, px(150.0), AUTO],
             (400.0, 200.0),
         ),
         (
             wide,
-            [auto, auto, px(400.0), auto, px(150.0), px(160.0)],
+            [AUTO, AUTO, px(400.0), AUTO, px(150.0), px(160.0)],
             (400.0, 160.0),
         ),
         (
             wide,
-            [auto, auto, auto, auto, px(60.0), px(5.0)],
+            [AUTO, AUTO, AUTO, AUTO, px(60.0), px(5.0)],
             (120.0, 60.0),
         ),
         // A max below the min is raised to the min.
         (
             wide,
-            [auto, auto, px(30.0), px(10.0), auto, auto],
+            [AUTO, AUTO, px(30.0), px(10.0), AUTO, AUTO],
             (30.0, 15.0),
         ),
         // Without a ratio each dimension is clamped on its own.
         (
             natural(Some(100.0), None, None),
-            [auto, auto, auto, auto, auto, px(50.0)],
+            [AUTO, AUTO, AUTO, AUTO, AUTO, px(50.0)],
             (100.0, 50.0),
         ),
         // A used width clamps before the height follows the ratio.
         (
             wide,
-            [px(30.0), auto, auto, px(20.0), auto, auto],
+            [px(30.0), AUTO, AUTO, px(20.0), AUTO, AUTO],
             (20.0, 10.0),
         ),
         (
             wide,
-            [auto, px(30.0), auto, auto, px(40.0), auto],
+            [AUTO, px(30.0), AUTO, AUTO, px(40.0), AUTO],
             (80.0, 40.0),
         ),
         (
             wide,
-            [px(30.0), auto, auto, auto, auto, px(5.0)],
+            [px(30.0), AUTO, AUTO, AUTO, AUTO, px(5.0)],
             (30.0, 5.0),
         ),
         (
             wide,
-            [px(30.0), px(30.0), px(40.0), auto, auto, px(20.0)],
+            [px(30.0), px(30.0), px(40.0), AUTO, AUTO, px(20.0)],
             (40.0, 20.0),
         ),
         // Percentages do not constrain the image.
         (
             wide,
             [
-                auto,
-                auto,
+                AUTO,
+                AUTO,
                 Length::Percent(10.0),
                 Length::Percent(10.0),
-                auto,
-                auto,
+                AUTO,
+                AUTO,
             ],
             (100.0, 50.0),
         ),
     ] {
         let mut style = raikiri_style::ComputedValues::initial();
-        style.width = width;
-        style.height = height;
-        style.min_width = min_width;
-        style.max_width = max_width;
-        style.min_height = min_height;
-        style.max_height = max_height;
+        style.width = width.clone();
+        style.height = height.clone();
+        style.min_width = min_width.clone();
+        style.max_width = max_width.clone();
+        style.min_height = min_height.clone();
+        style.max_height = max_height.clone();
         let size = content_image_size(intrinsic, Some(&style));
         assert_eq!(
             (size.width, size.height),

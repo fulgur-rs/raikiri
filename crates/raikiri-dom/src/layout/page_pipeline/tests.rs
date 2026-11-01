@@ -19111,7 +19111,7 @@ fn only_lengths_and_percentages_are_explicit_insets() {
     use raikiri_style::ComputedLengthPercentageOrAuto as Inset;
     for explicit in [Inset::Px(0.0), Inset::Px(5.0), Inset::Percent(10.0)] {
         assert!(
-            !crate::layout::page::inset_is_auto(explicit),
+            !crate::layout::page::inset_is_auto(&explicit),
             "{explicit:?}"
         );
     }
@@ -19121,7 +19121,7 @@ fn only_lengths_and_percentages_are_explicit_insets() {
         Inset::MaxContent,
         Inset::FitContent,
     ] {
-        assert!(crate::layout::page::inset_is_auto(auto), "{auto:?}");
+        assert!(crate::layout::page::inset_is_auto(&auto), "{auto:?}");
     }
 }
 
@@ -19212,12 +19212,15 @@ fn block_axis_insets_of_the_transposed_cascade_match_a_view_on_the_roots_axes() 
             for (&key, &expected) in keys.iter().zip(&expected) {
                 let computed = &transposed_cascade.computed[key];
                 assert_eq!(
-                    (inset_is_auto(computed.top), inset_is_auto(computed.bottom)),
+                    (
+                        inset_is_auto(&computed.top),
+                        inset_is_auto(&computed.bottom)
+                    ),
                     expected,
                     "{root_wm}: key {key}"
                 );
                 let physical = &cascade.computed[key];
-                differs |= inset_is_auto(physical.top) != inset_is_auto(computed.top);
+                differs |= inset_is_auto(&physical.top) != inset_is_auto(&computed.top);
             }
             assert!(differs, "the exchange of axes is observable");
         });

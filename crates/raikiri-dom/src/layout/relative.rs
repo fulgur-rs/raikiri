@@ -100,20 +100,20 @@ fn relative_insets_with_box_tree(
         _ => shodo::geometry::WritingMode::HorizontalTb,
     };
     let (right_wins, bottom_wins) = inset_precedence(mode, rtl);
-    let length = |value| match value {
-        ComputedLengthPercentageOrAuto::Px(px) => Some(Some(px)),
+    let length = |value: &ComputedLengthPercentageOrAuto| match value {
+        ComputedLengthPercentageOrAuto::Px(px) => Some(Some(*px)),
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
         | ComputedLengthPercentageOrAuto::FitContentOf(_)
         | ComputedLengthPercentageOrAuto::Stretch => Some(None),
-        ComputedLengthPercentageOrAuto::Percent(_) | ComputedLengthPercentageOrAuto::Calc(_) => {
-            None
-        }
+        ComputedLengthPercentageOrAuto::Percent(_)
+        | ComputedLengthPercentageOrAuto::Calc(_)
+        | ComputedLengthPercentageOrAuto::Math(_) => None,
     };
     // The bases are only looked up for an inset that needs them.
-    let resolve = |value, basis: &dyn Fn() -> Option<f32>| {
+    let resolve = |value: &ComputedLengthPercentageOrAuto, basis: &dyn Fn() -> Option<f32>| {
         length(value).unwrap_or_else(|| {
             basis().and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
         })
@@ -149,10 +149,10 @@ fn relative_insets_with_box_tree(
             start.or(end)
         }
     };
-    let left = resolve(cv.left, &width);
-    let right = resolve(cv.right, &width).map(|right| -right);
-    let top = resolve(cv.top, &height);
-    let bottom = resolve(cv.bottom, &height).map(|bottom| -bottom);
+    let left = resolve(&cv.left, &width);
+    let right = resolve(&cv.right, &width).map(|right| -right);
+    let top = resolve(&cv.top, &height);
+    let bottom = resolve(&cv.bottom, &height).map(|bottom| -bottom);
     match precedence {
         Precedence::WritingMode => (
             pick(left, right, right_wins),
