@@ -163,6 +163,32 @@ fn margins_sum(start: LengthPercentageAuto, end: LengthPercentageAuto) -> f32 {
         .sum()
 }
 
+/// The inputs that ask a flex item for its width at its min-content size,
+/// measured with the border-box `height` it has before its width is measured, if
+/// it has one. A `sizing_mode` of `InherentSize` gives the item the width it
+/// states within its `min-width` and `max-width`.
+fn min_content_probe(sizing_mode: SizingMode, height: Option<f32>) -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode,
+        axis: RequestedAxis::Horizontal,
+        known_dimensions: Size {
+            width: None,
+            height,
+        },
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: height.is_some(),
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MinContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    }
+}
+
 /// The automatic minimum size of the item `child` of a row flex container, as
 /// the value of a `min-width` of the item's own: the smaller of its min-content
 /// size and the width it states, within its `max-width` (CSS Flexbox 1 section
@@ -183,25 +209,7 @@ fn automatic_minimum_width(
     let measured = tree
         .compute_child_layout(
             child,
-            LayoutInput {
-                run_mode: RunMode::ComputeSize,
-                sizing_mode: SizingMode::ContentSize,
-                axis: RequestedAxis::Horizontal,
-                known_dimensions: Size {
-                    width: None,
-                    height: inputs.height,
-                },
-                known_dimensions_are_definite: Size {
-                    width: false,
-                    height: inputs.height.is_some(),
-                },
-                parent_size: Size::NONE,
-                available_space: Size {
-                    width: AvailableSpace::MinContent,
-                    height: AvailableSpace::MaxContent,
-                },
-                vertical_margins_are_collapsible: Line::FALSE,
-            },
+            min_content_probe(SizingMode::ContentSize, inputs.height),
         )
         .size
         .width;
@@ -360,4 +368,46 @@ pub(super) fn with_flex_item_basis_bounds<R>(
         }
         layout(tree)
     })
+}
+
+/// The width, less the padding and border of the container, of the row flex
+/// container `node_id` that wraps its items at its min-content width: that of
+/// its widest item, with the margins of the item. The items break onto lines of
+/// their own, whatever flex base sizes they have, so no flex base size, and no
+/// `flex-grow` or `flex-shrink`, enters it: Chromium sizes `flex: 0 0 100px;
+/// width: 30px` at 30px here, though the item is 100px wide once laid out. The
+/// flex base sizes bound the items at the max-content width of the container
+/// ([`with_flex_item_basis_bounds`]), which is no less than this one.
+///
+/// What an item contributes is its min-content size, or the width it states,
+/// within its `min-width` and `max-width`; the item is measured with the height
+/// it has before its width is measured, as [`automatic_minimum_width`] does.
+/// `cross_room` is the definite inner height of the container, if it has one.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-sizes>
+pub(super) fn wrapping_min_content_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    cross_room: Option<f32>,
+) -> f32 {
+    let container_align = tree.physical_style(usize::from(node_id)).align_items();
+    let children: Vec<NodeId> = tree.child_ids(node_id).collect();
+    let mut widest: f32 = 0.0;
+    for child in children {
+        let style = tree.physical_style(usize::from(child));
+        if style.box_generation_mode() == BoxGenerationMode::None
+            || style.position() == Position::Absolute
+        {
+            continue;
+        }
+        let margin = style.margin();
+        let margins = margins_sum(margin.left, margin.right);
+        let height = height_before_width(&style, cross_room, false, container_align);
+        let contribution = tree
+            .compute_child_layout(child, min_content_probe(SizingMode::InherentSize, height))
+            .size
+            .width;
+        widest = widest.max(contribution + margins);
+    }
+    widest
 }
