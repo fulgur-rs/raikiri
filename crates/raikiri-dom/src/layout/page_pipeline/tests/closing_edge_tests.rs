@@ -1912,17 +1912,37 @@ fn a_paragraph_after_a_box_outside_the_block_that_the_edges_close_is_split() {
 /// on 100px pages. Returns the height of the paragraph and the page-flow y of
 /// the paragraph.
 fn card_after_a_lead(lead_css: &str) -> (f32, f32) {
+    card_after_leads(50, &[(0, lead_css)], 2, "")
+}
+
+/// `body > [div(above), div(padding-bottom:40px) > [leads..., paragraph]]`
+/// where each lead is a div of the height and style given, and the paragraph is
+/// `lines` lines of 10px Ahem text, 30px wide, with `paragraph_css`, on 100px
+/// pages. No div comes first when `above` is 0. Returns the height and the
+/// page-flow y of the paragraph.
+fn card_after_leads(
+    above: u32,
+    leads: &[(u32, &str)],
+    lines: usize,
+    paragraph_css: &str,
+) -> (f32, f32) {
     let mut paragraph = 0;
     let (doc, _) = paged_body_with_ifc(|doc, body| {
-        block(doc, body, "display:block;height:50px");
+        if above > 0 {
+            block(doc, body, &format!("display:block;height:{above}px"));
+        }
         let card = block(doc, body, "display:block;padding-bottom:40px");
-        block(doc, card, &format!("display:block;{lead_css}"));
+        for &(height, css) in leads {
+            block(doc, card, &format!("display:block;height:{height}px;{css}"));
+        }
         paragraph = block(
             doc,
             card,
-            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
         );
-        doc.append_text(paragraph, "aaa aaa");
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
     });
     (
         doc.nodes[paragraph].layout.size.height,
@@ -1947,6 +1967,113 @@ fn a_paragraph_after_an_out_of_flow_box_in_the_card_is_split() {
     assert_eq!(
         card_after_a_lead("position:absolute;width:10px;height:10px"),
         (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_paragraph_tied_to_an_empty_block_that_starts_the_card_is_split_between_its_lines() {
+    // The empty block avoids a break after it, so the paragraph is tied to the
+    // first box of the card and no break between boxes is left to take inside
+    // the card. The break falls between the lines, though two lines have too
+    // few for two orphans and two widows: the last one goes to the next page
+    // with the padding, as Chromium prints it.
+    assert_eq!(card_after_a_lead("break-after:avoid"), (60.0, 50.0));
+}
+
+#[test]
+fn a_paragraph_tied_to_the_boxes_before_it_back_to_the_start_is_split_between_its_lines() {
+    // The lines end at 70 on the page and the 40px of padding do not fit. In
+    // each card an avoided break ties the paragraph to every box before it, so
+    // the break falls between the lines whatever their number: the paragraph
+    // spans its lines up to the page end and those that follow, as Chromium
+    // prints two lines as one and one, three as two and one, and four as two
+    // and two.
+    for (lines, above) in [(2, 50), (3, 40), (4, 30)] {
+        let split = match lines {
+            2 => (60.0, 50.0),
+            3 => (70.0, 40.0),
+            _ => (90.0, 30.0),
+        };
+        // An empty block with a break avoided after it or before the next.
+        assert_eq!(
+            card_after_leads(above, &[(0, "break-after:avoid")], lines, ""),
+            split,
+            "{lines} lines after an empty block"
+        );
+        assert_eq!(
+            card_after_leads(above, &[(0, "")], lines, "break-before:avoid"),
+            split,
+            "{lines} lines that avoid a break before them"
+        );
+        // Two empty blocks, each tied to the next.
+        assert_eq!(
+            card_after_leads(
+                above,
+                &[(0, "break-after:avoid"), (0, "break-after:avoid")],
+                lines,
+                ""
+            ),
+            split,
+            "{lines} lines after two empty blocks"
+        );
+        // A box with space, with and without a box above the card.
+        let height = 70 - 10 * lines as u32;
+        assert_eq!(
+            card_after_leads(0, &[(height, "break-after:avoid")], lines, ""),
+            split,
+            "{lines} lines after a box"
+        );
+        assert_eq!(
+            card_after_leads(
+                0,
+                &[
+                    (height - 10, "break-after:avoid"),
+                    (10, "break-after:avoid")
+                ],
+                lines,
+                ""
+            ),
+            split,
+            "{lines} lines after two boxes tied to each other"
+        );
+    }
+}
+
+#[test]
+fn a_float_between_the_boxes_that_tie_a_paragraph_does_not_untie_it() {
+    // The float is no box in the flow of the card: the paragraph is tied to the
+    // box before the float, and its lines are split as without the float.
+    assert_eq!(
+        card_after_leads(
+            0,
+            &[(50, "break-after:avoid"), (10, "float:left;width:0px")],
+            2,
+            ""
+        ),
+        (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_page_name_change_before_a_tied_paragraph_starts_a_page_for_it() {
+    // The paragraph names a page, and the page break that this forces before it
+    // is the one that the avoided break gave way to: the paragraph starts the
+    // next page whole, with the padding after it.
+    assert_eq!(
+        card_after_leads(50, &[(0, "break-after:avoid")], 2, "page:foo"),
+        (20.0, 100.0)
+    );
+}
+
+#[test]
+fn a_paragraph_tied_to_a_box_that_a_break_can_follow_moves_with_it() {
+    // The first box of the card ends where a break is not avoided, so the page
+    // breaks there: the box tied to the paragraph and the paragraph move to the
+    // next page together, as Chromium prints them, and the lines are not
+    // split.
+    assert_eq!(
+        card_after_leads(0, &[(40, ""), (10, "break-after:avoid")], 2, ""),
+        (20.0, 110.0)
     );
 }
 
