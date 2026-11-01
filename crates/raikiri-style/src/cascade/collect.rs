@@ -637,6 +637,11 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                     "visibility",
                     crate::property::PropertyKey::Visibility,
                 ),
+                (
+                    "overflow",
+                    "overflow",
+                    crate::property::PropertyKey::Overflow,
+                ),
                 ("opacity", "opacity", crate::property::PropertyKey::Opacity),
                 (
                     "background-color",
@@ -661,7 +666,24 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                     && value.key() == expected_key
                     && parser.expect_exhausted().is_ok()
                 {
-                    sink.push_hint(value)?;
+                    if expected_key == crate::property::PropertyKey::Overflow {
+                        // Include deferred CSS-wide and variable values in the
+                        // same longhand expansion used by stylesheets.
+                        let parsed = crate::rule::ParsedDeclaration {
+                            value,
+                            important: false,
+                            logical: None,
+                        };
+                        let mut result = Ok(());
+                        crate::rule::expand_shorthand_into(&parsed, |declaration| {
+                            if result.is_ok() {
+                                result = sink.push_hint(declaration.value);
+                            }
+                        });
+                        result?;
+                    } else {
+                        sink.push_hint(value)?;
+                    }
                 }
             }
         }

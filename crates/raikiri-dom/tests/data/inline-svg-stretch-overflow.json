@@ -1,0 +1,851 @@
+{
+  "description": "Chromium 152.0.7977.82. Natural image20x50 and ratio-only inline SVG, body margin8. The50 selected cases fit within one page; overflow-visible three-item screen cases are not compared to page fragments.",
+  "cases": [
+    {
+      "label": "svg//1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg//1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg//2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg//2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg//3/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg><svg id=i2 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          66.671875
+        ],
+        [
+          "i1",
+          8,
+          74.671875,
+          100,
+          66.65625
+        ],
+        [
+          "i2",
+          8,
+          141.328125,
+          100,
+          66.671875
+        ]
+      ]
+    },
+    {
+      "label": "svg//3/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg><svg id=i2 viewBox=\"0 0 20 50\" style=\"height:stretch;\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          66.671875
+        ],
+        [
+          "i1",
+          8,
+          74.671875,
+          300,
+          66.65625
+        ],
+        [
+          "i2",
+          8,
+          141.328125,
+          300,
+          66.671875
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:visible/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:visible\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:visible/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:visible\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:visible/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:visible\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:visible\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:visible/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:visible\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:visible\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:hidden/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:hidden\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:hidden/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:hidden\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:hidden/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:hidden\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:hidden\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:hidden/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:hidden\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:hidden\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:clip/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:clip\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:clip/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:clip\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:clip/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:clip\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:clip\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:clip/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:clip\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:clip\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:auto/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:auto\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:auto/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:auto\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:auto/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:auto\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:auto\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg/overflow:auto/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:auto\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;overflow:auto\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg/min-height:0/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;min-height:0\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/min-height:0/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;min-height:0\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "svg/min-height:0/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;min-height:0\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;min-height:0\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "svg/min-height:0/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><svg id=i0 viewBox=\"0 0 20 50\" style=\"height:stretch;min-height:0\"></svg><svg id=i1 viewBox=\"0 0 20 50\" style=\"height:stretch;min-height:0\"></svg></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "img//1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img//1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img//2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img//2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:visible/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:visible\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:visible/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:visible\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:visible/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:visible\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:visible\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:visible/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:visible\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:visible\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:hidden/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:hidden\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:hidden/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:hidden\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:hidden/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:hidden\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:hidden\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:hidden/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:hidden\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:hidden\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:clip/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:clip\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:clip/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:clip\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:clip/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:clip\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:clip\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:clip/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:clip\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:clip\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ],
+        [
+          "i1",
+          8,
+          208,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:auto/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:auto\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:auto/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:auto\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:auto/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:auto\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:auto\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "img/overflow:auto/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:auto\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;overflow:auto\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "img/min-height:0/1/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:0\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/min-height:0/1/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:0\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "img/min-height:0/2/100",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:100px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:0\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:0\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          100,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          100,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "img/min-height:0/2/300",
+      "html": "<div id=o style=\"display:flex;flex-direction:column;height:200px;width:300px\"><img id=i0 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:0\"><img id=i1 src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:0\"></div>",
+      "expected": [
+        [
+          "i0",
+          8,
+          8,
+          300,
+          100
+        ],
+        [
+          "i1",
+          8,
+          108,
+          300,
+          100
+        ]
+      ]
+    }
+  ]
+}
