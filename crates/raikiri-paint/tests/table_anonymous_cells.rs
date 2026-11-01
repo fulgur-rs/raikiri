@@ -195,11 +195,13 @@ fn review_anonymous_cell_keeps_winning_collapsed_row_border() {
     assert_eq!(border.top.width().0, 2.0);
     assert_eq!(border.bottom.width().0, 2.0);
     assert_eq!(border.left.width().0, 2.0);
+    // The row's border is the edge of the table, as the border of a box at
+    // its origin: the table adds nothing outside it.
     let (mut reference, body) = document();
     element(
         &mut reference,
         body,
-        "position:absolute;left:2px;top:2px;width:20px;height:10px;border:2px solid red",
+        "position:absolute;left:0;top:0;width:20px;height:10px;border:2px solid red",
     );
     let expected = layout(&mut reference);
     assert_exact_pixels(

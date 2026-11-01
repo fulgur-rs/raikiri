@@ -1691,12 +1691,13 @@ fn collapse_overlaps_adjoining_borders_by_pairwise_min() {
         "collapsed interior line should overlap by 4px, got {overlap}"
     );
     let tl = doc.nodes[table_idx].layout;
-    // Right-flush invariant: the last cell's far edge plus the 4px
-    // collapsed outer border (no padding, no table border) meets the
-    // table's right edge — the interior overlap must not leave slack.
+    // Right-flush invariant: the 4px border of the last cell is the table's
+    // right edge (no padding, no table border), so the cell's far edge meets
+    // it — the interior overlap must not leave slack, and the border must not
+    // be counted again outside the cell.
     assert!(
-        (tl.size.width - (l1.location.x + l1.size.width + 4.0)).abs() < 2.0,
-        "table right edge should flush with last cell + outer collapsed border, got {}",
+        (tl.size.width - (l1.location.x + l1.size.width)).abs() < 1.0,
+        "table right edge should flush with the last cell, got {}",
         tl.size.width
     );
 }
@@ -2891,11 +2892,14 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         ],
         col_widths: vec![],
     };
+    // The narrowest border of the edge cells is 4 on the left, 2 on the right,
+    // 2 at the top and 3 at the bottom; the table's own border shows outside
+    // the cells where it is wider than that.
     let table_border = Edges {
-        left: 1.0,
+        left: 7.0,
         right: 1.0,
-        top: 1.0,
-        bottom: 1.0,
+        top: 5.0,
+        bottom: 9.0,
     };
     let lines = compute_collapsed_lines_in_document(
         &mut doc,
@@ -2915,10 +2919,50 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         vec![4.0],
         "col0 min(4,6)=4 vs col1 min(2,3)=2 -> max 4"
     );
-    assert_eq!(lines.outer_left, 6.0);
-    assert_eq!(lines.outer_right, 3.0);
-    assert_eq!(lines.outer_top, 4.0);
-    assert_eq!(lines.outer_bottom, 6.0);
+    assert_eq!(lines.outer_left, 3.0, "7 beyond the 4 of c00");
+    assert_eq!(lines.outer_right, 0.0, "1 is within the 2 of c01");
+    assert_eq!(lines.outer_top, 3.0, "5 beyond the 2 of c01");
+    assert_eq!(lines.outer_bottom, 6.0, "9 beyond the 3 of c11");
+}
+
+#[test]
+fn compute_collapsed_lines_keeps_room_for_the_table_border_beside_a_cell_without_one() {
+    // Two rows of one cell. The first cell has a 3px border and the second
+    // none, so the table's 2px border is the second cell's edge: the table
+    // keeps those 2px outside, where the content of that cell is clear of the
+    // border, though the first cell has more than that itself.
+    let mut doc = Document::new();
+    let wide = bordered_cell(&mut doc, 3.0);
+    let bare = bordered_cell(&mut doc, 0.0);
+    let grid = super::TableGrid {
+        n_cols: 1,
+        rows: vec![0, 0],
+        cells: vec![
+            make_cell(wide, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(bare, 1, 0, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+    let table_border = Edges {
+        left: 2.0,
+        right: 2.0,
+        top: 2.0,
+        bottom: 2.0,
+    };
+    let lines = compute_collapsed_lines_in_document(
+        &mut doc,
+        &grid,
+        &super::CellIndex::new(&grid),
+        &table_border,
+        None,
+    );
+    assert_eq!(lines.outer_left, 2.0);
+    assert_eq!(lines.outer_right, 2.0);
+    assert_eq!(lines.outer_top, 0.0, "the first cell has 3px at the top");
+    assert_eq!(
+        lines.outer_bottom, 2.0,
+        "the last cell has none at the bottom"
+    );
 }
 
 #[test]
