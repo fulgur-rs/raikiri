@@ -189,6 +189,11 @@ fn table_caption(doc: &Document, table: usize) -> Option<usize> {
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
 }
 
+/// How far two edges of a vertical cell's content may be apart and still be the
+/// same edge: layout units are 1/64px, so edges that differ are at least
+/// 0.015px apart.
+const SAME_EDGE_TOLERANCE: f32 = 0.01;
+
 /// How far a flex column's height for a table item may be from the height the
 /// item states and still count as that height: layout units are 1/64px.
 const FLEXED_HEIGHT_TOLERANCE: f32 = 0.02;
@@ -4211,7 +4216,8 @@ fn place_cells(
                 style.border().resolve_or_zero(Some(cell_width)),
             )
         };
-        let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
+        let cell_writing_mode = table_writing_mode(doc, cell.node_id);
+        let vertical_cell = cell_writing_mode.is_vertical();
         let collapsed_empty = first_kept.is_none()
             || cell_height == 0.0
                 && doc
@@ -4275,7 +4281,7 @@ fn place_cells(
                 doc.store_layout(child, &child_layout);
             }
         }
-        let layout = BoxLayout {
+        let mut layout = BoxLayout {
             order: order as u32,
             location: Point {
                 x: cell_x,
@@ -4291,6 +4297,19 @@ fn place_cells(
             border,
             margin: Edges::ZERO,
         };
+        if vertical_cell && !vertical_writing && !collapsed_empty && first_shown_column.is_some() {
+            // A vertical cell in a horizontal table aligns its content on the
+            // block axis of the cell, the physical width, not on the height
+            // of the row. A vertical table lays its cells out again at its own
+            // size, and aligns them the same way afterwards.
+            align_vertical_cell_on_block_axis(
+                doc,
+                cell.node_id,
+                cell_writing_mode,
+                cell_width,
+                &mut layout,
+            );
+        }
         cell.resolved = Some(layout);
         doc.store_layout(cell.node_id, &layout);
         if doc.is_anonymous_cell(cell.node_id) {
@@ -4376,90 +4395,123 @@ fn reposition_cells_for_vertical_writing(
                 vertical_margins_are_collapsible: Line::FALSE,
             },
         );
-        let node = doc
-            .ifc_layout_node(cell.node_id)
-            .expect("table cell layout view");
-        let style = doc.table_style(cell.node_id);
-        let mut padding = style.padding().resolve_or_zero(Some(cell_width));
-        let border = style.border().resolve_or_zero(Some(cell_width));
-        let direction = style.direction();
-        let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
-        let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
-        let natural = if has_lines {
-            lines.map_or(0.0, |lines| lines.height)
-                + padding.left
-                + padding.right
-                + border.left
-                + border.right
-        } else {
-            node.children
-                .iter()
-                .filter(|&&child| doc.nodes[child].layout_position() != Position::Absolute)
-                .map(|&child| {
-                    let child_style = doc.table_style(child);
-                    // Relative insets move ink after normal flow; they must
-                    // not consume the cell's alignment space. Taffy leaves
-                    // floated boxes at their normal positions, so their
-                    // paint-side offsets are not removed here.
-                    let offset = if child_style.float() == Float::None {
-                        let inner_width =
-                            cell_width - padding.left - padding.right - border.left - border.right;
-                        let inset = child_style.inset();
-                        let left = inset.left.maybe_resolve(Some(inner_width));
-                        let right = inset.right.maybe_resolve(Some(inner_width));
-                        if direction == Direction::Rtl {
-                            right.map(|right| -right).or(left).unwrap_or(0.0)
-                        } else {
-                            left.or(right.map(|right| -right)).unwrap_or(0.0)
-                        }
-                    } else {
-                        0.0
-                    };
-                    let child = &doc.ifc_layout_node(child).unwrap().layout;
-                    child.location.x - offset + child.size.width + child.margin.right
-                })
-                .fold(padding.left + border.left, f32::max)
-                + padding.right
-                + border.right
-        };
-        let extra = (cell_width - natural).max(0.0);
-        let shift = match node.table_vertical_align {
-            VerticalAlign::Middle => extra / 2.0,
-            VerticalAlign::Bottom => extra,
-            _ => 0.0,
-        };
-        let rtl = matches!(
-            cell_writing_mode,
-            WritingMode::VerticalRl | WritingMode::SidewaysRl
-        );
-        let child_shift = if rtl {
-            if has_lines { -shift } else { extra - shift }
-        } else {
-            shift
-        };
-        if rtl {
-            padding.right += shift;
-            padding.left += extra - shift;
-        } else {
-            padding.left += shift;
-            padding.right += extra - shift;
-        }
-        for child in doc
-            .ifc_layout_node(cell.node_id)
-            .expect("table cell layout view")
-            .children
-            .clone()
-        {
-            if doc.nodes[child].layout_position() != Position::Absolute {
-                let mut layout = doc.nodes[child].layout;
-                layout.location.x += child_shift;
-                doc.store_layout(child, &layout);
-            }
-        }
-        layout.padding = padding;
-        layout.border = border;
+        align_vertical_cell_on_block_axis(doc, cell.node_id, cell_writing_mode, cell_width, layout);
         doc.store_layout(cell.node_id, layout);
     }
+}
+
+/// Aligns the content of a vertical cell on the block axis of the cell, which
+/// is the physical width, once the cell is laid out at its final size: the free
+/// room is spread by the vertical alignment of the cell between the block-start
+/// and block-end sides, as padding and as a shift of the children.
+fn align_vertical_cell_on_block_axis(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    cell_writing_mode: WritingMode,
+    cell_width: f32,
+    layout: &mut BoxLayout,
+) {
+    let node = doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view");
+    let style = doc.table_style(cell_node);
+    let mut padding = style.padding().resolve_or_zero(Some(cell_width));
+    let border = style.border().resolve_or_zero(Some(cell_width));
+    let direction = style.direction();
+    let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
+    let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
+    let rtl = matches!(
+        cell_writing_mode,
+        WritingMode::VerticalRl | WritingMode::SidewaysRl
+    );
+    // The left and right edges of the children in flow, with their margins.
+    let content_left = padding.left + border.left;
+    let (mut left_edge, mut right_edge) = (f32::INFINITY, content_left);
+    if !has_lines {
+        for &child in &node.children {
+            if doc.nodes[child].layout_position() == Position::Absolute {
+                continue;
+            }
+            let child_style = doc.table_style(child);
+            // Relative insets move ink after normal flow; they must not
+            // consume the cell's alignment space. Taffy leaves floated boxes
+            // at their normal positions, so their paint-side offsets are not
+            // removed here.
+            let offset = if child_style.float() == Float::None {
+                let inner_width =
+                    cell_width - padding.left - padding.right - border.left - border.right;
+                let inset = child_style.inset();
+                let left = inset.left.maybe_resolve(Some(inner_width));
+                let right = inset.right.maybe_resolve(Some(inner_width));
+                if direction == Direction::Rtl {
+                    right.map(|right| -right).or(left).unwrap_or(0.0)
+                } else {
+                    left.or(right.map(|right| -right)).unwrap_or(0.0)
+                }
+            } else {
+                0.0
+            };
+            let child = &doc.ifc_layout_node(child).unwrap().layout;
+            left_edge = left_edge.min(child.location.x - offset - child.margin.left);
+            right_edge =
+                right_edge.max(child.location.x - offset + child.size.width + child.margin.right);
+        }
+    }
+    // The block-start side of a `vertical-rl` cell is on the right. Content
+    // the layout placed against it, as the lines of a block with text are,
+    // takes only the room between its edges and the right side; content it
+    // placed against the left side is taken to reach from there.
+    let right_anchored = rtl && !has_lines && left_edge.is_finite() && {
+        let content_right = cell_width - padding.right - border.right;
+        (content_right - right_edge).abs() < SAME_EDGE_TOLERANCE
+    };
+    let natural = if has_lines {
+        lines.map_or(0.0, |lines| lines.height)
+            + padding.left
+            + padding.right
+            + border.left
+            + border.right
+    } else if right_anchored {
+        right_edge - left_edge + padding.left + padding.right + border.left + border.right
+    } else {
+        right_edge + padding.right + border.right
+    };
+    let extra = (cell_width - natural).max(0.0);
+    let shift = match node.table_vertical_align {
+        VerticalAlign::Middle => extra / 2.0,
+        VerticalAlign::Bottom => extra,
+        _ => 0.0,
+    };
+    let child_shift = if rtl {
+        if has_lines || right_anchored {
+            -shift
+        } else {
+            extra - shift
+        }
+    } else {
+        shift
+    };
+    if rtl {
+        padding.right += shift;
+        padding.left += extra - shift;
+    } else {
+        padding.left += shift;
+        padding.right += extra - shift;
+    }
+    for child in doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view")
+        .children
+        .clone()
+    {
+        if doc.nodes[child].layout_position() != Position::Absolute {
+            let mut child_layout = doc.nodes[child].layout;
+            child_layout.location.x += child_shift;
+            doc.store_layout(child, &child_layout);
+        }
+    }
+    layout.padding = padding;
+    layout.border = border;
 }
 
 // ---------------------------------------------------------------------------

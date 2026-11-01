@@ -8124,12 +8124,10 @@ fn root_and_body_decorations_use_their_actual_border_boxes() {
     }
 }
 
-/// Paint `markup` on a 100px page and spell out row `y`: `B` for blue, `R`
-/// for red, `.` for white and `?` for anything else.
-fn background_clip_row(markup: &str, y: usize) -> String {
-    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
-    rgba[y * 100 * 4..(y + 1) * 100 * 4]
-        .chunks_exact(4)
+/// Spell out the pixels of a row or column: `B` for blue, `R` for red, `.`
+/// for white and `?` for anything else.
+fn spell_pixels<'a>(pixels: impl Iterator<Item = &'a [u8]>) -> String {
+    pixels
         .map(|px| match px {
             [0, 0, 255, 255] => 'B',
             [255, 0, 0, 255] => 'R',
@@ -8137,6 +8135,18 @@ fn background_clip_row(markup: &str, y: usize) -> String {
             _ => '?',
         })
         .collect()
+}
+
+/// Paint `markup` on a 100px page and spell out row `y`.
+fn background_clip_row(markup: &str, y: usize) -> String {
+    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
+    spell_pixels(rgba[y * 100 * 4..(y + 1) * 100 * 4].chunks_exact(4))
+}
+
+/// Paint `markup` on a 100px page and spell out column `x`.
+fn background_clip_column(markup: &str, x: usize) -> String {
+    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
+    spell_pixels((0..100).map(|y| &rgba[(y * 100 + x) * 4..(y * 100 + x + 1) * 4]))
 }
 
 /// Spell out a row from `(char, count)` runs.
@@ -8176,6 +8186,60 @@ fn a_vertical_cell_in_a_horizontal_table_paints_every_background_layer_across_it
         row("linear-gradient(red,red) border-box, linear-gradient(blue,blue) content-box"),
         row_of(&[('R', 80), ('.', 20)])
     );
+}
+
+#[test]
+fn a_cell_content_box_background_spans_the_room_its_alignment_spreads() {
+    // The row is 80px high and the content of the first cell 20px. Whatever
+    // the vertical alignment, the room around the content is part of the
+    // content box: it runs from the top padding to the bottom padding.
+    for align in ["baseline", "top", "middle", "bottom"] {
+        let column = background_clip_column(
+            &format!(
+                "<!DOCTYPE html><html><body style='margin:0;background:white'>\
+                 <table style='border-spacing:0'><tr>\
+                 <td style='padding:3px 0 7px;vertical-align:{align};\
+                 background:linear-gradient(blue,blue) content-box'>\
+                 <div style='width:20px;height:20px'></div></td>\
+                 <td style='padding:0'><div style='width:5px;height:80px'></div></td></tr>\
+                 </table></body></html>"
+            ),
+            5,
+        );
+        assert_eq!(
+            column,
+            row_of(&[('.', 3), ('B', 70), ('.', 27)]),
+            "vertical-align: {align}"
+        );
+    }
+}
+
+#[test]
+fn a_vertical_cell_content_box_background_spans_the_room_its_alignment_spreads() {
+    // The cell is 80px wide: 10px of padding on the left, 6px on the right,
+    // and 20px of content. The content box is the cell less that padding for
+    // each alignment and each writing mode.
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for align in ["baseline", "top", "middle", "bottom"] {
+            let row = background_clip_row(
+                &format!(
+                    "<!DOCTYPE html><html><body style='margin:0;background:white'>\
+                     <table style='border-spacing:0'><tr>\
+                     <td style='padding:0 6px 0 10px;writing-mode:{mode};vertical-align:{align};\
+                     background:linear-gradient(blue,blue) content-box'>\
+                     <div style='width:20px;height:20px'></div></td></tr>\
+                     <tr><td style='padding:0'><div style='width:80px;height:5px'></div></td></tr>\
+                     </table></body></html>"
+                ),
+                15,
+            );
+            assert_eq!(
+                row,
+                row_of(&[('.', 10), ('B', 64), ('.', 26)]),
+                "{mode}, vertical-align: {align}"
+            );
+        }
+    }
 }
 
 #[test]
