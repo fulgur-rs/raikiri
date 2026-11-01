@@ -577,6 +577,7 @@ fn vertical_ratio_height_floors_preserve_other_authored_sizes_and_content_box_ra
                 ("height:60px", 120.0, 60.0),
                 ("height:40px;box-sizing:content-box", 130.0, 90.0),
                 ("width:70px;height:40px", 70.0, 50.0),
+                ("width:200px", 200.0, 100.0),
             ] {
                 assert_boxes(
                     &in_flow(
@@ -665,6 +666,7 @@ fn vertical_ratio_content_minimum_keeps_its_opt_outs_caps_and_grid_flow() {
                 ("min-width:0", wide, 100.0),
                 ("overflow:hidden", wide, 100.0),
                 ("max-width:90px", wide, 90.0),
+                ("max-height:80px", wide, 250.0),
                 ("", wide, 250.0),
                 ("grid-auto-flow:column", ITEMS, 100.0),
             ] {

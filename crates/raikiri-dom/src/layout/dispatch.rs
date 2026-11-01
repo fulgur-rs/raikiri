@@ -3472,6 +3472,13 @@ pub(crate) fn flex_layout(
             if block_right_to_left(tree, usize::from(node_id)).is_none() {
                 return laid_out_with_ratio_height(tree, node_id, inputs, flex_layout_sized);
             }
+            // A settled physical width must not be capped again by a height
+            // constraint carried back through the ratio during final layout.
+            if ratio_dimensions_are_settled(tree, node_id, &inputs) {
+                return without_container_ratio(tree, node_id, |tree| {
+                    flex_layout_sized(tree, node_id, inputs)
+                });
+            }
             flex_layout_sized(tree, node_id, inputs)
         },
     )
@@ -4017,6 +4024,11 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
             if grid_oof::right_to_left(tree, idx).is_none() {
                 return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
             }
+            if ratio_dimensions_are_settled(tree, node_id, &inputs) {
+                return without_container_ratio(tree, node_id, |tree| {
+                    grid_layout_sized(tree, node_id, inputs)
+                });
+            }
             grid_layout_sized(tree, node_id, inputs)
         },
     )
@@ -4075,6 +4087,26 @@ fn with_ratio_height(
     inputs.known_dimensions.height = height;
     inputs.known_dimensions_are_definite.height |= height.is_some();
     inputs
+}
+
+/// Whether an inherent layout already has a physical width and a known or
+/// resolvable authored height, leaving no size for the ratio to derive.
+fn ratio_dimensions_are_settled(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> bool {
+    if inputs.sizing_mode != SizingMode::InherentSize || inputs.known_dimensions.width.is_none() {
+        return false;
+    }
+    let style = tree.physical_style(usize::from(node_id));
+    style.aspect_ratio().is_some()
+        && (inputs.known_dimensions.height.is_some()
+            || style
+                .size()
+                .height
+                .maybe_resolve(inputs.parent_size.height)
+                .is_some())
 }
 
 /// Give a flex or grid container with a preferred aspect ratio, an `auto` width
