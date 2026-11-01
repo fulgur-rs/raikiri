@@ -15,6 +15,7 @@ fn placement(row: u16, col_span: u16, row_span: u16) -> CellPlacement {
         resolved: None,
         natural_height: 0.0,
         measured_height: 0.0,
+        alignment: None,
         baseline: 0.0,
         baseline_from_flow: false,
         row_pass: None,

@@ -469,3 +469,107 @@ fn the_height_of_a_row_does_not_stretch_the_columns() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// A table in `mode` with one row of a vertical cell `c` (60px by 50px) and a
+/// horizontal cell `d` (60px wide, `height` high) aligned by `align` and holding
+/// `content`, in the order the cells are in `first`.
+fn mixed_row(mode: &str, first: &str, height: u32, align: &str, content: &str) -> String {
+    let vertical = "<div id=c style='display: table-cell; width: 60px; height: 50px'>\
+                    <div id=pc>x</div></div>";
+    let horizontal = format!(
+        "<div id=d style='display: table-cell; writing-mode: horizontal-tb; width: 60px; \
+         height: {height}px; vertical-align: {align}'>{content}</div>"
+    );
+    let (one, two) = if first == "d" {
+        (horizontal.as_str(), vertical)
+    } else {
+        (vertical, horizontal.as_str())
+    };
+    format!(
+        "<div id=t style='display: table; writing-mode: {mode}'>\
+         <div id=r style='display: table-row'>{one}{two}</div></div>"
+    )
+}
+
+#[test]
+fn a_horizontal_cell_in_a_vertical_table_aligns_in_the_height_of_its_column() {
+    let square = "<div id=pd style='width: 20px; height: 20px'></div>";
+    let mut mismatches = Vec::new();
+    for mode in MODES {
+        // The column of `d` is 30px high next to a column of 50px: the room
+        // around a block of 20px is 10px, not the 30px of the row.
+        for (align, top) in [
+            ("baseline", 58.0),
+            ("top", 58.0),
+            ("middle", 63.0),
+            ("bottom", 68.0),
+        ] {
+            mismatches.extend(check(
+                &format!("{mode}, {align}"),
+                &mixed_row(mode, "c", 30, align, square),
+                &[
+                    ("t", [8.0, 8.0, 60.0, 80.0]),
+                    ("d", [8.0, 58.0, 60.0, 30.0]),
+                    ("pd", [8.0, top, 20.0, 20.0]),
+                ],
+            ));
+        }
+        // Content higher than the cell makes the column as high as itself: no
+        // room is left to spread, whichever side it is aligned to.
+        let tall = "<div id=pd style='width: 20px; height: 40px'></div>";
+        for align in ["middle", "bottom"] {
+            mismatches.extend(check(
+                &format!("{mode}, content of 40px, {align}"),
+                &mixed_row(mode, "c", 30, align, tall),
+                &[
+                    ("t", [8.0, 8.0, 60.0, 90.0]),
+                    ("d", [8.0, 58.0, 60.0, 40.0]),
+                    ("pd", [8.0, 58.0, 20.0, 40.0]),
+                ],
+            ));
+        }
+        // A cell with nothing in it keeps its column, aligned by any side.
+        for align in ["baseline", "middle"] {
+            mismatches.extend(check(
+                &format!("{mode}, empty, {align}"),
+                &mixed_row(mode, "c", 30, align, ""),
+                &[
+                    ("t", [8.0, 8.0, 60.0, 80.0]),
+                    ("d", [8.0, 58.0, 60.0, 30.0]),
+                ],
+            ));
+        }
+        // It comes first: its column is the first 30px.
+        mismatches.extend(check(
+            &format!("{mode}, first"),
+            &mixed_row(mode, "d", 30, "middle", square),
+            &[
+                ("d", [8.0, 8.0, 60.0, 30.0]),
+                ("pd", [8.0, 13.0, 20.0, 20.0]),
+                ("c", [8.0, 38.0, 60.0, 50.0]),
+            ],
+        ));
+        // Text: its line is 10px high.
+        mismatches.extend(check(
+            &format!("{mode}, text"),
+            &mixed_row(mode, "c", 30, "middle", "<div id=pd>x</div>"),
+            &[("pd", [8.0, 68.0, 60.0, 10.0])],
+        ));
+        // Alone, its column is as high as the row and nothing changes.
+        let alone = format!(
+            "<div id=t style='display: table; writing-mode: {mode}'>\
+             <div id=r style='display: table-row'>\
+             <div id=d style='display: table-cell; writing-mode: horizontal-tb; width: 60px; \
+             height: 50px; vertical-align: middle'>{square}</div></div></div>"
+        );
+        mismatches.extend(check(
+            &format!("{mode}, alone"),
+            &alone,
+            &[
+                ("d", [8.0, 8.0, 60.0, 50.0]),
+                ("pd", [8.0, 23.0, 20.0, 20.0]),
+            ],
+        ));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}

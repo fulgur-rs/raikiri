@@ -124,6 +124,16 @@ struct TableGrid {
     col_widths: Vec<ColSizing>,
 }
 
+/// The content block size a cell aligned its content in, the room it spread
+/// around the content, and how far the alignment moved the content from the
+/// block-start side.
+#[derive(Debug, Clone, Copy)]
+struct BlockAlignment {
+    natural: f32,
+    extra: f32,
+    shift: f32,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CellPlacement {
     node_id: usize,
@@ -139,6 +149,10 @@ struct CellPlacement {
     /// The height the cell asks of its row: its laid-out height, or the height
     /// it states if that is more.
     measured_height: f32,
+    /// How the row-height pass spread the room around the content of a
+    /// horizontal cell, kept for a vertical table, whose cell takes the height
+    /// of its own column afterwards.
+    alignment: Option<BlockAlignment>,
     baseline: f32,
     /// Whether the cell has something in flow to take its baseline from: a
     /// line, or a box with height of its own. A baseline-aligned cell without
@@ -2247,6 +2261,7 @@ fn build_table_grid(
                     resolved: None,
                     natural_height: 0.0,
                     measured_height: 0.0,
+                    alignment: None,
                     baseline: 0.0,
                     baseline_from_flow: false,
                     row_pass: None,
@@ -2587,6 +2602,7 @@ fn push_row(
             resolved: None,
             natural_height: 0.0,
             measured_height: 0.0,
+            alignment: None,
             baseline: 0.0,
             baseline_from_flow: false,
             row_pass: None,
@@ -4295,6 +4311,11 @@ fn place_cells(
             }
             _ => 0.0,
         };
+        cell.alignment = (!collapsed_empty && !vertical_cell).then(|| BlockAlignment {
+            natural: resolved_natural_height.unwrap_or(cell.natural_height),
+            extra,
+            shift,
+        });
         padding.top += shift;
         padding.bottom += (extra - shift).max(0.0);
         for child in doc
@@ -4436,7 +4457,17 @@ fn reposition_cells_for_vertical_writing(
         let cell_writing_mode = table_writing_mode(doc, cell.node_id);
         if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
-            // its own block axis. Preserve the normal pass's vertical shift.
+            // its own block axis, the physical height, which is now the height
+            // of its column and no longer the one the row pass measured.
+            if let Some(alignment) = cell.alignment {
+                realign_horizontal_cell(
+                    doc,
+                    cell.node_id,
+                    alignment,
+                    cell.baseline_from_flow,
+                    layout,
+                );
+            }
             doc.store_layout(cell.node_id, layout);
             continue;
         }
@@ -4470,6 +4501,43 @@ fn reposition_cells_for_vertical_writing(
         );
         align_vertical_cell_on_block_axis(doc, cell.node_id, cell_writing_mode, cell_width, layout);
         doc.store_layout(cell.node_id, layout);
+    }
+}
+
+/// Spreads the room a horizontal cell has around its content again, once the
+/// cell is `layout.size.height` high instead of the height the row pass aligned
+/// it in: the content moves by the change of the shift, and the padding that
+/// carries the room follows.
+fn realign_horizontal_cell(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    alignment: BlockAlignment,
+    baseline_from_flow: bool,
+    layout: &mut BoxLayout,
+) {
+    let node = doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view");
+    let extra = (layout.size.height - alignment.natural).max(0.0);
+    let shift = match node.table_vertical_align {
+        VerticalAlign::Top => 0.0,
+        VerticalAlign::Middle => extra / 2.0,
+        VerticalAlign::Bottom => extra,
+        // The row's baseline set this shift. It stays where the row put it,
+        // but a cell with nothing in flow is not pushed past its own room.
+        _ if baseline_from_flow => alignment.shift,
+        _ => alignment.shift.min(extra),
+    };
+    let children = node.children.clone();
+    layout.padding.top += shift - alignment.shift;
+    layout.padding.bottom +=
+        (extra - shift).max(0.0) - (alignment.extra - alignment.shift).max(0.0);
+    for child in children {
+        if doc.nodes[child].layout_position() != Position::Absolute {
+            let mut child_layout = doc.nodes[child].layout;
+            child_layout.location.y += shift - alignment.shift;
+            doc.store_layout(child, &child_layout);
+        }
     }
 }
 
