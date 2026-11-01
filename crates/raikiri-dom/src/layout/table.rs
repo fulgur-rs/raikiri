@@ -1523,19 +1523,21 @@ fn compute_table_layout_checked(
                     || parent_sizes_rows
                     || stretch_room.is_some()
             })
-            .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
+            .map(|known_h| known_h - distrib_insets.height);
         // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer
         // domain keeps content-box correct: `min_outer - distrib_insets` =
         // `min_content + overlap`, the track sum that yields `min_content`.
-        let min_target = min_h_outer.map(|mn| f32_max_compat(mn - distrib_insets.height, 0.0));
+        let min_target = min_h_outer.map(|mn| mn - distrib_insets.height);
         // The taller of the two is shared once, so that the percentage heights
-        // of rows resolve against the height the table ends up with.
-        let target_rows = [known_target, min_target]
+        // of rows resolve against the height the table ends up with. It is
+        // kept as it is, without the zero floor the rows get, for the vertical
+        // columns below.
+        let target_room = [known_target, min_target]
             .into_iter()
             .flatten()
             .reduce(f32_max_compat);
-        if let Some(target) = target_rows {
+        if let Some(target) = target_room.map(|room| f32_max_compat(room, 0.0)) {
             // The row groups share the extra first and the rows without an
             // authored height take their group's share, which keeps the
             // others as they are (see `distribute_extra_to_groups`).
@@ -1562,9 +1564,6 @@ fn compute_table_layout_checked(
                 target,
             );
         }
-        // What the rows add up to once they share an authored height: a
-        // vertical table is at least that high.
-        let target_total = target_rows.map(|_| row_heights.iter().sum::<f32>());
         if vertical_writing {
             // Vertical columns stack the same row track along the physical
             // inline axis. Share CAPMIN across those stacks after removing the
@@ -1588,8 +1587,11 @@ fn compute_table_layout_checked(
             let columns = usize::from(grid.n_cols);
             let mut tracks = vertical_column_tracks(&grid, border_spacing.1);
             let spacing_total = border_spacing.1 * (columns + 1) as f32;
-            let floor = target_total
-                .map_or(0.0, |total| total + border_spacing.1 * 2.0)
+            // The room the rows were given has the spacing of every visible
+            // row taken out of it; the columns stack along that height with
+            // spacing of their own, so all of it comes back.
+            let floor = target_room
+                .map_or(0.0, |room| room + spacing.height)
                 .max(caption_inline_minimum - padding_border_size.height);
             let natural = tracks.iter().sum::<f32>() + spacing_total;
             if floor > natural {

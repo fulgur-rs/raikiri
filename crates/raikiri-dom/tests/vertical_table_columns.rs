@@ -713,3 +713,116 @@ fn a_collapsed_row_still_sets_the_height_of_its_columns() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// Rows of cells `c<row><column>` of the sizes `grid` gives, without padding.
+fn grid_rows(grid: &[&[[u32; 2]]]) -> String {
+    grid.iter()
+        .enumerate()
+        .map(|(row, cells)| {
+            let cells: String = cells
+                .iter()
+                .enumerate()
+                .map(|(column, size)| td(&format!("c{row}{column}"), "", *size, "0", "x"))
+                .collect();
+            format!("<tr>{cells}</tr>")
+        })
+        .collect()
+}
+
+#[test]
+fn a_table_height_covers_the_spacing_of_every_row() {
+    // The rows of a vertical table run along its width, so the spacing between
+    // them is none of the height: the columns stacked along the height have
+    // the 200px of the table less their own spacing, however many rows the
+    // table has.
+    let mut mismatches = Vec::new();
+    for mode in MODES {
+        for (label, style) in [
+            ("height", "height: 200px"),
+            ("min-height", "min-height: 200px"),
+        ] {
+            let two_rows = table_element(
+                mode,
+                &format!("6px; {style}"),
+                &grid_rows(&[&[[60, 20]], &[[60, 20]]]),
+            );
+            mismatches.extend(check_extent(
+                &format!("{mode}, two rows, {label}"),
+                &two_rows,
+                &[
+                    ("t", 8.0, 200.0),
+                    ("c00", 14.0, 188.0),
+                    ("c10", 14.0, 188.0),
+                ],
+            ));
+            let three_rows = table_element(
+                mode,
+                &format!("4px; {style}"),
+                &grid_rows(&[&[[60, 20]], &[[60, 20]], &[[60, 20]]]),
+            );
+            mismatches.extend(check_extent(
+                &format!("{mode}, three rows, {label}"),
+                &three_rows,
+                &[
+                    ("t", 8.0, 200.0),
+                    ("c00", 12.0, 192.0),
+                    ("c10", 12.0, 192.0),
+                    ("c20", 12.0, 192.0),
+                ],
+            ));
+            // Two columns of 30px and 40px share the 182px that is left.
+            let two_columns = table_element(
+                mode,
+                &format!("6px; {style}"),
+                &grid_rows(&[&[[60, 20], [60, 40]], &[[60, 30], [60, 10]]]),
+            );
+            mismatches.extend(check_extent(
+                &format!("{mode}, two rows and two columns, {label}"),
+                &two_columns,
+                &[
+                    ("t", 8.0, 200.0),
+                    ("c00", 14.0, 78.0),
+                    ("c01", 98.0, 104.0),
+                    ("c10", 14.0, 78.0),
+                    ("c11", 98.0, 104.0),
+                ],
+            ));
+        }
+        // The padding and the border of the table are outside the 200px of its
+        // `min-height` only when the box is sized by the content.
+        let padded = table_element(
+            mode,
+            "2px; min-height: 200px; padding: 3px; border: 2px solid black",
+            &grid_rows(&[
+                &[[60, 20], [60, 40]],
+                &[[60, 30], [60, 10]],
+                &[[60, 5], [60, 5]],
+            ]),
+        );
+        mismatches.extend(check_extent(
+            &format!("{mode}, three rows with padding and border"),
+            &padded,
+            &[
+                ("t", 8.0, 200.0),
+                ("c00", 15.0, 78.84),
+                ("c01", 95.84, 105.16),
+                ("c20", 15.0, 78.84),
+                ("c21", 95.84, 105.16),
+            ],
+        ));
+        // Rows that are together higher than the table do not make the
+        // columns higher: the columns are as high as their tallest cell, and
+        // the table is as high as it states.
+        let crowded = table_element(
+            mode,
+            "0; height: 30px",
+            &grid_rows(&[&[[60, 20]], &[[60, 20]]]),
+        );
+        mismatches.extend(check_extent(
+            &format!("{mode}, rows higher than the table"),
+            &crowded,
+            &[("t", 8.0, 30.0), ("c00", 8.0, 30.0), ("c10", 8.0, 30.0)],
+        ));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
