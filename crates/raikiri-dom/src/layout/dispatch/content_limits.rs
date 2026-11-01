@@ -698,11 +698,36 @@ fn min_content_width_without_limits(
 
 /// The padding and border of the box `idx` summed along each axis, whatever its
 /// `box-sizing`: the smallest border box it can have.
-fn padding_border_sum(tree: &LayoutSession<'_>, idx: usize, containing_width: f32) -> Size<f32> {
+fn padding_border_sum(tree: &LayoutSession<'_>, idx: usize, basis: Option<f32>) -> Size<f32> {
     let style = tree.physical_style(idx);
-    (style.padding().resolve_or_zero(Some(containing_width))
-        + style.border().resolve_or_zero(Some(containing_width)))
-    .sum_axes()
+    (style.padding().resolve_or_zero(basis) + style.border().resolve_or_zero(basis)).sum_axes()
+}
+
+/// Lay out a vertical flex or grid container with any authored ratio source
+/// size raised to its padding and border before its axes are transposed.
+/// Parent-imposed dimensions and intrinsic content measurements stay intact.
+pub(super) fn with_vertical_ratio_stated_size_clamp(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    layout: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    if !tree.has_vertical_writing_mode(idx)
+        || inputs.sizing_mode != SizingMode::InherentSize
+        || tree.nodes[idx].ratio_in_content_box
+    {
+        return layout(tree, node_id, inputs);
+    }
+    let padding_basis = super::vertical_block::containing_inline_size(tree, idx, &inputs);
+    let Some(clamp) = ratio_stated_size_clamp(tree, idx, inputs.parent_size, padding_basis) else {
+        return layout(tree, node_id, inputs);
+    };
+    with_saved_probe_caches(tree, 1, |tree, saved| {
+        saved.push((idx, tree.take_layout_cache(idx)));
+        tree.push_local_overrides(vec![clamp]);
+        layout(tree, node_id, inputs)
+    })
 }
 
 /// The border-box sizes of the out-of-flow `candidates` with an aspect ratio
@@ -718,50 +743,67 @@ pub(super) fn ratio_stated_size_clamps(
     candidates: &[NodeId],
     containing_size: Size<f32>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
-    let mut clamps = Vec::new();
-    for &candidate in candidates {
-        let idx = usize::from(candidate);
-        let style = tree.physical_style(idx);
-        if style.stated_aspect_ratio().is_none() || style.box_sizing() == BoxSizing::ContentBox {
-            continue;
-        }
-        let edges = padding_border_sum(tree, idx, containing_size.width);
-        let key = tree.nodes.box_key(idx).expect("live out-of-flow box");
-        let size = style.size();
-        // The ratio derives a size only from the one the box states in the
-        // other axis, so a box that states both has nothing to relate.
-        for (property, stated, other, floor, basis) in [
-            (
-                LengthProperty::Width,
-                size.width,
-                size.height,
-                edges.width,
-                containing_size.width,
-            ),
-            (
-                LengthProperty::Height,
-                size.height,
-                size.width,
-                edges.height,
-                containing_size.height,
-            ),
-        ] {
-            if other.is_auto()
-                && stated
-                    .maybe_resolve(Some(basis))
-                    .is_some_and(|stated| stated < floor)
-            {
-                let entry = OwnedPropertyOverride::length(
-                    property,
-                    raikiri_style::ComputedLengthPercentageOrAuto::Px(floor),
-                    true,
-                )
-                .expect("resolved pixel size");
-                clamps.push((key, entry));
-            }
+    candidates
+        .iter()
+        .filter_map(|&candidate| {
+            ratio_stated_size_clamp(
+                tree,
+                usize::from(candidate),
+                containing_size.map(Some),
+                Some(containing_size.width),
+            )
+        })
+        .collect()
+}
+
+/// One authored physical ratio source below its edge floor, resolved with
+/// independent physical size and containing-inline padding bases.
+fn ratio_stated_size_clamp(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    size_basis: Size<Option<f32>>,
+    padding_basis: Option<f32>,
+) -> Option<(BoxKey, OwnedPropertyOverride)> {
+    let style = tree.physical_style(idx);
+    if style.stated_aspect_ratio().is_none() || style.box_sizing() == BoxSizing::ContentBox {
+        return None;
+    }
+    let edges = padding_border_sum(tree, idx, padding_basis);
+    let size = style.size();
+    // The ratio derives a size only from the one the box states in the
+    // other axis, so a box that states both has nothing to relate.
+    for (property, stated, other, floor, basis) in [
+        (
+            LengthProperty::Width,
+            size.width,
+            size.height,
+            edges.width,
+            size_basis.width,
+        ),
+        (
+            LengthProperty::Height,
+            size.height,
+            size.width,
+            edges.height,
+            size_basis.height,
+        ),
+    ] {
+        if other.is_auto()
+            && stated
+                .maybe_resolve(basis)
+                .is_some_and(|stated| stated < floor)
+        {
+            let entry = OwnedPropertyOverride::length(
+                property,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px(floor),
+                true,
+            )
+            .expect("resolved pixel size");
+            let key = tree.nodes.box_key(idx).expect("live aspect-ratio box");
+            return Some((key, entry));
         }
     }
-    clamps
+    None
 }
 
 /// Whether the `min-height` of the out-of-flow box `idx`, if it states one, is
@@ -774,7 +816,7 @@ fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size
     }
     let basis = Some(containing_size.height);
     let adjustment = box_sizing_height_adjustment(tree, idx, containing_size.width);
-    let edges = padding_border_sum(tree, idx, containing_size.width).height;
+    let edges = padding_border_sum(tree, idx, Some(containing_size.width)).height;
     match (
         style.min_size().height.maybe_resolve(basis),
         style.size().height.maybe_resolve(basis),

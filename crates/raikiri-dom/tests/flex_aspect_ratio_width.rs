@@ -549,3 +549,149 @@ fn nested_containers_and_vertical_writing_follow_the_ratio() {
         &[("o", [8.0, 8.0, 100.0, 50.0])],
     );
 }
+
+#[test]
+fn vertical_ratio_containers_raise_a_small_stated_height_before_deriving_width() {
+    let small = "<div style='width:10px;height:10px'></div>";
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for display in ["flex", "grid", "inline-flex", "inline-grid"] {
+            for position in ["", "position:absolute;"] {
+                assert_boxes(
+                    &in_flow(
+                        &format!("display:{display};writing-mode:{mode};{position}{RATIO}"),
+                        small,
+                    ),
+                    &[("o", [8.0, 8.0, 100.0, 50.0])],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_ratio_height_floors_preserve_other_authored_sizes_and_content_box_ratios() {
+    let small = "<div style='width:10px;height:10px'></div>";
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for display in ["flex", "grid", "inline-flex", "inline-grid"] {
+            for (sizes, width, height) in [
+                ("height:60px", 120.0, 60.0),
+                ("height:40px;box-sizing:content-box", 130.0, 90.0),
+                ("width:70px;height:40px", 70.0, 50.0),
+                ("width:200px", 200.0, 100.0),
+            ] {
+                assert_boxes(
+                    &in_flow(
+                        &format!("display:{display};writing-mode:{mode};aspect-ratio:2/1;{sizes}"),
+                        small,
+                    ),
+                    &[("o", [8.0, 8.0, width, height])],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_ratio_containers_include_padding_before_deriving_width() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for display in ["flex", "grid", "inline-flex", "inline-grid"] {
+            assert_boxes(
+                &format!(
+                    "<div id=o style='display:{display};writing-mode:{mode};{RATIO};padding:25px'><div style='width:10px;height:10px'></div></div>"
+                ),
+                &[("o", [8.0, 8.0, 100.0, 50.0])],
+            );
+        }
+    }
+}
+
+#[test]
+fn vertical_grid_content_still_raises_the_ratio_width_above_the_edge_floor() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for (display, width) in [
+            ("flex", 100.0),
+            ("inline-flex", 100.0),
+            ("grid", 120.0),
+            ("inline-grid", 120.0),
+        ] {
+            assert_boxes(
+                &in_flow(
+                    &format!("display:{display};writing-mode:{mode};{RATIO}"),
+                    ITEMS,
+                ),
+                &[("o", [8.0, 8.0, width, 50.0])],
+            );
+        }
+    }
+}
+
+/// Check dimensions without constraining the parent's writing-mode placement.
+fn assert_size(body: &str, expected: [f32; 2]) {
+    let (_, rect) = boxes(body).into_iter().find(|(id, _)| id == "o").unwrap();
+    assert_eq!([rect[2], rect[3]], expected, "{body}");
+}
+
+#[test]
+fn vertical_ratio_containers_resolve_size_percentages_separately_from_padding() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for display in ["flex", "grid", "inline-flex", "inline-grid"] {
+            for (parent, sizes, expected) in [
+                ("writing-mode:vertical-rl;", "height:40px", [100.0, 50.0]),
+                ("", "height:40px", [140.0, 70.0]),
+                ("writing-mode:vertical-rl;", "height:20%", [100.0, 50.0]),
+                ("", "height:20%", [140.0, 70.0]),
+                (
+                    "writing-mode:vertical-rl;",
+                    "width:20%;height:20%",
+                    [60.0, 50.0],
+                ),
+            ] {
+                assert_size(
+                    &format!(
+                        "<div style='width:300px;height:200px;{parent}'><div id=o style='display:{display};writing-mode:{mode};aspect-ratio:2/1;padding:10%;border:5px solid;{sizes}'><div style='width:10px;height:10px'></div></div></div>"
+                    ),
+                    expected,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_ratio_content_minimum_keeps_its_opt_outs_caps_and_grid_flow() {
+    let wide = "<div style='width:200px;height:10px'></div>";
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for display in ["flex", "grid", "inline-flex", "inline-grid"] {
+            for (extra, content, width) in [
+                ("min-width:0", wide, 100.0),
+                ("overflow:hidden", wide, 100.0),
+                ("max-width:90px", wide, 90.0),
+                ("max-height:80px", wide, 250.0),
+                ("", wide, 250.0),
+                ("grid-auto-flow:column", ITEMS, 100.0),
+            ] {
+                assert_size(
+                    &in_flow(
+                        &format!("display:{display};writing-mode:{mode};{RATIO};{extra}"),
+                        content,
+                    ),
+                    [width, 50.0],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_ratio_containers_keep_the_height_the_grid_parent_imposes() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for display in ["flex", "grid", "inline-flex", "inline-grid"] {
+            assert_size(
+                &format!(
+                    "<div style='display:grid;width:300px;height:100px;justify-items:start;align-items:stretch'><div id=o style='display:{display};writing-mode:{mode};aspect-ratio:2/1;{BORDER}'><div style='width:10px;height:10px'></div></div></div>"
+                ),
+                [200.0, 100.0],
+            );
+        }
+    }
+}
