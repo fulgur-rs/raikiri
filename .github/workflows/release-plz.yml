@@ -147,7 +147,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      # cargo publish builds every package before uploading it.
+      # cargo publish builds every package before uploading it, and
+      # raikiri-dom reaches yeslogic-fontconfig-sys, whose build script needs
+      # the fontconfig development files (same step as in ci.yml).
+      - name: Install system dependencies
+        run: |
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          # Bound package acquisition and fail on incomplete index updates.
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" --error-on=any update
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" install -y libfontconfig1-dev pkg-config
+
       - name: Cache Cargo registry
         uses: Swatinem/rust-cache@v2
         with:
