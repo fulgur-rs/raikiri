@@ -851,3 +851,68 @@ fn a_table_height_covers_the_spacing_of_every_row() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+#[test]
+fn columns_of_no_height_keep_their_cells_at_no_height() {
+    // The height of a row does not reach the columns, so cells that state none
+    // make columns of no height, and the cells follow, with the spacing around
+    // and between the columns, however high the row states it is.
+    let horizontal = |id: &str, size: [u32; 2]| {
+        td(id, "", size, "0", "").replace("style='", "style='writing-mode: horizontal-tb; ")
+    };
+    let mut mismatches = Vec::new();
+    for mode in MODES {
+        for (spacing, first, second) in [("0", 8.0, 8.0), ("6px", 14.0, 20.0)] {
+            let height = if spacing == "0" { 0.0 } else { 12.0 };
+            let table_height = height + if spacing == "0" { 0.0 } else { 6.0 };
+            for (label, cell) in [
+                ("a vertical cell", td("c", "", [0, 0], "0", "")),
+                ("a horizontal cell", horizontal("c", [0, 0])),
+            ] {
+                let one = table_element(
+                    mode,
+                    spacing,
+                    &format!("<tr id=r style='height: 100px'>{cell}</tr>"),
+                );
+                mismatches.extend(check_extent(
+                    &format!("{mode}, {label}, spacing {spacing}"),
+                    &one,
+                    &[("t", 8.0, height), ("c", first, 0.0)],
+                ));
+            }
+            let two = table_element(
+                mode,
+                spacing,
+                &format!(
+                    "<tr id=r style='height: 100px'>{}{}</tr>",
+                    td("c", "", [0, 0], "0", ""),
+                    td("d", "", [0, 0], "0", "")
+                ),
+            );
+            mismatches.extend(check_extent(
+                &format!("{mode}, two columns, spacing {spacing}"),
+                &two,
+                &[
+                    ("t", 8.0, table_height),
+                    ("c", first, 0.0),
+                    ("d", second, 0.0),
+                ],
+            ));
+            let rows = table_element(
+                mode,
+                spacing,
+                &format!(
+                    "<tr id=r style='height: 100px'>{}</tr><tr id=r2>{}</tr>",
+                    td("c", "", [20, 0], "0", ""),
+                    td("d", "", [20, 0], "0", "")
+                ),
+            );
+            mismatches.extend(check_extent(
+                &format!("{mode}, two rows, spacing {spacing}"),
+                &rows,
+                &[("t", 8.0, height), ("c", first, 0.0), ("d", first, 0.0)],
+            ));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}

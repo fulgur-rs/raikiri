@@ -4457,8 +4457,9 @@ fn reposition_cells_for_vertical_writing(
     origin: Point<f32>,
     spacing: f32,
 ) {
-    let total = tracks.iter().sum::<f32>();
-    if !total.is_finite() || total <= 0.0 {
+    // Columns of no height are valid: the cells still take their place, with
+    // the height of their column, and not the one a taller row gave them.
+    if !tracks.iter().sum::<f32>().is_finite() {
         return; // cov:ignore: defensive empty/invalid vertical track fallback.
     }
     for cell in &mut grid.cells {
