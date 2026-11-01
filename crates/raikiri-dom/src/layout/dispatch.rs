@@ -3872,11 +3872,30 @@ fn with_stretch_cross_size(
     inputs
 }
 
-/// Give a flex container with a `fit-content` width, or a
-/// `fit-content(<length-percentage>)` one whose limit [`with_fit_content_room`]
-/// made the room, the width CSS Sizing 3 §3.1.1 defines for it: the room
-/// offered, but at least its min-content and at most its max-content width.
-/// Taffy's flexbox algorithm reads the keyword as `max-content`.
+/// Whether the width of the flex container `idx` is the `fit-content` one: the
+/// keyword, `fit-content(<length-percentage>)`, or the `auto` width of an
+/// absolutely positioned box, which shrinks to fit (CSS Positioned Layout 3
+/// section 5.1.1) unless its insets state the width.
+fn has_fit_content_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let width = tree.physical_style(idx).size().width;
+    matches!(
+        width.expand(),
+        ExpandedDimension::FitContent
+            | ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_)
+    ) || (width.is_auto() && tree.nodes[idx].layout_position() == Position::Absolute)
+}
+
+/// Give a flex container with a `fit-content` width (see
+/// [`has_fit_content_width`]), or a `fit-content(<length-percentage>)` one whose
+/// limit [`with_fit_content_room`] made the room, the width CSS Sizing 3 §3.1.1
+/// defines for it: the room offered, but at least its min-content and at most
+/// its max-content width.
+///
+/// Taffy's flexbox algorithm reads the keyword as `max-content`. It sizes the
+/// container that shrinks to fit by the flex base sizes of its items, which a
+/// `max-width` of an item, a flex basis of `0` or the room does not bound.
 fn with_fit_content_width(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -3885,17 +3904,7 @@ fn with_fit_content_width(
     let AvailableSpace::Definite(room) = inputs.available_space.width else {
         return inputs;
     };
-    if inputs.known_dimensions.width.is_some()
-        || !matches!(
-            tree.physical_style(usize::from(node_id))
-                .size()
-                .width
-                .expand(),
-            ExpandedDimension::FitContent
-                | ExpandedDimension::FitContentPx(_)
-                | ExpandedDimension::FitContentPercent(_)
-                | ExpandedDimension::FitContentCalc(_)
-        )
+    if inputs.known_dimensions.width.is_some() || !has_fit_content_width(tree, usize::from(node_id))
     {
         return inputs;
     }
@@ -3906,9 +3915,15 @@ fn with_fit_content_width(
         probe.available_space.width = space;
         flex_layout_sized(tree, node_id, probe).size.width
     };
-    let min_content = measure(AvailableSpace::MinContent);
+    // A container whose items fit the room is as wide as they are, whatever
+    // they need at their least.
     let max_content = measure(AvailableSpace::MaxContent);
-    inputs.known_dimensions.width = Some(max_content.min(min_content.max(room)));
+    let width = if max_content <= room {
+        max_content
+    } else {
+        max_content.min(measure(AvailableSpace::MinContent).max(room))
+    };
+    inputs.known_dimensions.width = Some(width);
     inputs.known_dimensions_are_definite.width = true;
     inputs
 }
