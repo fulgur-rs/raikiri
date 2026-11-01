@@ -4007,8 +4007,9 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
     let measure = |doc: &mut LayoutSession<'_>| {
         #[cfg(test)]
         tests::cell_scope_tests::before_measure(doc, cell.node_id);
-        doc.compute_child_layout(
-            NodeId::from(cell.node_id),
+        layout_cell_contents(
+            doc,
+            cell.node_id,
             LayoutInput {
                 run_mode: RunMode::PerformLayout,
                 sizing_mode: SizingMode::InherentSize,
@@ -4175,6 +4176,29 @@ fn horizontal_cell_alignment_height(
     Some(lines.height + padding.top + padding.bottom + border.top + border.bottom)
 }
 
+/// Lay out a cell after its width has been assigned. Its maximum height
+/// constrains intrinsic width probes, but does not cap its row's content or
+/// the height the row gives its children. Descendant limits still apply.
+fn layout_cell_contents(
+    doc: &mut LayoutSession<'_>,
+    cell: usize,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    if doc.physical_style(cell).max_size().height.is_auto() {
+        return doc.compute_child_layout(NodeId::from(cell), inputs);
+    }
+    let key = doc.nodes.box_key(cell).expect("cell has a box key");
+    let entry = raikiri_layout_style::OwnedPropertyOverride::length(
+        raikiri_layout_style::LengthProperty::MaxHeight,
+        raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+        false,
+    )
+    .expect("physical cell maximum height");
+    doc.with_overrides(vec![(key, entry)], |doc| {
+        doc.compute_child_layout(NodeId::from(cell), inputs)
+    })
+}
+
 struct CellPlacementTracks<'a> {
     column_widths: &'a [f32],
     column_gaps: &'a [f32],
@@ -4303,8 +4327,9 @@ fn place_cells(
                 // has: a cached one, or a cell that is not a block container,
                 // leaves none, and the height measured before stands.
                 doc.nodes[cell.node_id].auto_block_size = None;
-                let output = doc.compute_child_layout(
-                    NodeId::from(cell.node_id),
+                let output = layout_cell_contents(
+                    doc,
+                    cell.node_id,
                     LayoutInput {
                         run_mode: RunMode::PerformLayout,
                         sizing_mode: SizingMode::InherentSize,
@@ -4646,7 +4671,7 @@ fn reposition_cells_for_vertical_writing(
             vertical_margins_are_collapsible: Line::FALSE,
         };
         let output = super::dispatch::with_final_vertical_table_cell(doc, cell.node_id, |doc| {
-            let mut output = doc.compute_child_layout(NodeId::from(cell.node_id), inputs);
+            let mut output = layout_cell_contents(doc, cell.node_id, inputs);
             let shift = align_vertical_cell_on_block_axis(
                 doc,
                 cell.node_id,
@@ -4687,8 +4712,9 @@ fn relayout_horizontal_cell(
 ) -> (f32, OofCandidates) {
     let height = layout.size.height;
     doc.nodes[cell_node].auto_block_size = None;
-    let output = doc.compute_child_layout(
-        NodeId::from(cell_node),
+    let output = layout_cell_contents(
+        doc,
+        cell_node,
         LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,

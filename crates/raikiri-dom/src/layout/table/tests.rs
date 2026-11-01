@@ -23,6 +23,7 @@ pub(super) mod border_scope_tests;
 mod border_state_tests;
 mod cache_tests;
 mod cell_index_tests;
+mod cell_maximum_tests;
 pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
 mod intrinsic_keyword_tests;
