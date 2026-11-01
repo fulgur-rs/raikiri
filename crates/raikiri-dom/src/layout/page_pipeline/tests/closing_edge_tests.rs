@@ -1234,6 +1234,62 @@ fn lines_move_when_the_next_page_cannot_hold_them_with_the_edges() {
     assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 210.0));
 }
 
+#[test]
+fn a_paragraph_moved_whole_to_a_page_still_splits_when_the_edges_run_past_its_end() {
+    // The lines end at 70 and the padding below them does not fit, so the
+    // paragraph moves to the top of the next page: 100 to 120 for two lines.
+    // The page break before it is then gone, and 81px of padding after the
+    // lines no longer fit either: the last line goes on to the page after
+    // with the padding, as Chromium prints it.
+    assert_eq!(closed_paragraph_with(2, 80, ""), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(2, 81, ""), (100.0, 291.0));
+    assert_eq!(closed_paragraph_with(2, 90, ""), (100.0, 300.0));
+    // Three lines cannot have two orphans and two widows, so the last line is
+    // what goes: Chromium leaves two lines on the page it moved the paragraph
+    // to.
+    assert_eq!(closed_paragraph_with(3, 70, ""), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(3, 71, ""), (100.0, 281.0));
+    // So do lines that one of the two leaves no break for.
+    for css in ["orphans:3", "widows:3", "orphans:1;widows:3"] {
+        assert_eq!(closed_paragraph_with(3, 71, css), (100.0, 281.0), "{css}");
+    }
+    assert_eq!(closed_paragraph_with(4, 60, "orphans:3"), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(4, 61, "orphans:3"), (100.0, 271.0));
+    // Orphans that a break cannot keep do not hold the lines together either.
+    assert_eq!(closed_paragraph_with(2, 90, "orphans:5"), (100.0, 300.0));
+    assert_eq!(closed_paragraph_with(2, 90, "widows:5"), (100.0, 300.0));
+}
+
+#[test]
+fn the_padding_of_the_paragraph_itself_counts_when_it_splits_after_moving_whole() {
+    // 5px of padding or border below the lines of the paragraph are edges that
+    // follow its last line like those of the div: 20 + 5 + 75 fill the page
+    // and one pixel more does not.
+    for css in ["padding-bottom:5px", "border-bottom:5px solid"] {
+        assert_eq!(closed_paragraph_with(2, 75, css), (100.0, 200.0), "{css}");
+        assert_eq!(closed_paragraph_with(2, 76, css), (100.0, 291.0), "{css}");
+        assert_eq!(closed_paragraph_with(3, 65, css), (100.0, 200.0), "{css}");
+        assert_eq!(closed_paragraph_with(3, 66, css), (100.0, 281.0), "{css}");
+    }
+    // The paragraph moves whole when its box fits the page it moves to,
+    // whatever the edges are: breaking before it beats breaking in it.
+    assert_eq!(
+        closed_paragraph_with(3, 30, "padding-bottom:5px"),
+        (100.0, 165.0)
+    );
+}
+
+#[test]
+fn a_paragraph_of_one_line_moves_whole_whatever_the_edges_below_it() {
+    // A single line has no break to take: it keeps its edges, which run past
+    // the end of the page it moved to.
+    assert_eq!(closed_paragraph_with(1, 90, ""), (100.0, 200.0));
+    assert_eq!(
+        closed_paragraph_with(1, 90, "padding-bottom:5px"),
+        (100.0, 205.0)
+    );
+}
+
 /// `body > [div(10px), div(padding-bottom:40px) > paragraph]` where the
 /// paragraph is `lines` lines of 10px Ahem text, 30px wide. Returns the height
 /// of the div and the page-flow y of the paragraph's first line.
@@ -1764,9 +1820,6 @@ fn a_card_of_two_lines_after_a_box_in_the_card_moves_whole() {
     // With a box before the paragraph in the card, a break between the two is
     // a better one: the paragraph moves whole, and orphans of two keep it so.
     assert_eq!(closed_paragraph(2, ""), (100.0, 160.0));
-    // When the next page cannot hold the paragraph with the edges, it moves
-    // all the same: a break before it beats one between it and the edges.
-    assert_eq!(closed_paragraph_with(2, 90, ""), (100.0, 210.0));
 }
 
 /// `body > [div(20px), outer > [div(30px), wrapper > paragraph], div(10px)]`
