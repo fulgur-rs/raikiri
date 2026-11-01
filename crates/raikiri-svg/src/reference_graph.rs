@@ -27,8 +27,10 @@
 //!
 //! The graph over-approximates what `usvg` follows: an ancestor's `fill` that a
 //! nearer ancestor overrides still counts as inherited, a shape counts as
-//! inheriting the paint that it only sets in a style rule, and a `use` is
-//! always followed. A document refused for that reason refers to a resource
+//! inheriting the paint that it only sets in a style rule, every ancestor's
+//! `mask` counts as the one an element takes with `inherit`, resources that
+//! share an `id` all count as the one `usvg` picks, and a `use` is always
+//! followed. A document refused for that reason refers to a resource
 //! from inside itself in a way no browser draws either.
 
 use std::collections::{HashMap, HashSet};
@@ -50,6 +52,12 @@ const REFERENCE_HOP_LEVELS: usize = 4;
 /// about a kilobyte of stack, so this fits in a thread of the smallest stack
 /// with room left for the parser around it.
 const MAX_REFERENCE_LEVELS: usize = 512;
+
+/// What keeping one edge of the graph costs, in visits. An edge takes memory
+/// that a visit does not, and a reference to an `id` that many resources share
+/// makes an edge to each of them, so a few thousand of these would otherwise
+/// take hundreds of megabytes.
+const EDGE_VISITS: usize = 8;
 
 /// Checks the references between the resources of `xml`.
 ///
@@ -144,11 +152,6 @@ impl Property {
         .find_map(|(known, property)| name.eq_ignore_ascii_case(known).then_some(property))
     }
 
-    /// Whether an element inherits the property from its parent.
-    fn is_inherited_paint(self) -> bool {
-        matches!(self, Self::Fill | Self::Stroke)
-    }
-
     /// The kind of resource `usvg` follows this property to. A reference to
     /// any other element is dropped, and so is no edge here.
     fn resource(self) -> Kind {
@@ -157,6 +160,25 @@ impl Property {
             Self::ClipPath => Kind::ClipPath,
             Self::Fill | Self::Stroke => Kind::Pattern,
             Self::Marker => Kind::Marker,
+        }
+    }
+}
+
+/// The references that an element can take from its ancestors.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Inheritance {
+    /// `fill` and `stroke`, which every element inherits.
+    Paint,
+    /// `mask` and `clip-path`, which an element takes from its parent only when
+    /// it sets them to `inherit`.
+    Cutout,
+}
+
+impl Inheritance {
+    fn keeps(self, property: Property) -> bool {
+        match self {
+            Self::Paint => matches!(property, Property::Fill | Property::Stroke),
+            Self::Cutout => matches!(property, Property::Mask | Property::ClipPath),
         }
     }
 }
@@ -181,11 +203,16 @@ struct Edge {
 /// An edge by what tells it apart, with its greatest cost.
 type EdgeSet = HashMap<(usize, Property, bool), usize>;
 
-/// A style rule that sets a property to a reference.
+/// A style rule that sets a property to a reference, or a `mask` or a
+/// `clip-path` to `inherit`.
 struct ReferenceRule<'a> {
     selector: simplecss::Selector<'a>,
     references: Vec<(Property, &'a str)>,
+    inherits: Vec<Property>,
 }
+
+/// The references of the ancestors of an element that it takes from them.
+type Inherited<'a> = Rc<Vec<(Property, &'a str)>>;
 
 /// The paint properties that an element or one of its ancestors in a resource
 /// gives a value of its own, so that the elements below do not inherit one.
@@ -219,6 +246,7 @@ enum Frame<'a, 'input> {
         levels: usize,
         direct: bool,
         declared: Declared,
+        cutouts: Inherited<'a>,
     },
     /// The expansion of a `use` of this element is over.
     Leave(NodeId),
@@ -234,8 +262,9 @@ struct GraphBuilder<'a, 'input: 'a> {
     /// `inherit`. The rules are not matched against the elements that set a
     /// paint of their own, so no element is then taken to set one.
     rules_set_paint: bool,
-    /// The fill and stroke references of an element and of its ancestors.
-    inherited: HashMap<NodeId, Rc<Vec<(Property, &'a str)>>>,
+    /// The references of an element and of its ancestors that an element takes
+    /// from them.
+    inherited: HashMap<(NodeId, Inheritance), Inherited<'a>>,
     budget: InitialParseSelectorBudget,
     visits_left: usize,
 }
@@ -292,14 +321,17 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
                         Some(Property::Fill | Property::Stroke)
                     )
                 });
-                let references = declaration_references(
+                let declarations = || {
                     rule.declarations
                         .iter()
-                        .map(|declaration| (declaration.name, declaration.value)),
-                );
-                (!references.is_empty()).then_some(ReferenceRule {
+                        .map(|declaration| (declaration.name, declaration.value))
+                };
+                let references = declaration_references(declarations());
+                let inherits = declaration_inherits(declarations());
+                (!references.is_empty() || !inherits.is_empty()).then_some(ReferenceRule {
                     selector: rule.selector,
                     references,
+                    inherits,
                 })
             })
             .collect();
@@ -315,14 +347,14 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
         })
     }
 
-    /// The references an element makes, through the `fill` and `stroke` it
-    /// inherits when `paint_only`, and through every property otherwise.
+    /// The references an element makes through the properties `only` keeps, or
+    /// through every property without one.
     fn references_of(
         &mut self,
         node: Node<'a, 'input>,
-        paint_only: bool,
+        only: Option<Inheritance>,
     ) -> Result<Vec<(Property, &'a str)>, SvgError> {
-        let keep = |property: Property| !paint_only || property.is_inherited_paint();
+        let keep = |property: Property| only.is_none_or(|kind| kind.keeps(property));
         self.budget.charge_work(1)?;
         let mut references = declaration_references(
             node.attributes()
@@ -352,17 +384,18 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
         Ok(references)
     }
 
-    /// The `fill` and `stroke` references of `node` and of its ancestors,
-    /// which the elements in `node` inherit.
-    fn inherited_paint(
+    /// The references of `node` and of its ancestors that `kind` keeps, which
+    /// the elements in `node` take from them.
+    fn inherited(
         &mut self,
         node: Node<'a, 'input>,
-    ) -> Result<Rc<Vec<(Property, &'a str)>>, SvgError> {
+        kind: Inheritance,
+    ) -> Result<Inherited<'a>, SvgError> {
         let mut missing = Vec::new();
         let mut inherited = Rc::default();
         let mut current = Some(node);
         while let Some(element) = current {
-            if let Some(known) = self.inherited.get(&element.id()) {
+            if let Some(known) = self.inherited.get(&(element.id(), kind)) {
                 inherited = Rc::clone(known);
                 break;
             }
@@ -370,15 +403,46 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
             current = element.parent_element();
         }
         for element in missing.into_iter().rev() {
-            let own = self.references_of(element, true)?;
+            let own = self.references_of(element, Some(kind))?;
             if !own.is_empty() {
                 let mut merged = Vec::clone(&inherited);
                 merged.extend(own);
                 inherited = Rc::new(merged);
             }
-            self.inherited.insert(element.id(), Rc::clone(&inherited));
+            self.inherited
+                .insert((element.id(), kind), Rc::clone(&inherited));
         }
         Ok(inherited)
+    }
+
+    /// The `mask` and `clip-path` properties that an element sets to `inherit`
+    /// in an attribute, in its `style` attribute or in a style rule.
+    fn inherits_of(&mut self, node: Node<'a, 'input>) -> Result<Vec<Property>, SvgError> {
+        let mut inherits = declaration_inherits(
+            node.attributes()
+                .filter(|attribute| attribute.namespace().is_none())
+                .map(|attribute| (attribute.name(), attribute.value())),
+        );
+        if let Some(style) = node.attribute("style") {
+            inherits.extend(declaration_inherits(
+                simplecss::DeclarationTokenizer::from(style)
+                    .map(|declaration| (declaration.name, declaration.value)),
+            ));
+        }
+        for rule in &self.rules {
+            if rule.inherits.is_empty() {
+                continue;
+            }
+            if budgeted_selector_matches_with_budget(
+                &rule.selector,
+                node,
+                &mut self.budget.remaining_work,
+                initial_parse_selector_limit_error,
+            )? {
+                inherits.extend_from_slice(&rule.inherits);
+            }
+        }
+        Ok(inherits)
     }
 
     /// The references of resource `index` to others, made by the resource,
@@ -390,9 +454,13 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
         // unless that or an element between sets its own. What the resource
         // itself sets is reached below, where `usvg` removes it when it refers
         // back.
-        let above = root
-            .parent_element()
-            .map(|parent| self.inherited_paint(parent))
+        let parent = root.parent_element();
+        let above = parent
+            .map(|parent| self.inherited(parent, Inheritance::Paint))
+            .transpose()?
+            .unwrap_or_default();
+        let cutouts = parent
+            .map(|parent| self.inherited(parent, Inheritance::Cutout))
             .transpose()?
             .unwrap_or_default();
         let mut active = HashSet::new();
@@ -403,9 +471,10 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
             levels: 0,
             direct: true,
             declared: Declared::default(),
+            cutouts,
         }];
         while let Some(frame) = pending.pop() {
-            let (node, levels, direct, declared) = match frame {
+            let (node, levels, direct, declared, cutouts) = match frame {
                 Frame::Leave(copied) => {
                     active.remove(&copied);
                     continue;
@@ -415,12 +484,33 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
                     levels,
                     direct,
                     declared,
-                } => (node, levels, direct, declared),
+                    cutouts,
+                } => (node, levels, direct, declared, cutouts),
             };
             self.charge_visits(1)?;
-            for (property, id) in self.references_of(node, false)? {
-                self.add_edges(&mut edges, property, id, direct, levels);
+            let references = self.references_of(node, None)?;
+            for &(property, id) in &references {
+                self.add_edges(&mut edges, property, id, direct, levels)?;
             }
+            // An element that sets `mask` or `clip-path` to `inherit` takes the
+            // reference of its parent. Every ancestor counts as the parent,
+            // for the parent of a copy is the `use` and not where it was found.
+            for property in self.inherits_of(node)? {
+                for &(from, id) in cutouts.iter().filter(|(from, _)| *from == property) {
+                    self.add_edges(&mut edges, from, id, false, levels)?;
+                }
+            }
+            let own_cutouts: Vec<_> = references
+                .into_iter()
+                .filter(|&(property, _)| Inheritance::Cutout.keeps(property))
+                .collect();
+            let cutouts = if own_cutouts.is_empty() {
+                cutouts
+            } else {
+                let mut all = Vec::clone(&cutouts);
+                all.extend(own_cutouts);
+                Rc::new(all)
+            };
             let declared = if self.rules_set_paint {
                 declared
             } else {
@@ -431,7 +521,7 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
                     .iter()
                     .filter(|(property, _)| !declared.has(*property))
                 {
-                    self.add_edges(&mut edges, property, id, false, levels);
+                    self.add_edges(&mut edges, property, id, false, levels)?;
                 }
             }
             if node.tag_name().name() == "use" {
@@ -448,6 +538,7 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
                             levels: levels + 1,
                             direct,
                             declared,
+                            cutouts: Rc::clone(&cutouts),
                         });
                     }
                 }
@@ -461,6 +552,7 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
                         levels: levels + 1,
                         direct,
                         declared,
+                        cutouts: Rc::clone(&cutouts),
                     }),
             );
         }
@@ -476,19 +568,30 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
     }
 
     fn add_edges(
-        &self,
+        &mut self,
         edges: &mut EdgeSet,
         property: Property,
         id: &str,
         direct: bool,
         levels: usize,
-    ) {
+    ) -> Result<(), SvgError> {
         let cost = REFERENCE_HOP_LEVELS + levels;
-        let targets = self.resources_by_id.get(id).into_iter().flatten();
-        for &to in targets.filter(|&&to| self.resources[to].kind == property.resource()) {
+        let targets: Vec<usize> = self
+            .resources_by_id
+            .get(id)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&to| self.resources[to].kind == property.resource())
+            .collect();
+        // Charged before the edges are kept, so resources that share an `id`
+        // cannot make more of them than the check may spend.
+        self.charge_visits(EDGE_VISITS * targets.len())?;
+        for to in targets {
             let known = edges.entry((to, property, direct)).or_default();
             *known = (*known).max(cost);
         }
+        Ok(())
     }
 
     /// Takes `amount` visits from the work this check may do.
@@ -511,6 +614,11 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
             let mut seen = HashSet::from([index]);
             let mut pending = vec![index];
             while let Some(current) = pending.pop() {
+                // `usvg` takes the content of the first pattern in the chain
+                // that has some, and does not add the content of the rest.
+                if self.resources[current].node.children().any(is_drawn) {
+                    continue;
+                }
                 let targets: Vec<usize> = href_id(self.resources[current].node)
                     .and_then(|id| self.resources_by_id.get(id))
                     .into_iter()
@@ -661,6 +769,18 @@ fn declaration_references<'a>(
         }
     }
     references
+}
+
+/// The `mask` and `clip-path` properties that the declarations `(name, value)`
+/// set to `inherit`.
+fn declaration_inherits<'a>(
+    declarations: impl Iterator<Item = (&'a str, &'a str)>,
+) -> Vec<Property> {
+    declarations
+        .filter(|(_, value)| value.trim().eq_ignore_ascii_case("inherit"))
+        .filter_map(|(name, _)| Property::from_name(name))
+        .filter(|&property| Inheritance::Cutout.keeps(property))
+        .collect()
 }
 
 /// The ids that the `url(#id)` functions in `value` name.

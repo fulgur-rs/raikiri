@@ -163,7 +163,9 @@ are bounded the same way, because `usvg` converts a resource by converting the
 elements in it and then the resource they refer to, without counting depth. The
 parse builds a graph of the references that the attributes, the `style`
 attributes, the matching rules of the `<style>` elements, the `use` copies, the
-`fill` and `stroke` a resource inherits and the `href` of a pattern make, and
+`fill` and `stroke` a resource inherits, the `mask` and `clip-path` it takes
+from an ancestor with `inherit` and the `href` of a pattern make (the content
+of the first pattern in an `href` chain that has any, as `usvg` takes it), and
 fails with `SvgError::InvalidDocument` when it holds a cycle that `usvg` does
 not break, or a chain deeper than 512 levels of element nesting (a reference
 counts as four levels on top of the nesting of the element that makes it). A
@@ -176,7 +178,11 @@ inside itself. A shape or text in a resource counts as inheriting the `fill` and
 resource, sets that property itself with an attribute or a `style` attribute.
 The graph otherwise takes what an element could inherit or match, so a document
 whose `fill` is overridden by a nearer ancestor, or by a style rule, before it
-reaches a pattern that the paint refers to can be refused too.
+reaches a pattern that the paint refers to can be refused too. So can one with
+three or more resources that share an `id` and refer to it, because every
+resource of that `id` counts as the one `usvg` picks. The edges of the graph
+are paid for from the same work limit as the elements it visits, so many
+resources that share an `id` are refused instead of exhausting memory.
 
 The declarations a host resolves for descendants of an inline SVG can refer to
 resources the document does not. The source that preparing builds from them is

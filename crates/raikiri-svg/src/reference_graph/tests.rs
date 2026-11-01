@@ -414,6 +414,110 @@ fn a_shape_that_may_inherit_the_paint_above_the_pattern_is_refused() {
     }
 }
 
+/// Three resources that each sit in a group whose `property` refers to the
+/// next, and that take it with `inherit`: `attributes` and `style` say how.
+fn inherit_ring(tag: &str, property: &str, attributes: &str, style: &str) -> String {
+    let groups: String = (0..3)
+        .map(|index| {
+            format!(
+                "<g {property}='url(#r{})'><{tag} id='r{index}' {attributes}>\
+                 <rect width='5' height='5'/></{tag}></g>",
+                (index + 1) % 3
+            )
+        })
+        .collect();
+    svg(
+        "",
+        &format!(
+            "{style}<defs>{groups}</defs><rect width='20' height='20' {property}='url(#r0)'/>"
+        ),
+    )
+}
+
+#[test]
+fn a_reference_that_inherit_takes_from_the_parent_is_followed() {
+    for (tag, property) in [("mask", "mask"), ("clipPath", "clip-path")] {
+        for (attributes, style) in [
+            (format!("{property}='inherit'"), String::new()),
+            (format!("style='{property}: Inherit'"), String::new()),
+            (
+                String::new(),
+                format!("<style>{tag} {{ {property}: inherit }}</style>"),
+            ),
+        ] {
+            assert_cycle(&inherit_ring(tag, property, &attributes, &style));
+        }
+        // Without `inherit` the groups hold no reference of the resources.
+        assert_drawn(&inherit_ring(tag, property, "", ""));
+        // `inherit` takes no reference where nothing above has one, and one that
+        // leads on to a resource that holds none closes no cycle.
+        assert_drawn(&svg(
+            "",
+            &format!(
+                "<defs><{tag} id='a' {property}='inherit'><rect width='5' height='5'/></{tag}>\
+                 <g {property}='url(#c)'><{tag} id='b' {property}='inherit'/></g>\
+                 <{tag} id='c'/></defs>\
+                 <rect width='20' height='20' {property}='url(#a)'/>"
+            ),
+        ));
+    }
+}
+
+#[test]
+fn resources_that_share_an_id_cannot_make_more_edges_than_the_check_may_spend() {
+    let masks: String = (0..2000).map(|_| "<mask id='a' mask='url(#a)'/>").collect();
+    assert_refused(
+        &svg(
+            "",
+            &format!("{masks}<rect width='20' height='20' mask='url(#a)'/>"),
+        ),
+        "resource limit exceeded",
+    );
+    // A couple that share an id are still looked at, and are `usvg`'s to break.
+    assert_drawn(&svg(
+        "",
+        "<mask id='a' mask='url(#a)'/><mask id='a' mask='url(#a)'/>\
+         <rect width='20' height='20' mask='url(#a)'/>",
+    ));
+}
+
+#[test]
+fn a_pattern_with_content_of_its_own_ignores_the_content_of_the_one_it_names() {
+    let pattern = |extra: &str, content: &str| {
+        format!(
+            "<pattern {extra} width='5' height='5' patternUnits='userSpaceOnUse'>{content}</pattern>"
+        )
+    };
+    let back = "<rect width='5' height='5' fill='url(#p)'/>";
+    let own = "<rect width='5' height='5' fill='red'/>";
+    let drawn = |first: &str, second: &str, third: &str| {
+        svg(
+            "",
+            &format!(
+                "<defs>{first}{second}{third}</defs><rect width='20' height='20' fill='url(#p)'/>"
+            ),
+        )
+    };
+    // `usvg` draws the content of `p` and leaves `q` out.
+    assert_drawn(&drawn(
+        &pattern("id='p' href='#q'", own),
+        &pattern("id='q'", back),
+        "",
+    ));
+    // The first pattern with content in the chain is the one that counts.
+    assert_drawn(&drawn(
+        &pattern("id='p' href='#q'", ""),
+        &pattern("id='q' href='#r'", own),
+        &pattern("id='r'", back),
+    ));
+    // With none before it, the pattern that refers back is the one that counts.
+    assert_cycle(&drawn(
+        &pattern("id='p' href='#q'", ""),
+        &pattern("id='q' href='#r'", ""),
+        &pattern("id='r'", back),
+    ));
+}
+
 #[test]
 fn a_pattern_without_content_takes_the_references_of_the_one_it_names() {
     let pattern = |extra: &str, content: &str| {
