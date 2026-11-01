@@ -18,7 +18,7 @@ use raikiri_layout_style::values::{
     BoxSizing, Dimension, Display, ExpandedDimension, ExpandedLengthPercentageAuto, LengthIdentity,
     LengthPercentage, LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::fit_content_room;
@@ -705,8 +705,9 @@ fn padding_border_sum(tree: &LayoutSession<'_>, idx: usize, containing_width: f3
     .sum_axes()
 }
 
-/// The border-box sizes of the out-of-flow `candidates` with an aspect ratio
-/// that are smaller than the padding and border they hold, raised to them.
+/// The border-box sizes of the `candidates`, out-of-flow boxes or items of a
+/// grid, with an aspect ratio that are smaller than the padding and border they
+/// hold, raised to them.
 ///
 /// A border box is no smaller than its padding and border, and the ratio
 /// relates the box that results. The library derives the size the box does not
@@ -726,7 +727,7 @@ pub(super) fn ratio_stated_size_clamps(
             continue;
         }
         let edges = padding_border_sum(tree, idx, containing_size.width);
-        let key = tree.nodes.box_key(idx).expect("live out-of-flow box");
+        let key = tree.nodes.box_key(idx).expect("live box");
         let size = style.size();
         // The ratio derives a size only from the one the box states in the
         // other axis, so a box that states both has nothing to relate.
@@ -764,8 +765,8 @@ pub(super) fn ratio_stated_size_clamps(
     clamps
 }
 
-/// Whether the `min-height` of the out-of-flow box `idx`, if it states one, is
-/// no taller than the border-box height the box states. Such a minimum leaves
+/// Whether the `min-height` of the box `idx`, if it states one, is no taller
+/// than the border-box height the box states. Such a minimum leaves
 /// the height as it is, and so the width the ratio gives for it.
 fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size<f32>) -> bool {
     let style = tree.physical_style(idx);
@@ -784,19 +785,31 @@ fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size
     }
 }
 
-/// The automatic minimum width of the out-of-flow `candidates` whose width
-/// follows from a height they state through their aspect ratio: their
-/// min-content width, which the content raises that width to unless the box
-/// scrolls or states a `min-width` (CSS Sizing 4 §5.1). The `max-width` of the
-/// box caps it.
+/// Whether the box `idx` has a preferred aspect ratio of its own and a layout
+/// that [`ratio_stated_size_clamps`] and [`ratio_width_floors`] can reason
+/// about: not a table, not replaced, not in a vertical writing mode, and with
+/// no limits on its content.
+fn is_plain_ratio_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].content_limits == ContentLimits::NONE
+        && !is_table_content_limits(tree, idx)
+        && !is_replaced_content(tree, idx)
+        && !tree.has_vertical_writing_mode(idx)
+        && tree.physical_style(idx).stated_aspect_ratio().is_some()
+}
+
+/// The automatic minimum width of the `candidates`, out-of-flow boxes or items
+/// of a grid, whose width follows from a height they state through their
+/// aspect ratio: their min-content width, which the content raises that width
+/// to unless the box scrolls or states a `min-width` (CSS Sizing 4 §5.1). The
+/// `max-width` of the box caps it.
 ///
-/// The library takes the width the ratio gives for an out-of-flow box as final,
-/// so a box whose content needs more room is narrower than its content. It
-/// clamps that width to the `min-width` of the box, so the floor goes there. A
-/// minimum width carries across the ratio into a minimum height, which a box
-/// that states its height must not get, so the minimum height is `0`. A box
-/// that states a `min-height` taller than its height keeps the minimum width
-/// that carries across the ratio from it, and is left alone.
+/// The library takes the width the ratio gives for such a box as final, so a
+/// box whose content needs more room is narrower than its content. It clamps
+/// that width to the `min-width` of the box, so the floor goes there. A minimum
+/// width carries across the ratio into a minimum height, which a box that
+/// states its height must not get, so the minimum height is `0`. A box that
+/// states a `min-height` taller than its height keeps the minimum width that
+/// carries across the ratio from it, and is left alone.
 ///
 /// The width is measured without the `width`, `min-width`, `max-width` and
 /// aspect ratio of the box, at its min-content size.
@@ -811,16 +824,11 @@ pub(super) fn ratio_width_floors(
         .copied()
         .filter(|&candidate| {
             let idx = usize::from(candidate);
-            if tree.nodes[idx].content_limits != ContentLimits::NONE
-                || is_table_content_limits(tree, idx)
-                || is_replaced_content(tree, idx)
-                || tree.has_vertical_writing_mode(idx)
-            {
+            if !is_plain_ratio_box(tree, idx) {
                 return false;
             }
             let style = tree.physical_style(idx);
-            style.stated_aspect_ratio().is_some()
-                && style.size().width.is_auto()
+            style.size().width.is_auto()
                 && style.min_size().width.is_auto()
                 && min_height_is_met(tree, idx, containing_size)
                 && !style.overflow().x.is_scroll_container()
@@ -858,7 +866,7 @@ pub(super) fn ratio_width_floors(
                     .maybe_resolve(Some(containing_width))
                     .map(|maximum| maximum + adjustment);
                 let floor = maximum.map_or(minimum, |maximum| minimum.min(maximum));
-                let key = tree.nodes.box_key(idx).expect("live out-of-flow box");
+                let key = tree.nodes.box_key(idx).expect("live box");
                 let floors = [
                     (LengthProperty::MinWidth, (floor - adjustment).max(0.0)),
                     (LengthProperty::MinHeight, 0.0),
@@ -874,6 +882,107 @@ pub(super) fn ratio_width_floors(
                 })
             })
             .collect()
+    })
+}
+
+/// Whether a size, a minimum or maximum size, or an edge of the box `idx`
+/// depends on the size of its containing block.
+///
+/// The sizes are resolved against a small, a medium and a large basis, so that
+/// a `calc()` or `min()` that clamps at one of them still tells.
+fn depends_on_containing_block(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let sample = |basis: f32| {
+        let style = tree.physical_style(idx);
+        let basis = Some(basis);
+        let (size, min, max) = (style.size(), style.min_size(), style.max_size());
+        let edges = style.padding().resolve_or_zero(basis) + style.border().resolve_or_zero(basis);
+        [
+            size.width.maybe_resolve(basis),
+            size.height.maybe_resolve(basis),
+            min.width.maybe_resolve(basis),
+            min.height.maybe_resolve(basis),
+            max.width.maybe_resolve(basis),
+            max.height.maybe_resolve(basis),
+            Some(edges.left),
+            Some(edges.right),
+            Some(edges.top),
+            Some(edges.bottom),
+        ]
+    };
+    let first = sample(0.0);
+    [1.0e3, 1.0e6]
+        .into_iter()
+        .any(|basis| sample(basis) != first)
+}
+
+/// The in-flow items of the grid `node_id` that take their width from a height
+/// they state through their aspect ratio, and the overrides of those, as
+/// [`ratio_stated_size_clamps`] and [`ratio_width_floors`] give them for an
+/// out-of-flow box.
+///
+/// The grid algorithm sizes such an item from its stated size and ratio before
+/// the content has a say, as it does for an out-of-flow box. An item whose sizes
+/// depend on the grid area keeps its authored sizes: the area is not known until
+/// the tracks are.
+fn grid_item_ratio_overrides(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+) -> (Vec<usize>, Vec<(BoxKey, OwnedPropertyOverride)>) {
+    // A vertical container runs its algorithm on the axes of its writing mode,
+    // which these overrides, written for a width along the columns, do not
+    // follow.
+    if super::grid_oof::right_to_left(tree, usize::from(node_id)).is_some() {
+        return (Vec::new(), Vec::new());
+    }
+    let items = tree
+        .child_ids(node_id)
+        .filter(|&child| {
+            let idx = usize::from(child);
+            tree.nodes[idx].layout_display() != Display::None
+                && !is_oof_box(tree, idx)
+                && !tree.context.content_limit_probes.contains(&idx)
+                && is_plain_ratio_box(tree, idx)
+                && !depends_on_containing_block(tree, idx)
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let no_area = Size {
+        width: 0.0,
+        height: 0.0,
+    };
+    let mut entries = ratio_stated_size_clamps(tree, &items, no_area);
+    entries.extend(ratio_width_floors(tree, &items, no_area));
+    let overridden = entries.iter().map(|(key, _)| *key).collect::<HashSet<_>>();
+    let items = items
+        .into_iter()
+        .map(usize::from)
+        .filter(|&idx| overridden.contains(&tree.nodes.box_key(idx).expect("live grid item")))
+        .collect();
+    (items, entries)
+}
+
+/// Run `layout`, the layout of the grid `node_id`, with the overrides of
+/// [`grid_item_ratio_overrides`] in place for the items they name.
+///
+/// The overrides change the sizes of the items and so what their boxes measure,
+/// so each item's caches are kept apart while they last.
+pub(super) fn with_grid_item_ratio_overrides(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> LayoutOutput,
+) -> LayoutOutput {
+    let (items, entries) = grid_item_ratio_overrides(tree, node_id);
+    if entries.is_empty() {
+        return layout(tree);
+    }
+    with_saved_probe_caches(tree, items.len(), |tree, saved| {
+        for idx in items {
+            saved.push((idx, tree.take_layout_cache(idx)));
+        }
+        tree.push_local_overrides(entries);
+        layout(tree)
     })
 }
 

@@ -4219,41 +4219,44 @@ fn grid_layout_sized(
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     let right_to_left = grid_oof::right_to_left(tree, idx);
-    let mut output = content_limits::with_grid_item_content_limits(
-        tree,
-        node_id,
-        inputs,
-        parent_size,
-        |tree, node_id, inputs| {
-            // The items are still where the algorithm placed them, on the
-            // axes it ran on, when the baseline is taken from one of them.
-            let algorithm = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
-                let output = compute_grid_layout(tree, node_id, inputs);
-                grid_baseline::with_first_baseline(
-                    tree,
-                    usize::from(node_id),
-                    right_to_left.is_some(),
-                    inputs.run_mode,
-                    output,
-                )
-            };
-            if right_to_left.is_some() {
-                // The container runs its algorithm on the axes of its own
-                // writing mode.
-                tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
-                    let inputs = vertical_block::with_atomic_fit_content(
-                        tree,
-                        node_id,
-                        inputs,
-                        compute_grid_layout,
-                    );
+    let mut output = content_limits::with_grid_item_ratio_overrides(tree, node_id, |tree| {
+        content_limits::with_grid_item_content_limits(
+            tree,
+            node_id,
+            inputs,
+            parent_size,
+            |tree, node_id, inputs| {
+                // The items are still where the algorithm placed them, on the
+                // axes it ran on, when the baseline is taken from one of them.
+                let algorithm =
+                    |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
+                        let output = compute_grid_layout(tree, node_id, inputs);
+                        grid_baseline::with_first_baseline(
+                            tree,
+                            usize::from(node_id),
+                            right_to_left.is_some(),
+                            inputs.run_mode,
+                            output,
+                        )
+                    };
+                if right_to_left.is_some() {
+                    // The container runs its algorithm on the axes of its own
+                    // writing mode.
+                    tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                        let inputs = vertical_block::with_atomic_fit_content(
+                            tree,
+                            node_id,
+                            inputs,
+                            compute_grid_layout,
+                        );
+                        algorithm(tree, node_id, inputs)
+                    })
+                } else {
                     algorithm(tree, node_id, inputs)
-                })
-            } else {
-                algorithm(tree, node_id, inputs)
-            }
-        },
-    );
+                }
+            },
+        )
+    });
     let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);

@@ -3,9 +3,9 @@
 //! raises that width to its min-content width unless the container scrolls or
 //! states a `min-width`, and a `max-width` caps it (CSS Sizing 4 section 5.1).
 //! The ratio relates the border box, which is no smaller than the padding and
-//! border it holds. The expected boxes are the ones Chromium lays out for the
-//! same markup, with an 8px body margin and a green border of 25px around the
-//! items.
+//! border it holds. A grid item of any kind follows the same rule. The expected
+//! boxes are the ones Chromium lays out for the same markup, with an 8px body
+//! margin and a green border of 25px around the items.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -548,4 +548,283 @@ fn nested_containers_and_vertical_writing_follow_the_ratio() {
         ),
         &[("o", [8.0, 8.0, 100.0, 50.0])],
     );
+}
+
+/// A grid container whose columns are `template` and whose item `o` has the
+/// given `css` and holds `items`.
+fn grid_item(template: &str, css: &str, items: &str) -> String {
+    format!(
+        "<div style=\"display:grid;{template}\">\
+         <div id=o style=\"{css};{BORDER}\">{items}</div></div>"
+    )
+}
+
+/// An item 100px wide, which the 25px border makes 150px.
+const WIDE: &str = "<div id=i style=\"width:100px;height:20px\"></div>";
+
+/// The border box of the item `o` and its child `i` when the item is raised to
+/// the 150px of `WIDE`.
+fn wide_item(x: f32) -> [(&'static str, [f32; 4]); 2] {
+    [
+        ("o", [x, 8.0, 150.0, 50.0]),
+        ("i", [x + 25.0, 33.0, 100.0, 20.0]),
+    ]
+}
+
+#[test]
+fn a_grid_item_takes_the_width_of_its_ratio_raised_to_its_content() {
+    // The ratio gives 100px, which the child and the border raise to 150px,
+    // whatever the track is: even a 60px one is overflowed.
+    for template in [
+        "grid-template-columns:max-content",
+        "grid-template-columns:min-content",
+        "grid-template-columns:1fr",
+        "grid-template-columns:300px",
+        "grid-template-columns:60px",
+        "",
+    ] {
+        assert_boxes(&grid_item(template, RATIO, WIDE), &wide_item(8.0));
+    }
+    assert_boxes(
+        &format!(
+            "<div style=\"display:inline-grid\"><div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div></div>"
+        ),
+        &wide_item(8.0),
+    );
+    // The small child does not shrink it below the 100px of the ratio.
+    assert_boxes(
+        &grid_item(
+            "grid-template-columns:max-content",
+            RATIO,
+            "<div id=i style=\"width:5px;height:5px\"></div>",
+        ),
+        &[
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+            ("i", [33.0, 33.0, 5.0, 5.0]),
+        ],
+    );
+    // Text breaks at the room it is given, so the longest word of 40px with
+    // the border needs less than the ratio gives.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:inline-grid\"><div id=o style=\"{RATIO};{BORDER};font:10px Ahem\">XXXX XXXX</div></div>"
+        ),
+        &[("o", [8.0, 8.0, 100.0, 50.0])],
+    );
+}
+
+#[test]
+fn a_grid_item_is_placed_by_the_width_it_takes() {
+    let column = "grid-template-columns:300px";
+    // The item is centered or at the end in a 300px track by its 150px.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;{column};justify-items:center\">\
+             <div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div></div>"
+        ),
+        &wide_item(83.0),
+    );
+    assert_boxes(
+        &grid_item(column, &format!("justify-self:end;{RATIO}"), WIDE),
+        &wide_item(158.0),
+    );
+    assert_boxes(
+        &grid_item(column, &format!("justify-self:start;{RATIO}"), WIDE),
+        &wide_item(8.0),
+    );
+    // The track of a max-content column is as wide as the item, so the next
+    // one starts after it, and a row gap or a spanned track keeps the width.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;grid-template-columns:max-content max-content\">\
+             <div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div>\
+             <div id=p style=\"width:30px;height:10px\"></div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+            ("p", [158.0, 8.0, 30.0, 10.0]),
+        ],
+    );
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;gap:10px\">\
+             <div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div>\
+             <div id=p style=\"width:30px;height:10px\"></div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+            ("p", [8.0, 68.0, 30.0, 10.0]),
+        ],
+    );
+    assert_boxes(
+        &grid_item(
+            "grid-template-columns:50px 50px 50px",
+            &format!("grid-column:1/3;{RATIO}"),
+            WIDE,
+        ),
+        &wide_item(8.0),
+    );
+    // A row of 100px or a stretch along the rows leaves the width alone.
+    for css in [RATIO.to_owned(), format!("align-self:stretch;{RATIO}")] {
+        assert_boxes(
+            &format!(
+                "<div style=\"display:grid;grid-template-rows:100px;grid-template-columns:max-content\">\
+                 <div id=o style=\"{css};{BORDER}\">{WIDE}</div></div>"
+            ),
+            &wide_item(8.0),
+        );
+    }
+}
+
+#[test]
+fn a_grid_item_keeps_the_height_it_states_in_an_auto_row() {
+    // The minimum width the item gets must not carry across the ratio into a
+    // minimum height: the tall child overflows the 50px item, and the auto row
+    // is as high as the item states.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;grid-template-columns:max-content\">\
+             <div id=o style=\"{RATIO};{BORDER}\">\
+             <div id=i style=\"width:100px;height:200px\"></div></div>\
+             <div id=p style=\"width:30px;height:10px\"></div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+            ("i", [33.0, 33.0, 100.0, 200.0]),
+            ("p", [8.0, 58.0, 30.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_grid_item_whose_edges_follow_its_area_or_that_is_hidden_keeps_the_ratio_width() {
+    let child = "<div id=i style=\"width:10px;height:10px\"></div>";
+    // Percentage padding, also one that a `calc()` clamps to nothing at the
+    // width of this track, is not known before the tracks are.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;grid-template-columns:300px\">\
+             <div id=o style=\"aspect-ratio:2/1;height:50px;padding:5%\">{child}</div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+            ("i", [23.0, 23.0, 10.0, 10.0]),
+        ],
+    );
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;grid-template-columns:300px\">\
+             <div id=o style=\"aspect-ratio:2/1;height:50px;padding:calc(1% - 10px)\">{child}</div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+            ("i", [8.0, 8.0, 10.0, 10.0]),
+        ],
+    );
+    // A hidden item takes no part, whatever it holds.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;grid-template-columns:max-content\">\
+             <div style=\"display:none;{RATIO};{BORDER}\">{WIDE}</div>\
+             <div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div></div>"
+        ),
+        &wide_item(8.0),
+    );
+}
+
+#[test]
+fn a_grid_item_that_scrolls_or_has_a_limit_keeps_the_width_the_limit_gives() {
+    let template = "grid-template-columns:max-content";
+    assert_boxes(
+        &grid_item(template, &format!("max-width:90px;{RATIO}"), WIDE),
+        &[
+            ("o", [8.0, 8.0, 90.0, 50.0]),
+            ("i", [33.0, 33.0, 100.0, 20.0]),
+        ],
+    );
+    for css in ["min-width:0", "overflow:hidden"] {
+        assert_boxes(
+            &grid_item(template, &format!("{css};{RATIO}"), WIDE),
+            &[
+                ("o", [8.0, 8.0, 100.0, 50.0]),
+                ("i", [33.0, 33.0, 100.0, 20.0]),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_grid_item_follows_its_box_sizing_padding_and_children() {
+    let template = "grid-template-columns:max-content";
+    // A content-box height of 40px is 90px with the border, and 2 / 1 gives 80px
+    // of content and 130px of box, which the child raises to 150px.
+    assert_boxes(
+        &grid_item(template, &format!("box-sizing:content-box;{RATIO}"), WIDE),
+        &[("o", [8.0, 8.0, 150.0, 90.0])],
+    );
+    // Padding of 20px and a border of 5px make the 30px height 50px.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;{template}\"><div id=o style=\"aspect-ratio:2/1;height:30px;\
+             padding:20px;border:solid 5px green\">{WIDE}</div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+            ("i", [33.0, 33.0, 100.0, 20.0]),
+        ],
+    );
+    // A percentage width of a child is of the item, not a minimum of it.
+    assert_boxes(
+        &grid_item(
+            template,
+            RATIO,
+            "<div id=i style=\"width:50%;height:20px\"></div>",
+        ),
+        &[
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+            ("i", [33.0, 33.0, 25.0, 20.0]),
+        ],
+    );
+    // A box with a ratio of its own inside the item is as wide as its child.
+    assert_boxes(
+        &grid_item(
+            template,
+            RATIO,
+            "<div id=p style=\"aspect-ratio:3/1;height:20px;border:solid 5px red\">\
+             <div id=i style=\"width:90px;height:5px\"></div></div>",
+        ),
+        &[
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+            ("p", [33.0, 33.0, 100.0, 20.0]),
+            ("i", [38.0, 38.0, 90.0, 5.0]),
+        ],
+    );
+    // An absolutely positioned sibling takes no part.
+    assert_boxes(
+        &format!(
+            "<div style=\"display:grid;{template};position:relative\">\
+             <div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div>\
+             <div id=p style=\"position:absolute;left:0;top:0;width:10px;height:10px\"></div></div>"
+        ),
+        &[
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+            ("p", [8.0, 8.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_flex_or_grid_container_in_a_grid_follows_the_minimum_of_its_ratio() {
+    // The ratio gives 100px, and the items need 70px with the 50px of border.
+    for css in ["display:flex", "display:grid;grid-auto-flow:column"] {
+        for template in [
+            "grid-template-columns:max-content",
+            "grid-template-columns:300px",
+        ] {
+            assert_boxes(
+                &grid_item(template, &format!("{css};{RATIO}"), ITEMS),
+                &row(120.0),
+            );
+        }
+    }
 }
