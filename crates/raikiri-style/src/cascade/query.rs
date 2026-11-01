@@ -281,7 +281,10 @@ pub struct SelectorMatcher<'a, D: StyleDom> {
 impl<D: StyleDom> SelectorMatcher<'_, D> {
     /// Whether `elem_id` matches any selector in the list. `ancestors`
     /// follows the same contract as [`SelectorQuery::matches`]: `elem_id`'s
-    /// ancestor element ids, root side first, ending with its parent.
+    /// ancestor element ids, root side first, ending with its parent. Calls
+    /// on one matcher must give an element the same `ancestors` every time,
+    /// because the language, direction and `:has()` results it memoizes are
+    /// shared between them.
     pub fn matches(&self, elem_id: StyleNodeId, ancestors: &[StyleNodeId]) -> bool {
         self.try_matches(elem_id, ancestors)
             .expect("query matching has no selector work limit")
