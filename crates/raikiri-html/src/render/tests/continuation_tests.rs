@@ -595,7 +595,10 @@ fn a_bordered_body_reaches_every_page_of_one_width() {
 #[test]
 fn a_bordered_paragraph_body_reaches_every_page() {
     // Seven 50px words fit in 360px, so the body's 200 words take 29 10px
-    // lines: with its 1px borders it ends 132px down the second page.
+    // lines. The first page holds fifteen of them below the 1px border: the
+    // sixteenth would cross the page end and starts the second page, which
+    // holds the other fourteen, as in Chromium, and the bottom border: the body
+    // ends 141px down it.
     let out = run(&format!(
         "{}<style>body {{ border: 1px solid; font: 10px/10px Ahem }}</style>{}",
         PAGES.replace("margin-left: 220px", "margin-top: 20px"),
@@ -603,7 +606,7 @@ fn a_bordered_paragraph_body_reaches_every_page() {
     ));
     assert_eq!(
         body_on_pages(&out),
-        vec![Some((20.0, 160.0)), Some((20.0, 132.0))]
+        vec![Some((20.0, 160.0)), Some((20.0, 141.0))]
     );
 }
 
