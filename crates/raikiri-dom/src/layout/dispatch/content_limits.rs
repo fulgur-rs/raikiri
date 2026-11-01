@@ -865,10 +865,11 @@ fn items_held_to_minimum_width(
                 return None;
             }
             let style = tree.physical_style(idx);
-            // An item with a preferred aspect ratio takes its height from the
-            // width it is held to.
+            // Replaced items retain their intrinsic sizing contract. Other
+            // ratio items are measured for width alone here; their height is
+            // recomputed with the authored style at the final track width.
             if !style.size().width.is_auto()
-                || style.stated_aspect_ratio().is_some()
+                || (style.stated_aspect_ratio().is_some() && is_replaced_content(tree, idx))
                 || super::is_scroll_container(style.overflow())
             {
                 return None;

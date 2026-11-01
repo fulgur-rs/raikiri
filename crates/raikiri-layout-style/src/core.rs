@@ -155,6 +155,12 @@ impl LayoutStyleView<'_> {
     /// The preferred aspect ratio after projection into the returned axes.
     #[inline]
     pub fn aspect_ratio(&self) -> Option<f32> {
+        if matches!(
+            self.context.grid_item_ratio,
+            crate::GridItemRatio::MeasuredByItem { .. }
+        ) {
+            return None;
+        }
         match self.context.flex_item_ratio {
             FlexItemRatio::CrossFollowsMain => return None,
             FlexItemRatio::BasisFromCross => return self.stated_aspect_ratio(),

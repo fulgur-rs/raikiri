@@ -33,11 +33,21 @@ impl LayoutStyleView<'_> {
     /// Alignment read by project block primitives, independent of trait defaults.
     #[inline]
     pub fn bridge_align_self(&self) -> Option<values::AlignSelf> {
+        if let crate::GridItemRatio::MeasuredByItem { align_self, .. } =
+            self.context.grid_item_ratio
+        {
+            return Some(align_self);
+        }
         self.self_alignment(false)
     }
     /// Inline alignment read by project block primitives.
     #[inline]
     pub fn bridge_justify_self(&self) -> Option<values::AlignSelf> {
+        if let crate::GridItemRatio::MeasuredByItem { justify_self, .. } =
+            self.context.grid_item_ratio
+        {
+            return Some(justify_self);
+        }
         self.self_alignment(true)
     }
     /// The block-axis alignment of a box in the static-position rectangle of its
