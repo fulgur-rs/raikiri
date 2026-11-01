@@ -2836,12 +2836,23 @@ fn compute_inline_block_shrink_wrap(
     // definite one, takes its width from that height along its ratio, say for its
     // automatic minimum size. A container that wraps its items does not take the
     // height it stretches an item to as definite then.
+    //
+    // Nor does a container whose own height is not definite stretch an item
+    // with an `auto` height to anything: the height that Taffy still offers
+    // such an item is only its largest height, which its `max-*` sizes make,
+    // and it gives the item no width through the ratio.
+    let horizontal_row_item = leaf_intrinsic.is_some()
+        && !tree.has_vertical_writing_mode(idx)
+        && tree.in_row_flex_container(idx);
     let row_height = inputs.known_dimensions.height.filter(|_| {
         leaf_intrinsic.is_some()
             && !in_column_flex
             && inputs.sizing_mode == SizingMode::ContentSize
             && inputs.known_dimensions_are_definite.height
             && tree.in_row_flex_container(idx)
+            && !(horizontal_row_item
+                && leaf_style.size.height.is_auto()
+                && flex_item_percent_basis(tree, idx).is_some_and(|basis| basis.height.is_none()))
             && !tree.is_wrapping_stretch_hint(idx, &leaf_style, inputs.known_dimensions)
     });
     // The height that `height: stretch` gave a box with an aspect ratio is as
@@ -2868,12 +2879,22 @@ fn compute_inline_block_shrink_wrap(
             );
             style
         });
+    // An item of a row flex container that states no size, and has no height
+    // fixed for it, is measured for its content as it is sized outside a flex
+    // container: by its natural size within the `min-*` and `max-*` sizes it
+    // states, where the sizes of one axis carry over to the other along its
+    // ratio (CSS 2.1 §10.4).
+    let sized_by_its_bounds = horizontal_row_item
+        && row_height.is_none()
+        && inputs.sizing_mode == SizingMode::ContentSize
+        && leaf_style.size.width.is_auto()
+        && leaf_style.size.height.is_auto();
     let leaf_auto_sides = leaf_intrinsic.and_then(|natural| {
         replaced_size::auto_sides_size(
             sides_style.as_ref().unwrap_or(&leaf_style),
             &LayoutInput {
                 known_dimensions: Size::NONE,
-                sizing_mode: if in_column_flex || row_height.is_some() {
+                sizing_mode: if in_column_flex || row_height.is_some() || sized_by_its_bounds {
                     SizingMode::InherentSize
                 } else {
                     inputs.sizing_mode
