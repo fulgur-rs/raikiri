@@ -444,3 +444,109 @@ fn a_container_that_is_an_item_of_another_one_is_as_wide_as_its_own_items_make_i
         );
     }
 }
+
+#[test]
+fn an_item_that_shrinks_keeps_its_automatic_minimum_size_in_a_container_of_the_keyword_width() {
+    // The text of 30px cannot break, so the item is not narrower than the 30px
+    // it states, or than the width it states if that is less, whatever the 0
+    // of its flex basis would leave it.
+    let block = "<div style=\"width:30px;height:10px\"></div>";
+    for container_css in [
+        "width:min-content",
+        "width:max-content",
+        "display:inline-flex",
+        "float:left",
+    ] {
+        for flex_css in [
+            "flex:0 1 0px",
+            "flex:0 1 10px",
+            "flex:0 0 0px",
+            "flex:1 1 0px",
+        ] {
+            for content in ["XXX", block] {
+                assert_boxes(
+                    &flex(
+                        container_css,
+                        &item("i", &format!("{flex_css};width:30px;height:20px"), content),
+                    ),
+                    [80.0, 70.0],
+                    &[("i", [33.0, 33.0, 30.0, 20.0])],
+                );
+            }
+        }
+        assert_boxes(
+            &flex(
+                container_css,
+                &item("i", "flex:0 1 0px;width:10px;height:20px", "XXX"),
+            ),
+            [60.0, 70.0],
+            &[("i", [33.0, 33.0, 10.0, 20.0])],
+        );
+        // An item that scrolls has no automatic minimum size.
+        assert_boxes(
+            &flex(
+                container_css,
+                &item(
+                    "i",
+                    "flex:0 1 0px;width:30px;height:20px;overflow:hidden",
+                    "XXX",
+                ),
+            ),
+            [50.0, 70.0],
+            &[("i", [33.0, 33.0, 0.0, 20.0])],
+        );
+    }
+}
+
+#[test]
+fn the_automatic_minimum_size_of_an_item_that_shrinks_follows_its_box_in_a_container_of_the_keyword_width()
+ {
+    // Each item holds the text of 30px, which cannot break.
+    for container_css in [
+        "width:min-content",
+        "width:max-content",
+        "display:inline-flex",
+        "float:left",
+    ] {
+        for (item_css, container_width, item_box) in [
+            // The padding is in the 30px that the item states.
+            ("padding:0 5px", 80.0, [33.0, 33.0, 30.0, 20.0]),
+            ("border:solid 5px blue", 80.0, [33.0, 33.0, 30.0, 20.0]),
+            // The padding is outside the 30px of the content box.
+            (
+                "box-sizing:content-box;padding:0 5px",
+                90.0,
+                [33.0, 33.0, 40.0, 20.0],
+            ),
+            ("margin:0 7px", 94.0, [40.0, 33.0, 30.0, 20.0]),
+            // The maximum width holds the automatic minimum size to 20px, and
+            // an explicit minimum width replaces it.
+            ("max-width:20px", 70.0, [33.0, 33.0, 20.0, 20.0]),
+            ("min-width:5px", 55.0, [33.0, 33.0, 5.0, 20.0]),
+        ] {
+            assert_boxes(
+                &flex(
+                    container_css,
+                    &item(
+                        "i",
+                        &format!("flex:0 1 0px;width:30px;height:20px;{item_css}"),
+                        "XXX",
+                    ),
+                ),
+                [container_width, 70.0],
+                &[("i", item_box)],
+            );
+        }
+        // A width that the flex basis does not lower is the width it is.
+        for flex_css in ["flex:0 1 50px", "flex:0 1 100px"] {
+            assert_boxes(
+                &flex(
+                    container_css,
+                    &item("i", &format!("{flex_css};width:30px;height:20px"), "XXX"),
+                ),
+                [80.0, 70.0],
+                &[("i", [33.0, 33.0, 30.0, 20.0])],
+            );
+        }
+    }
+}
