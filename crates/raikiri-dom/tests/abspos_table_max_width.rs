@@ -265,6 +265,141 @@ fn the_floor_holds_whatever_contains_the_table() {
     ]);
 }
 
+/// The absolutely positioned table `t` with `style`, whose only cell `d` holds
+/// `content`, in a grid container of 200px by 100px styled by `grid`.
+fn table_in_grid(grid: &str, style: &str, content: &str) -> String {
+    format!(
+        "<div style='display: grid; position: relative; width: 200px; height: 100px; {grid}'>\
+         <div id=t style='display: table; position: absolute; top: 0; {style}'>\
+         <div style='display: table-row'>\
+         <div id=d style='display: table-cell'>{content}</div></div></div></div>"
+    )
+}
+
+/// A table that names a grid area is as wide as its content whatever its
+/// `max-width` says, as the percentages of the box resolve against the width of
+/// that area rather than against the whole grid container.
+#[test]
+fn a_table_that_names_a_grid_area_is_not_narrower_than_its_content() {
+    const COLUMNS: &str = "grid-template-columns: 80px 120px";
+    let boxed = "border: 2px solid #00f; max-width: 5px";
+    check_boxes(&[
+        (
+            "the second column",
+            &table_in_grid(COLUMNS, &format!("grid-column: 2; {boxed}"), BOX),
+            &[("t", 80.0, 0.0, 14.0, 14.0), ("d", 82.0, 2.0, 10.0, 10.0)],
+        ),
+        (
+            "the first column",
+            &table_in_grid(COLUMNS, &format!("grid-column: 1; {boxed}"), BOX),
+            &[("t", 0.0, 0.0, 14.0, 14.0)],
+        ),
+        (
+            "both columns",
+            &table_in_grid(COLUMNS, &format!("grid-column: 1 / 3; {boxed}"), BOX),
+            &[("t", 0.0, 0.0, 14.0, 14.0)],
+        ),
+        (
+            "a row after the first",
+            &table_in_grid(
+                "grid-template-columns: 80px 120px; grid-template-rows: 30px 60px",
+                &format!("grid-column: 2; grid-row: 2; {boxed}"),
+                BOX,
+            ),
+            &[("t", 80.0, 30.0, 14.0, 14.0)],
+        ),
+        (
+            "a named line",
+            &table_in_grid(
+                "grid-template-columns: [a] 80px [b] 120px [c]",
+                &format!("grid-column: b / c; {boxed}"),
+                BOX,
+            ),
+            &[("t", 80.0, 0.0, 14.0, 14.0)],
+        ),
+        (
+            "text: as wide as the longest word",
+            &table_in_grid(COLUMNS, "grid-column: 2; max-width: 5px", "aaaa bbbb"),
+            &[("t", 80.0, 0.0, 40.0, 20.0)],
+        ),
+        (
+            "anchored to the right edge of the area",
+            &table_in_grid(
+                COLUMNS,
+                &format!("grid-column: 2; left: auto; right: 0; {boxed}"),
+                BOX,
+            ),
+            &[("t", 186.0, 0.0, 14.0, 14.0), ("d", 188.0, 2.0, 10.0, 10.0)],
+        ),
+        (
+            "centered in the area",
+            &table_in_grid(
+                COLUMNS,
+                &format!("grid-column: 2; justify-self: center; {boxed}"),
+                BOX,
+            ),
+            &[("t", 133.0, 0.0, 14.0, 14.0)],
+        ),
+        (
+            "a percentage max-width of the area: 9.6px of 120px",
+            &table_in_grid(
+                COLUMNS,
+                "grid-column: 2; border: 2px solid #00f; max-width: 8%",
+                BOX,
+            ),
+            &[("t", 80.0, 0.0, 14.0, 14.0)],
+        ),
+        (
+            "a percentage padding of the area: 12px of 120px",
+            &table_in_grid(COLUMNS, "grid-column: 2; padding: 10%; max-width: 5px", BOX),
+            &[("t", 80.0, 0.0, 34.0, 34.0), ("d", 92.0, 12.0, 10.0, 10.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_table_that_names_a_grid_area_of_a_vertical_grid_is_not_narrower_than_its_content() {
+    const ROWS: &str = "grid-template-rows: 80px 120px; writing-mode: vertical-rl";
+    let boxed = "border: 2px solid #00f; max-width: 5px";
+    check_boxes(&[
+        (
+            "the second row, which is on the left",
+            &table_in_grid(ROWS, &format!("grid-row: 2; {boxed}"), BOX),
+            &[("t", 106.0, 0.0, 14.0, 14.0), ("d", 108.0, 2.0, 10.0, 10.0)],
+        ),
+        (
+            "the first row, which is on the right",
+            &table_in_grid(ROWS, &format!("grid-row: 1; {boxed}"), BOX),
+            &[("t", 186.0, 0.0, 14.0, 14.0)],
+        ),
+        (
+            "a percentage max-width of the area",
+            &table_in_grid(
+                ROWS,
+                "grid-row: 2; border: 2px solid #00f; max-width: 8%",
+                BOX,
+            ),
+            &[("t", 106.0, 0.0, 14.0, 14.0)],
+        ),
+    ]);
+}
+
+/// The column of a fixed table with a `width` is sized from the `width`, so
+/// its content says nothing about the narrowest it can be, in a grid area too.
+#[test]
+fn a_fixed_table_with_a_width_in_a_grid_area_ignores_its_content_for_the_floor() {
+    check_boxes(&[(
+        "the second column",
+        &table_in_grid(
+            "grid-template-columns: 80px 120px",
+            "grid-column: 2; table-layout: fixed; width: 100px; max-width: 5px; \
+             border: 2px solid #00f",
+            "<div style='width: 200px; height: 10px'></div>",
+        ),
+        &[("t", 80.0, 0.0, 9.0, 14.0)],
+    )]);
+}
+
 #[test]
 fn the_floor_is_the_min_content_width_of_every_column_and_the_caption() {
     check_boxes(&[
