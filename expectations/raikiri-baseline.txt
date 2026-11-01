@@ -3191,7 +3191,6 @@ css/css-pseudo/marker-and-other-pseudo-elements.html
 css/css-pseudo/marker-content-002.html
 css/css-pseudo/marker-content-003.html
 css/css-pseudo/marker-content-003b.html
-css/css-pseudo/marker-content-005.html
 css/css-pseudo/marker-content-006.html
 css/css-pseudo/marker-content-013.html
 css/css-pseudo/marker-content-015.html
