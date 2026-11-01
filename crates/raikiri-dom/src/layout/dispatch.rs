@@ -1437,7 +1437,9 @@ pub(crate) mod grid_baseline;
 mod grid_oof;
 mod inline_baseline;
 mod intrinsic_scopes;
-use intrinsic_scopes::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
+use intrinsic_scopes::{
+    with_flex_intrinsic_probe, with_flex_item_basis_bounds, wrapping_min_content_width,
+};
 mod oof;
 mod orthogonal_flow;
 mod replaced_size;
@@ -3400,6 +3402,52 @@ pub(crate) fn flex_layout(
     flex_layout_sized(tree, node_id, inputs)
 }
 
+/// Give a row flex container that wraps its items, and is laid out at its
+/// min-content width, the width CSS Flexbox 1 section 9.9.1 defines for it: that
+/// of its widest item, as each item breaks onto a line of its own. Taffy sums
+/// the flex base sizes of the items of a line, which is neither the width an
+/// item contributes nor bounded by its `max-width`.
+fn with_wrapping_min_content_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.available_space.width != AvailableSpace::MinContent
+        || inputs.known_dimensions.width.is_some()
+        || block_right_to_left(tree, idx).is_some()
+        || !{
+            let style = tree.physical_style(idx);
+            style.flex_direction_is_row() && style.flex_wraps()
+        }
+    {
+        return inputs;
+    }
+    let (size, inset, _) = tree.block_definite_size(idx, &inputs);
+    if size.width.is_some() {
+        return inputs;
+    }
+    let room = item_cross_room(
+        size.height.map(|height| (height - inset.height).max(0.0)),
+        &inputs,
+    );
+    let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+    let width = wrapping_min_content_width(tree, node_id, room) + inset.width;
+    inputs.known_dimensions.width = Some(width.clamp(min, max));
+    inputs.known_dimensions_are_definite.width = true;
+    inputs
+}
+
+/// The inner height of a flex container that its items take their height from
+/// while they are measured for their widths, given the `inner_height` the
+/// container has if it is definite. The height of a container that follows its
+/// items is no room for them.
+fn item_cross_room(inner_height: Option<f32>, inputs: &LayoutInput) -> Option<f32> {
+    inner_height.filter(|_| {
+        inputs.known_dimensions.height.is_none() || inputs.known_dimensions_are_definite.height
+    })
+}
+
 /// [`flex_layout`] once the width of a `fit-content` container is settled.
 fn flex_layout_sized(
     tree: &mut LayoutSession<'_>,
@@ -3407,6 +3455,7 @@ fn flex_layout_sized(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    let inputs = with_wrapping_min_content_width(tree, node_id, inputs);
     let (size, inset, _) = tree.block_definite_size(idx, &inputs);
     let basis = Size {
         width: size.width.map(|width| (width - inset.width).max(0.0)),
@@ -3432,12 +3481,7 @@ fn flex_layout_sized(
                     compute_flexbox_layout(tree, node_id, inputs)
                 })
             } else if tree.context.flex_intrinsic_probe == Some(idx) {
-                // The height of a container that follows its items is no room for
-                // its items to take their height from.
-                let cross_room = basis.height.filter(|_| {
-                    inputs.known_dimensions.height.is_none()
-                        || inputs.known_dimensions_are_definite.height
-                });
+                let cross_room = item_cross_room(basis.height, &inputs);
                 with_flex_item_basis_bounds(tree, node_id, cross_room, |tree| {
                     compute_flexbox_layout(tree, node_id, inputs)
                 })
