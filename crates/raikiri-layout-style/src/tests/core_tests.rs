@@ -352,3 +352,28 @@ fn a_grid_item_defers_ratio_height_without_changing_its_own_ratio_or_alignment()
         assert_eq!(own.bridge_align_self(), None);
     });
 }
+
+#[test]
+fn a_replaced_grid_item_keeps_its_identity_and_bounds_while_sizing_its_own_ratio() {
+    let mut cv = ComputedValues::initial();
+    cv.aspect_ratio.auto = false;
+    cv.aspect_ratio.ratio = Some((2.0, 1.0));
+    cv.height = L::Px(10.0);
+    cv.min_width = L::Px(20.0);
+    cv.max_width = L::Px(30.0);
+    query(&cv, StyleFlags::REPLACED, |own| {
+        let parent = own.with_context(ViewContext {
+            grid_item_ratio: GridItemRatio::Replaced,
+            ..ViewContext::default()
+        });
+        assert!(parent.is_replaced());
+        assert_eq!(own.aspect_ratio(), Some(2.0));
+        assert_eq!(parent.aspect_ratio(), None);
+        assert_eq!(parent.block_aspect_ratio(), Some(2.0));
+        assert_eq!(parent.size(), own.size());
+        assert_eq!(parent.min_size(), own.min_size());
+        assert_eq!(parent.max_size(), own.max_size());
+        assert_eq!(parent.bridge_align_self(), own.bridge_align_self());
+        assert_eq!(parent.bridge_justify_self(), own.bridge_justify_self());
+    });
+}

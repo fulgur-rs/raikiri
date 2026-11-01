@@ -495,9 +495,9 @@ impl LayoutSession<'_> {
         view.with_context(context)
     }
 
-    /// Defer a grid item's automatic ratio height to its own content measure.
-    /// The parent otherwise treats the ratio height as final, skipping the
-    /// content floor when an explicit minimum width lets the track shrink.
+    /// Preserve replaced sizes and defer content-based automatic ratio sizes
+    /// to the item. The parent otherwise transfers bounds into stated replaced
+    /// sizes or treats a non-replaced ratio height as final without its content floor.
     fn grid_item_ratio(&self, idx: usize) -> raikiri_layout_style::GridItemRatio {
         use raikiri_layout_style::GridItemRatio;
         use raikiri_layout_style::values::{
@@ -506,10 +506,27 @@ impl LayoutSession<'_> {
         let item = self.physical_style(idx);
         if self.container_is_vertical(idx)
             || self.nodes[idx].used_writing_mode.is_vertical()
-            || crate::paint_rules::is_replaced_element(self.document, idx)
             || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
             || item.stated_aspect_ratio().is_none()
-            || !item.size().width.is_auto()
+        {
+            return GridItemRatio::Declared;
+        }
+        if crate::paint_rules::is_replaced_element(self.document, idx) {
+            return if item.is_replaced()
+                && (!item.size().width.is_auto()
+                    || !item.size().height.is_auto()
+                    || matches!(
+                        item.min_size().width.expand(),
+                        ExpandedLengthPercentageAuto::Length(_)
+                            | ExpandedLengthPercentageAuto::Percent(_)
+                    ))
+            {
+                GridItemRatio::Replaced
+            } else {
+                GridItemRatio::Declared
+            };
+        }
+        if !item.size().width.is_auto()
             || !item.size().height.is_auto()
             || !matches!(
                 self.nodes[idx].formatting_context,
