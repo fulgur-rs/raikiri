@@ -668,3 +668,48 @@ fn a_horizontal_cell_lays_out_percentage_heights_at_the_height_of_its_column() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+#[test]
+fn a_collapsed_row_still_sets_the_height_of_its_columns() {
+    // `visibility: collapse` takes a row out of the block direction, the
+    // width of a vertical table, and leaves the heights of its cells, which
+    // are along the inline direction, in the columns.
+    let mut mismatches = Vec::new();
+    for mode in MODES {
+        let first = table_element(
+            mode,
+            "0",
+            &format!(
+                "<tr id=r style='visibility: collapse'>{}</tr><tr id=r2>{}</tr>",
+                td("c", "", [60, 80], "0", "x"),
+                td("d", "", [40, 30], "0", "y")
+            ),
+        );
+        mismatches.extend(check_extent(
+            &format!("{mode}, the first row collapsed"),
+            &first,
+            &[("t", 8.0, 80.0), ("c", 8.0, 80.0), ("d", 8.0, 80.0)],
+        ));
+        let columns = table_element(
+            mode,
+            "0",
+            &format!(
+                "<tr id=r style='visibility: collapse'>{}{}</tr><tr id=r2>{}</tr>",
+                td("c", "", [60, 80], "0", "x"),
+                td("e", "", [60, 20], "0", "z"),
+                td("d", "", [40, 30], "0", "y")
+            ),
+        );
+        mismatches.extend(check_extent(
+            &format!("{mode}, two columns in a collapsed row"),
+            &columns,
+            &[
+                ("t", 8.0, 100.0),
+                ("c", 8.0, 80.0),
+                ("e", 88.0, 20.0),
+                ("d", 8.0, 80.0),
+            ],
+        ));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
