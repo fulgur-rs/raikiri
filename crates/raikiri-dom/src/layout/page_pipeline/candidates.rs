@@ -75,6 +75,12 @@ pub(super) struct ElementContext {
     /// The box moves to the next page when that crosses a page edge, so that
     /// the edges do not stay behind alone (see [`super::leading_edges_move`]).
     pub(super) leading_piece_end: Option<f32>,
+    /// For the last box of a run of boxes tied by avoided breaks that ends its
+    /// block: the block size of the bottom padding and border that follow it.
+    /// The box moves to the next page with them when the run is as far on as
+    /// it goes and they do not fit after the box, the avoided break giving way
+    /// (see [`super::run_tail_move`]).
+    pub(super) run_tail_edges: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -179,6 +185,11 @@ impl BoxContext {
     pub(super) fn leading_piece_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.leading_piece_end)
+    }
+
+    pub(super) fn run_tail_edges(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.run_tail_edges)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -432,6 +443,10 @@ struct CandidateFrame<'name> {
     /// How far below its border-box top the run of boxes tied by avoided
     /// breaks ends that the node starts among the boxes of its parent.
     run_unit: Option<f32>,
+    /// Whether the node is the last box of a run that avoided breaks tie it
+    /// to, from a free break on, and ends its block: `closing_edges` follows
+    /// it.
+    run_tail: bool,
 }
 
 /// How a box is tied by avoided page breaks to the others of the run that ends
@@ -473,6 +488,7 @@ impl CandidateFrame<'_> {
             lines_closing_edges: 0.0,
             tie: AvoidTie::None,
             run_unit: None,
+            run_tail: false,
         }
     }
 }
@@ -742,6 +758,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.previous_box = None;
                         child_frame.tie = AvoidTie::None;
                         child_frame.run_unit = None;
+                        child_frame.run_tail = false;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -1011,16 +1028,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // run was. So does a paragraph after a box to break from whose
                 // lines are too few for its orphans and widows: the break
                 // before it is the one between boxes, which beats one between
-                // lines that leaves too few at either end. Not one with
-                // padding or a border of its own below its lines: its box may
-                // run past the page edge where the lines fit and could not
-                // move whole, and browsers then split the lines.
+                // lines that leaves too few at either end.
                 let unbreakable = lines_shape
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
                             && node.is_ifc_root()
-                            && node.layout.padding.bottom + node.layout.border.bottom == 0.0
                             && paragraph_lines_keep_together(document, cascade, node_id)));
                 let closing_edges_base = closing_edges_shape && unbreakable;
                 // A block that holds one box moves whole with the edges that
@@ -1081,12 +1094,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
+                // The last box of such a run goes to the next page with the
+                // edges that follow it when the run has moved as far on as it
+                // goes (the first box starts its page) and they still do not
+                // fit after the box.
+                let run_tail_base = frame.run_tail
+                    && (in_flow_block || in_flow_container)
+                    && frame.closing_edges > 0.0;
                 let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)
                         || is_float
                         || clears_float))
                     || lines_shape
                     || lone_tail.is_some()
+                    || run_tail_base
                     || (avoided_unit.is_some() && !direct_body_child)
                     || (leading_piece.is_some() && !direct_body_child);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
@@ -1104,6 +1125,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
+                let run_tail_candidate = run_tail_base && can_move_nested;
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
                 let leading_piece = leading_piece.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
@@ -1115,9 +1137,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // edges close, the page cannot break before the paragraph at
                 // a better place than between its lines (class C against
                 // class B), so the orphans it cannot keep do not stop it.
+                // A paragraph with a box before it that moves whole to the
+                // next page for them has no such break there: its box ends up
+                // at the top of that page, and its lines split when the edges
+                // still run past the page end.
                 let lines_closing_edges = if lines_shape
                     && can_move_nested
-                    && (!unbreakable || frame.lone_in_edges)
+                    && (!unbreakable || frame.lone_in_edges || closing_edges_shape)
                     && !avoids_break
                     && node.is_ifc_root()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. })
@@ -1142,6 +1168,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || nested_float_candidate
                         || closing_edges_candidate
                         || lone_box_candidate.is_some()
+                        || run_tail_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
                         || is_tall_direct_absolute
@@ -1195,6 +1222,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 },
                                 avoided_unit,
                                 leading_piece_end: leading_piece,
+                                run_tail_edges: if run_tail_candidate {
+                                    frame.closing_edges
+                                } else {
+                                    0.0
+                                },
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1405,6 +1437,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     } else {
                         AvoidTie::None
                     };
+                    // The last box of a run that avoided breaks tie to the boxes
+                    // before it, from a free break on.
+                    let run_tail = matches!(avoid_chain, Some(AvoidChain::Run { .. }))
+                        && last_in_flow == Some(index);
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
                     // A float between the boxes is no box in their flow, and
@@ -1468,6 +1504,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             lines_closing_edges,
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
+                            run_tail,
                         },
                     )?;
                 }
