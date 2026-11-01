@@ -23,8 +23,8 @@ use super::{
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_text_start_y, reaches_line,
-    record_candidate_pages, reset_inline_x_for_page_transition, shift_text_candidate,
-    straddling_line, text_changes_page_name, text_sets_page_name,
+    record_candidate_pages, reset_inline_x_for_page_transition, run_tail_move,
+    shift_text_candidate, straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -854,7 +854,9 @@ impl PaginationState {
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
-        overflow.page |= closing_edges_move(candidate, &fit) || leading_edges_move(candidate, &fit);
+        overflow.page |= closing_edges_move(candidate, &fit)
+            || leading_edges_move(candidate, &fit)
+            || run_tail_move(candidate, &fit);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
