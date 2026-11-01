@@ -1199,7 +1199,11 @@ impl PaginationState {
     /// orphans, content comes before it on a page it does not start, and its
     /// first line fits a page; otherwise it keeps its natural break. A
     /// paragraph that is a flex item alone on its line cannot move as a unit,
-    /// but its later lines can move down inside it.
+    /// but its later lines can move down inside it. The padding and border
+    /// that close the boxes around the paragraph stay with its last lines:
+    /// when its lines fit a page but the edges do not, the lines that the edge
+    /// break asks for move down, on the page the paragraph starts on and on
+    /// the one it moved to as a unit.
     pub(super) fn keep_lines_together(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1225,12 +1229,28 @@ impl PaginationState {
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
+            // Lines move down inside the paragraph only when it is its own
+            // inline layout root, has no earlier split pending, and can shift
+            // its lines.
+            let lines_can_move = blocks.paragraph_root == Some(block_id)
+                && self.deferred_shifts.line_splits.is_empty()
+                && lines_can_shift_inside(document, block_id);
+            // The break that keeps the last lines with the padding and border
+            // that close the boxes around the paragraph, on `page`.
+            let closing_edges_break = |page: u32, effective_y: f32| {
+                closing_edges_line_move(
+                    &line_metrics,
+                    candidate.context.lines_closing_edges(),
+                    effective_y,
+                    page,
+                    cascade.computed[block_id].orphans.max(1) as usize,
+                    cascade.computed[block_id].widows.max(1) as usize,
+                    page_origins,
+                )
+            };
             // Forced breaks between the lines come first. The lines they
             // leave on either side are not repaired for orphans and widows.
-            if blocks.paragraph_root == Some(block_id)
-                && self.deferred_shifts.line_splits.is_empty()
-                && lines_can_shift_inside(document, block_id)
-            {
+            if lines_can_move {
                 let moves = forced_line_moves(
                     &forced_line_breaks(document, block_id),
                     &line_metrics,
@@ -1244,15 +1264,7 @@ impl PaginationState {
                 }
                 // The padding and border that close the blocks around the
                 // paragraph stay with its last lines.
-                if let Some(moved) = closing_edges_line_move(
-                    &line_metrics,
-                    candidate.context.lines_closing_edges(),
-                    text.effective_y,
-                    self.current_page,
-                    cascade.computed[block_id].orphans.max(1) as usize,
-                    cascade.computed[block_id].widows.max(1) as usize,
-                    page_origins,
-                ) {
+                if let Some(moved) = closing_edges_break(self.current_page, text.effective_y) {
                     return self.move_lines(
                         document,
                         env,
@@ -1353,14 +1365,7 @@ impl PaginationState {
                     page,
                     page_origins,
                     can_move_block,
-                    // Lines move down inside the paragraph only when it is
-                    // its own inline layout root, has no earlier split
-                    // pending, and can shift its lines.
-                    || {
-                        blocks.paragraph_root == Some(block_id)
-                            && self.deferred_shifts.line_splits.is_empty()
-                            && lines_can_shift_inside(document, block_id)
-                    },
+                    || lines_can_move,
                 );
                 match fix {
                     LineBreakFix::MoveLines(moves) => {
@@ -1388,7 +1393,27 @@ impl PaginationState {
                         text.effective_y += delta;
                         moved_whole = true;
                     }
-                    LineBreakFix::Keep => break,
+                    LineBreakFix::Keep => {
+                        // A paragraph moved whole to a page it fits there may
+                        // leave the padding and border that close the boxes
+                        // around it behind its lines, as on the page it left.
+                        if moved_whole
+                            && lines_can_move
+                            && let Some(moved) = closing_edges_break(page, text.effective_y)
+                        {
+                            return self.move_lines(
+                                document,
+                                env,
+                                candidate,
+                                entry,
+                                blocks,
+                                text,
+                                block_id,
+                                [moved],
+                            );
+                        }
+                        break;
+                    }
                 }
             }
         }
