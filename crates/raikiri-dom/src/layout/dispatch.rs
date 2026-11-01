@@ -3391,7 +3391,13 @@ fn flex_layout_sized(
                     compute_flexbox_layout(tree, node_id, inputs)
                 })
             } else if tree.context.flex_intrinsic_probe == Some(idx) {
-                with_flex_item_basis_bounds(tree, node_id, |tree| {
+                // The height of a container that follows its items is no room for
+                // its items to take their height from.
+                let cross_room = basis.height.filter(|_| {
+                    inputs.known_dimensions.height.is_none()
+                        || inputs.known_dimensions_are_definite.height
+                });
+                with_flex_item_basis_bounds(tree, node_id, cross_room, |tree| {
                     compute_flexbox_layout(tree, node_id, inputs)
                 })
             } else {

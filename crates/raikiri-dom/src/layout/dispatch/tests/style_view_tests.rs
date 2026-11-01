@@ -43,7 +43,7 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
         tree.style_view(child).flex_shrink(),
     );
     let result: Result<(), ()> =
-        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |tree| {
+        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), None, |tree| {
             let view = tree.style_view(child);
             assert_eq!(view.size().width, Dimension::length(20.0));
             assert_eq!(view.min_size().width, LengthPercentageAuto::length(20.0));
@@ -62,7 +62,7 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
     };
     assert_eq!(restored(&tree), original);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |_| {
+        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), None, |_| {
             panic!("flex bound unwind")
         });
     }));

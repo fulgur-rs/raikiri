@@ -1,6 +1,9 @@
 use super::*;
 use crate::layout::cache_context::SavedLayoutCache;
-use raikiri_layout_style::values::{BoxSizing, Dimension, ResolveOrZero};
+use raikiri_layout_style::values::{
+    AlignItems, AlignItemsKeyword, BoxSizing, Dimension, ExpandedDimension, LengthPercentageAuto,
+    ResolveOrZero,
+};
 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -88,19 +91,84 @@ struct AutomaticMinimumInputs {
     specified: Option<f32>,
     /// The `max-width` of the item, if it is a length.
     maximum: Option<f32>,
-    /// The `height` the item states, if it is a length.
+    /// The border-box height the item has before its width is measured, if it
+    /// has one ([`height_before_width`]).
     height: Option<f32>,
-    /// Whether the sizes of the item are those of its content box.
-    content_box: bool,
-    /// The padding and border of the item, left and right, top and bottom.
-    edges: Size<f32>,
+    /// The padding and border of the item across its main axis, when its sizes
+    /// are those of its content box, and zero when they are those of its border
+    /// box.
+    across: f32,
+}
+
+/// The border-box height the item `style` of a row flex container has before
+/// its width is measured, if it has one. That is the height it states, a
+/// percentage of the definite inner height `room` of the container, or the
+/// height the container gives it: `room` less the margins of the item, within
+/// its `min-height` and `max-height`. The container gives it to an item with
+/// `height: stretch` and to an item with an `auto` height that the container
+/// stretches, which a container of one line does to an item aligned to stretch
+/// that has no `auto` margin across (CSS Flexbox 1 section 9.4). The height is
+/// no less than the padding and border of the item.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#definite-sizes>
+fn height_before_width(
+    style: &LayoutStyleView<'_>,
+    room: Option<f32>,
+    single_line: bool,
+    container_align: AlignItems,
+) -> Option<f32> {
+    let edges = {
+        let padding = style.padding().resolve_or_zero(None);
+        let border = style.border().resolve_or_zero(None);
+        padding.top + padding.bottom + border.top + border.bottom
+    };
+    let content_box = style.box_sizing() == BoxSizing::ContentBox;
+    let outer = if content_box { edges } else { 0.0 };
+    let height = style.size().height;
+    if let Some(stated) = crate::layout::resolve_dimension(height, room) {
+        return Some((stated + outer).max(edges));
+    }
+    let room = room?;
+    let margin = style.margin();
+    // The self alignment of an item whose height is a content keyword is not
+    // `stretch`: the style reads the keyword as `auto` but does not stretch it.
+    let stretched = matches!(height.expand(), ExpandedDimension::Stretch)
+        || (height.is_auto()
+            && single_line
+            && !margin.top.is_auto()
+            && !margin.bottom.is_auto()
+            && matches!(
+                style.align_self().unwrap_or(container_align).keyword,
+                AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+            ));
+    stretched.then(|| {
+        // A percentage margin counts as zero, as in the width of the container.
+        let bound = |length| {
+            crate::layout::resolve_length_percentage_auto(length, Some(room))
+                .map(|bound| bound + outer)
+        };
+        (room - margins_sum(margin.top, margin.bottom))
+            .min(bound(style.max_size().height).unwrap_or(f32::INFINITY))
+            .max(bound(style.min_size().height).unwrap_or(0.0))
+            .max(edges)
+    })
+}
+
+/// The sum of two opposite margins of the item, where an `auto` margin and a
+/// percentage of a size the probe has not got count as zero.
+fn margins_sum(start: LengthPercentageAuto, end: LengthPercentageAuto) -> f32 {
+    [start, end]
+        .into_iter()
+        .map(|margin| crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0))
+        .sum()
 }
 
 /// The automatic minimum size of the item `child` of a row flex container, as
 /// the value of a `min-width` of the item's own: the smaller of its min-content
 /// size and the width it states, within its `max-width` (CSS Flexbox 1 section
-/// 4.5). The item is measured with the height it states, which gives a replaced
-/// item with an aspect ratio the width that follows from that height.
+/// 4.5). The item is measured with the height it has before its width is
+/// measured, which gives a replaced item with an aspect ratio the width that
+/// follows from that height.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#min-size-auto>
 fn automatic_minimum_width(
@@ -111,11 +179,7 @@ fn automatic_minimum_width(
     if inputs.scrolls {
         return 0.0;
     }
-    let (across, along) = if inputs.content_box {
-        (inputs.edges.width, inputs.edges.height)
-    } else {
-        (0.0, 0.0)
-    };
+    let across = inputs.across;
     let measured = tree
         .compute_child_layout(
             child,
@@ -125,7 +189,7 @@ fn automatic_minimum_width(
                 axis: RequestedAxis::Horizontal,
                 known_dimensions: Size {
                     width: None,
-                    height: inputs.height.map(|height| height + along),
+                    height: inputs.height,
                 },
                 known_dimensions_are_definite: Size {
                     width: false,
@@ -149,7 +213,9 @@ fn automatic_minimum_width(
 }
 
 /// Run `layout`, a layout of the row flex container `node_id`, with each item
-/// whose flex base size is a length bounded by it.
+/// whose flex base size is a length bounded by it. `cross_room` is the definite
+/// inner height of the container, if it has one: the room that its items take
+/// their height from while they are measured for their minimum width.
 ///
 /// An item contributes at least its flex base size to the intrinsic widths of
 /// the container when it cannot shrink and at most that size when it cannot
@@ -169,12 +235,14 @@ fn automatic_minimum_width(
 pub(super) fn with_flex_item_basis_bounds<R>(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
+    cross_room: Option<f32>,
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
     tree.sync_layout_cache_mutations();
-    let is_row = tree
-        .physical_style(usize::from(node_id))
-        .flex_direction_is_row();
+    let container = tree.physical_style(usize::from(node_id));
+    let is_row = container.flex_direction_is_row();
+    let single_line = !container.flex_wraps();
+    let container_align = container.align_items();
     let children: Vec<NodeId> = if is_row {
         tree.child_ids(node_id).collect()
     } else {
@@ -206,12 +274,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             // bounds nothing, and is no margin either.
             let min_length = crate::layout::resolve_length_percentage_auto(min, None);
             let max_length = crate::layout::resolve_length_percentage_auto(max, None);
-            let margins: f32 = [margin.left, margin.right]
-                .into_iter()
-                .map(|margin| {
-                    crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0)
-                })
-                .sum();
+            let margins = margins_sum(margin.left, margin.right);
             let (cannot_shrink, cannot_grow) =
                 (style.flex_shrink() == 0.0, style.flex_grow() == 0.0);
             let preferred = crate::layout::resolve_dimension(width, None);
@@ -219,15 +282,13 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                 scrolls: is_scroll_container(style.overflow()),
                 specified: preferred,
                 maximum: max_length,
-                height: crate::layout::resolve_dimension(style.size().height, None),
-                content_box: style.box_sizing() == BoxSizing::ContentBox,
-                edges: {
+                height: height_before_width(&style, cross_room, single_line, container_align),
+                across: if style.box_sizing() == BoxSizing::ContentBox {
                     let padding = style.padding().resolve_or_zero(None);
                     let border = style.border().resolve_or_zero(None);
-                    Size {
-                        width: padding.left + padding.right + border.left + border.right,
-                        height: padding.top + padding.bottom + border.top + border.bottom,
-                    }
+                    padding.left + padding.right + border.left + border.right
+                } else {
+                    0.0
                 },
             });
             // The flex base size floors the contribution, and then the item's own
