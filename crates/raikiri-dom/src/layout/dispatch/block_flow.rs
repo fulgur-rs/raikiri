@@ -271,6 +271,65 @@ fn is_inline_box(tree: &LayoutSession<'_>, node: NodeId, style: &Style) -> bool 
             .is_some_and(|parent| tree.nodes[parent].display().is_flex_or_grid_container())
 }
 
+/// The metrics of the block `node`, as [`Metrics::resolve`] settles them for
+/// `inputs`, except that a size taken from the cross size a wrapping flex
+/// container stretches the box to does not carry across its aspect ratio.
+///
+/// A container that wraps its items onto more than one line does not take that
+/// cross size as definite (CSS Flexbox 1 §9.4), so the box takes its main size
+/// from its content, as it does when no cross size is given.
+fn item_metrics(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    style: &Style,
+    width_stands_in: bool,
+    content_box_ratio: bool,
+    inputs: LayoutInput,
+) -> Metrics {
+    let metrics = Metrics::resolve(style, width_stands_in, content_box_ratio, inputs);
+    let known = inputs.known_dimensions;
+    // Only a box with a ratio takes a size from the other axis, and a stretch
+    // hint is the one size known while the other is not.
+    if style.aspect_ratio.is_none()
+        || known.width.is_some() == known.height.is_some()
+        || !tree.is_wrapping_stretch_hint(usize::from(node), style, known)
+    {
+        return metrics;
+    }
+    let ignoring_hint = Metrics::resolve(
+        style,
+        width_stands_in,
+        content_box_ratio,
+        LayoutInput {
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            ..inputs
+        },
+    );
+    if known.height.is_some() {
+        Metrics {
+            preferred: Size {
+                width: ignoring_hint.preferred.width,
+                height: metrics.preferred.height,
+            },
+            ratio_width: ignoring_hint.ratio_width,
+            ..metrics
+        }
+    } else {
+        Metrics {
+            preferred: Size {
+                width: metrics.preferred.width,
+                height: ignoring_hint.preferred.height,
+            },
+            ratio_height: ignoring_hint.ratio_height,
+            ..metrics
+        }
+    }
+}
+
 pub(crate) fn compute_block_flow(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
@@ -293,7 +352,9 @@ pub(crate) fn compute_block_flow(
         },
         ..metrics
     };
-    let metrics = in_the_block_around(Metrics::resolve(
+    let metrics = in_the_block_around(item_metrics(
+        tree,
+        node,
         &style,
         width_stands_in,
         content_box_ratio,

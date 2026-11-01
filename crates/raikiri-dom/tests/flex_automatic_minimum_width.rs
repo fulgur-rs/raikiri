@@ -761,3 +761,331 @@ fn an_item_of_a_container_that_wraps_keeps_the_height_it_states_or_is_aligned_to
         &[("i", [33.0, 33.0, 150.0, 150.0])],
     );
 }
+
+/// A container of 100px wide and 200px high, 150px inside its border, that
+/// wraps its items in columns.
+const TALL_COLUMNS: &str = "display:inline-flex;flex-direction:column;width:100px;height:200px;\
+     border:solid 25px green;flex-wrap:wrap";
+
+/// An inline flex container with `container_css` holding one `div` with
+/// `item_css` that holds `content`.
+fn block(container_css: &str, item_css: &str, content: &str) -> String {
+    format!(
+        "<div id=o style=\"{container_css}\"><div id=i style=\"{item_css}\">{content}</div></div>"
+    )
+}
+
+/// A box of 10x10 pixels.
+const SQUARE: &str = "<div style=\"width:10px;height:10px\"></div>";
+
+#[test]
+fn a_box_with_a_ratio_in_a_container_that_wraps_takes_its_width_from_its_content() {
+    // The 50px a wrapping container stretches the box to is no definite height
+    // (CSS Flexbox 1 §9.4), so the ratio does not turn it into a width: an empty
+    // box is as wide as its padding and border, and a box with content as the
+    // content, as with no height given.
+    let flexible = "flex:0 0 0px;aspect-ratio:1/1";
+    for (container, item, content, size, item_box) in [
+        (
+            TALL_WRAP,
+            flexible,
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "aspect-ratio:1/1",
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:2/1",
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/2",
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;padding:3px",
+            "",
+            [56.0, 100.0],
+            [33.0, 33.0, 6.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;border:2px solid red",
+            "",
+            [54.0, 100.0],
+            [33.0, 33.0, 4.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 10px;aspect-ratio:1/1",
+            "",
+            [60.0, 100.0],
+            [33.0, 33.0, 10.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;max-width:5px",
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;min-width:5px",
+            "",
+            [55.0, 100.0],
+            [33.0, 33.0, 5.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;min-height:20px",
+            "",
+            [70.0, 100.0],
+            [33.0, 33.0, 20.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;max-height:20px",
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 20.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;align-self:flex-start",
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 0.0],
+        ),
+        (
+            "display:inline-flex;height:100px;border:solid 25px green;flex-wrap:wrap;\
+             align-content:flex-start",
+            flexible,
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 0.0],
+        ),
+        (
+            "display:inline-flex;border:solid 25px green;flex-wrap:wrap",
+            flexible,
+            "",
+            [50.0, 50.0],
+            [33.0, 33.0, 0.0, 0.0],
+        ),
+        (
+            TALL_WRAP,
+            flexible,
+            SQUARE,
+            [60.0, 100.0],
+            [33.0, 33.0, 10.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;padding:5px",
+            SQUARE,
+            [70.0, 100.0],
+            [33.0, 33.0, 20.0, 50.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;max-height:20px",
+            SQUARE,
+            [60.0, 100.0],
+            [33.0, 33.0, 10.0, 20.0],
+        ),
+        // Text is inline content and gives the width alike.
+        (
+            TALL_WRAP,
+            flexible,
+            "X",
+            [60.0, 100.0],
+            [33.0, 33.0, 10.0, 50.0],
+        ),
+        (
+            "display:inline-flex;height:100px;border:solid 25px green;flex-wrap:wrap-reverse",
+            flexible,
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        (
+            "display:inline-flex;height:100px;border:solid 25px green;flex-wrap:wrap;\
+             flex-direction:row-reverse",
+            flexible,
+            "",
+            [50.0, 100.0],
+            [33.0, 33.0, 0.0, 50.0],
+        ),
+        // The content is wider than the box is high: the height follows the
+        // width the content asks for.
+        (
+            TALL_WRAP,
+            flexible,
+            "<div style=\"width:80px;height:10px\"></div>",
+            [130.0, 100.0],
+            [33.0, 33.0, 80.0, 80.0],
+        ),
+    ] {
+        assert_boxes(&block(container, item, content), size, &[("i", item_box)]);
+    }
+    assert_boxes(
+        &format!(
+            "<div id=o style=\"{TALL_WRAP}\">\
+             <div id=i style=\"flex:0 0 0px;aspect-ratio:1/1\"></div>\
+             <div id=j style=\"flex:0 0 0px;aspect-ratio:1/1\"></div></div>"
+        ),
+        [50.0, 100.0],
+        &[
+            ("i", [33.0, 33.0, 0.0, 50.0]),
+            ("j", [33.0, 33.0, 0.0, 50.0]),
+        ],
+    );
+    assert_boxes(
+        "<div style=\"height:400px\"><div id=o style=\"display:inline-flex;height:25%;\
+         border:solid 25px green;flex-wrap:wrap\">\
+         <div id=i style=\"flex:0 0 0px;aspect-ratio:1/1\"></div></div></div>",
+        [50.0, 100.0],
+        &[("i", [33.0, 33.0, 0.0, 50.0])],
+    );
+}
+
+#[test]
+fn a_box_with_a_ratio_in_columns_that_wrap_takes_its_height_from_its_content() {
+    // The same holds for the width a container of columns stretches the box to.
+    let flexible = "flex:0 0 0px;aspect-ratio:1/1";
+    for (item, content, item_box) in [
+        (flexible, "", [33.0, 33.0, 50.0, 0.0]),
+        ("aspect-ratio:1/1", "", [33.0, 33.0, 50.0, 0.0]),
+        (flexible, SQUARE, [33.0, 33.0, 50.0, 10.0]),
+        (flexible, "X", [33.0, 33.0, 50.0, 10.0]),
+        (
+            "flex:0 0 0px;aspect-ratio:1/1;min-width:20px",
+            "",
+            [33.0, 33.0, 50.0, 20.0],
+        ),
+        (
+            "flex:0 0 0px;aspect-ratio:1/1;max-width:20px",
+            "",
+            [33.0, 33.0, 20.0, 0.0],
+        ),
+        (
+            "flex:0 0 0px;aspect-ratio:1/1;width:30px",
+            "",
+            [33.0, 33.0, 30.0, 30.0],
+        ),
+        (
+            "flex:0 0 0px;aspect-ratio:1/1;align-self:center",
+            "",
+            [58.0, 33.0, 0.0, 0.0],
+        ),
+    ] {
+        assert_boxes(
+            &block(TALL_COLUMNS, item, content),
+            [100.0, 200.0],
+            &[("i", item_box)],
+        );
+    }
+    assert_boxes(
+        &format!(
+            "<div id=o style=\"{TALL_COLUMNS}\">\
+             <div id=i style=\"flex:0 0 0px;aspect-ratio:1/1\"></div>\
+             <div id=j style=\"flex:0 0 0px;aspect-ratio:1/1\"></div></div>"
+        ),
+        [100.0, 200.0],
+        &[
+            ("i", [33.0, 33.0, 50.0, 0.0]),
+            ("j", [33.0, 33.0, 50.0, 0.0]),
+        ],
+    );
+    // The columns run from the bottom, or along the vertical lines of a
+    // vertical writing mode.
+    assert_boxes(
+        &block(
+            &format!("{TALL_COLUMNS};flex-direction:column-reverse"),
+            "flex:0 0 0px;aspect-ratio:1/1",
+            "",
+        ),
+        [100.0, 200.0],
+        &[("i", [33.0, 183.0, 50.0, 0.0])],
+    );
+    assert_boxes(
+        &block(
+            "display:inline-flex;writing-mode:vertical-rl;width:100px;height:200px;\
+             border:solid 25px green;flex-wrap:wrap",
+            "flex:0 0 0px;aspect-ratio:1/1",
+            "X",
+        ),
+        [100.0, 200.0],
+        &[("i", [33.0, 33.0, 50.0, 10.0])],
+    );
+}
+
+#[test]
+fn a_box_with_a_ratio_keeps_the_size_a_definite_cross_size_gives_it() {
+    let flexible = "flex:0 0 0px;aspect-ratio:1/1";
+    // A container of one line takes the height it stretches the box to as
+    // definite.
+    assert_boxes(
+        &block(TALL_ROW, flexible, ""),
+        [100.0, 100.0],
+        &[("i", [33.0, 33.0, 50.0, 50.0])],
+    );
+    // So does a height or a width that is stated, a percentage or `stretch` in
+    // a container that wraps.
+    for (container, item, size, item_box) in [
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;height:30px",
+            [80.0, 100.0],
+            [30.0, 30.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;height:50%",
+            [75.0, 100.0],
+            [25.0, 25.0],
+        ),
+        (
+            TALL_WRAP,
+            "flex:0 0 0px;aspect-ratio:1/1;height:stretch",
+            [100.0, 100.0],
+            [50.0, 50.0],
+        ),
+        (
+            TALL_COLUMNS,
+            "flex:0 0 0px;aspect-ratio:1/1;width:stretch",
+            [100.0, 200.0],
+            [50.0, 50.0],
+        ),
+    ] {
+        assert_boxes(
+            &block(container, item, ""),
+            size,
+            &[("i", [33.0, 33.0, item_box[0], item_box[1]])],
+        );
+    }
+    // A box that grows takes the width of its container, and its height along
+    // the ratio.
+    assert_boxes(
+        &block(
+            "display:flex;width:200px;height:100px;border:solid 25px green;flex-wrap:wrap",
+            "flex:1 1 0px;aspect-ratio:1/1",
+            "",
+        ),
+        [200.0, 100.0],
+        &[("i", [33.0, 33.0, 150.0, 150.0])],
+    );
+}
