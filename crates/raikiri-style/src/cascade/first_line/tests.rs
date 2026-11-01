@@ -13,6 +13,24 @@ fn tree_doc(css: &str) -> (TestDoc, usize) {
 }
 
 #[test]
+fn first_line_children_inherit_the_color_syntax_of_the_first_line() {
+    let (mut doc, root) =
+        tree_doc("#root{color:#e53935} #root::first-line{color:oklch(0.6 0.2 25)}");
+    let child = doc.push_element(root, "span", None);
+    let result = cascade_with_first_line(
+        &doc,
+        &build_rule_tree(&doc),
+        &MediaContext::screen(),
+        StyleNodeId(root as u64),
+    )
+    .unwrap();
+    let first = result.first_line.unwrap();
+    // The first line is in a modern syntax, the rest of the paragraph is not.
+    assert!(first.computed[child].as_ref().unwrap().color_modern);
+    assert!(!result.normal.computed[child].color_modern);
+}
+
+#[test]
 fn first_line_child_winners_preserve_provenance() {
     let (mut doc, root) = tree_doc(
         "#root{font-size:16px;color:blue} #root::first-line{font-size:32px;color:red;text-transform:uppercase}",

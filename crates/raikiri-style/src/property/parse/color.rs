@@ -12,6 +12,9 @@ pub(crate) fn parse_element_color(
     input: &mut Parser<'_, '_>,
     key: PropertyKey,
 ) -> Option<PropertyValue> {
+    // The syntax of the color is read before the color is, as the parsed color
+    // no longer tells it.
+    let syntax = super::visual::color_syntax(input, 0);
     let (color, expression) = parse_contextual_color(input)?;
     if let Some(source) = expression {
         Some(PropertyValue::ContextualColor(ContextualColor {
@@ -19,10 +22,22 @@ pub(crate) fn parse_element_color(
             key,
         }))
     } else if key == PropertyKey::Color {
-        Some(PropertyValue::Color(color))
+        Some(if syntax == super::visual::ColorSyntax::Modern {
+            PropertyValue::ModernColor(color)
+        } else {
+            PropertyValue::Color(color)
+        })
     } else {
         Some(PropertyValue::BackgroundColor(color))
     }
+}
+
+/// How the color written as `source` is written (see
+/// [`super::visual::ColorSyntax`]). Text that is not a color counts as legacy.
+pub(crate) fn source_color_syntax(source: &str) -> super::visual::ColorSyntax {
+    let mut parser_input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    super::visual::color_syntax(&mut parser, 0)
 }
 
 pub(super) fn parse_contextual_color(

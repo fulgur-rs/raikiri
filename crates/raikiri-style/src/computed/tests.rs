@@ -274,6 +274,7 @@ fn non_initial_parent() -> ComputedValues {
             b: 50,
             a: 255,
         },
+        color_modern: true,
         background_color_expression: None,
         background_color: CssColor {
             r: 10,
