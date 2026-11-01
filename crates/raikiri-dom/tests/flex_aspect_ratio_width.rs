@@ -966,6 +966,67 @@ fn a_minimum_height_above_the_maximum_height_stays_the_height_of_a_grid_item() {
 }
 
 #[test]
+fn a_grid_at_its_min_content_width_is_as_wide_as_the_ratio_items_it_holds() {
+    let grid = |style: &str, items: &str| {
+        format!("<div id=g style=\"display:grid;width:min-content;{style}\">{items}</div>")
+    };
+    let small = "<div id=o style=\"aspect-ratio:2/1;height:50px\"><div id=i style=\"width:10px;height:10px\"></div></div>";
+    // The item takes the 100px its height gives through the ratio, and the
+    // grid with it, not the 10px of its child.
+    assert_boxes(
+        &grid("", small),
+        &[
+            ("g", [8.0, 8.0, 100.0, 50.0]),
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+        ],
+    );
+    assert_boxes(
+        &grid(
+            "grid-template-columns:auto auto",
+            &format!("{small}<div id=p style=\"width:20px;height:10px\"></div>"),
+        ),
+        &[
+            ("g", [8.0, 8.0, 120.0, 50.0]),
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+            ("p", [108.0, 8.0, 20.0, 10.0]),
+        ],
+    );
+    // A child wider than the ratio width, or the border, raises both.
+    assert_boxes(
+        &grid(
+            "",
+            "<div id=o style=\"aspect-ratio:2/1;height:50px\"><div style=\"width:200px;height:10px\"></div></div>",
+        ),
+        &[
+            ("g", [8.0, 8.0, 200.0, 50.0]),
+            ("o", [8.0, 8.0, 200.0, 50.0]),
+        ],
+    );
+    assert_boxes(
+        &grid(
+            "",
+            &format!("<div id=o style=\"{RATIO};{BORDER}\">{WIDE}</div>"),
+        ),
+        &[
+            ("g", [8.0, 8.0, 150.0, 50.0]),
+            ("o", [8.0, 8.0, 150.0, 50.0]),
+        ],
+    );
+    // A `min-width` the author wrote still holds the item to it while the
+    // grid is measured, and the item overflows the grid.
+    assert_boxes(
+        &grid(
+            "",
+            "<div id=o style=\"aspect-ratio:2/1;height:50px;min-width:30px\"><div style=\"width:10px;height:10px\"></div></div>",
+        ),
+        &[
+            ("g", [8.0, 8.0, 30.0, 50.0]),
+            ("o", [8.0, 8.0, 100.0, 50.0]),
+        ],
+    );
+}
+
+#[test]
 fn a_grid_item_that_scrolls_or_has_a_limit_keeps_the_width_the_limit_gives() {
     let template = "grid-template-columns:max-content";
     assert_boxes(
