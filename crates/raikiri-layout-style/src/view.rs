@@ -119,11 +119,21 @@ impl<'a> LayoutStyleView<'a> {
     /// `max-height` of the table. The view leaves them out. The library then
     /// measures the wrapper itself and places it by that height, and the
     /// table's layout, which still reads its own `height` and limits, sizes the
-    /// grid box inside the wrapper.
+    /// grid box inside the wrapper. For a stretch height, the table also owns
+    /// the stretch-fit step: the positioner measures the result without
+    /// applying stretch sizing, deriving a new height from an aspect ratio,
+    /// or redistributing vertical auto margins again.
     #[inline]
     pub const fn with_hidden_table_height(mut self) -> Self {
         self.hidden_table_height = true;
         self
+    }
+
+    /// Whether the table resolves its authored stretch height before the
+    /// positioning library consumes this measurement-only view.
+    #[inline]
+    pub(crate) fn table_owns_stretch_height(&self) -> bool {
+        self.hidden_table_height && matches!(self.length(LengthProperty::Height).value, L::Stretch)
     }
 
     /// The length of the vertical size `property` as the layout library reads

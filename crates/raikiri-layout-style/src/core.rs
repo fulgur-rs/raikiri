@@ -179,6 +179,11 @@ impl LayoutStyleView<'_> {
     /// The preferred aspect ratio after projection into the returned axes.
     #[inline]
     pub fn aspect_ratio(&self) -> Option<f32> {
+        // The measured table supplies this height; a width-to-height ratio
+        // transfer must not replace it before measurement.
+        if self.table_owns_stretch_height() {
+            return None;
+        }
         if matches!(
             self.context.grid_item_ratio,
             crate::GridItemRatio::MeasuredByItem { .. } | crate::GridItemRatio::Replaced
@@ -263,16 +268,26 @@ impl LayoutStyleView<'_> {
             && max.width.is_auto()
             && max.height.is_auto())
     }
-    /// The margin edges; `auto` is preserved.
+    /// The margin edges; `auto` is preserved except on a table-owned stretch
+    /// height in the measurement-only view, where vertical auto margins are zero.
     #[inline]
     pub fn margin(&self) -> Edges<LengthPercentageAuto> {
         use LengthProperty::*;
-        self.edges(
+        let mut margin = self.edges(
             self.length(MarginTop).auto(true),
             self.length(MarginRight).auto(true),
             self.length(MarginBottom).auto(true),
             self.length(MarginLeft).auto(true),
-        )
+        );
+        if self.table_owns_stretch_height() {
+            if margin.top.is_auto() {
+                margin.top = LengthPercentageAuto::length(0.0);
+            }
+            if margin.bottom.is_auto() {
+                margin.bottom = LengthPercentageAuto::length(0.0);
+            }
+        }
+        margin
     }
     /// The inset edges.
     #[inline]
