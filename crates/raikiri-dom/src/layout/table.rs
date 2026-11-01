@@ -4314,15 +4314,20 @@ fn place_cells(
             if let Some(rect) = reused {
                 (rect, OofCandidates::new(), None)
             } else {
-                // The height the row gives the cell is a definite one for the
-                // percentage heights of its children only when the table or the
-                // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
-                // as in the pass that measured the row.
-                let table_height_is_definite = height_is_definite
-                    || (stretch_height_is_resolved && cell_height > cell.natural_height);
-                let cell_height_is_definite = table_height_is_definite
-                    || resolve_dimension(doc.table_style(cell.node_id).size().height, None)
-                        .is_some();
+                // A row-derived height resolves percentage and stretch children
+                // only when it adds room beyond the cell's natural content.
+                // Feeding a content-determined height back into that content
+                // would grow it again. Vertical tables retain their inline-axis
+                // basis, which final column placement can change later.
+                // Summing fractional row tracks can add roundoff to a span
+                // whose content has not gained any independent room.
+                let grew = cell_height > cell.natural_height + SAME_EDGE_TOLERANCE;
+                let table_height_is_definite = vertical_writing
+                    || ((height_is_definite || stretch_height_is_resolved) && grew);
+                let cell_has_authored_height =
+                    resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
+                let cell_height_is_definite =
+                    table_height_is_definite || (grew && cell_has_authored_height);
                 // Only the layout of this pass may leave the height the content
                 // has: a cached one, or a cell that is not a block container,
                 // leaves none, and the height measured before stands.
@@ -4362,7 +4367,10 @@ fn place_cells(
                         .table_vertical_align,
                     VerticalAlign::Middle | VerticalAlign::Bottom
                 );
-                resolved_natural_height = (cell_height_is_definite && aligned_by_its_end)
+                // An authored cell height remains an independent basis even
+                // when its contents determined the row's final height.
+                resolved_natural_height = ((cell_height_is_definite || cell_has_authored_height)
+                    && aligned_by_its_end)
                     .then(|| horizontal_cell_alignment_height(doc, cell.node_id, cell_width))
                     .flatten();
                 (
@@ -4745,7 +4753,9 @@ fn relayout_horizontal_cell(
             .table_vertical_align,
         VerticalAlign::Middle | VerticalAlign::Bottom
     );
-    let natural = (cell_height_is_definite && aligned_by_its_end)
+    let cell_has_authored_height =
+        resolve_dimension(doc.table_style(cell_node).size().height, None).is_some();
+    let natural = ((cell_height_is_definite || cell_has_authored_height) && aligned_by_its_end)
         .then(|| horizontal_cell_alignment_height(doc, cell_node, cell_width))
         .flatten()
         .unwrap_or(natural_height);
