@@ -2112,6 +2112,7 @@ pub(crate) fn paint_document_impl(
         traced_below: std::collections::HashSet::new(),
         deferral_scopes: vec![DeferralLayer::new(true, LayerClose::Paint)],
         stack,
+        clip_scopes: Vec::new(),
     };
     walk.run();
 }

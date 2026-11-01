@@ -1581,6 +1581,133 @@ fn overflow_clip_rectangles_match_for_a_box_starting_near_a_page_bottom() {
     }
 }
 
+/// A box moved whole to a later page leaves no overflow clip on the page
+/// where neither it nor its descendants have a fragment.
+#[test]
+fn an_overflow_box_moved_whole_leaves_no_clip_on_the_previous_page() {
+    let inner: String = (0..5).map(|i| format!("<p>line {i}</p>")).collect();
+    for spacer in [130, 150] {
+        let result = lay_out(
+            &format!(
+                "<div style='height:{spacer}px'></div>\
+             <div style='overflow:hidden;padding:15px;border:4px solid;break-inside:avoid'>{inner}</div>"
+            ),
+            "",
+        );
+        assert!(result.page_count() > 1);
+        let first = result.pages().next().expect("first page");
+        let (walker, api) = clip_rects(&first);
+        assert!(api.is_empty(), "box moved away from page zero");
+        assert_rects_match(&walker, &api, &format!("spacer {spacer}, page zero"));
+        for page in result.pages().skip(1) {
+            let (walker, api) = clip_rects(&page);
+            assert!(!api.is_empty(), "the moved subtree still needs its clip");
+            assert_rects_match(
+                &walker,
+                &api,
+                &format!("spacer {spacer}, page {}", page.index()),
+            );
+        }
+    }
+}
+
+#[test]
+fn an_absent_overflow_box_still_clips_a_negative_offset_child() {
+    for position in ["relative", "absolute"] {
+        let result = lay_out(
+            &format!(
+                "<div style='height:220px'></div>\
+             <div style='position:absolute;top:180px;left:10px;width:100px;height:40px;overflow:hidden'>\
+             <div style='position:{position};top:-180px;width:20px;height:20px;background:red'></div></div>"
+            ),
+            "",
+        );
+        let first = result.pages().next().expect("first page");
+        assert!(
+            trace(&first)
+                .iter()
+                .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
+        );
+        assert_eq!(
+            pixels_of(&render_first_page(&result), [255, 0, 0]),
+            0,
+            "{position}"
+        );
+    }
+}
+
+#[test]
+fn absent_overflow_boxes_do_not_hide_children_with_external_containing_blocks() {
+    for position in ["absolute", "fixed"] {
+        let result = lay_out(
+            &format!(
+                "<div style='height:180px'></div>\
+             <div style='overflow:hidden;width:100px;height:40px'>\
+             <div style='position:{position};left:10px;top:10px;width:20px;height:20px;background:lime'></div></div>"
+            ),
+            "",
+        );
+        assert_eq!(
+            pixels_of(&render_first_page(&result), [0, 255, 0]),
+            400,
+            "{position}"
+        );
+    }
+}
+
+#[test]
+fn a_hidden_clipping_table_keeps_its_visible_transformed_cell() {
+    let result = lay_out(
+        "<div style='display:table;visibility:hidden;overflow:hidden;border-spacing:0;transform:translate(12px,7px)'>\
+         <div style='display:table-row'><div style='display:table-cell;visibility:visible;width:20px;height:20px;background:lime'></div></div></div>",
+        "",
+    );
+    let page = result.pages().next().expect("first page");
+    assert!(
+        trace(&page)
+            .iter()
+            .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
+    );
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [0, 255, 0]), 400);
+    let reference = lay_out(
+        "<div style='display:table;visibility:hidden;overflow:visible;border-spacing:0;transform:translate(12px,7px)'>\
+         <div style='display:table-row'><div style='display:table-cell;visibility:visible;width:20px;height:20px;background:lime'></div></div></div>",
+        "",
+    );
+    assert_eq!(
+        pixels,
+        render_first_page(&reference),
+        "capturing the empty ancestor must not apply its transform twice"
+    );
+}
+
+#[test]
+fn empty_overflow_scopes_are_removed_from_the_recorded_scene_as_well_as_the_trace() {
+    use kurbo::Shape;
+    let inner: String = (0..5).map(|i| format!("<p>line {i}</p>")).collect();
+    let result = lay_out(
+        &format!(
+            "<div style='height:130px'></div>\
+         <div style='overflow:hidden;padding:15px;border:4px solid;break-inside:avoid'>{inner}</div>"
+        ),
+        "",
+    );
+    let page = result.pages().next().expect("first page");
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = anyrender::Scene::new();
+    raikiri_paint::paint_single_page_with_origin(&mut scene, document, cascade, page_box, origin)
+        .expect("paint");
+    for command in scene.commands {
+        if let anyrender::recording::RenderCommand::PushClipLayer(clip) = command {
+            assert_ne!(
+                clip.clip.bounding_box(),
+                kurbo::Rect::new(32.0, 184.0, 268.0, 324.0)
+            );
+        }
+    }
+}
+
 /// A box whose bottom padding is cut by a page break.
 #[test]
 fn overflow_clip_rectangles_match_for_padding_cut_by_a_break() {
