@@ -311,39 +311,70 @@ fn root_static_position_overrides(
             .iter()
             .map(|candidate| candidate.node)
             .collect::<Vec<_>>();
-        overrides.extend(table_max_width_floors(tree, root, &nodes, area.size.width));
+        overrides.extend(table_max_width_floors(tree, root, &nodes, area, None));
         overrides
     })
 }
 
+/// How the grid areas that boxes name resolve in a grid container: the inline
+/// direction of the container and, when it is laid out on the axes of a
+/// vertical writing mode, those axes.
+#[derive(Clone, Copy)]
+struct GridAreaBasis {
+    direction: Direction,
+    axes: Option<grid_oof::GridAxes>,
+}
+
 /// [`super::content_limits::table_max_width_floors`] for the `candidates` that
-/// `owner` positions against a containing block `containing_width` wide.
+/// `owner` positions against `area`, its positioning area.
 ///
 /// A grid container places a box that names a grid area in that area, so the
 /// percentages of the box resolve against the width of the area rather than
-/// against `containing_width`, which the floor is decided by; those boxes keep
-/// the `max-width` they state.
+/// against that of `area`, and the floor of such a box is decided by the width
+/// of its own area, which `basis` resolves. Without `basis`, or without the
+/// tracks of the container to resolve it from, those boxes keep the
+/// `max-width` they state.
 fn table_max_width_floors(
     tree: &mut LayoutSession<'_>,
     owner: NodeId,
     candidates: &[NodeId],
-    containing_width: f32,
+    area: OofPositioningArea,
+    basis: Option<GridAreaBasis>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
-    let in_containing_block =
-        if tree.nodes[usize::from(owner)].formatting_context == FormattingContext::Grid {
-            candidates
-                .iter()
-                .copied()
-                .filter(|&candidate| {
-                    !tree
-                        .query_style(usize::from(candidate), ReadRole::Oof)
-                        .has_grid_placement()
-                })
-                .collect()
-        } else {
-            candidates.to_vec()
-        };
-    super::content_limits::table_max_width_floors(tree, &in_containing_block, containing_width)
+    if tree.nodes[usize::from(owner)].formatting_context != FormattingContext::Grid {
+        return super::content_limits::table_max_width_floors(tree, candidates, area.size.width);
+    }
+    let mut floors = Vec::new();
+    let mut in_containing_block = Vec::new();
+    for &candidate in candidates {
+        let style = tree.query_style(usize::from(candidate), ReadRole::Oof);
+        if !style.has_grid_placement() {
+            in_containing_block.push(candidate);
+            continue;
+        }
+        let area_width = basis.and_then(|basis| {
+            let info = tree.context.grid_layout_info.get(&usize::from(owner));
+            grid_oof::GridAreas::of(info, basis.axes).map(|areas| {
+                areas
+                    .positioning_area(&style, basis.direction, area)
+                    .size
+                    .width
+            })
+        });
+        if let Some(width) = area_width {
+            floors.extend(super::content_limits::table_max_width_floors(
+                tree,
+                &[candidate],
+                width,
+            ));
+        }
+    }
+    floors.extend(super::content_limits::table_max_width_floors(
+        tree,
+        &in_containing_block,
+        area.size.width,
+    ));
+    floors
 }
 
 /// Run `layout` with the boxes it positions aligned on the axes of `container`,
@@ -380,7 +411,11 @@ pub(super) fn layout_candidates(
     let result = with_oof_axes(tree, owner, |tree| {
         super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
             let span: OofSpan<'_> = candidates.all();
-            let floors = table_max_width_floors(tree, owner, &candidate_ids, area.size.width);
+            let basis = Some(GridAreaBasis {
+                direction,
+                axes: grid,
+            });
+            let floors = table_max_width_floors(tree, owner, &candidate_ids, area, basis);
             match grid {
                 Some(axes) => tree.with_overrides(floors, |tree| {
                     grid_oof::compute_oof_layout(tree, owner, span, area, direction, claims, axes)
