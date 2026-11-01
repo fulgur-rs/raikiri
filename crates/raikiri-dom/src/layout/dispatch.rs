@@ -3402,39 +3402,53 @@ pub(crate) fn flex_layout(
     flex_layout_sized(tree, node_id, inputs)
 }
 
-/// Give a row flex container that wraps its items, and is laid out at its
-/// min-content width, the width CSS Flexbox 1 section 9.9.1 defines for it: that
-/// of its widest item, as each item breaks onto a line of its own. Taffy sums
-/// the flex base sizes of the items of a line, which is neither the width an
-/// item contributes nor bounded by its `max-width`.
-fn with_wrapping_min_content_width(
+/// The border-box width CSS Flexbox 1 section 9.9.1 gives a row flex container
+/// that wraps its items at its min-content width: that of its widest item, as
+/// each item breaks onto a line of its own. Taffy sums the flex base sizes of
+/// the items of a line instead, which is neither the width an item contributes
+/// nor bounded by its `max-width`. `None` for any other container, and for one
+/// that states its width or runs on the axes of a vertical writing mode.
+fn wrapping_row_min_content_width(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
-    mut inputs: LayoutInput,
-) -> LayoutInput {
+    inputs: &LayoutInput,
+) -> Option<f32> {
     let idx = usize::from(node_id);
-    if inputs.available_space.width != AvailableSpace::MinContent
-        || inputs.known_dimensions.width.is_some()
+    if inputs.known_dimensions.width.is_some()
         || block_right_to_left(tree, idx).is_some()
         || !{
             let style = tree.physical_style(idx);
             style.flex_direction_is_row() && style.flex_wraps()
         }
     {
-        return inputs;
+        return None;
     }
-    let (size, inset, _) = tree.block_definite_size(idx, &inputs);
+    let (size, inset, _) = tree.block_definite_size(idx, inputs);
     if size.width.is_some() {
-        return inputs;
+        return None;
     }
     let room = item_cross_room(
         size.height.map(|height| (height - inset.height).max(0.0)),
-        &inputs,
+        inputs,
     );
     let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
     let width = wrapping_min_content_width(tree, node_id, room) + inset.width;
-    inputs.known_dimensions.width = Some(width.clamp(min, max));
-    inputs.known_dimensions_are_definite.width = true;
+    Some(width.clamp(min, max))
+}
+
+/// Give a row flex container that wraps its items, and is laid out at its
+/// min-content width, the width [`wrapping_row_min_content_width`] gives it.
+fn with_wrapping_min_content_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.available_space.width == AvailableSpace::MinContent
+        && let Some(width) = wrapping_row_min_content_width(tree, node_id, &inputs)
+    {
+        inputs.known_dimensions.width = Some(width);
+        inputs.known_dimensions_are_definite.width = true;
+    }
     inputs
 }
 
@@ -3448,6 +3462,20 @@ fn item_cross_room(inner_height: Option<f32>, inputs: &LayoutInput) -> Option<f3
     })
 }
 
+/// Whether `inputs` ask for the size of a container at its min-content or
+/// max-content width, wherever the query comes from: the shrink-to-fit width of
+/// the container, a `min-content` or `max-content` keyword width, or a parent
+/// that measures it as an item. The flex base sizes of its items bound them
+/// then (CSS Flexbox 1 section 9.9.1).
+fn measures_intrinsic_width(inputs: &LayoutInput) -> bool {
+    inputs.run_mode == RunMode::ComputeSize
+        && inputs.known_dimensions.width.is_none()
+        && matches!(
+            inputs.available_space.width,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
+}
+
 /// [`flex_layout`] once the width of a `fit-content` container is settled.
 fn flex_layout_sized(
     tree: &mut LayoutSession<'_>,
@@ -3456,6 +3484,15 @@ fn flex_layout_sized(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_wrapping_min_content_width(tree, node_id, inputs);
+    // The max-content width of a container that wraps its items is no less
+    // than its min-content width: the widest item, whatever its flex base size.
+    let max_content_floor = if inputs.run_mode == RunMode::ComputeSize
+        && inputs.available_space.width == AvailableSpace::MaxContent
+    {
+        wrapping_row_min_content_width(tree, node_id, &inputs)
+    } else {
+        None
+    };
     let (size, inset, _) = tree.block_definite_size(idx, &inputs);
     let basis = Size {
         width: size.width.map(|width| (width - inset.width).max(0.0)),
@@ -3480,7 +3517,9 @@ fn flex_layout_sized(
                     );
                     compute_flexbox_layout(tree, node_id, inputs)
                 })
-            } else if tree.context.flex_intrinsic_probe == Some(idx) {
+            } else if tree.context.flex_intrinsic_probe == Some(idx)
+                || measures_intrinsic_width(&inputs)
+            {
                 let cross_room = item_cross_room(basis.height, &inputs);
                 with_flex_item_basis_bounds(tree, node_id, cross_room, |tree| {
                     compute_flexbox_layout(tree, node_id, inputs)
@@ -3493,6 +3532,9 @@ fn flex_layout_sized(
     if let Some(width) = content_limits::wrapping_column_min_content_width(tree, node_id, &inputs) {
         let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
         output.size.width = width.clamp(min, max);
+    }
+    if let Some(width) = max_content_floor {
+        output.size.width = output.size.width.max(width);
     }
     let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {

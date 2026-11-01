@@ -41,7 +41,8 @@ pub(super) fn with_saved_probe_caches<R>(
 /// a single line (CSS Flexbox §9.9.1). The container's `max-width` is dropped
 /// for the probe; the caller clamps the result by it. The items are bounded by
 /// their flex base sizes while the container lays them out
-/// ([`with_flex_item_basis_bounds`]).
+/// ([`with_flex_item_basis_bounds`]), as they are when the container is asked
+/// for its min-content or max-content width without this probe.
 ///
 /// A container with no `max-width` has nothing to drop, and the probe leaves
 /// its style alone. A container with one drops it in a scope that keeps the
