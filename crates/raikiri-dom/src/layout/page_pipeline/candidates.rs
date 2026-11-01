@@ -405,9 +405,16 @@ struct CandidateFrame<'name> {
     /// Whether no box comes before the node in its parent or in any block the
     /// node starts, up to the outermost block whose bottom padding or border
     /// follows the node: no page break before the node falls inside that
-    /// block. It is read only where `closing_edges` follows the node, and the
-    /// boxes before it are known only for the blocks on that path.
+    /// block. Boxes that `tied_to_start` ties to the node do not count. It is
+    /// read only where `closing_edges` follows the node, and the boxes before
+    /// it are known only for the blocks on that path.
     lone_in_edges: bool,
+    /// Whether avoided breaks tie the node to the box before it in its parent,
+    /// and that box to the one before it in turn, all the way to the first box
+    /// of the parent: no break between boxes is left to take before the node
+    /// inside its parent. It is read only where `closing_edges` follows the
+    /// node.
+    tied_to_start: bool,
     /// The block size of the bottom padding and border that follow the last
     /// line of the paragraph the node is in or is the text of.
     lines_closing_edges: f32,
@@ -454,6 +461,7 @@ impl CandidateFrame<'_> {
             closing_edges: 0.0,
             previous_box: None,
             lone_in_edges: true,
+            tied_to_start: false,
             lines_closing_edges: 0.0,
             tie: AvoidTie::None,
             run_unit: None,
@@ -972,12 +980,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let closing_edges_base_shape = (in_flow_block || in_flow_container)
                     && !direct_body_child
                     && frame.closing_edges > 0.0;
-                let closing_edges_shape = closing_edges_base_shape && break_before_available();
-                // With no box before it in the block, the edges follow its
-                // lines when it is a paragraph that breaks between them.
+                // A paragraph that avoided breaks tie to the boxes before it,
+                // all the way to the first, has no break between boxes to
+                // take, not even the one that gives way for the last box of a
+                // block: it is split between its lines like a first box.
+                let closing_edges_shape = closing_edges_base_shape
+                    && break_before_available()
+                    && !(frame.tied_to_start && node.is_ifc_root());
+                // With no box before it in the block, or only boxes tied to
+                // it, the edges follow its lines when it is a paragraph that
+                // breaks between them.
                 let lines_shape = closing_edges_shape
                     || (closing_edges_base_shape
-                        && frame.previous_box.is_none()
+                        && (frame.previous_box.is_none() || frame.tied_to_start)
                         && node.is_ifc_root());
                 // Nothing may break inside it at a better place than before
                 // it. A paragraph with lines enough to break between moves
@@ -1344,6 +1359,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // included: `previous_box` forgets a text box, which is no box
                 // to break from for some rules but is one for this.
                 let mut box_before = false;
+                // Whether avoided breaks tie each box so far to the one before
+                // it, from the first box on.
+                let mut tied_from_start = true;
+                let is_block = |id: usize| {
+                    is_plain_block_box(document, id) || is_plain_container_box(document, id)
+                };
                 // A block whose edges nothing around it carries is where the
                 // boxes below it stop looking for a box before them.
                 let child_scope_is_lone = (own_closing_edges.is_some_and(|own| own > 0.0)
@@ -1375,9 +1396,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     };
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
+                    // A float between the boxes is no box in their flow, and
+                    // text before the child is left to the rules for it.
+                    let child_tied_to_start = tied_from_start
+                        && flow_flags.get(index).and_then(|&(in_flow, _)| in_flow)
+                            == Some(child_id)
+                        && is_block(child_id)
+                        && child_previous_box.is_some_and(|previous| {
+                            is_block(previous)
+                                && boxes_are_tied(document, cascade, previous, child_id)
+                        });
                     box_before |= matches!(flow_flags.get(index), Some((Some(_), _)));
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
                         previous_box = Some(last_box);
+                        tied_from_start = !child_box_before || child_tied_to_start;
                     }
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
@@ -1419,7 +1451,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
-                            lone_in_edges: !child_box_before && child_scope_is_lone,
+                            lone_in_edges: (!child_box_before || child_tied_to_start)
+                                && child_scope_is_lone,
+                            tied_to_start: child_tied_to_start,
                             lines_closing_edges,
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),

@@ -789,7 +789,15 @@ fn ratio_stated_size_clamp(
             size_basis.height,
         ),
     ] {
-        if other.is_auto()
+        // Intrinsic widths of an out-of-flow box still follow its stated
+        // height through the ratio. A fixed width does not.
+        let intrinsic_oof_width = property == LengthProperty::Height
+            && is_oof_box(tree, idx)
+            && matches!(
+                other.expand(),
+                ExpandedDimension::MinContent | ExpandedDimension::MaxContent
+            );
+        if (other.is_auto() || intrinsic_oof_width)
             && stated
                 .maybe_resolve(basis)
                 .is_some_and(|stated| stated < floor)
@@ -820,10 +828,10 @@ fn is_plain_ratio_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
 }
 
 /// The automatic minimum width of the `candidates`, out-of-flow boxes or items
-/// of a grid, whose width follows from a height they state through their
-/// aspect ratio: their min-content width, which the content raises that width
-/// to unless the box scrolls or states a `min-width` (CSS Sizing 4 §5.1). The
-/// `max-width` of the box caps it.
+/// of a grid, with an aspect ratio and a height they state: their min-content
+/// width, which the content raises that width to unless the box scrolls or
+/// states a `min-width` (CSS Sizing 4 §5.1). The `max-width` of the box caps
+/// it.
 ///
 /// The library takes the width the ratio gives for such a box as final, so a
 /// box whose content needs more room is narrower than its content. It clamps
@@ -833,6 +841,10 @@ fn is_plain_ratio_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// to `0`, even when an authored minimum width opts out of the content floor.
 /// An authored minimum height remains intact, including the legitimate width
 /// minimum it transfers through the ratio.
+///
+/// Chromium also applies this content floor to intrinsic and definite widths
+/// of genuinely out-of-flow boxes. A definite width keeps its preferred size;
+/// only its content minimum can raise it, not the width the ratio would give.
 ///
 /// The width is measured without the `width`, `min-width`, `max-width` and
 /// aspect ratio of the box, at its min-content size.
@@ -851,7 +863,13 @@ pub(super) fn ratio_width_floors(
                 return false;
             }
             let style = tree.physical_style(idx);
-            style.size().width.is_auto()
+            let width = style.size().width;
+            let oof_width = is_oof_box(tree, idx)
+                && (matches!(
+                    width.expand(),
+                    ExpandedDimension::MinContent | ExpandedDimension::MaxContent
+                ) || width.maybe_resolve(Some(containing_size.width)).is_some());
+            (width.is_auto() || oof_width)
                 && style
                     .size()
                     .height

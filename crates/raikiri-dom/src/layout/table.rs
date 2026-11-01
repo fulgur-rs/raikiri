@@ -3010,9 +3010,11 @@ fn normalize_fixed_cells(
             0.0
         };
         if let ExpandedDimension::Length(width) = style.size().width.expand() {
-            // A length sizes the cell's border box. A single percentage cell
-            // adds its edges separately; a spanning percentage only contributes
-            // its share of the net track width.
+            // A length sizes the cell's border box, held to the cell's
+            // `max-width` first. A single percentage cell adds its edges
+            // separately; a spanning percentage only contributes its share of
+            // the net track width.
+            let width = capped_by_max_width(&style, width);
             let padding = style.padding().resolve_or_zero(Some(avail));
             let border = style.border().resolve_or_zero(Some(avail));
             let cell_insets = padding.left + padding.right + border.left + border.right;
@@ -3037,6 +3039,22 @@ fn normalize_fixed_cells(
             cell.specified_min_width = Dimension::length((outer - gaps).max(0.0));
         }
     }
+}
+
+/// A `width` held to the `max-width` of the box `style` is of, which is in the
+/// same box-sizing as the width.
+fn capped_by_max_width(style: &LayoutStyleView<'_>, width: f32) -> f32 {
+    resolve_dimension(style.max_size().width.into(), None)
+        .map_or(width, |maximum| width.min(maximum))
+}
+
+/// The `width` a cell states, held within its own `min-width` and `max-width`
+/// (the minimum wins).
+fn within_cell_width_limits(doc: &LayoutSession<'_>, cell: usize, width: f32) -> f32 {
+    let style = doc.table_style(cell);
+    let capped = capped_by_max_width(&style, width);
+    resolve_dimension(style.min_size().width.into(), None)
+        .map_or(capped, |minimum| capped.max(minimum))
 }
 
 // ---------------------------------------------------------------------------
@@ -3187,7 +3205,8 @@ fn resolve_column_widths(
             && matches!(cell.specified_width.expand(), ExpandedDimension::Length(_))
             && col_len[c].is_none()
         {
-            col_len[c] = resolve_dimension(cell.specified_width, None);
+            col_len[c] = resolve_dimension(cell.specified_width, None)
+                .map(|width| within_cell_width_limits(doc, cell.node_id, width));
         }
     }
     for c in 0..n {

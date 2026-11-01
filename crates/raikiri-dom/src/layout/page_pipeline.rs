@@ -1941,6 +1941,19 @@ fn usable_widows(total_lines: usize, orphans: usize, widows: usize) -> usize {
     widows.min(total_lines.saturating_sub(orphans)).max(1)
 }
 
+/// The lines that a page gives up to the next one when the padding and border
+/// below its last line do not fit, and it holds `lines` lines of the paragraph.
+/// The break the edges ask for follows `widows` lines after it and `orphans`
+/// before it when the page can have both; a page that cannot ignores the two
+/// and gives up its last line, as Chromium does.
+fn edge_break_lines(lines: usize, orphans: usize, widows: usize) -> usize {
+    if lines.saturating_sub(widows) >= orphans {
+        widows
+    } else {
+        1
+    }
+}
+
 /// The break that keeps the last `widows` lines of a paragraph together at
 /// the top of the page after `current_page` (CSS Fragmentation 3 §3.3).
 /// `line_metrics` holds each line's top and bottom relative to the top of
@@ -1988,21 +2001,29 @@ struct LinePiece {
 
 /// Where each page of a paragraph starts, and the lines it holds: a line that
 /// crosses a page end starts the next page, and the lines after it move down
-/// with it. `forced` names a line that starts a page whether it crosses the
-/// end of the one before or not: `(line, page)`.
+/// with it. `forced` names the lines that start a page whether they cross the
+/// end of the one before or not: `(line, page)`. The last line carries
+/// `tail_edges`, the padding and border that close the paragraph below it: it
+/// crosses a page end when they do, and starts the next page with them.
 fn line_pieces(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     current_page: u32,
     page_origins: &PageOrigins,
-    forced: Option<(usize, u32)>,
+    forced: &[(usize, u32)],
+    tail_edges: f32,
 ) -> Vec<LinePiece> {
     let mut pieces: Vec<LinePiece> = Vec::new();
     let mut shift = 0.0_f32;
     let mut page = current_page;
     for (line, &(line_top, line_bottom)) in line_metrics.iter().enumerate() {
         let top = effective_y + line_top + shift;
-        let bottom = effective_y + line_bottom + shift;
+        let edges = if line + 1 == line_metrics.len() {
+            tail_edges
+        } else {
+            0.0
+        };
+        let bottom = effective_y + line_bottom + shift + edges;
         // The flow itself may carry the line onto a later page.
         page = page.max(page_origins.page_index_for_y(top + 0.001));
         let mut push = None;
@@ -2010,11 +2031,11 @@ fn line_pieces(
             let next = page.saturating_add(1);
             let crosses = top > page_origins.origin(page) + 0.001
                 && bottom > page_origins.origin(next) + 0.001;
-            let target = match forced {
-                Some((first, forced_page)) if first == line => {
+            let target = match forced.iter().find(|&&(first, _)| first == line) {
+                Some(&(_, forced_page)) => {
                     (page_origins.origin(forced_page) - top > 0.001).then_some(forced_page)
                 }
-                _ => crosses.then_some(next),
+                None => crosses.then_some(next),
             };
             if let Some(target) = target {
                 page = target;
@@ -2055,43 +2076,88 @@ fn line_pieces(
 /// the top of the page after it, so the lines that then cross its end start the
 /// page after that. When the widows are more lines than a page holds, Chromium
 /// repairs only the first break of the paragraph, and so does this.
+///
+/// `tail_edges` is the padding and border below the last line. They stay with
+/// the lines at the end of the last page: when they do not fit under it, the
+/// page gives up the lines of an edge break to the next one (see
+/// [`edge_break_lines`]), which holds them with the edges. The breaks the lines
+/// themselves need are repaired first, and the edges are fitted to the lines as
+/// they come out.
 fn paragraph_line_moves(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     current_page: u32,
     orphans: usize,
     widows: usize,
+    tail_edges: f32,
     page_origins: &PageOrigins,
 ) -> Vec<LineBreakMove> {
     let (Some(&(_, last_bottom)), total) = (line_metrics.last(), line_metrics.len()) else {
         return Vec::new();
     };
-    let mut pieces = line_pieces(line_metrics, effective_y, current_page, page_origins, None);
+    let kept_widows = usable_widows(total, orphans, widows);
+    let mut pieces = line_pieces(
+        line_metrics,
+        effective_y,
+        current_page,
+        page_origins,
+        &[],
+        0.0,
+    );
     // The widows lines fit a page, so that no break after the first needs
     // more than the lines that follow it.
     let widows_fit = pieces.last().is_some_and(|last| {
-        let first_widow = total - widows.clamp(1, total);
+        let first_widow = total - kept_widows.clamp(1, total);
         last_bottom - line_metrics[first_widow].0 <= page_origins.step_at(last.page) + 0.001
     });
-    let forced = pieces
+    let mut breaks: Vec<(usize, u32)> = pieces
         .iter()
         .zip(pieces.iter().skip(1))
         .enumerate()
         .find_map(|(index, (before, after))| {
             let remaining = total - after.first;
-            let moved = widows
+            let moved = kept_widows
                 .saturating_sub(remaining)
                 .min(before.count.saturating_sub(orphans));
             (moved > 0 && (index == 0 || widows_fit)).then_some((after.first - moved, after.page))
-        });
-    if forced.is_some() {
+        })
+        .into_iter()
+        .collect();
+    if !breaks.is_empty() {
         pieces = line_pieces(
             line_metrics,
             effective_y,
             current_page,
             page_origins,
-            forced,
+            &breaks,
+            0.0,
         );
+    }
+    if tail_edges > 0.0 {
+        let closed = line_pieces(
+            line_metrics,
+            effective_y,
+            current_page,
+            page_origins,
+            &breaks,
+            tail_edges,
+        );
+        // The edges start a page of their own when they do not fit under the
+        // last line.
+        if let Some(last) = pieces.last().filter(|_| closed.len() > pieces.len()) {
+            let moved = edge_break_lines(last.count, orphans, widows);
+            breaks.push((total - moved, last.page.saturating_add(1)));
+            pieces = line_pieces(
+                line_metrics,
+                effective_y,
+                current_page,
+                page_origins,
+                &breaks,
+                tail_edges,
+            );
+        } else {
+            pieces = closed;
+        }
     }
     pieces
         .iter()
@@ -6894,13 +6960,13 @@ fn nested_run_units(
     units
 }
 
-/// The break that keeps a paragraph's last `widows` lines with the `edges` of
-/// bottom padding and border that close the blocks around it, when the lines
-/// fit the page but the edges do not. A break between the last line and the
-/// edges (class C) is not taken while one between lines (class B) honors
-/// `orphans` and `widows`, as in [`closing_edges_move`]. A paragraph with no
-/// more lines than `orphans` keeps the orphans it can, down to one line, and
-/// its last line moves. The edges run on past the end of the next page as
+/// The break that keeps a paragraph's last lines with the `edges` of bottom
+/// padding and border that close the blocks around it, when the lines fit the
+/// page but the edges do not. A break between the last line and the edges
+/// (class C) is not taken while one between lines (class B) honors `orphans`
+/// and `widows`, as in [`closing_edges_move`]: the page gives up `widows` lines
+/// when it keeps its `orphans` after that, and its last line when it cannot
+/// (see [`edge_break_lines`]). The edges run on past the end of the next page as
 /// they would anywhere; that page only has to hold the lines. `line_metrics`
 /// is as for [`widows_break_on_next_page`]. `None` when the lines or the edges
 /// do not run past the page end the way that needs, there is only one line,
@@ -6925,12 +6991,11 @@ fn closing_edges_line_move(
     if !fits_lines || last_bottom + edges <= page_end + 0.001 {
         return None;
     }
-    let widows = usable_widows(line_metrics.len(), orphans, widows);
     widows_break_on_next_page(
         line_metrics,
         effective_y,
         current_page,
-        widows,
+        edge_break_lines(line_metrics.len(), orphans, widows),
         page_origins,
     )
 }
@@ -7769,6 +7834,12 @@ struct ParagraphLineFit {
     /// Whether the lines need a break that leaves fewer than `orphans`
     /// lines before it or fewer than `widows` lines after it.
     violates_line_constraints: bool,
+    /// The padding and border below the last line, which stay with it; 0 for
+    /// a paragraph of one line.
+    tail_edges: f32,
+    /// Whether every line fits the page but the last does not with
+    /// `tail_edges` below it.
+    tail_overflows: bool,
 }
 
 impl ParagraphLineFit {
@@ -7815,7 +7886,7 @@ impl ParagraphLineFit {
             && self.violates_line_constraints;
         let moves = if !(move_block && self.leaves_too_few_orphans())
             && self.starts_on_page
-            && self.lines_before_break < self.total_lines
+            && (self.lines_before_break < self.total_lines || self.tail_overflows)
             && can_move_lines()
         {
             paragraph_line_moves(
@@ -7824,6 +7895,7 @@ impl ParagraphLineFit {
                 current_page,
                 self.orphans,
                 self.widows,
+                self.tail_edges,
                 page_origins,
             )
         } else {
@@ -7840,7 +7912,11 @@ impl ParagraphLineFit {
 
     /// Measures `line_metrics`, the block-start and block-end edges of each
     /// line relative to `effective_y`, against the page from `page_start`
-    /// to `page_end`, with the computed `orphans` and `widows`.
+    /// to `page_end`, with the computed `orphans` and `widows`. `edges` is the
+    /// padding and border below the last line, which `line_metrics` does not
+    /// count and which stay with that line. A paragraph of one line has
+    /// nothing to break between, so the edges are not tracked for it; the box
+    /// moves whole at the break before it.
     fn measure(
         line_metrics: &[(f32, f32)],
         effective_y: f32,
@@ -7848,6 +7924,7 @@ impl ParagraphLineFit {
         page_end: f32,
         orphans: i32,
         widows: i32,
+        edges: f32,
     ) -> Self {
         let total_lines = line_metrics.len();
         let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
@@ -7860,10 +7937,21 @@ impl ParagraphLineFit {
             .count();
         let needs_break = lines_before_break < total_lines;
         let orphans = orphans.max(1) as usize;
-        let widows = usable_widows(total_lines, orphans, widows.max(1) as usize);
+        let widows = widows.max(1) as usize;
+        let usable = usable_widows(total_lines, orphans, widows);
         let violates_line_constraints = needs_break
             && (lines_before_break < orphans
-                || total_lines.saturating_sub(lines_before_break) < widows);
+                || total_lines.saturating_sub(lines_before_break) < usable);
+        let tail_edges = if total_lines > 1 && edges > 0.0 {
+            edges
+        } else {
+            0.0
+        };
+        let tail_overflows = tail_edges > 0.0
+            && !needs_break
+            && line_metrics
+                .last()
+                .is_some_and(|(_, bottom)| effective_y + bottom + tail_edges > page_end + 0.001);
         Self {
             total_lines,
             starts_on_page,
@@ -7872,6 +7960,8 @@ impl ParagraphLineFit {
             widows,
             top_edges_end_page: false,
             violates_line_constraints,
+            tail_edges,
+            tail_overflows,
         }
     }
 }
