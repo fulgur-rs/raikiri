@@ -390,15 +390,15 @@ fn a_stretched_image_in_a_table_cell_is_aligned_at_its_used_height() {
 
 #[test]
 fn table_cell_image_alignment_follows_final_constraints() {
-    check_cell_image_oracle(include_str!("data/table-cell-stretch-image.json"));
+    check_image_oracle(include_str!("data/table-cell-stretch-image.json"));
 }
 
 #[test]
 fn a_cell_does_not_stretch_its_height_determining_image_again() {
-    check_cell_image_oracle(include_str!("data/table-cell-stretch-min-height.json"));
+    check_image_oracle(include_str!("data/table-cell-stretch-min-height.json"));
 }
 
-fn check_cell_image_oracle(source: &str) {
+fn check_image_oracle(source: &str) {
     let oracle: serde_json::Value = serde_json::from_str(source).expect("Chromium measurements");
     let mut mismatches = Vec::new();
     for case in oracle["cases"].as_array().expect("cases") {
@@ -424,4 +424,20 @@ fn check_cell_image_oracle(source: &str) {
         }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn a_vertical_column_image_takes_its_ratio_width_from_the_margin_adjusted_stretch_height() {
+    check(
+        &image(
+            "display:flex;flex-direction:column;writing-mode:vertical-rl;height:200px;width:300px",
+            "margin:10% 0",
+        ),
+        &[("i", [244.0, 28.0, 64.0, 160.0])],
+    );
+}
+
+#[test]
+fn stretched_image_ratios_follow_the_containing_inline_size() {
+    check_image_oracle(include_str!("data/vertical-stretch-image.json"));
 }
