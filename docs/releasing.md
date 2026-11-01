@@ -36,7 +36,8 @@ version; an ordinary push skips it and never waits for an approval.
 `release-plz.toml` keeps git-only mode and disables Cargo publishing for the
 workspace, and turns both around for the eight published crates: release-plz
 reads their latest version from crates.io and publishes them, and reads the
-others from their git tags and only tags them. GitHub Releases stay disabled.
+others from their git tags and only tags them. Each published crate also
+gets a GitHub Release for its tag; the other members get none.
 The Release PR uses the existing `RELEASE_PLZ_APP_CLIENT_ID` repository variable
 and `RELEASE_PLZ_APP_PRIVATE_KEY` secret so PR CI can run. Tag creation uses
 `GITHUB_TOKEN`. Publishing uses crates.io Trusted Publishing: the release job
