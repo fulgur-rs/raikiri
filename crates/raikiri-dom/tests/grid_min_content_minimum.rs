@@ -9,7 +9,10 @@ use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
 };
-use raikiri_traits::{LayoutConfig, PageDefaults};
+use raikiri_traits::{
+    IntrinsicBox, LayoutConfig, PageDefaults, ReplacedResolver, ResolveDisposition,
+    ResolvedIntrinsic, ResolverError, ResolverRequest,
+};
 
 const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -17,6 +20,18 @@ const AHEM: &[u8] = include_bytes!(concat!(
 ));
 
 const TEXT: &str = "AAAA BBBB";
+
+/// All image fixtures in this module use a decoded 1x1 GIF.
+struct OnePixelImage;
+
+impl ReplacedResolver for OnePixelImage {
+    fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(1.0, 1.0).with_aspect_ratio(1.0),
+            ResolveDisposition::Ok,
+        ))
+    }
+}
 
 /// The border box `(x, y, width, height)` of the element with the given `id`
 /// when `body` is laid out on a page with an 8px margin.
@@ -29,7 +44,10 @@ fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
         .font_bytes("Ahem", AHEM.to_vec())
         .build()
         .expect("fonts");
-    let resources = RenderResources::new().fonts(fonts);
+    let image = OnePixelImage;
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .replaced_resolver(&image);
     let doc = parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
     let status = layout(
         &doc,
@@ -342,11 +360,9 @@ fn a_chain_of_nested_grids_is_laid_out_in_time_linear_in_its_length() {
     );
 }
 
-#[test]
-fn ratio_items_contribute_their_minimum_width_and_reflow_at_the_final_track_width() {
-    let oracle: serde_json::Value =
-        serde_json::from_str(include_str!("data/grid-minimum-aspect-ratio.json"))
-            .expect("Chromium measurements");
+/// Compare all recorded element boxes with independent Chromium measurements.
+fn assert_oracle(data: &str) {
+    let oracle: serde_json::Value = serde_json::from_str(data).expect("Chromium measurements");
     for case in oracle["cases"].as_array().expect("cases") {
         let expected: Vec<_> = case["expected"]
             .as_array()
@@ -361,6 +377,16 @@ fn ratio_items_contribute_their_minimum_width_and_reflow_at_the_final_track_widt
             .collect();
         assert_boxes(case["html"].as_str().expect("markup"), &expected);
     }
+}
+
+#[test]
+fn ratio_items_contribute_their_minimum_width_and_reflow_at_the_final_track_width() {
+    assert_oracle(include_str!("data/grid-minimum-aspect-ratio.json"));
+}
+
+#[test]
+fn image_items_contribute_their_minimum_but_keep_their_intrinsic_ratio() {
+    assert_oracle(include_str!("data/grid-minimum-image-ratio.json"));
 }
 
 #[test]

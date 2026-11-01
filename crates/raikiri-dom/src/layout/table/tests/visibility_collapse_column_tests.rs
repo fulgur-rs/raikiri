@@ -389,6 +389,12 @@ fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
     doc.nodes[table].layout.size.height
 }
 
+/// The fixed table's height with the requested Ahem face actually loaded.
+fn rows_height_with_ahem(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
+    let (doc, table, _) = laid_out_rows_with_font("table-layout:fixed", width, columns, rows, true);
+    doc.nodes[table].layout.size.height
+}
+
 /// The table [`rows_height`] measures, laid out with `table_css` besides its
 /// `width`, and its cells by row.
 fn laid_out_rows(
@@ -397,7 +403,20 @@ fn laid_out_rows(
     columns: &[&'static str],
     rows: &[Row],
 ) -> (Document, usize, Vec<Vec<usize>>) {
+    laid_out_rows_with_font(table_css, width, columns, rows, false)
+}
+
+fn laid_out_rows_with_font(
+    table_css: &str,
+    width: u32,
+    columns: &[&'static str],
+    rows: &[Row],
+    load_ahem: bool,
+) -> (Document, usize, Vec<Vec<usize>>) {
     let mut doc = Document::new();
+    if load_ahem {
+        crate::layout::test_support::with_ahem(&mut doc);
+    }
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let table = doc.append_element(
@@ -460,16 +479,16 @@ fn a_collapsed_edge_column_keeps_its_border_in_the_widths_rows_are_measured_at()
         ("", &[("border-left:20px solid black", "X"), ("", "X")]),
         ("", &[("", wraps), ("", "X")]),
     ];
-    let measured = rows_height(110, &[COLLAPSED_COL, COL], &first);
-    assert_eq!(measured, rows_height(110, &[COL, COL], &first));
+    let measured = rows_height_with_ahem(110, &[COLLAPSED_COL, COL], &first);
+    assert_eq!(measured, rows_height_with_ahem(110, &[COL, COL], &first));
     assert_eq!(measured, 30.0);
     // The same holds at the other edge.
     let last: [Row; 2] = [
         ("", &[("", "X"), ("border-right:20px solid black", "X")]),
         ("", &[("", "X"), ("", wraps)]),
     ];
-    let measured = rows_height(110, &[COL, COLLAPSED_COL], &last);
-    assert_eq!(measured, rows_height(110, &[COL, COL], &last));
+    let measured = rows_height_with_ahem(110, &[COL, COLLAPSED_COL], &last);
+    assert_eq!(measured, rows_height_with_ahem(110, &[COL, COL], &last));
     assert_eq!(measured, 30.0);
 }
 
@@ -484,9 +503,13 @@ fn a_collapsed_column_keeps_its_overlaps_in_the_widths_rows_are_measured_at() {
         "",
         &[(bordered, "X"), (bordered, "X"), (bordered, "X X X X X X")],
     )];
-    let measured = rows_height(118, &[COL, COLLAPSED_COL, COL], &cells);
-    assert_eq!(measured, rows_height(118, &[COL, COL, COL], &cells));
-    assert_eq!(measured, 50.0);
+    let measured = rows_height_with_ahem(118, &[COL, COLLAPSED_COL, COL], &cells);
+    assert_eq!(
+        measured,
+        rows_height_with_ahem(118, &[COL, COL, COL], &cells)
+    );
+    // Chromium 152 with the same loaded 10px Ahem face gives 80px.
+    assert_eq!(measured, 80.0);
 }
 
 #[test]

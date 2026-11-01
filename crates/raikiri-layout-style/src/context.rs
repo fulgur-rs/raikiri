@@ -289,6 +289,9 @@ pub enum GridItemRatio {
     /// The preferred aspect ratio of the box.
     #[default]
     Declared,
+    /// Leave natural ratio sizing to the replaced item itself. The parent
+    /// retains its replaced-element alignment and independent axis bounds.
+    Replaced,
     /// Leave the automatic height to the item's ratio and content at its
     /// final width. Preserve its resolved alignment when hiding the ratio
     /// from the parent, whose `normal` alignment would otherwise stretch it.

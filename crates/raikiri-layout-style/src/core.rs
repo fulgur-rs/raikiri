@@ -157,7 +157,7 @@ impl LayoutStyleView<'_> {
     pub fn aspect_ratio(&self) -> Option<f32> {
         if matches!(
             self.context.grid_item_ratio,
-            crate::GridItemRatio::MeasuredByItem { .. }
+            crate::GridItemRatio::MeasuredByItem { .. } | crate::GridItemRatio::Replaced
         ) {
             return None;
         }
