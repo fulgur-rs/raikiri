@@ -3461,6 +3461,7 @@ pub(crate) fn flex_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_ratio_width(tree, node_id, inputs, flex_layout_sized);
     let inputs = with_fit_content_width(tree, node_id, inputs);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
     if block_right_to_left(tree, usize::from(node_id)).is_none() {
@@ -3908,12 +3909,18 @@ fn with_fit_content_width(
     {
         return inputs;
     }
+    // The ratio relates the width the container ends up with to its height; it
+    // gives the width no content size, which is what the probes measure.
     let mut measure = |space: AvailableSpace| {
         let mut probe = inputs;
         probe.run_mode = RunMode::ComputeSize;
         probe.axis = RequestedAxis::Horizontal;
         probe.available_space.width = space;
-        flex_layout_sized(tree, node_id, probe).size.width
+        without_container_ratio(tree, node_id, |tree| {
+            flex_layout_sized(tree, node_id, probe)
+        })
+        .size
+        .width
     };
     // A container whose items fit the room is as wide as they are, whatever
     // they need at their least.
@@ -3993,6 +4000,7 @@ fn with_clamped_keyword_width(
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
+    let inputs = with_ratio_width(tree, node_id, inputs, grid_layout_sized);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
     if grid_oof::right_to_left(tree, idx).is_none() {
         return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
@@ -4052,6 +4060,59 @@ fn with_ratio_height(
     let height = ratio_height(tree, node_id, inputs, &metrics, sized);
     inputs.known_dimensions.height = height;
     inputs.known_dimensions_are_definite.height |= height.is_some();
+    inputs
+}
+
+/// Give a flex or grid container with a preferred aspect ratio, an `auto` width
+/// and a height it states the width the ratio gives for that height, raised by
+/// its content up to the `max-width` it states: the automatic minimum size of
+/// CSS Sizing 4 §5.1, which is the min-content width unless the container
+/// scrolls or states a `min-width`.
+///
+/// Taffy takes the width the ratio gives as final, so a container whose items
+/// need more room is narrower than they are. `sized` measures the content: it
+/// is the layout of the container once its width is settled.
+fn with_ratio_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.width.is_some() {
+        return inputs;
+    }
+    let style = block_flow::style_input::physical(tree, idx);
+    // A `min-content` or `max-content` width of a box with a definite height
+    // is the width its ratio gives, as browsers lay it out, so such a width
+    // takes the same minimum as an `auto` one.
+    if style.aspect_ratio.is_none() || block_right_to_left(tree, idx).is_some() {
+        return inputs;
+    }
+    let metrics =
+        block_flow::Metrics::resolve(&style, false, tree.nodes[idx].ratio_in_content_box, inputs);
+    let Some(width) = metrics.preferred.width.filter(|_| metrics.ratio_width) else {
+        return inputs;
+    };
+    // The height is no part of the intrinsic width, so the probe is measured
+    // without the one the parent imposed.
+    let probe = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Horizontal,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size::splat(false),
+        available_space: Size {
+            width: AvailableSpace::MinContent,
+            height: inputs.available_space.height,
+        },
+        ..inputs
+    };
+    let minimum = without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
+        .size
+        .width;
+    inputs.known_dimensions.width =
+        Some(width.max(minimum.maybe_clamp(None, metrics.own_max.width)));
+    inputs.known_dimensions_are_definite.width = true;
     inputs
 }
 

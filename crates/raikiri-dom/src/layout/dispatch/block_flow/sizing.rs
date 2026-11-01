@@ -155,7 +155,14 @@ impl Metrics {
         }
         .maybe_add(adjustment);
         let own_max = own_max.maybe_add(adjustment);
-        let authored = across_ratio(specified).maybe_add(adjustment);
+        // A border-box size is no smaller than the padding and border it
+        // holds, and the ratio relates the box that results.
+        let stated_box = if style.box_sizing == BoxSizing::ContentBox {
+            specified
+        } else {
+            specified.maybe_max(padding_border.sum_axes())
+        };
+        let authored = across_ratio(stated_box).maybe_add(adjustment);
         // Whether the content may raise an axis that the aspect ratio gives:
         // unless the box scrolls or `min-*` says otherwise, an automatic
         // minimum keeps it from ending up smaller than its content.
