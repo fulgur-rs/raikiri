@@ -2073,16 +2073,17 @@ fn paragraph_line_moves(
         let first_widow = total - widows.clamp(1, total);
         last_bottom - line_metrics[first_widow].0 <= page_origins.step_at(last.page) + 0.001
     });
-    let forced = pieces.windows(2).enumerate().find_map(|(index, pair)| {
-        let [before, after] = pair else {
-            return None;
-        };
-        let remaining = total - after.first;
-        let moved = widows
-            .saturating_sub(remaining)
-            .min(before.count.saturating_sub(orphans));
-        (moved > 0 && (index == 0 || widows_fit)).then_some((after.first - moved, after.page))
-    });
+    let forced = pieces
+        .iter()
+        .zip(pieces.iter().skip(1))
+        .enumerate()
+        .find_map(|(index, (before, after))| {
+            let remaining = total - after.first;
+            let moved = widows
+                .saturating_sub(remaining)
+                .min(before.count.saturating_sub(orphans));
+            (moved > 0 && (index == 0 || widows_fit)).then_some((after.first - moved, after.page))
+        });
     if forced.is_some() {
         pieces = line_pieces(
             line_metrics,
