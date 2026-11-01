@@ -136,6 +136,9 @@ struct CellPlacement {
     specified_min_width: Dimension,
     resolved: Option<BoxLayout>,
     natural_height: f32,
+    /// The height the cell asks of its row: its laid-out height, or the height
+    /// it states if that is more.
+    measured_height: f32,
     baseline: f32,
     /// Whether the cell has something in flow to take its baseline from: a
     /// line, or a box with height of its own. A baseline-aligned cell without
@@ -1501,11 +1504,11 @@ fn compute_table_layout_checked(
         let min_target = min_h_outer.map(|mn| f32_max_compat(mn - distrib_insets.height, 0.0));
         // The taller of the two is shared once, so that the percentage heights
         // of rows resolve against the height the table ends up with.
-        if let Some(target) = [known_target, min_target]
+        let target_rows = [known_target, min_target]
             .into_iter()
             .flatten()
-            .reduce(f32_max_compat)
-        {
+            .reduce(f32_max_compat);
+        if let Some(target) = target_rows {
             // The row groups share the extra first and the rows without an
             // authored height take their group's share, which keeps the
             // others as they are (see `distribute_extra_to_groups`).
@@ -1532,6 +1535,9 @@ fn compute_table_layout_checked(
                 target,
             );
         }
+        // What the rows add up to once they share an authored height: a
+        // vertical table is at least that high.
+        let target_total = target_rows.map(|_| row_heights.iter().sum::<f32>());
         if vertical_writing {
             // Vertical columns stack the same row track along the physical
             // inline axis. Share CAPMIN across those stacks after removing the
@@ -1543,12 +1549,31 @@ fn compute_table_layout_checked(
         }
 
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
-        // Vertical tables stack each column's inline track along the physical
-        // height, so the physical spacing applies across that stack: the
-        // vertical gap between and around the stacked tracks, the horizontal gap
-        // on both sides of the single physical column.
-        let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
-            + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+        // Vertical tables stack the columns along the physical height, so the
+        // physical spacing applies across that stack: the vertical gap between
+        // and around the stacked tracks, the horizontal gap on both sides of
+        // the single physical column. Each column is as high as the cells that
+        // start in it ask, the columns of a cell that spans several sharing its
+        // height. The table is at least as high as its authored height or
+        // `min-height` and its caption ask, which the columns share in
+        // proportion to their heights.
+        let vertical_tracks = if vertical_writing {
+            let columns = usize::from(grid.n_cols);
+            let mut tracks = vertical_column_tracks(&grid, border_spacing.1);
+            let spacing_total = border_spacing.1 * (columns + 1) as f32;
+            let floor = target_total
+                .map_or(0.0, |total| total + border_spacing.1 * 2.0)
+                .max(caption_inline_minimum - padding_border_size.height);
+            let natural = tracks.iter().sum::<f32>() + spacing_total;
+            if floor > natural {
+                grow_tracks(&mut tracks, floor - natural);
+            }
+            tracks
+        } else {
+            Vec::new()
+        };
+        let vertical_content_height =
+            vertical_tracks.iter().sum::<f32>() + border_spacing.1 * (grid.n_cols as f32 + 1.0);
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
@@ -1711,7 +1736,7 @@ fn compute_table_layout_checked(
             reposition_cells_for_vertical_writing(
                 doc,
                 &mut grid,
-                &row_heights,
+                &vertical_tracks,
                 (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
                 Point {
                     x: x_origin,
@@ -2221,6 +2246,7 @@ fn build_table_grid(
                     specified_min_width,
                     resolved: None,
                     natural_height: 0.0,
+                    measured_height: 0.0,
                     baseline: 0.0,
                     baseline_from_flow: false,
                     row_pass: None,
@@ -2560,6 +2586,7 @@ fn push_row(
             specified_min_width,
             resolved: None,
             natural_height: 0.0,
+            measured_height: 0.0,
             baseline: 0.0,
             baseline_from_flow: false,
             row_pass: None,
@@ -3967,6 +3994,7 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         }
     });
     let h = output.size.height.max(authored_height);
+    cell.measured_height = h;
     let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
     cell.baseline =
         baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
@@ -4330,6 +4358,50 @@ fn place_cells(
     Ok(())
 }
 
+/// The heights of the columns of a vertical table, which stack along its
+/// physical height: each is as high as the tallest cell that starts in it and
+/// spans no other column. A cell that spans several columns shares the height
+/// it lacks among them, once the narrower spans have settled, and the columns
+/// keep the `spacing` between them out of its height.
+fn vertical_column_tracks(grid: &TableGrid, spacing: f32) -> Vec<f32> {
+    let columns = usize::from(grid.n_cols);
+    let mut tracks = vec![0.0f32; columns];
+    let mut spanning = Vec::new();
+    for cell in &grid.cells {
+        let start = usize::from(cell.col_start).min(columns);
+        let end = start
+            .saturating_add(usize::from(cell.col_span))
+            .min(columns);
+        if end - start > 1 {
+            spanning.push((start..end, cell.measured_height));
+        } else if end > start {
+            tracks[start] = f32_max_compat(tracks[start], cell.measured_height);
+        }
+    }
+    spanning.sort_by_key(|(span, _)| (span.len(), span.start));
+    for (span, height) in spanning {
+        let current = spanned_size(&tracks[span.clone()], spacing);
+        if height > current {
+            grow_tracks(&mut tracks[span], height - current);
+        }
+    }
+    tracks
+}
+
+/// Adds `extra` to `tracks` in proportion to their sizes, or equally when none
+/// of them has any.
+fn grow_tracks(tracks: &mut [f32], extra: f32) {
+    let total: f32 = tracks.iter().sum();
+    let count = tracks.len() as f32;
+    for track in tracks.iter_mut() {
+        *track += if total > 0.0 {
+            extra * *track / total
+        } else {
+            extra / count
+        };
+    }
+}
+
 /// Re-map the already measured table grid from horizontal physical axes to
 /// vertical writing-mode axes. Vertical cells are re-laid out at their final
 /// physical dimensions and aligned on their block axis. Orthogonal horizontal
@@ -4337,23 +4409,24 @@ fn place_cells(
 fn reposition_cells_for_vertical_writing(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    row_heights: &[f32],
+    tracks: &[f32],
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
 ) {
-    let vertical_track = row_heights.iter().sum::<f32>();
-    if !vertical_track.is_finite() || vertical_track <= 0.0 {
+    let total = tracks.iter().sum::<f32>();
+    if !total.is_finite() || total <= 0.0 {
         return; // cov:ignore: defensive empty/invalid vertical track fallback.
     }
     for cell in &mut grid.cells {
-        let col_start = cell.col_start as usize;
+        let col_start = usize::from(cell.col_start).min(tracks.len());
         let col_end = col_start
-            .saturating_add(cell.col_span as usize)
-            .min(usize::from(grid.n_cols));
-        let col_span = col_end.saturating_sub(col_start).max(1);
-        let y = origin.y + (vertical_track + spacing) * col_start as f32;
-        let height = vertical_track * col_span as f32 + spacing * (col_span - 1) as f32;
+            .saturating_add(usize::from(cell.col_span))
+            .min(tracks.len());
+        let y = origin.y
+            + spanned_size(&tracks[..col_start], spacing)
+            + if col_start > 0 { spacing } else { 0.0 };
+        let height = spanned_size(&tracks[col_start..col_end], spacing);
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };

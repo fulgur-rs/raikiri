@@ -14,6 +14,7 @@ fn placement(row: u16, col_span: u16, row_span: u16) -> CellPlacement {
         specified_min_width: Dimension::auto(),
         resolved: None,
         natural_height: 0.0,
+        measured_height: 0.0,
         baseline: 0.0,
         baseline_from_flow: false,
         row_pass: None,
