@@ -4339,7 +4339,12 @@ fn grid_layout_sized(
                     algorithm(tree, node_id, inputs)
                 })
             } else {
-                algorithm(tree, node_id, inputs)
+                // The items are sized by what they state and their content
+                // for this layout of the grid only: the limits above read
+                // the minimum widths as the author wrote them.
+                content_limits::with_grid_item_ratio_overrides(tree, node_id, |tree| {
+                    algorithm(tree, node_id, inputs)
+                })
             }
         },
     );
