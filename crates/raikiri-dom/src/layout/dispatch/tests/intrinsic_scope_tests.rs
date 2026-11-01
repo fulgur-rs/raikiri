@@ -134,8 +134,12 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
 #[test]
 fn intrinsic_scope_sets_the_bounded_item_cache_apart_and_keeps_the_generation() {
     use raikiri_layout_style::ViewContext;
-    let (mut doc, cascade, child, _) =
-        fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
+    // The item states `min-width: 0` so that its automatic minimum width is not
+    // measured inside the scope; this test is about where the cache answers go.
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:flex;max-width:50px",
+        "flex:1 0 100px;width:auto;min-width:0",
+    );
     let parent = doc.nodes[child].parent.unwrap();
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let id = NodeId::from(child);

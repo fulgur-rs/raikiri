@@ -1,0 +1,415 @@
+{
+  "browser": "Chromium 152.0.7977.82",
+  "conditions": "800x600 viewport; body margin 8px; Ahem explicitly loaded 10px/10px; image decoded 1x1; div box-sizing:border-box",
+  "spec": "https://www.w3.org/TR/css-sizing-3/#cyclic-percentage-contribution",
+  "cases": [
+    {
+      "label": "calc(10px + 5%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(10px + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(10px + 50%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(10px + 50%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          15,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(10px + 100%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(10px + 100%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(10px - 50%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(10px - 50%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(5% - 10px)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(5% - 10px)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(0px + 5%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(0px + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(1em + 5%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(1em + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(10px + 0%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(10px + 0%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "calc(20px - 5%)",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:calc(20px - 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "0",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:10px\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "5%",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:5%\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "auto",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:auto\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "width:max-content",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:max-content\"><div id=i style=\"min-width:calc(10px + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          90,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          90,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "width:min-content;max-width:5px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:5px\"><div id=i style=\"min-width:calc(10px + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          5,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "width:min-content;min-width:30px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;min-width:30px\"><div id=i style=\"min-width:calc(10px + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          30,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          30,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "ratio item",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:calc(10px + 5%);aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "image item",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:calc(10px + 5%);height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "two tracks",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;grid-template-columns:auto auto\"><div id=i style=\"min-width:calc(10px + 5%)\">AAAA BBBB</div><div id=j style=\"min-width:calc(10px + 5%)\">AAAA BBBB</div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          20
+        ],
+        [
+          "j",
+          18,
+          8,
+          10.5,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "image with both preferred sizes auto",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:calc(10px + 5%)\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          10.5
+        ],
+        [
+          "i",
+          8,
+          8,
+          10.5,
+          10.5
+        ]
+      ]
+    }
+  ],
+  "scope": "Affine calc() and controls. Mixed length/percentage comparison functions are rejected before layout and tracked separately in RAIKIRI-1317; their computed-Auto probes and full Chromium reproductions are retained in that issue."
+}

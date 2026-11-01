@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::cache_context::SavedLayoutCache;
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
+use raikiri_layout_style::values::{BoxSizing, Dimension, ResolveOrZero};
 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -79,6 +79,75 @@ pub(super) fn with_flex_intrinsic_probe<R>(
     }
 }
 
+/// What the automatic minimum size of a flex item with a horizontal main axis
+/// depends on.
+struct AutomaticMinimumInputs {
+    /// Whether the item is a scroll container, which has no automatic minimum.
+    scrolls: bool,
+    /// The `width` the item states, if it is a length.
+    specified: Option<f32>,
+    /// The `max-width` of the item, if it is a length.
+    maximum: Option<f32>,
+    /// The `height` the item states, if it is a length.
+    height: Option<f32>,
+    /// Whether the sizes of the item are those of its content box.
+    content_box: bool,
+    /// The padding and border of the item, left and right, top and bottom.
+    edges: Size<f32>,
+}
+
+/// The automatic minimum size of the item `child` of a row flex container, as
+/// the value of a `min-width` of the item's own: the smaller of its min-content
+/// size and the width it states, within its `max-width` (CSS Flexbox 1 section
+/// 4.5). The item is measured with the height it states, which gives a replaced
+/// item with an aspect ratio the width that follows from that height.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#min-size-auto>
+fn automatic_minimum_width(
+    tree: &mut LayoutSession<'_>,
+    child: NodeId,
+    inputs: AutomaticMinimumInputs,
+) -> f32 {
+    if inputs.scrolls {
+        return 0.0;
+    }
+    let (across, along) = if inputs.content_box {
+        (inputs.edges.width, inputs.edges.height)
+    } else {
+        (0.0, 0.0)
+    };
+    let measured = tree
+        .compute_child_layout(
+            child,
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: SizingMode::ContentSize,
+                axis: RequestedAxis::Horizontal,
+                known_dimensions: Size {
+                    width: None,
+                    height: inputs.height.map(|height| height + along),
+                },
+                known_dimensions_are_definite: Size {
+                    width: false,
+                    height: inputs.height.is_some(),
+                },
+                parent_size: Size::NONE,
+                available_space: Size {
+                    width: AvailableSpace::MinContent,
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
+            },
+        )
+        .size
+        .width;
+    let bounded = [inputs.specified, inputs.maximum]
+        .into_iter()
+        .flatten()
+        .fold(measured, |minimum, bound| minimum.min(bound + across));
+    (bounded - across).max(0.0)
+}
+
 /// Run `layout`, a layout of the row flex container `node_id`, with each item
 /// whose flex base size is a length bounded by it.
 ///
@@ -146,15 +215,29 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             let (cannot_shrink, cannot_grow) =
                 (style.flex_shrink() == 0.0, style.flex_grow() == 0.0);
             let preferred = crate::layout::resolve_dimension(width, None);
+            let automatic_minimum = min.is_auto().then(|| AutomaticMinimumInputs {
+                scrolls: is_scroll_container(style.overflow()),
+                specified: preferred,
+                maximum: max_length,
+                height: crate::layout::resolve_dimension(style.size().height, None),
+                content_box: style.box_sizing() == BoxSizing::ContentBox,
+                edges: {
+                    let padding = style.padding().resolve_or_zero(None);
+                    let border = style.border().resolve_or_zero(None);
+                    Size {
+                        width: padding.left + padding.right + border.left + border.right,
+                        height: padding.top + padding.bottom + border.top + border.bottom,
+                    }
+                },
+            });
             // The flex base size floors the contribution, and then the item's own
             // bounds clamp it, the minimum over the maximum.
             let new_min = cannot_shrink.then(|| {
                 let floor = max_length.map_or(basis, |max| basis.min(max));
-                LengthPercentageAuto::length(min_length.map_or(floor, |min| min.max(floor)))
+                min_length.map_or(floor, |min| min.max(floor))
             });
-            let new_max = (cannot_grow && preferred.is_none()).then(|| {
-                LengthPercentageAuto::length(max_length.map_or(basis, |m| m.min(basis)) + margins)
-            });
+            let new_max = (cannot_grow && preferred.is_none())
+                .then(|| max_length.map_or(basis, |m| m.min(basis)) + margins);
             let new_width = preferred
                 .filter(|_| cannot_shrink || cannot_grow)
                 .map(|preferred| {
@@ -169,6 +252,17 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                         floored
                     })
                 });
+            // A bound installed as `min-width` or `max-width` is an explicit one,
+            // which leaves the item no automatic minimum size. The contribution
+            // of an item with one is no less than that size however far its flex
+            // base size would bound it.
+            let automatic = automatic_minimum
+                .filter(|_| new_min.is_some() || new_max.is_some())
+                .map(|inputs| automatic_minimum_width(tree, child, inputs));
+            let new_min =
+                new_min.map(|value| automatic.map_or(value, |minimum| value.max(minimum)));
+            let new_max = new_max
+                .map(|value| automatic.map_or(value, |minimum| value.max(minimum + margins)));
             if new_min.is_none() && new_max.is_none() && new_width.is_none() {
                 continue;
             }
@@ -187,18 +281,8 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                     P::Width,
                     new_width.and_then(|value| crate::layout::resolve_dimension(value, None)),
                 ),
-                (
-                    P::MinWidth,
-                    new_min.and_then(|value| {
-                        crate::layout::resolve_length_percentage_auto(value, None)
-                    }),
-                ),
-                (
-                    P::MaxWidth,
-                    new_max.and_then(|value| {
-                        crate::layout::resolve_length_percentage_auto(value, None)
-                    }),
-                ),
+                (P::MinWidth, new_min),
+                (P::MaxWidth, new_max),
             ] {
                 if let Some(value) = value {
                     entries.push((
