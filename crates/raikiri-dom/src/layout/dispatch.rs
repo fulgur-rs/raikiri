@@ -347,6 +347,58 @@ fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size
         .map(|&(_, basis)| basis)
 }
 
+/// The height that a replaced item of a column flex container fills when it
+/// states `height: stretch`, for the probe that asks for its content size along
+/// the main axis: the height of the container less the margins of the item,
+/// resolved against the container's width as Taffy resolves them.
+///
+/// The automatic minimum size of a flex item is the smaller of its content size
+/// and its specified size (CSS Flexbox 1 §4.5), and a `stretch` height is a
+/// specified size once the container's height is definite. Taffy only sees the
+/// specified size of a length, so it takes the content size alone, which is the
+/// height the item's width gives it along its ratio: the item would grow past
+/// the stretch height. The cap is only a ceiling for that probe: a `min-height`
+/// or `max-height` of the item still clamps the size it ends up with.
+fn column_flex_stretch_cap(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    style: &Style,
+    inputs: &LayoutInput,
+) -> Option<f32> {
+    let probes_content_height = inputs.run_mode == RunMode::ComputeSize
+        && inputs.axis == RequestedAxis::Vertical
+        && inputs.sizing_mode == SizingMode::ContentSize
+        && inputs.known_dimensions.height.is_none()
+        && matches!(inputs.available_space.height, AvailableSpace::MinContent)
+        && matches!(style.size.height.expand(), ExpandedDimension::Stretch)
+        && tree.in_column_flex_container(idx);
+    if !probes_content_height {
+        return None;
+    }
+    let room = flex_item_percent_basis(tree, idx)?.height?;
+    let margin = style
+        .margin
+        .map(|edge| edge.resolve(inputs.parent_size.width).unwrap_or(0.0));
+    // The border box is never smaller than its padding and border.
+    let edges = replaced_size::padding_and_border(style, inputs.parent_size.width).height;
+    Some((room - margin.top - margin.bottom).max(edges))
+}
+
+/// Whether the size that replaced leaf `idx` reports follows the height of its
+/// column flex container (see [`column_flex_stretch_cap`]), which the cache of
+/// layouts does not key on.
+fn reads_column_flex_stretch_room(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let node = &tree.nodes[idx];
+    let replaced_leaf = node.is_inline_svg_root()
+        || (node.children.is_empty() && leaf_intrinsic_size(node).is_some());
+    replaced_leaf
+        && matches!(
+            tree.physical_style(idx).size().height.expand(),
+            ExpandedDimension::Stretch
+        )
+        && tree.in_column_flex_container(idx)
+}
+
 /// Whether a margin, padding or border of `style` depends on its percentage
 /// basis.
 fn has_percent_edge(style: &LayoutStyleView<'_>) -> bool {
@@ -975,7 +1027,11 @@ impl LayoutSession<'_> {
             || self.context.size_contained_measure.last() == Some(&idx)
             // Stretch-dependent sizing reads the margins the parent holds
             // in, which are not part of the cache's layout inputs.
-            || content_limits::needs_stretch_height_room(self, idx);
+            || content_limits::needs_stretch_height_room(self, idx)
+            // The height of a column flex container is not either, and the
+            // same container is laid out at its content height first and at
+            // the height it is stretched to after.
+            || reads_column_flex_stretch_room(self, idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
@@ -1183,7 +1239,8 @@ impl LayoutSession<'_> {
                     replaced_size::padding_and_border(&resolver_style, inputs.parent_size.width),
                     content_box_ratio,
                 );
-                return compute_leaf_layout(
+                let stretch_cap = column_flex_stretch_cap(tree, idx, &resolver_style, &inputs);
+                let mut output = compute_leaf_layout(
                     inputs,
                     &LeafStyle::new(&style),
                     resolve_calc,
@@ -1234,6 +1291,10 @@ impl LayoutSession<'_> {
                         }
                     },
                 );
+                if let Some(cap) = stretch_cap {
+                    output.size.height = output.size.height.min(cap);
+                }
+                return output;
             }
             // A paragraph measured as if empty is a block container with no
             // lines.
@@ -1285,7 +1346,9 @@ impl LayoutSession<'_> {
                 if constrained.is_some() {
                     apply_local_sizing(&mut style, &[OwnedPropertyOverride::aspect_ratio(None)]);
                 }
-                compute_leaf_layout(
+                let stretch_cap = leaf_intrinsic
+                    .and_then(|_| column_flex_stretch_cap(tree, idx, &style, &inputs));
+                let mut output = compute_leaf_layout(
                     inputs,
                     &LeafStyle::new(&style),
                     resolve_calc,
@@ -1299,7 +1362,11 @@ impl LayoutSession<'_> {
                             height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
                         }
                     },
-                )
+                );
+                if let Some(cap) = stretch_cap {
+                    output.size.height = output.size.height.min(cap);
+                }
+                output
             } else {
                 match formatting_context {
                     FormattingContext::Flex => flex_layout(tree, node_id, inputs),
