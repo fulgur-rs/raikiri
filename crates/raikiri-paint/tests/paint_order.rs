@@ -2480,3 +2480,35 @@ fn boxes_that_are_not_visible_keep_native_and_public_order() {
         assert!(boxes.contains(&by_id(&result, "b")));
     }
 }
+
+#[test]
+fn hidden_table_overflow_scopes_keep_only_painting_content() {
+    for visibility in ["hidden", "collapse"] {
+        for display in ["block", "table"] {
+            assert_same_order(
+                &format!(
+                    "<svg width='20' height='10' style='display:{display};visibility:{visibility}'>\
+                     <rect width='10' height='10' visibility='visible'/></svg>"
+                ),
+                "",
+            );
+        }
+        for child_visibility in ["hidden", "visible"] {
+            assert_same_order(
+                &format!(
+                    "<div style='display:table;visibility:{visibility};overflow:hidden'>\
+                     <div style='visibility:{child_visibility}'>x</div></div>"
+                ),
+                "",
+            );
+        }
+    }
+    for visibility in ["visible", "hidden"] {
+        assert_same_order(
+            &format!(
+                "<div style='visibility:{visibility};overflow:hidden;width:20px;height:10px'></div>"
+            ),
+            "",
+        );
+    }
+}
