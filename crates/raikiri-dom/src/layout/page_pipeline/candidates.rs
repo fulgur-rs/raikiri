@@ -1001,16 +1001,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // run was. So does a paragraph after a box to break from whose
                 // lines are too few for its orphans and widows: the break
                 // before it is the one between boxes, which beats one between
-                // lines that leaves too few at either end. Not one with
-                // padding or a border of its own below its lines: its box may
-                // run past the page edge where the lines fit and could not
-                // move whole, and browsers then split the lines.
+                // lines that leaves too few at either end.
                 let unbreakable = lines_shape
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
                             && node.is_ifc_root()
-                            && node.layout.padding.bottom + node.layout.border.bottom == 0.0
                             && paragraph_lines_keep_together(document, cascade, node_id)));
                 let closing_edges_base = closing_edges_shape && unbreakable;
                 // A block that holds one box moves whole with the edges that
@@ -1105,9 +1101,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // edges close, the page cannot break before the paragraph at
                 // a better place than between its lines (class C against
                 // class B), so the orphans it cannot keep do not stop it.
+                // A paragraph with a box before it that moves whole to the
+                // next page for them has no such break there: its box ends up
+                // at the top of that page, and its lines split when the edges
+                // still run past the page end.
                 let lines_closing_edges = if lines_shape
                     && can_move_nested
-                    && (!unbreakable || frame.lone_in_edges)
+                    && (!unbreakable || frame.lone_in_edges || closing_edges_shape)
                     && !avoids_break
                     && node.is_ifc_root()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. })
