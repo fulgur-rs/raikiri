@@ -1190,10 +1190,11 @@ impl PaginationState {
 
     /// Keeps the lines of the text from breaking badly at the end of the
     /// page. `orphans` and `widows` constrain breaks between line boxes, not
-    /// breaks between block-level children. When the paragraph has lines
-    /// enough for both, a break that leaves too few widows moves up between
-    /// earlier lines; otherwise a fitting block is moved as a unit when its
-    /// natural split would violate either constraint. A block taller than a
+    /// breaks between block-level children. A line that crosses the end of a
+    /// page starts the next one, and a break that leaves too few widows moves
+    /// up between earlier lines as far as the orphans allow; a fitting block
+    /// is moved as a unit instead when its natural split would leave too few
+    /// orphans. A block taller than a
     /// page is moved as a unit only when its break would leave too few
     /// orphans, content comes before it on a page it does not start, and its
     /// first line fits a page; otherwise it keeps its natural break. A
@@ -1344,14 +1345,7 @@ impl PaginationState {
                 match fix {
                     LineBreakFix::MoveLines(moves) => {
                         self.move_lines(
-                            document,
-                            env,
-                            candidate,
-                            entry,
-                            blocks,
-                            text,
-                            block_id,
-                            moves.into_iter().flatten(),
+                            document, env, candidate, entry, blocks, text, block_id, moves,
                         )?;
                         break;
                     }
@@ -1386,8 +1380,9 @@ impl PaginationState {
     /// of its lines as one run, which cannot move when blocks lie among the
     /// lines; the run of lines between two blocks breaks like a block of its
     /// own instead. It moves whole to the next page when it fits a page and
-    /// the break would leave too few orphans or widows, and its trailing
-    /// lines move down to keep the widows otherwise. The rest of the
+    /// the break would leave too few orphans or widows; otherwise the line
+    /// that crosses a page end starts the next page, and the lines that keep
+    /// the widows move down with it. The rest of the
     /// paragraph follows the moved lines. Returns how far the moves took the
     /// run's first line.
     pub(super) fn keep_lines_after_block(
@@ -1474,7 +1469,7 @@ impl PaginationState {
                 can_move_block,
                 || true,
             ) {
-                LineBreakFix::MoveLines(moves) => (moves.into_iter().flatten().collect(), false),
+                LineBreakFix::MoveLines(moves) => (moves, false),
                 LineBreakFix::MoveBlock => {
                     page = page.saturating_add(1);
                     (vec![(0, page_origins.origin(page) - run_top, page)], true)
@@ -1518,7 +1513,9 @@ impl PaginationState {
                 } else if reaches_line(text_lines.get(node_id), line) {
                     text.height += shift;
                 }
-                self.deferred_shifts.line_splits.push((root, line, shift));
+                self.deferred_shifts
+                    .line_splits
+                    .push((root, line, shift, move_page));
             }
             if !repeat {
                 break;
@@ -1576,7 +1573,7 @@ impl PaginationState {
             }
             self.deferred_shifts
                 .line_splits
-                .push((block_id, line, shift));
+                .push((block_id, line, shift, page));
         }
         Ok(())
     }
@@ -1747,13 +1744,22 @@ impl PaginationState {
             ..
         } = *env;
         let node_id = candidate.node_id;
-        self.deferred_shifts.apply_reached(
+        // What follows a line that moved to a later page in the flow is on
+        // that page or after it, though the candidates placed so far are on
+        // the one before. A float or a box out of the flow is placed by its
+        // own position.
+        let in_flow = !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant();
+        if let Some(page) = self.deferred_shifts.apply_reached(
             document,
             text_lines,
             node_id,
             candidate.ifc_root,
             &mut self.flow_shift,
-        );
+        ) && in_flow
+        {
+            self.current_page = self.current_page.max(page);
+        }
         if let Some(page) = self
             .subtree_shifts
             .leave(document, node_id, &mut self.flow_shift)

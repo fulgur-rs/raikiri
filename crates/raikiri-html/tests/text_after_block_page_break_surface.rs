@@ -1,5 +1,6 @@
-//! Lines of text that follow a block inside the same parent, around the end of
-//! a page. The positions are the ones Chromium prints for the same documents.
+//! Lines of text that follow a block inside the same parent, and the lines of a
+//! paragraph that follows one, around the end of a page. The positions are the
+//! ones Chromium prints for the same documents.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -49,7 +50,7 @@ fn lines_of(body: &str, wanted: impl Fn(&str) -> bool) -> Vec<(u32, f32, f32)> {
         panic!("layout must complete")
     };
     let mut lines: Vec<(u32, f32, f32)> = Vec::new();
-    for index in 0..4 {
+    for index in 0..8 {
         let Some(page) = result.page(index) else {
             continue;
         };
@@ -243,4 +244,210 @@ fn a_box_placed_by_its_insets_does_not_keep_the_lines_from_moving() {
             "{inset}"
         );
     }
+}
+
+/// The tops of the lines of the text in `body` on each page from the first to
+/// the last with a line.
+fn tops_per_page(body: &str) -> Vec<Vec<f32>> {
+    let found = lines(body);
+    let pages = found.last().map_or(0, |line| line.0 as usize + 1);
+    let mut tops = vec![Vec::new(); pages];
+    for (page, _, top) in found {
+        tops[page as usize].push(top);
+    }
+    tops
+}
+
+/// A 20px-wide paragraph of `lines` words, one to a line.
+fn paragraph(lines: usize, style: &str) -> String {
+    format!(
+        "<div style='width:20px;{style}'>{}</div>",
+        vec!["z"; lines].join(" ")
+    )
+}
+
+/// The tops of the lines of a 20px-wide paragraph of `lines` words that
+/// follows a block `height` tall, on each page from the first to the last one
+/// with a line.
+fn paragraph_tops(height: u32, style: &str, lines: usize) -> Vec<Vec<f32>> {
+    tops_per_page(&format!("{}{}", spacer(height), paragraph(lines, style)))
+}
+
+#[test]
+fn a_paragraph_that_follows_a_block_breaks_between_its_lines() {
+    // The block ends 5px into the 30px grid of the lines, so the line that
+    // crosses each page end starts the next page and the lines after it follow.
+    assert_eq!(
+        paragraph_tops(5, "", 5),
+        [vec![10.0, 40.0, 70.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(paragraph_tops(20, "", 3), [vec![25.0, 55.0], vec![5.0]]);
+    // The last page takes the line that the widows ask for, and the page
+    // before keeps its orphans.
+    assert_eq!(
+        paragraph_tops(0, "", 7),
+        [vec![5.0, 35.0, 65.0], vec![5.0, 35.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "widows:3", 7),
+        [vec![5.0, 35.0, 65.0], vec![5.0, 35.0], vec![5.0, 35.0]]
+    );
+    // Orphans that no page holds leave the lines that fit together.
+    assert_eq!(
+        paragraph_tops(0, "orphans:4", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+}
+
+#[test]
+fn a_paragraph_that_follows_a_block_moves_whole_when_its_orphans_do_not_fit() {
+    // No line fits after the block, or too few for the orphans: the paragraph
+    // starts the next page.
+    assert_eq!(
+        paragraph_tops(45, "", 5),
+        [vec![], vec![5.0, 35.0, 65.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(
+        paragraph_tops(15, "orphans:3;widows:3", 5),
+        [vec![], vec![5.0, 35.0, 65.0], vec![5.0, 35.0]]
+    );
+    // With one orphan and one widow the line that fits stays.
+    assert_eq!(
+        paragraph_tops(45, "orphans:1;widows:1", 5),
+        [vec![50.0], vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+}
+
+#[test]
+fn paragraphs_that_follow_each_other_break_each_for_itself() {
+    // The second paragraph starts where the first ends, on the page its lines
+    // were pushed to, and the lines of each cross the page ends of that grid.
+    let two = |first: &str, second: &str| format!("{}{first}{second}", spacer(5));
+    assert_eq!(
+        tops_per_page(&two(&paragraph(5, ""), &paragraph(5, ""))),
+        [
+            vec![10.0, 40.0, 70.0],
+            vec![5.0, 35.0],
+            vec![5.0, 35.0, 65.0],
+            vec![5.0, 35.0]
+        ]
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}{}{}{}",
+            spacer(20),
+            paragraph(2, ""),
+            paragraph(5, ""),
+            paragraph(3, "")
+        )),
+        [
+            vec![25.0, 55.0],
+            vec![5.0, 35.0, 65.0],
+            vec![5.0, 35.0],
+            vec![5.0, 35.0, 65.0]
+        ]
+    );
+    // Each takes its own orphans and widows.
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}{}{}{}",
+            spacer(5),
+            paragraph(5, "widows:3"),
+            paragraph(5, "orphans:1;widows:1"),
+            paragraph(3, "")
+        )),
+        [
+            vec![10.0, 40.0],
+            vec![5.0, 35.0, 65.0],
+            vec![5.0, 35.0, 65.0],
+            vec![5.0, 35.0],
+            vec![5.0, 35.0, 65.0]
+        ]
+    );
+}
+
+#[test]
+fn paragraphs_in_the_same_box_break_each_for_itself() {
+    // The box begins on the first page, and its second paragraph starts on the
+    // page its first paragraph's lines were pushed to.
+    let expected = [
+        vec![10.0, 40.0, 70.0],
+        vec![5.0, 35.0],
+        vec![5.0, 35.0, 65.0],
+        vec![5.0, 35.0],
+    ];
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div>{}{}</div>",
+            spacer(5),
+            paragraph(5, ""),
+            paragraph(5, "")
+        )),
+        expected
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "<div>{}{}{}</div>",
+            spacer(5),
+            paragraph(5, ""),
+            paragraph(5, "")
+        )),
+        expected
+    );
+    // The paragraphs of two boxes, and three paragraphs in one.
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div>{}</div><div>{}</div>",
+            spacer(5),
+            paragraph(5, ""),
+            paragraph(5, "")
+        )),
+        expected
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div>{}{}{}</div>",
+            spacer(5),
+            paragraph(5, ""),
+            paragraph(5, ""),
+            paragraph(5, "")
+        )),
+        [
+            vec![10.0, 40.0, 70.0],
+            vec![5.0, 35.0],
+            vec![5.0, 35.0, 65.0],
+            vec![5.0, 35.0],
+            vec![5.0, 35.0, 65.0],
+            vec![5.0, 35.0]
+        ]
+    );
+}
+
+/// A paragraph of `normal` words on lines of 30px and then `tall` words on
+/// lines of 40px, in a 20px-wide box.
+fn mixed_paragraph(normal: usize, tall: usize, style: &str) -> String {
+    format!(
+        "<div style='width:20px;{style}'>{} <span style='line-height:40px'>{}</span></div>",
+        vec!["z"; normal].join(" "),
+        vec!["z"; tall].join(" ")
+    )
+}
+
+#[test]
+fn widows_are_taken_from_lines_of_different_heights() {
+    // The lines the first page gives up do not fit the next page with the ones
+    // already there, and the last of them starts the page after it.
+    assert_eq!(
+        tops_per_page(&mixed_paragraph(3, 2, "widows:3")),
+        [vec![5.0, 35.0], vec![5.0, 40.0], vec![10.0]]
+    );
+    assert_eq!(
+        tops_per_page(&mixed_paragraph(4, 2, "widows:4")),
+        [vec![5.0, 35.0], vec![5.0, 35.0, 70.0], vec![10.0]]
+    );
+    // Two widows are all the lines the second page holds.
+    assert_eq!(
+        tops_per_page(&mixed_paragraph(3, 2, "")),
+        [vec![5.0, 35.0, 65.0], vec![10.0, 50.0]]
+    );
 }

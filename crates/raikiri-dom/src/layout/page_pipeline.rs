@@ -1974,46 +1974,130 @@ fn widows_break_on_next_page(
         .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0)
 }
 
-/// The break that keeps `widows` lines on the last page of a paragraph that
-/// runs over more pages, whether or not `earlier_break` repaired its first
-/// break. The pages between are full, so only the break before the last page
-/// can leave too few; it moves up the same way while the page before keeps
-/// `orphans`. `line_metrics` is as for [`widows_break_on_next_page`] and has
-/// at least `orphans + widows` lines.
-fn widows_break_on_last_page(
+/// The lines of a paragraph that one page holds.
+struct LinePiece {
+    /// The page the lines are on.
+    page: u32,
+    /// The first of the lines.
+    first: usize,
+    /// How many lines there are.
+    count: usize,
+    /// How far the first line moved down to start the page, when it did.
+    push: Option<f32>,
+}
+
+/// Where each page of a paragraph starts, and the lines it holds: a line that
+/// crosses a page end starts the next page, and the lines after it move down
+/// with it. `forced` names a line that starts a page whether it crosses the
+/// end of the one before or not: `(line, page)`.
+fn line_pieces(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    current_page: u32,
+    page_origins: &PageOrigins,
+    forced: Option<(usize, u32)>,
+) -> Vec<LinePiece> {
+    let mut pieces: Vec<LinePiece> = Vec::new();
+    let mut shift = 0.0_f32;
+    let mut page = current_page;
+    for (line, &(line_top, line_bottom)) in line_metrics.iter().enumerate() {
+        let top = effective_y + line_top + shift;
+        let bottom = effective_y + line_bottom + shift;
+        // The flow itself may carry the line onto a later page.
+        page = page.max(page_origins.page_index_for_y(top + 0.001));
+        let mut push = None;
+        if line > 0 {
+            let next = page.saturating_add(1);
+            let crosses = top > page_origins.origin(page) + 0.001
+                && bottom > page_origins.origin(next) + 0.001;
+            let target = match forced {
+                Some((first, forced_page)) if first == line => {
+                    (page_origins.origin(forced_page) - top > 0.001).then_some(forced_page)
+                }
+                _ => crosses.then_some(next),
+            };
+            if let Some(target) = target {
+                page = target;
+                let delta = page_origins.origin(page) - top;
+                shift += delta;
+                push = Some(delta);
+            }
+        }
+        match pieces.last_mut() {
+            Some(piece) if piece.page == page => piece.count += 1,
+            _ => pieces.push(LinePiece {
+                page,
+                first: line,
+                count: 1,
+                push,
+            }),
+        }
+    }
+    pieces
+}
+
+/// The moves that keep every line of a paragraph whole on one page, each page
+/// ending with the lines that fit it and the next starting with the line that
+/// does not, and that give the pages after a break the `widows` lines it
+/// needs, or as many of them as the page before can spare and still keep
+/// `orphans` lines.
+///
+/// `line_metrics` and `effective_y` are as for [`widows_break_on_next_page`];
+/// the first line is on `current_page`.
+///
+/// A line that crosses a page end without starting the next page moves to the
+/// top of that page, and the lines after it move with it. The widows are
+/// counted on the pages as they come out: a page that a moved line starts
+/// holds fewer lines than the page grid has room for. The first break that
+/// leaves fewer lines after it than the widows ask for, and whose page can
+/// spare a line and keep its orphans, moves up; a break whose page cannot stays
+/// where it falls. The lines the page before gives up are laid out again from
+/// the top of the page after it, so the lines that then cross its end start the
+/// page after that. When the widows are more lines than a page holds, Chromium
+/// repairs only the first break of the paragraph, and so does this.
+fn paragraph_line_moves(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     current_page: u32,
     orphans: usize,
     widows: usize,
-    earlier_break: Option<LineBreakMove>,
     page_origins: &PageOrigins,
-) -> Option<LineBreakMove> {
-    let total_lines = line_metrics.len();
-    let moved = |line: usize| {
-        earlier_break
-            .filter(|&(first, _, _)| line >= first)
-            .map_or(0.0, |(_, shift, _)| shift)
+) -> Vec<LineBreakMove> {
+    let (Some(&(_, last_bottom)), total) = (line_metrics.last(), line_metrics.len()) else {
+        return Vec::new();
     };
-    let top = |line: usize| effective_y + line_metrics[line].0 + moved(line);
-    let bottom = |line: usize| effective_y + line_metrics[line].1 + moved(line);
-    // Each line belongs to the page that holds its center (see
-    // `line_center_on_page`).
-    let page_of =
-        |line: usize| page_origins.page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001);
-    let first_on = |page: u32| {
-        (0..total_lines)
-            .find(|&line| page_of(line) >= page)
-            .unwrap_or(total_lines)
-    };
-    let last_page = page_of(total_lines - 1);
-    let line = total_lines - widows;
-    (last_page > current_page.saturating_add(1)
-        && total_lines - first_on(last_page) < widows
-        && line >= first_on(last_page - 1) + orphans
-        && bottom(total_lines - 1) - top(line) <= page_origins.step_at(last_page) + 0.001)
-        .then(|| (line, page_origins.origin(last_page) - top(line), last_page))
-        .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0)
+    let mut pieces = line_pieces(line_metrics, effective_y, current_page, page_origins, None);
+    // The widows lines fit a page, so that no break after the first needs
+    // more than the lines that follow it.
+    let widows_fit = pieces.last().is_some_and(|last| {
+        let first_widow = total - widows.clamp(1, total);
+        last_bottom - line_metrics[first_widow].0 <= page_origins.step_at(last.page) + 0.001
+    });
+    let forced = pieces
+        .iter()
+        .zip(pieces.iter().skip(1))
+        .enumerate()
+        .find_map(|(index, (before, after))| {
+            let remaining = total - after.first;
+            let moved = widows
+                .saturating_sub(remaining)
+                .min(before.count.saturating_sub(orphans));
+            (moved > 0 && (index == 0 || widows_fit)).then_some((after.first - moved, after.page))
+        });
+    if forced.is_some() {
+        pieces = line_pieces(
+            line_metrics,
+            effective_y,
+            current_page,
+            page_origins,
+            forced,
+        );
+    }
+    pieces
+        .iter()
+        .filter_map(|piece| Some((piece.first, piece.push?, piece.page)))
+        .filter(|&(_, delta, _)| delta.is_finite() && delta > 0.0)
+        .collect()
 }
 
 /// A forced page break between two lines of a paragraph, and where the
@@ -7201,16 +7285,19 @@ struct DeferredShifts {
     /// follow the box while later siblings still begin after the break
     /// boundary: `(box, correction)`.
     underflow: Option<(usize, f32)>,
-    /// Lines of a paragraph that were moved to a later page to keep enough
-    /// widows there: `(root, first moved line, shift)`. The flow after the
-    /// paragraph, and its texts that start on a moved line, take each shift
-    /// once they are reached; its texts before that line stay where they are.
-    line_splits: Vec<(usize, usize, f32)>,
+    /// Lines of a paragraph that were moved down to a later page, because
+    /// they cross a page end or to keep enough widows there: `(root, first
+    /// moved line, shift, page)`. The flow after the paragraph, and its texts
+    /// that start on a moved line, take each shift once they are reached, and
+    /// are on its page or after it; its texts before that line stay where
+    /// they are.
+    line_splits: Vec<(usize, usize, f32, u32)>,
 }
 
 impl DeferredShifts {
     /// Adds to `flow_shift` every pending shift that `node_id` has reached,
-    /// line splits first, and drops them.
+    /// line splits first, and drops them. Returns the last page that a line
+    /// split it reached moved lines to.
     fn apply_reached(
         &mut self,
         document: &Document,
@@ -7218,26 +7305,30 @@ impl DeferredShifts {
         node_id: usize,
         ifc_root: Option<(usize, f32)>,
         flow_shift: &mut f32,
-    ) {
-        self.line_splits.retain(|&(root, first_moved, shift)| {
-            let reached = !is_descendant_or_self(document, node_id, root)
-                || ifc_root.is_some_and(|(text_root, _)| text_root == root)
-                    && text_lines
-                        .get(node_id)
-                        .and_then(|owned| owned.lines.first())
-                        .is_some_and(|line| line.line >= first_moved)
-                || follows_line_of_paragraph(document, node_id, root, first_moved);
-            if reached {
-                *flow_shift += shift;
-            }
-            !reached
-        });
+    ) -> Option<u32> {
+        let mut reached_page: Option<u32> = None;
+        self.line_splits
+            .retain(|&(root, first_moved, shift, page)| {
+                let reached = !is_descendant_or_self(document, node_id, root)
+                    || ifc_root.is_some_and(|(text_root, _)| text_root == root)
+                        && text_lines
+                            .get(node_id)
+                            .and_then(|owned| owned.lines.first())
+                            .is_some_and(|line| line.line >= first_moved)
+                    || follows_line_of_paragraph(document, node_id, root, first_moved);
+                if reached {
+                    *flow_shift += shift;
+                    reached_page = reached_page.max(Some(page));
+                }
+                !reached
+            });
         if let Some((ancestor_id, correction)) = self.underflow
             && !is_descendant_or_self(document, node_id, ancestor_id)
         {
             *flow_shift += correction;
             self.underflow = None;
         }
+        reached_page
     }
 }
 
@@ -7650,8 +7741,9 @@ fn follows_line_of_paragraph(
 enum LineBreakFix {
     /// The natural break stays.
     Keep,
-    /// Lines move down inside the paragraph, the earlier break first.
-    MoveLines([Option<LineBreakMove>; 2]),
+    /// Lines move down inside the paragraph to the pages the moves name, the
+    /// earlier page first.
+    MoveLines(Vec<LineBreakMove>),
     /// The whole block moves to the next page.
     MoveBlock,
 }
@@ -7680,12 +7772,6 @@ struct ParagraphLineFit {
 }
 
 impl ParagraphLineFit {
-    /// Whether the first line starts on the current page and the paragraph
-    /// has lines enough for both `orphans` and `widows`.
-    fn has_room_for_both_constraints(&self) -> bool {
-        self.starts_on_page && self.orphans + self.widows <= self.total_lines
-    }
-
     /// Whether a block taller than a page gains from moving whole to the next
     /// page: the break leaves fewer than `orphans` lines on this page, and
     /// the first line, `first_line_bottom` below the top of the block, fits a
@@ -7701,51 +7787,16 @@ impl ParagraphLineFit {
         self.lines_before_break < self.orphans.min(self.total_lines)
     }
 
-    /// The line moves that split a paragraph able to move its lines down
-    /// inside it: a break moved up between earlier lines, then the break on
-    /// the paragraph's last page.
-    ///
-    /// When only the widows are short, the break moves up between earlier
-    /// lines (CSS Fragmentation 3 §3.3), so the last `widows` lines start the
-    /// next page and the lines before them stay.
-    fn line_moves(
-        &self,
-        line_metrics: &[(f32, f32)],
-        effective_y: f32,
-        current_page: u32,
-        page_origins: &PageOrigins,
-    ) -> [Option<LineBreakMove>; 2] {
-        let earlier_break = (self.violates_line_constraints
-            && self.lines_before_break >= self.orphans)
-            .then(|| {
-                widows_break_on_next_page(
-                    line_metrics,
-                    effective_y,
-                    current_page,
-                    self.widows,
-                    page_origins,
-                )
-            })
-            .flatten();
-        let final_break = widows_break_on_last_page(
-            line_metrics,
-            effective_y,
-            current_page,
-            self.orphans,
-            self.widows,
-            earlier_break,
-            page_origins,
-        );
-        [earlier_break, final_break]
-    }
-
     /// How to repair the break between the paragraph's lines on the page
     /// `current_page`. A block that can move whole moves whenever the break
     /// leaves too few orphans, as lines moved down inside it would leave
-    /// its top on this page. Else lines move down inside the paragraph when
-    /// it has lines enough for both constraints and `can_move_lines` allows
-    /// it; else the whole block moves when `can_move_block` and the break
-    /// violates a constraint; otherwise the natural break stays.
+    /// its top on this page. Else lines move down inside the paragraph when a
+    /// line crosses the page end and `can_move_lines` allows it: the line that
+    /// crosses each page end starts the next page, and the first break that
+    /// leaves too few widows moves up as far as the orphans allow (see
+    /// [`paragraph_line_moves`]). Else the whole block moves when
+    /// `can_move_block` and the break violates a constraint; otherwise the
+    /// natural break stays.
     ///
     /// The block also moves when no line starts on the page because the
     /// padding and border above the lines end it (`top_edges_end_page`): the
@@ -7763,14 +7814,22 @@ impl ParagraphLineFit {
             && (self.starts_on_page || self.top_edges_end_page)
             && self.violates_line_constraints;
         let moves = if !(move_block && self.leaves_too_few_orphans())
-            && self.has_room_for_both_constraints()
+            && self.starts_on_page
+            && self.lines_before_break < self.total_lines
             && can_move_lines()
         {
-            self.line_moves(line_metrics, effective_y, current_page, page_origins)
+            paragraph_line_moves(
+                line_metrics,
+                effective_y,
+                current_page,
+                self.orphans,
+                self.widows,
+                page_origins,
+            )
         } else {
-            [None, None]
+            Vec::new()
         };
-        if moves.iter().any(Option::is_some) {
+        if !moves.is_empty() {
             LineBreakFix::MoveLines(moves)
         } else if move_block {
             LineBreakFix::MoveBlock
