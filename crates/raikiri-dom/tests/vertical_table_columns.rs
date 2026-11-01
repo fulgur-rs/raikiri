@@ -710,6 +710,31 @@ fn a_collapsed_row_still_sets_the_height_of_its_columns() {
                 ("d", 8.0, 80.0),
             ],
         ));
+        // The same holds for cells in the horizontal writing mode, which have
+        // no room to align in a row that takes no width.
+        let horizontal = |id: &str, size: [u32; 2], text: &str| {
+            td(id, "", size, "0", text).replace("style='", "style='writing-mode: horizontal-tb; ")
+        };
+        let horizontal_cells = table_element(
+            mode,
+            "0",
+            &format!(
+                "<tr id=r style='visibility: collapse'>{}{}</tr><tr id=r2>{}</tr>",
+                horizontal("c", [60, 80], "x"),
+                horizontal("e", [60, 20], "z"),
+                td("d", "", [40, 30], "0", "y")
+            ),
+        );
+        mismatches.extend(check_extent(
+            &format!("{mode}, horizontal cells in a collapsed row"),
+            &horizontal_cells,
+            &[
+                ("t", 8.0, 100.0),
+                ("c", 8.0, 80.0),
+                ("e", 88.0, 20.0),
+                ("d", 8.0, 80.0),
+            ],
+        ));
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
