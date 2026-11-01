@@ -550,6 +550,63 @@ fn an_authored_height_is_not_raised_by_the_content() {
     assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
 }
 
+/// The size of `root` measured for its content, as a flex item is laid out, when
+/// the parent has fixed the given sides.
+fn laid_out_size_fixed_by_parent(
+    tree: &mut Document,
+    root: usize,
+    width: Option<f32>,
+    height: Option<f32>,
+) -> Size<f32> {
+    let mut input = inputs();
+    input.sizing_mode = SizingMode::ContentSize;
+    input.known_dimensions = Size { width, height };
+    block_layout(tree, NodeId::from(root), input, None).size
+}
+
+#[test]
+fn a_stated_size_the_parent_fixed_is_not_moved_by_a_bound_of_the_other_side() {
+    // The ratio of 2 would carry the 30px maximum width across as a maximum
+    // height of 15px, and the box states 50px.
+    let mut tree = Document::new();
+    let root = ratio_box(&mut tree, "height:50px;max-width:30px;min-height:0px");
+    assert_eq!(
+        laid_out_size_fixed_by_parent(&mut tree, root, Some(30.0), Some(50.0)),
+        Size {
+            width: 30.0,
+            height: 50.0
+        }
+    );
+}
+
+#[test]
+fn a_size_the_parent_fixed_on_an_auto_side_still_follows_a_bound_of_the_other_side() {
+    let mut tree = Document::new();
+    let root = ratio_box(&mut tree, "max-width:30px;min-height:0px");
+    assert_eq!(
+        laid_out_size_fixed_by_parent(&mut tree, root, Some(30.0), Some(50.0)),
+        Size {
+            width: 30.0,
+            height: 15.0
+        }
+    );
+}
+
+#[test]
+fn a_stated_size_is_ignored_while_the_box_is_measured_for_its_content() {
+    // Nothing is fixed, so the stated height is not the box's height here, and
+    // the width carries across the ratio as the height it asks for.
+    let mut tree = Document::new();
+    let root = ratio_box(&mut tree, "height:50px;max-width:30px;min-height:0px");
+    assert_eq!(
+        laid_out_size_fixed_by_parent(&mut tree, root, Some(30.0), None),
+        Size {
+            width: 30.0,
+            height: 15.0
+        }
+    );
+}
+
 #[test]
 fn a_width_taken_from_the_aspect_ratio_grows_to_the_min_content_width() {
     let mut tree = Document::new();

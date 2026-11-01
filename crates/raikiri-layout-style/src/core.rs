@@ -142,15 +142,39 @@ impl LayoutStyleView<'_> {
         } else {
             self.library_height(LengthProperty::MinHeight).auto(false)
         };
-        self.size_axes(self.length(LengthProperty::MinWidth).auto(false), height)
+        let min = self.size_axes(self.length(LengthProperty::MinWidth).auto(false), height);
+        self.with_held_cross_size(min, |held| held.min)
     }
     /// The maximum size.
     #[inline]
     pub fn max_size(&self) -> Size<LengthPercentageAuto> {
-        self.size_axes(
+        let max = self.size_axes(
             self.length(LengthProperty::MaxWidth).auto(false),
             self.library_height(LengthProperty::MaxHeight).auto(false),
-        )
+        );
+        self.with_held_cross_size(max, |held| held.max)
+    }
+    /// `limit`, a minimum or maximum size, with the side of the cross axis of a
+    /// flex item replaced by the cross size the item states where
+    /// [`HeldCrossSize`] holds it.
+    #[inline]
+    fn with_held_cross_size(
+        &self,
+        mut limit: Size<LengthPercentageAuto>,
+        is_held: impl FnOnce(&HeldCrossSize) -> bool,
+    ) -> Size<LengthPercentageAuto> {
+        let Some(held) = self.context.held_cross_size.filter(is_held) else {
+            return limit;
+        };
+        let stated = self.size_axes(
+            self.length(LengthProperty::Width).auto(false),
+            self.library_height(LengthProperty::Height).auto(false),
+        );
+        match held.axis {
+            Axis::X => limit.width = stated.width,
+            Axis::Y => limit.height = stated.height,
+        }
+        limit
     }
     /// The preferred aspect ratio after projection into the returned axes.
     #[inline]
