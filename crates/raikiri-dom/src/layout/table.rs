@@ -1064,15 +1064,21 @@ fn compute_table_layout_checked(
         // `padding_border_size`. Collapse zeroes `border_spacing`.
         // A row whose overlapping cells all hide their empty boxes has zero
         // height and only one spacing side (CSS 2.2 section 17.6.1.1).
-        let hidden_rows: Vec<bool> = hidden_empty_rows(doc, &grid)
-            .into_iter()
+        let empty_hidden_rows = hidden_empty_rows(doc, &grid);
+        let hidden_rows: Vec<bool> = empty_hidden_rows
+            .iter()
             .zip(collapsed_rows)
-            .map(|(hidden, collapsed)| hidden || *collapsed)
+            .map(|(hidden, collapsed)| *hidden || *collapsed)
             .collect();
         let row_gaps: Vec<_> = hidden_rows
             .iter()
             .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
             .collect();
+        // The gaps around the rows that `hidden` leaves visible: one more than
+        // the rows.
+        let row_spacing = |hidden: &[bool]| {
+            border_spacing.1 * (hidden.iter().filter(|hidden| !**hidden).count() as f32 + 1.0)
+        };
         let specified_width = stated_table_width(table_size.width, &inputs);
         let fixed_columns_collapse = columns_collapse
             && table_layout == TableLayoutValue::Fixed
@@ -1095,13 +1101,38 @@ fn compute_table_layout_checked(
             height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
                 0.0
             } else {
-                border_spacing.1
-                    * (hidden_rows.iter().filter(|hidden| !**hidden).count() as f32 + 1.0)
+                row_spacing(&hidden_rows)
             },
         };
         let distrib_insets = Size {
             width: padding_border_size.width - overlap_w + spacing.width,
             height: padding_border_size.height - overlap_h + spacing.height,
+        };
+        // A row that `visibility: collapse` removes still takes its share when
+        // the table shares out the extra height of its own `height` or
+        // `min-height`, with the spacing around it, and gives that share up
+        // afterwards, so the table ends up lower than the height it states
+        // (Chromium; CSS Tables 3 leaves it to the user agent). The rows share
+        // a height that `height: stretch` or a flex or grid parent gives the
+        // table in the same way, and the box keeps that height. A height that
+        // only fragmentation imposes is left out, and so is a vertical table,
+        // which shares along its columns instead: both keep the collapsed rows
+        // out of the sharing as before.
+        let collapsed_rows_share = !vertical_writing
+            && collapsed_rows.iter().any(|collapsed| *collapsed)
+            && (specified_height.is_some()
+                || min_h_outer.is_some()
+                || stretch_room.is_some()
+                || parent_is_flex_or_grid);
+        let sharing_hidden_rows: &[bool] = if collapsed_rows_share {
+            &empty_hidden_rows
+        } else {
+            &hidden_rows
+        };
+        let sharing_insets_height = if collapsed_rows_share {
+            padding_border_size.height - overlap_h + row_spacing(sharing_hidden_rows)
+        } else {
+            distrib_insets.height
         };
 
         // Specified (non-auto) table width, resolved against the containing
@@ -1547,7 +1578,7 @@ fn compute_table_layout_checked(
         if let Some(columns) = columns_in_place {
             columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
         }
-        for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
+        for (height, hidden) in row_heights.iter_mut().zip(sharing_hidden_rows) {
             if *hidden {
                 *height = 0.0;
             }
@@ -1571,12 +1602,12 @@ fn compute_table_layout_checked(
                     || parent_sizes_rows
                     || stretch_room.is_some()
             })
-            .map(|known_h| known_h - distrib_insets.height);
+            .map(|known_h| known_h - sharing_insets_height);
         // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer
         // domain keeps content-box correct: `min_outer - distrib_insets` =
         // `min_content + overlap`, the track sum that yields `min_content`.
-        let min_target = min_h_outer.map(|mn| mn - distrib_insets.height);
+        let min_target = min_h_outer.map(|mn| mn - sharing_insets_height);
         // The taller of the two is shared once, so that the percentage heights
         // of rows resolve against the height the table ends up with. It is
         // kept as it is, without the zero floor the rows get, for the vertical
@@ -1604,13 +1635,20 @@ fn compute_table_layout_checked(
             };
             distribute_extra_to_groups(
                 &mut row_heights,
-                &hidden_rows,
+                sharing_hidden_rows,
                 &authored,
                 &percents,
                 &row_groups(doc, table_idx, &grid),
                 border_spacing.1,
                 target,
             );
+        }
+        if collapsed_rows_share {
+            for (height, collapsed) in row_heights.iter_mut().zip(collapsed_rows) {
+                if *collapsed {
+                    *height = 0.0;
+                }
+            }
         }
         if vertical_writing {
             // Vertical columns stack the same row track along the physical
@@ -1661,6 +1699,17 @@ fn compute_table_layout_checked(
                 clamp_min_max(
                     f32_max_compat(assigned, content_height + padding_border_size.height),
                     min_h_outer,
+                    max_h_outer,
+                )
+            } else if collapsed_rows_share && target_room.is_some() && !parent_is_flex_or_grid {
+                // The rows that collapsed took their share of the stated
+                // height or `min-height` with them, so the table is as high as
+                // the rows that remain, however low that is; the maximum still
+                // caps it. A flex or grid parent gives its item a height it
+                // keeps whatever the rows do.
+                clamp_min_max(
+                    content_height + padding_border_size.height,
+                    None,
                     max_h_outer,
                 )
             } else {
