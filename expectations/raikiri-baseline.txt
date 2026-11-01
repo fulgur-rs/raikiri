@@ -5522,3 +5522,7 @@ css/css-multicol/multicol-span-float-003.html
 # --- An image in a column flex container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
 # An image that is an item of a column flex container takes its width from a height along its aspect ratio (CSS Sizing 4 section 5.1): the height it states while the width of the container is measured, and the height the container flexed it to once that width is fixed. A container that wraps its items is as wide as the stated height gives, and the image on its line is as wide as the grown height gives.
 css/css-sizing/aspect-ratio/flex-aspect-ratio-024.html
+
+# --- A vertical table as wide as its cells (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# A table in a vertical writing mode is as wide as its rows (CSS 2 section 17.5.2), not as wide as the room around it, so its cells shrink to their content the way the `width: fit-content` boxes of the reference do. The test was XFAIL before and KEEP in an audit-vacuous-passes run.
+css/css-tables/baseline-vertical.html
