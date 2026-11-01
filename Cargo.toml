@@ -75,7 +75,7 @@ skrifa = "0.48"
 unicode-script = "0.5"
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
-anyrender = "0.13"
+anyrender = "0.14"
 peniko    = "0.6"
 kurbo     = "0.13"
 
