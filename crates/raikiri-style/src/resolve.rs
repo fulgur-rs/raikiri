@@ -1636,11 +1636,12 @@ pub struct ResolveContext {
     /// inline axis, the basis of `vi`, is the viewport's height and its
     /// block axis, the basis of `vb`, is the viewport's width.
     pub vertical_root: bool,
-    /// Device pixels per CSS pixel for computed `border-*-width` snapping.
+    /// Device pixels per CSS pixel for computed border widths and table spacing.
     ///
-    /// `None` preserves fractional CSS-pixel widths for output-neutral and
+    /// `None` preserves fractional CSS-pixel lengths for output-neutral and
     /// vector consumers. A finite positive scale applies CSS Values 4's
-    /// “snap a length as a border width” algorithm. Invalid scales are
+    /// “snap a length as a border width” algorithm and quantizes table gaps,
+    /// which may become zero. Invalid scales are
     /// ignored by [`Self::with_border_width_device_scale`].
     pub border_width_device_scale: Option<f32>,
 }
@@ -1672,12 +1673,14 @@ impl ResolveContext {
         self
     }
 
-    /// Configure device-pixel snapping for computed border widths.
+    /// Configure device-pixel quantization for computed border widths and table spacing.
     ///
     /// `device_pixels_per_css_pixel` is the raster output scale. At 1x, one
     /// CSS pixel maps to one device pixel; at 2x, two device pixels map to one
     /// CSS pixel. `None`, zero, negative, NaN, and infinite scales preserve
-    /// fractional CSS-pixel widths.
+    /// fractional CSS-pixel lengths. Table gaps may become zero; border widths
+    /// follow their separate minimum-pixel rule. A new scale requires resolving
+    /// the original specified values again, rather than already computed lengths.
     pub fn with_border_width_device_scale(
         mut self,
         device_pixels_per_css_pixel: Option<f32>,
@@ -2477,6 +2480,9 @@ pub fn resolve_tab_size(
 /// Values 4 §10.7 (properties that disallow negative lengths cannot compute
 /// negative values). WPT `border-spacing-computed.html` checks
 /// `"calc(10px - 0.5em)"` (40px font-size → `-10px`) → `"0px"`.
+/// A configured raster scale quantizes newly specified gaps to device pixels;
+/// an absent scale keeps fractional lengths for vector output. Unchanged
+/// components lifted from computed values keep their exact inherited lengths.
 /// The parser in [`crate::property`] already rejects authored negative values
 /// such as `-20px`; only derived values from calc need clamping here.
 ///
@@ -2502,11 +2508,49 @@ pub fn resolve_border_spacing(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorderSpacing {
-    let horizontal = resolve_length(specified.horizontal, font_size, own_line_height, ctx);
-    let vertical = resolve_length(specified.vertical, font_size, own_line_height, ctx);
+    let resolve = |length, original| {
+        let value = ComputedLength(
+            resolve_length(length, font_size, own_line_height, ctx)
+                .px()
+                .max(0.0),
+        );
+        if matches!(length, Length::Px(px) if Some(px) == original) {
+            return value;
+        }
+        ctx.border_width_device_scale.map_or(value, |scale| {
+            snap_border_spacing_to_device_pixels(value, scale)
+        })
+    };
     ComputedBorderSpacing {
-        horizontal: ComputedLength(horizontal.px().max(0.0)),
-        vertical: ComputedLength(vertical.px().max(0.0)),
+        horizontal: resolve(
+            specified.horizontal,
+            specified.computed_lengths.map(|v| v[0]),
+        ),
+        vertical: resolve(specified.vertical, specified.computed_lengths.map(|v| v[1])),
+    }
+}
+
+/// Quantize raster table gaps without the minimum width required for borders.
+fn snap_border_spacing_to_device_pixels(value: ComputedLength, scale: f32) -> ComputedLength {
+    if !scale.is_finite() || scale <= 0.0 || !value.px().is_finite() {
+        return value;
+    }
+    let scale = f64::from(scale);
+    let device = f64::from(value.px()) * scale;
+    // Chromium's integer length conversion allows 0.01 device pixels near an
+    // integer. Round that correction in computed-length precision so 4.99f32
+    // and 0.99f32 use the same boundary. Keep the multiplication wide.
+    let corrected = device + 0.01;
+    let pixels = if corrected <= f64::from(f32::MAX) {
+        f64::from((corrected as f32).floor())
+    } else {
+        corrected.floor()
+    };
+    let result = (pixels / scale) as f32;
+    if result.is_finite() {
+        ComputedLength(result)
+    } else {
+        value
     }
 }
 
@@ -4508,6 +4552,7 @@ pub fn lift_border_spacing(computed: ComputedBorderSpacing) -> BorderSpacingValu
     BorderSpacingValue {
         horizontal: Length::Px(computed.horizontal.px()),
         vertical: Length::Px(computed.vertical.px()),
+        computed_lengths: Some([computed.horizontal.px(), computed.vertical.px()]),
     }
 }
 

@@ -7,6 +7,8 @@ use crate::property::{
 };
 use crate::specified::SpecifiedValues;
 
+mod border_spacing_tests;
+
 /// Shared context for `rem`, with a 16px root font size.
 const CTX: ResolveContext = ResolveContext {
     root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),

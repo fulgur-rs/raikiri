@@ -41,6 +41,10 @@ type Rect = [f32; 4];
 
 /// The border boxes of the elements of `body` with an `id` on the first page.
 fn border_boxes(body: &str) -> Vec<(String, Rect)> {
+    border_boxes_with_device_scale(body, None)
+}
+
+fn border_boxes_with_device_scale(body: &str, scale: Option<f32>) -> Vec<(String, Rect)> {
     let html = format!(
         "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
          body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
@@ -51,6 +55,7 @@ fn border_boxes(body: &str) -> Vec<(String, Rect)> {
         .expect("fonts");
     let resources = RenderResources::new()
         .fonts(fonts)
+        .border_width_device_scale(scale)
         .base_url(Url::parse("https://stretch.test/document.html").expect("url"))
         .replaced_resolver(&Portrait);
     let doc = parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
@@ -398,7 +403,8 @@ fn check_cell_image_oracle(source: &str) {
     let mut mismatches = Vec::new();
     for case in oracle["cases"].as_array().expect("cases") {
         let body = case["html"].as_str().expect("markup");
-        let boxes = border_boxes(body);
+        let scale = case["device_scale"].as_f64().map(|value| value as f32);
+        let boxes = border_boxes_with_device_scale(body, scale);
         for entry in case["expected"].as_array().expect("expected boxes") {
             let id = entry[0].as_str().expect("id");
             let (_, actual) = boxes.iter().find(|(name, _)| name == id).expect("box");
