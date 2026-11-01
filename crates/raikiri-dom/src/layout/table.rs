@@ -124,6 +124,23 @@ struct TableGrid {
     col_widths: Vec<ColSizing>,
 }
 
+/// How the row pass aligned the content of a horizontal cell, which a vertical
+/// table redoes once the cell takes the height of its own column.
+#[derive(Debug, Clone, Copy)]
+struct BlockAlignment {
+    /// The height the cell had in the row pass.
+    height: f32,
+    /// The block size of its content, which the room around it is measured from.
+    natural: f32,
+    /// How far the alignment moved the content from the block-start side.
+    shift: f32,
+    /// Whether the pass laid the cell out at that height, which its content may
+    /// depend on, and if so whether the height was definite for the cell and
+    /// for the percentage heights of its children. `None` when it kept the
+    /// lines of the row-height pass, which do not.
+    laid_out_definite: Option<(bool, bool)>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CellPlacement {
     node_id: usize,
@@ -136,6 +153,13 @@ struct CellPlacement {
     specified_min_width: Dimension,
     resolved: Option<BoxLayout>,
     natural_height: f32,
+    /// The height the cell asks of its row: its laid-out height, or the height
+    /// it states if that is more.
+    measured_height: f32,
+    /// How the row-height pass spread the room around the content of a
+    /// horizontal cell, kept for a vertical table, whose cell takes the height
+    /// of its own column afterwards.
+    alignment: Option<BlockAlignment>,
     baseline: f32,
     /// Whether the cell has something in flow to take its baseline from: a
     /// line, or a box with height of its own. A baseline-aligned cell without
@@ -1499,19 +1523,21 @@ fn compute_table_layout_checked(
                     || parent_sizes_rows
                     || stretch_room.is_some()
             })
-            .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
+            .map(|known_h| known_h - distrib_insets.height);
         // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer
         // domain keeps content-box correct: `min_outer - distrib_insets` =
         // `min_content + overlap`, the track sum that yields `min_content`.
-        let min_target = min_h_outer.map(|mn| f32_max_compat(mn - distrib_insets.height, 0.0));
+        let min_target = min_h_outer.map(|mn| mn - distrib_insets.height);
         // The taller of the two is shared once, so that the percentage heights
-        // of rows resolve against the height the table ends up with.
-        if let Some(target) = [known_target, min_target]
+        // of rows resolve against the height the table ends up with. It is
+        // kept as it is, without the zero floor the rows get, for the vertical
+        // columns below.
+        let target_room = [known_target, min_target]
             .into_iter()
             .flatten()
-            .reduce(f32_max_compat)
-        {
+            .reduce(f32_max_compat);
+        if let Some(target) = target_room.map(|room| f32_max_compat(room, 0.0)) {
             // The row groups share the extra first and the rows without an
             // authored height take their group's share, which keeps the
             // others as they are (see `distribute_extra_to_groups`).
@@ -1549,12 +1575,34 @@ fn compute_table_layout_checked(
         }
 
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
-        // Vertical tables stack each column's inline track along the physical
-        // height, so the physical spacing applies across that stack: the
-        // vertical gap between and around the stacked tracks, the horizontal gap
-        // on both sides of the single physical column.
-        let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
-            + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+        // Vertical tables stack the columns along the physical height, so the
+        // physical spacing applies across that stack: the vertical gap between
+        // and around the stacked tracks, the horizontal gap on both sides of
+        // the single physical column. Each column is as high as the cells that
+        // start in it ask, the columns of a cell that spans several sharing its
+        // height. The table is at least as high as its authored height or
+        // `min-height` and its caption ask, which the columns share in
+        // proportion to their heights.
+        let vertical_tracks = if vertical_writing {
+            let columns = usize::from(grid.n_cols);
+            let mut tracks = vertical_column_tracks(&grid, border_spacing.1);
+            let spacing_total = border_spacing.1 * (columns + 1) as f32;
+            // The room the rows were given has the spacing of every visible
+            // row taken out of it; the columns stack along that height with
+            // spacing of their own, so all of it comes back.
+            let floor = target_room
+                .map_or(0.0, |room| room + spacing.height)
+                .max(caption_inline_minimum - padding_border_size.height);
+            let natural = tracks.iter().sum::<f32>() + spacing_total;
+            if floor > natural {
+                grow_tracks(&mut tracks, floor - natural);
+            }
+            tracks
+        } else {
+            Vec::new()
+        };
+        let vertical_content_height =
+            vertical_tracks.iter().sum::<f32>() + border_spacing.1 * (grid.n_cols as f32 + 1.0);
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
@@ -1717,7 +1765,7 @@ fn compute_table_layout_checked(
             reposition_cells_for_vertical_writing(
                 doc,
                 &mut grid,
-                &row_heights,
+                &vertical_tracks,
                 (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
                 Point {
                     x: x_origin,
@@ -2227,6 +2275,8 @@ fn build_table_grid(
                     specified_min_width,
                     resolved: None,
                     natural_height: 0.0,
+                    measured_height: 0.0,
+                    alignment: None,
                     baseline: 0.0,
                     baseline_from_flow: false,
                     row_pass: None,
@@ -2566,6 +2616,8 @@ fn push_row(
             specified_min_width,
             resolved: None,
             natural_height: 0.0,
+            measured_height: 0.0,
+            alignment: None,
             baseline: 0.0,
             baseline_from_flow: false,
             row_pass: None,
@@ -3973,6 +4025,7 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         }
     });
     let h = output.size.height.max(authored_height);
+    cell.measured_height = h;
     let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
     cell.baseline =
         baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
@@ -4153,60 +4206,66 @@ fn place_cells(
             .filter(|pass| pass.width == cell_width)
             .map(|pass| pass.scrollable_overflow_rect);
         let mut resolved_natural_height = None;
-        let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
-            (rect, OofCandidates::new())
-        } else {
-            // The height the row gives the cell is a definite one for the
-            // percentage heights of its children only when the table or the
-            // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
-            // as in the pass that measured the row.
-            let table_height_is_definite = height_is_definite
-                || (stretch_height_is_resolved && cell_height > cell.natural_height);
-            let cell_height_is_definite = table_height_is_definite
-                || resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
-            // Only the layout of this pass may leave the height the content
-            // has: a cached one, or a cell that is not a block container,
-            // leaves none, and the height measured before stands.
-            doc.nodes[cell.node_id].auto_block_size = None;
-            let output = doc.compute_child_layout(
-                NodeId::from(cell.node_id),
-                LayoutInput {
-                    run_mode: RunMode::PerformLayout,
-                    sizing_mode: SizingMode::InherentSize,
-                    axis: RequestedAxis::Horizontal,
-                    known_dimensions: Size {
-                        width: Some(cell_width),
-                        height: Some(cell_height),
+        let (scrollable_overflow_rect, mut child_candidates, laid_out_definite) =
+            if let Some(rect) = reused {
+                (rect, OofCandidates::new(), None)
+            } else {
+                // The height the row gives the cell is a definite one for the
+                // percentage heights of its children only when the table or the
+                // cell states a height (CSS 2.1 §10.5); otherwise they are `auto`,
+                // as in the pass that measured the row.
+                let table_height_is_definite = height_is_definite
+                    || (stretch_height_is_resolved && cell_height > cell.natural_height);
+                let cell_height_is_definite = table_height_is_definite
+                    || resolve_dimension(doc.table_style(cell.node_id).size().height, None)
+                        .is_some();
+                // Only the layout of this pass may leave the height the content
+                // has: a cached one, or a cell that is not a block container,
+                // leaves none, and the height measured before stands.
+                doc.nodes[cell.node_id].auto_block_size = None;
+                let output = doc.compute_child_layout(
+                    NodeId::from(cell.node_id),
+                    LayoutInput {
+                        run_mode: RunMode::PerformLayout,
+                        sizing_mode: SizingMode::InherentSize,
+                        axis: RequestedAxis::Horizontal,
+                        known_dimensions: Size {
+                            width: Some(cell_width),
+                            height: Some(cell_height),
+                        },
+                        parent_size: Size {
+                            width: Some(cell_width),
+                            height: table_height_is_definite.then_some(cell_height),
+                        },
+                        available_space: Size {
+                            width: AvailableSpace::Definite(cell_width),
+                            height: AvailableSpace::Definite(cell_height),
+                        },
+                        known_dimensions_are_definite: Size {
+                            width: true,
+                            height: cell_height_is_definite,
+                        },
+                        vertical_margins_are_collapsible: Line::FALSE,
                     },
-                    parent_size: Size {
-                        width: Some(cell_width),
-                        height: table_height_is_definite.then_some(cell_height),
-                    },
-                    available_space: Size {
-                        width: AvailableSpace::Definite(cell_width),
-                        height: AvailableSpace::Definite(cell_height),
-                    },
-                    known_dimensions_are_definite: Size {
-                        width: true,
-                        height: cell_height_is_definite,
-                    },
-                    vertical_margins_are_collapsible: Line::FALSE,
-                },
-            );
-            // The height the content has now that the row height made a
-            // percentage height of a child definite, which the alignment
-            // below follows.
-            let aligned_by_its_end = matches!(
-                doc.ifc_layout_node(cell.node_id)
-                    .expect("table cell layout view")
-                    .table_vertical_align,
-                VerticalAlign::Middle | VerticalAlign::Bottom
-            );
-            resolved_natural_height = (cell_height_is_definite && aligned_by_its_end)
-                .then(|| doc.nodes[cell.node_id].auto_block_size)
-                .flatten();
-            (output.scrollable_overflow_rect, output.oof_candidates)
-        };
+                );
+                // The height the content has now that the row height made a
+                // percentage height of a child definite, which the alignment
+                // below follows.
+                let aligned_by_its_end = matches!(
+                    doc.ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .table_vertical_align,
+                    VerticalAlign::Middle | VerticalAlign::Bottom
+                );
+                resolved_natural_height = (cell_height_is_definite && aligned_by_its_end)
+                    .then(|| doc.nodes[cell.node_id].auto_block_size)
+                    .flatten();
+                (
+                    output.scrollable_overflow_rect,
+                    output.oof_candidates,
+                    Some((table_height_is_definite, cell_height_is_definite)),
+                )
+            };
         child_candidates.translate(Point {
             x: cell_x,
             y: cell_y,
@@ -4273,6 +4332,12 @@ fn place_cells(
             }
             _ => 0.0,
         };
+        cell.alignment = (!collapsed_empty && !vertical_cell).then(|| BlockAlignment {
+            height: cell_height,
+            natural: resolved_natural_height.unwrap_or(cell.natural_height),
+            shift,
+            laid_out_definite,
+        });
         padding.top += shift;
         padding.bottom += (extra - shift).max(0.0);
         for child in doc
@@ -4336,6 +4401,50 @@ fn place_cells(
     Ok(())
 }
 
+/// The heights of the columns of a vertical table, which stack along its
+/// physical height: each is as high as the tallest cell that starts in it and
+/// spans no other column. A cell that spans several columns shares the height
+/// it lacks among them, once the narrower spans have settled, and the columns
+/// keep the `spacing` between them out of its height.
+fn vertical_column_tracks(grid: &TableGrid, spacing: f32) -> Vec<f32> {
+    let columns = usize::from(grid.n_cols);
+    let mut tracks = vec![0.0f32; columns];
+    let mut spanning = Vec::new();
+    for cell in &grid.cells {
+        let start = usize::from(cell.col_start).min(columns);
+        let end = start
+            .saturating_add(usize::from(cell.col_span))
+            .min(columns);
+        if end - start > 1 {
+            spanning.push((start..end, cell.measured_height));
+        } else if end > start {
+            tracks[start] = f32_max_compat(tracks[start], cell.measured_height);
+        }
+    }
+    spanning.sort_by_key(|(span, _)| (span.len(), span.start));
+    for (span, height) in spanning {
+        let current = spanned_size(&tracks[span.clone()], spacing);
+        if height > current {
+            grow_tracks(&mut tracks[span], height - current);
+        }
+    }
+    tracks
+}
+
+/// Adds `extra` to `tracks` in proportion to their sizes, or equally when none
+/// of them has any.
+fn grow_tracks(tracks: &mut [f32], extra: f32) {
+    let total: f32 = tracks.iter().sum();
+    let count = tracks.len() as f32;
+    for track in tracks.iter_mut() {
+        *track += if total > 0.0 {
+            extra * *track / total
+        } else {
+            extra / count
+        };
+    }
+}
+
 /// Re-map the already measured table grid from horizontal physical axes to
 /// vertical writing-mode axes. Vertical cells are re-laid out at their final
 /// physical dimensions and aligned on their block axis. Orthogonal horizontal
@@ -4343,23 +4452,25 @@ fn place_cells(
 fn reposition_cells_for_vertical_writing(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    row_heights: &[f32],
+    tracks: &[f32],
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
 ) {
-    let vertical_track = row_heights.iter().sum::<f32>();
-    if !vertical_track.is_finite() || vertical_track <= 0.0 {
+    // Columns of no height are valid: the cells still take their place, with
+    // the height of their column, and not the one a taller row gave them.
+    if !tracks.iter().sum::<f32>().is_finite() {
         return; // cov:ignore: defensive empty/invalid vertical track fallback.
     }
     for cell in &mut grid.cells {
-        let col_start = cell.col_start as usize;
+        let col_start = usize::from(cell.col_start).min(tracks.len());
         let col_end = col_start
-            .saturating_add(cell.col_span as usize)
-            .min(usize::from(grid.n_cols));
-        let col_span = col_end.saturating_sub(col_start).max(1);
-        let y = origin.y + (vertical_track + spacing) * col_start as f32;
-        let height = vertical_track * col_span as f32 + spacing * (col_span - 1) as f32;
+            .saturating_add(usize::from(cell.col_span))
+            .min(tracks.len());
+        let y = origin.y
+            + spanned_size(&tracks[..col_start], spacing)
+            + if col_start > 0 { spacing } else { 0.0 };
+        let height = spanned_size(&tracks[col_start..col_end], spacing);
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };
@@ -4369,7 +4480,33 @@ fn reposition_cells_for_vertical_writing(
         let cell_writing_mode = table_writing_mode(doc, cell.node_id);
         if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
-            // its own block axis. Preserve the normal pass's vertical shift.
+            // its own block axis, the physical height, which is now the height
+            // of its column and no longer the one the row pass measured. What
+            // depends on that height is laid out again, and the room around
+            // the content is spread again.
+            if let Some(alignment) = cell.alignment {
+                let relaid = match alignment.laid_out_definite {
+                    Some(definite) if (alignment.height - height).abs() > SAME_EDGE_TOLERANCE => {
+                        Some(relayout_horizontal_cell(
+                            doc,
+                            cell.node_id,
+                            cell.natural_height,
+                            cell_width,
+                            definite,
+                            layout,
+                        ))
+                    }
+                    _ => None,
+                };
+                realign_horizontal_cell(
+                    doc,
+                    cell.node_id,
+                    alignment,
+                    cell.baseline_from_flow,
+                    relaid,
+                    layout,
+                );
+            }
             doc.store_layout(cell.node_id, layout);
             continue;
         }
@@ -4403,6 +4540,104 @@ fn reposition_cells_for_vertical_writing(
         );
         align_vertical_cell_on_block_axis(doc, cell.node_id, cell_writing_mode, cell_width, layout);
         doc.store_layout(cell.node_id, layout);
+    }
+}
+
+/// Lays a horizontal cell out again at the final size in `layout`, the way the
+/// row pass did at the height of its row, so that what depends on the height
+/// (a child with a percentage height) follows it. Returns the block size of the
+/// content to align.
+fn relayout_horizontal_cell(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    natural_height: f32,
+    cell_width: f32,
+    (table_height_is_definite, cell_height_is_definite): (bool, bool),
+    layout: &mut BoxLayout,
+) -> f32 {
+    let height = layout.size.height;
+    doc.nodes[cell_node].auto_block_size = None;
+    let output = doc.compute_child_layout(
+        NodeId::from(cell_node),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Horizontal,
+            known_dimensions: Size {
+                width: Some(cell_width),
+                height: Some(height),
+            },
+            parent_size: Size {
+                width: Some(cell_width),
+                height: table_height_is_definite.then_some(height),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(cell_width),
+                height: AvailableSpace::Definite(height),
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: cell_height_is_definite,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        },
+    );
+    layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
+    let aligned_by_its_end = matches!(
+        doc.ifc_layout_node(cell_node)
+            .expect("table cell layout view")
+            .table_vertical_align,
+        VerticalAlign::Middle | VerticalAlign::Bottom
+    );
+    (cell_height_is_definite && aligned_by_its_end)
+        .then(|| doc.nodes[cell_node].auto_block_size)
+        .flatten()
+        .unwrap_or(natural_height)
+}
+
+/// Spreads the room a horizontal cell has around its content again, once the
+/// cell is `layout.size.height` high instead of the height the row pass aligned
+/// it in: the content moves by the change of the shift, and the padding that
+/// carries the room follows. `relaid` is the block size of the content when the
+/// cell was laid out again, which put its children back where no alignment has
+/// moved them.
+fn realign_horizontal_cell(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    alignment: BlockAlignment,
+    baseline_from_flow: bool,
+    relaid: Option<f32>,
+    layout: &mut BoxLayout,
+) {
+    let node = doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view");
+    let natural = relaid.unwrap_or(alignment.natural);
+    let extra = (layout.size.height - natural).max(0.0);
+    let shift = match node.table_vertical_align {
+        VerticalAlign::Top => 0.0,
+        VerticalAlign::Middle => extra / 2.0,
+        VerticalAlign::Bottom => extra,
+        // The row's baseline set this shift. It stays where the row put it,
+        // but a cell with nothing in flow is not pushed past its own room.
+        _ if baseline_from_flow => alignment.shift,
+        _ => alignment.shift.min(extra),
+    };
+    let children = node.children.clone();
+    let row_extra = (alignment.height - alignment.natural).max(0.0);
+    layout.padding.top += shift - alignment.shift;
+    layout.padding.bottom += (extra - shift).max(0.0) - (row_extra - alignment.shift).max(0.0);
+    let placed = if relaid.is_some() {
+        0.0
+    } else {
+        alignment.shift
+    };
+    for child in children {
+        if doc.nodes[child].layout_position() != Position::Absolute {
+            let mut child_layout = doc.nodes[child].layout;
+            child_layout.location.y += shift - placed;
+            doc.store_layout(child, &child_layout);
+        }
     }
 }
 
