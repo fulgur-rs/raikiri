@@ -754,10 +754,16 @@ fn compute_table_layout_checked(
         let border_spacing = if collapse {
             (0.0, 0.0)
         } else {
-            (
-                doc.nodes[table_idx].border_spacing.horizontal.0.max(0.0),
-                doc.nodes[table_idx].border_spacing.vertical.0.max(0.0),
-            )
+            let spacing = doc.nodes[table_idx].border_spacing;
+            let inline = spacing.horizontal.0.max(0.0);
+            let block = spacing.vertical.0.max(0.0);
+            // The authored pair follows the inline and block axes. The
+            // layout pass below consumes physical horizontal/vertical gaps.
+            if vertical_writing {
+                (block, inline)
+            } else {
+                (inline, block)
+            }
         };
 
         let padding_border_size = Size {

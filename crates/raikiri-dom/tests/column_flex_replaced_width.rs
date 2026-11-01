@@ -669,3 +669,174 @@ fn two_images_that_cannot_shrink_follow_each_other_at_their_full_height() {
         ],
     );
 }
+
+/// An inline column flex container with the given `container_css`, holding two
+/// images `i` and `j` with the given `image_css`.
+fn column_of_two(container_css: &str, image_css: &str) -> String {
+    format!(
+        "<div id=o style=\"display:inline-flex;flex-direction:column;{container_css}\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"{image_css}\">\
+         <img id=j src=\"https://flex.test/portrait.png\" style=\"{image_css}\"></div>"
+    )
+}
+
+#[test]
+fn stretched_images_that_overflow_their_container_keep_the_width_its_height_gives() {
+    // Each image stretches to the 200px of the container, so the container is
+    // 80px wide whatever the container flexes the images to. The images are
+    // 80px wide and 200px high, so the second one overflows.
+    assert_boxes(
+        &column_of_two("height:200px", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [8.0, 208.0, 80.0, 200.0]),
+        ],
+    );
+    // A container that is 80px wide already lays the same images out alike.
+    assert_boxes(
+        &column_of_two("height:200px;width:80px", "height:stretch"),
+        &[
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [8.0, 208.0, 80.0, 200.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_flex_basis_does_not_shrink_the_stretched_width_of_the_container() {
+    assert_boxes(
+        &column("height:200px", "height:stretch;flex-basis:50px"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+    assert_boxes(
+        &column_of_two("height:200px", "height:stretch;flex-grow:1"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [8.0, 208.0, 80.0, 200.0]),
+        ],
+    );
+    assert_boxes(
+        &column_of_two("height:200px;flex-wrap:wrap", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 160.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [88.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_stretched_image_beside_an_item_with_a_stated_height_is_not_shrunk_by_it() {
+    assert_boxes(
+        "<div id=o style=\"display:inline-flex;flex-direction:column;height:200px\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"height:stretch\">\
+         <img id=j src=\"https://flex.test/portrait.png\" style=\"height:100px\"></div>",
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [8.0, 208.0, 80.0, 100.0]),
+        ],
+    );
+}
+
+#[test]
+fn the_margins_padding_and_border_of_stretched_images_stay_inside_the_height_they_fill() {
+    // 200px less the 10px margins above and below.
+    assert_boxes(
+        &column_of_two("height:200px", "height:stretch;margin:10px 0"),
+        &[
+            ("o", [8.0, 8.0, 72.0, 200.0]),
+            ("i", [8.0, 18.0, 72.0, 180.0]),
+            ("j", [8.0, 218.0, 72.0, 180.0]),
+        ],
+    );
+    assert_boxes(
+        &column_of_two("height:200px", "height:stretch;padding:5px"),
+        &[
+            ("o", [8.0, 8.0, 86.0, 200.0]),
+            ("i", [8.0, 8.0, 86.0, 200.0]),
+            ("j", [8.0, 208.0, 86.0, 200.0]),
+        ],
+    );
+    // 200px less the 10px border of the container above and below: 180px.
+    assert_boxes(
+        &column_of_two("height:200px;border:solid 10px green", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 92.0, 200.0]),
+            ("i", [18.0, 18.0, 72.0, 180.0]),
+            ("j", [18.0, 198.0, 72.0, 180.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_height_bound_of_stretched_images_bounds_the_width_of_the_container() {
+    assert_boxes(
+        &column_of_two("height:200px", "height:stretch;max-height:100px"),
+        &[
+            ("o", [8.0, 8.0, 40.0, 200.0]),
+            ("i", [8.0, 8.0, 40.0, 100.0]),
+            ("j", [8.0, 108.0, 40.0, 100.0]),
+        ],
+    );
+}
+
+#[test]
+fn images_that_are_not_stretched_to_the_container_keep_the_height_they_are_flexed_to() {
+    // The images fit their content when they do not stretch, so they are 40px
+    // wide at the 100px each of them gets, in a container 80px wide.
+    assert_boxes(
+        &column_of_two("height:200px;align-items:center", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [28.0, 8.0, 40.0, 100.0]),
+            ("j", [28.0, 108.0, 40.0, 100.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_container_without_a_definite_height_leaves_stretched_images_at_their_natural_size() {
+    assert_boxes(
+        &column_of_two("", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 20.0, 100.0]),
+            ("i", [8.0, 8.0, 20.0, 50.0]),
+            ("j", [8.0, 58.0, 20.0, 50.0]),
+        ],
+    );
+}
+
+#[test]
+fn the_container_height_a_percentage_gives_is_what_stretched_images_fill() {
+    assert_boxes(
+        &format!(
+            "<div style=\"height:400px\">{}</div>",
+            column_of_two("height:50%", "height:stretch")
+        ),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [8.0, 208.0, 80.0, 200.0]),
+        ],
+    );
+}
+
+#[test]
+fn stretched_images_of_a_row_container_are_unchanged() {
+    assert_boxes(
+        "<div id=o style=\"display:inline-flex;height:200px\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"height:stretch\">\
+         <img id=j src=\"https://flex.test/portrait.png\" style=\"height:stretch\"></div>",
+        &[
+            ("o", [8.0, 8.0, 160.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+            ("j", [88.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+}

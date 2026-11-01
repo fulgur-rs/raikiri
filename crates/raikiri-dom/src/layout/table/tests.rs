@@ -3782,16 +3782,16 @@ fn separate_border_spacing_gaps_the_stacked_tracks_of_a_vertical_table() {
     let first = doc.nodes[first].layout;
     let second = doc.nodes[second].layout;
     let table = doc.nodes[table].layout.size;
-    assert_eq!((first.location.x, first.location.y), (3.0, 5.0));
+    assert_eq!((first.location.x, first.location.y), (5.0, 3.0));
     assert_eq!(
         (second.location.x, second.location.y),
-        (3.0, 5.0 + first.size.height + 5.0)
+        (5.0, 3.0 + first.size.height + 3.0)
     );
     assert_eq!(
         table.height,
-        5.0 + first.size.height + 5.0 + second.size.height + 5.0
+        3.0 + first.size.height + 3.0 + second.size.height + 3.0
     );
-    assert_eq!(table.width, 3.0 + first.size.width + 3.0);
+    assert_eq!(table.width, 5.0 + first.size.width + 5.0);
 }
 
 #[test]

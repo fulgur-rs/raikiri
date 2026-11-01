@@ -2802,12 +2802,35 @@ fn compute_inline_block_shrink_wrap(
     // width.
     let in_column_flex = leaf_intrinsic.is_some() && tree.in_column_flex_container(idx);
     let stretches_height = matches!(leaf_style.size.height.expand(), ExpandedDimension::Stretch);
-    let flexed_height = inputs.known_dimensions.height.filter(|_| {
+    // While the container's width is measured, which Taffy says by offering the
+    // item a min-content or max-content width, a stretched item contributes the
+    // width of the height it stretches to, the definite height of the
+    // container less its margins, whatever height the container flexes it to:
+    // the width of the container does not shrink with its items.
+    let stretch_room = inputs.parent_size.height.filter(|_| {
         in_column_flex
+            && stretches_height
             && inputs.sizing_mode == SizingMode::ContentSize
-            && (stretches_height
-                || matches!(inputs.available_space.width, AvailableSpace::Definite(_)))
+            && inputs.axis == RequestedAxis::Horizontal
+            && inputs.run_mode == RunMode::ComputeSize
+            && inputs.known_dimensions.height.is_some()
+            && inputs.known_dimensions_are_definite.height
+            && !matches!(inputs.available_space.width, AvailableSpace::Definite(_))
     });
+    let flexed_height = if let Some(room) = stretch_room {
+        // A percentage margin counts as zero in the width the item contributes.
+        let margin = leaf_style
+            .margin
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
+        Some((room - margin.top - margin.bottom).max(0.0))
+    } else {
+        inputs.known_dimensions.height.filter(|_| {
+            in_column_flex
+                && inputs.sizing_mode == SizingMode::ContentSize
+                && (stretches_height
+                    || matches!(inputs.available_space.width, AvailableSpace::Definite(_)))
+        })
+    };
     // An item of a row flex container whose height is fixed before its width is
     // measured, because it states the height or the container stretches it to a
     // definite one, takes its width from that height along its ratio, say for its
@@ -2819,17 +2842,30 @@ fn compute_inline_block_shrink_wrap(
             && inputs.known_dimensions_are_definite.height
             && tree.in_row_flex_container(idx)
     });
-    let sides_style = flexed_height.or(row_height).map(|height| {
-        let mut style = leaf_style.clone();
-        apply_border_box_height(
-            tree,
-            idx,
-            &mut style,
-            height,
-            inputs.parent_size.width.unwrap_or(0.0),
-        );
-        style
-    });
+    // The height that `height: stretch` gave a box with an aspect ratio is as
+    // good as one it states, so the width follows from it through the ratio.
+    let stretched_height = inputs
+        .known_dimensions
+        .height
+        .filter(|_| leaf_style.aspect_ratio.is_some() && stretches_height);
+    // A replaced box given the height it fills, say an image in a line of text,
+    // is sized by it before any width is fixed.
+    let stretched_by_parent = stretched_height
+        .filter(|_| leaf_intrinsic.is_some() && inputs.sizing_mode == SizingMode::InherentSize);
+    let sides_style = flexed_height
+        .or(row_height)
+        .or(stretched_by_parent)
+        .map(|height| {
+            let mut style = leaf_style.clone();
+            apply_border_box_height(
+                tree,
+                idx,
+                &mut style,
+                height,
+                inputs.parent_size.width.unwrap_or(0.0),
+            );
+            style
+        });
     let leaf_auto_sides = leaf_intrinsic.and_then(|natural| {
         replaced_size::auto_sides_size(
             sides_style.as_ref().unwrap_or(&leaf_style),
@@ -2861,11 +2897,7 @@ fn compute_inline_block_shrink_wrap(
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;
     let avail_height = inputs.available_space.height;
-    // The height that `height: stretch` gave an empty box is as good as one it
-    // states, so the width follows from it through the aspect ratio: it is put
-    // in the style the box is sized with.
-    let stretched_height =
-        known_height.filter(|_| leaf_style.aspect_ratio.is_some() && stretches_height);
+    // It is put in the style the box is sized with.
     if let Some(height) = stretched_height {
         apply_border_box_height(
             tree,
@@ -3008,7 +3040,10 @@ fn compute_inline_block_shrink_wrap(
                 content_box_ratio,
             )
         });
-        if fixed_width.is_some() {
+        // The ratio has done its work for a box whose height the parent fixed
+        // and whose width it gave, and Taffy's ratio floor would raise that
+        // height again to the border-box width divided by the ratio.
+        if fixed_width.is_some() || stretched_by_parent.is_some() {
             apply_local_sizing(
                 &mut leaf_style,
                 &[OwnedPropertyOverride::aspect_ratio(None)],

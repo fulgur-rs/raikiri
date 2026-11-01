@@ -487,7 +487,7 @@ fn fourth_review_vertical_caption_minimum_includes_margins_and_grid_edges() {
                 &mut doc,
                 body,
                 &format!(
-                    "display:table;writing-mode:{mode};width:40px;height:40px;padding:2px;border:1px solid black;border-spacing:0 2px;background:green"
+                    "display:table;writing-mode:{mode};width:40px;height:40px;padding:2px;border:1px solid black;border-spacing:2px 0;background:green"
                 ),
             );
             let caption = element(
