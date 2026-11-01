@@ -1062,15 +1062,10 @@ fn compute_table_layout_checked(
         // edge, so n tracks take n + 1 gaps. The spacing belongs to the table's
         // content box, so it is part of the extents the tracks share but not of
         // `padding_border_size`. Collapse zeroes `border_spacing`.
-        // A row whose overlapping cells all hide their empty boxes has zero
-        // height and only one spacing side (CSS 2.2 section 17.6.1.1).
-        let empty_hidden_rows = hidden_empty_rows(doc, &grid);
-        let hidden_rows: Vec<bool> = empty_hidden_rows
-            .iter()
-            .zip(collapsed_rows)
-            .map(|(hidden, collapsed)| *hidden || *collapsed)
-            .collect();
-        let row_gaps: Vec<_> = hidden_rows
+        // Match Chromium and Blitz: empty-cells hides paint, not row geometry.
+        // This intentionally differs from CSS 2.2 section 17.6.1.1's empty-row
+        // rule. Only visibility:collapse removes a row's height and spacing.
+        let row_gaps: Vec<_> = collapsed_rows
             .iter()
             .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
             .collect();
@@ -1101,7 +1096,7 @@ fn compute_table_layout_checked(
             height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
                 0.0
             } else {
-                row_spacing(&hidden_rows)
+                row_spacing(collapsed_rows)
             },
         };
         let distrib_insets = Size {
@@ -1124,13 +1119,12 @@ fn compute_table_layout_checked(
                 || min_h_outer.is_some()
                 || stretch_room.is_some()
                 || parent_is_flex_or_grid);
-        let sharing_hidden_rows: &[bool] = if collapsed_rows_share {
-            &empty_hidden_rows
-        } else {
-            &hidden_rows
-        };
+        let sharing_hidden_rows: Vec<bool> = collapsed_rows
+            .iter()
+            .map(|&collapsed| collapsed && !collapsed_rows_share)
+            .collect();
         let sharing_insets_height = if collapsed_rows_share {
-            padding_border_size.height - overlap_h + row_spacing(sharing_hidden_rows)
+            padding_border_size.height - overlap_h + row_spacing(&sharing_hidden_rows)
         } else {
             distrib_insets.height
         };
@@ -1578,7 +1572,7 @@ fn compute_table_layout_checked(
         if let Some(columns) = columns_in_place {
             columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
         }
-        for (height, hidden) in row_heights.iter_mut().zip(sharing_hidden_rows) {
+        for (height, hidden) in row_heights.iter_mut().zip(&sharing_hidden_rows) {
             if *hidden {
                 *height = 0.0;
             }
@@ -1635,7 +1629,7 @@ fn compute_table_layout_checked(
             };
             distribute_extra_to_groups(
                 &mut row_heights,
-                sharing_hidden_rows,
+                &sharing_hidden_rows,
                 &authored,
                 &percents,
                 &row_groups(doc, table_idx, &grid),
@@ -1657,7 +1651,7 @@ fn compute_table_layout_checked(
             let columns = grid.n_cols as f32;
             let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
             let target = (caption_inline_minimum - edges).max(0.0) / columns;
-            distribute_extra(&mut row_heights, Some(&hidden_rows), target);
+            distribute_extra(&mut row_heights, Some(collapsed_rows), target);
         }
 
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
@@ -1830,13 +1824,7 @@ fn compute_table_layout_checked(
         // offset winning. With none, it is the lowest content edge among the
         // cells, measured as the row stretched them; a cell in a collapsed row
         // has no extent, so that edge is the row's top.
-        let first_row_collapsed = collapsed_rows.first() == Some(&true);
-        let first_row_hidden = hidden_rows.first() == Some(&true) && !first_row_collapsed;
-        let first_row_cells = || {
-            grid.cells
-                .iter()
-                .filter(|cell| cell.row == 0 && !first_row_hidden)
-        };
+        let first_row_cells = || grid.cells.iter().filter(|cell| cell.row == 0);
         let first_row_baseline = first_row_cells()
             .filter(|cell| {
                 cell.baseline_from_flow
@@ -3555,24 +3543,6 @@ fn cell_block_end_edges(doc: &LayoutSession<'_>, cell: &CellPlacement) -> f32 {
     let padding = style.padding().resolve_or_zero(Some(width));
     let border = style.border().resolve_or_zero(Some(width));
     padding.bottom + border.bottom
-}
-
-fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
-    let mut rows = vec![None; grid.rows.len()];
-    for cell in &grid.cells {
-        let start = cell.row as usize;
-        let end = (start + cell.row_span as usize).min(rows.len());
-        for row in &mut rows[start..end] {
-            *row = Some(
-                row.unwrap_or(true)
-                    && doc
-                        .ifc_layout_node(cell.node_id)
-                        .expect("table cell layout view")
-                        .hides_empty_table_cell,
-            );
-        }
-    }
-    rows.into_iter().map(|row| row.unwrap_or(false)).collect()
 }
 
 /// Grow `sizes` (row heights or column widths) until they sum to `target`,
