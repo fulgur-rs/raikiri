@@ -1448,7 +1448,7 @@ pub(crate) use oof::{compute_root_layout_with_content_limits, layout_container_c
 pub(crate) use transposed_axes::reverse_static_position;
 pub(crate) use vertical_block::{
     TransposedBlock, TransposedSizingUndo, TransposedStyleIndex, block_right_to_left, is_table_box,
-    with_orthogonal_fit_content,
+    with_final_vertical_table_cell, with_orthogonal_fit_content,
 };
 pub(crate) use vertical_oof::used_writing_mode;
 
@@ -3073,6 +3073,29 @@ fn compute_inline_block_shrink_wrap(
     }
 }
 
+/// Position a vertical block's out-of-flow boxes after its flow is aligned.
+/// Table cells defer this step until their final block-axis alignment.
+pub(crate) fn finish_vertical_block_oof(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+    mut output: LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let in_flow_overflow = output.scrollable_overflow_rect;
+    if inputs.run_mode == RunMode::PerformLayout {
+        oof::layout_local_oof_now(tree, node_id, &mut output);
+    }
+    center_absolute_children_in_block_axis(tree, idx, inputs, output.size, None);
+    if let Some(area) = output.oof_positioning_area
+        && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
+        && inputs.run_mode == RunMode::PerformLayout
+    {
+        output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
+    }
+    output
+}
+
 /// Lay out the block container `node_id` with taffy's block algorithm.
 ///
 /// Every block container goes through here so that
@@ -3097,20 +3120,15 @@ pub(crate) fn block_layout(
     if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
         let block_ctx =
             block_ctx.filter(|_| vertical_block::has_same_vertical_block_parent(tree, idx));
-        let mut output =
+        let output =
             vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left, block_ctx);
-        let in_flow_overflow = output.scrollable_overflow_rect;
-        if inputs.run_mode == RunMode::PerformLayout {
-            oof::layout_local_oof(tree, node_id, &mut output);
-        }
-        center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
-        if let Some(area) = output.oof_positioning_area
-            && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
-            && inputs.run_mode == RunMode::PerformLayout
+        if tree.nodes[idx]
+            .flags
+            .contains(NodeFlags::FINAL_VERTICAL_TABLE_CELL)
         {
-            output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
+            return output;
         }
-        return output;
+        return finish_vertical_block_oof(tree, node_id, &inputs, output);
     }
     let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
     let basis = width.map(|width| width - inline_inset);

@@ -82,6 +82,9 @@ bitflags::bitflags! {
         /// context whatever its style says. Set by
         /// [`Node::set_box_properties`] from the display it captures.
         const ROOTS_BLOCK_CONTEXT = 1 << 9;
+        /// The table is laying this cell out at its final physical size on
+        /// vertical axes. Measurement passes retain the horizontal table path.
+        const FINAL_VERTICAL_TABLE_CELL = 1 << 10;
     }
 }
 

@@ -39,7 +39,7 @@ use super::transposed_axes::{
 };
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
-use crate::node::FormattingContext;
+use crate::node::{FormattingContext, NodeFlags};
 use raikiri_style::property::{DisplayValue, WritingMode};
 
 /// A vertical block container being laid out on transposed axes.
@@ -354,7 +354,11 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
         WritingMode::VerticalLr | WritingMode::SidewaysLr => false,
         _ => return None,
     };
-    if is_table_box(tree.nodes[idx].display()) {
+    if is_table_box(tree.nodes[idx].display())
+        && !tree.nodes[idx]
+            .flags
+            .contains(NodeFlags::FINAL_VERTICAL_TABLE_CELL)
+    {
         return None;
     }
     if tree
@@ -364,6 +368,33 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
         return None;
     }
     Some(right_to_left)
+}
+
+/// Run the final physical layout of a vertical table cell on vertical axes.
+/// Its cached measurement output uses horizontal axes, so neither pass may
+/// reuse the other's cache entry even when its physical input sizes match.
+pub(crate) fn with_final_vertical_table_cell<R>(
+    tree: &mut LayoutSession<'_>,
+    cell: usize,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    debug_assert_eq!(tree.nodes[cell].display(), DisplayValue::TableCell);
+    let was_final = tree.nodes[cell]
+        .flags
+        .contains(NodeFlags::FINAL_VERTICAL_TABLE_CELL);
+    tree.nodes[cell]
+        .flags
+        .insert(NodeFlags::FINAL_VERTICAL_TABLE_CELL);
+    tree.cache_clear_subtree(NodeId::from(cell));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(tree)));
+    tree.nodes[cell]
+        .flags
+        .set(NodeFlags::FINAL_VERTICAL_TABLE_CELL, was_final);
+    tree.cache_clear_subtree(NodeId::from(cell));
+    match result {
+        Ok(output) => output,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 pub(crate) fn is_table_box(display: DisplayValue) -> bool {
