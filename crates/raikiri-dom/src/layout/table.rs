@@ -4176,15 +4176,19 @@ fn horizontal_cell_alignment_height(
     Some(lines.height + padding.top + padding.bottom + border.top + border.bottom)
 }
 
-/// Lay out a cell after its width has been assigned. Its maximum height
-/// constrains intrinsic width probes, but does not cap its row's content or
-/// the height the row gives its children. Descendant limits still apply.
+/// Lay out a cell after its width has been assigned. A horizontal cell's
+/// maximum height constrains intrinsic width probes, but does not cap its
+/// row's content or the height the row gives its children. A vertical cell
+/// keeps its maximum height to constrain inline text wrapping. Descendant
+/// limits still apply.
 fn layout_cell_contents(
     doc: &mut LayoutSession<'_>,
     cell: usize,
     inputs: LayoutInput,
 ) -> LayoutOutput {
-    if doc.physical_style(cell).max_size().height.is_auto() {
+    if table_writing_mode(doc, cell).is_vertical()
+        || doc.physical_style(cell).max_size().height.is_auto()
+    {
         return doc.compute_child_layout(NodeId::from(cell), inputs);
     }
     let key = doc.nodes.box_key(cell).expect("cell has a box key");
