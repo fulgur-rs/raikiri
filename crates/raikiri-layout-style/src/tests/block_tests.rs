@@ -205,3 +205,90 @@ fn self_baseline_set_reads_the_own_value_and_falls_back_on_the_container() {
         });
     });
 }
+
+#[test]
+fn measured_table_stretch_height_does_not_stretch_a_second_time() {
+    for height in [L::Stretch, L::Px(40.0)] {
+        for swapped in [false, true] {
+            let mut cv = ComputedValues::initial();
+            cv.width = L::Px(20.0);
+            cv.height = height;
+            cv.margin.top = L::Auto;
+            cv.margin.bottom = L::Auto;
+            cv.margin.left = L::Auto;
+            cv.margin.right = L::Auto;
+            cv.top = L::Px(-10.0);
+            cv.bottom = L::Px(-20.0);
+            cv.align_self = AlignSelfValue::Value(if swapped {
+                SelfAlignmentValue::Center
+            } else {
+                SelfAlignmentValue::Stretch
+            });
+            cv.justify_self = AlignSelfValue::Value(if swapped {
+                SelfAlignmentValue::Stretch
+            } else {
+                SelfAlignmentValue::Center
+            });
+            let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+            let plain = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+            let plain = if swapped {
+                plain.with_swapped_oof_alignment()
+            } else {
+                plain
+            };
+            let measured = plain.with_hidden_table_height();
+            assert_eq!(plain.oof_align_self(), Some(values::AlignSelf::STRETCH));
+            let expected = if height == L::Stretch {
+                values::AlignSelf::START
+            } else {
+                values::AlignSelf::STRETCH
+            };
+            assert_eq!(measured.oof_align_self(), Some(expected));
+            assert_eq!(measured.oof_justify_self(), Some(values::AlignSelf::CENTER));
+            assert_eq!(measured.bridge_align_self(), plain.bridge_align_self());
+            assert_eq!(measured.bridge_justify_self(), plain.bridge_justify_self());
+            assert_eq!(measured.inset(), plain.inset());
+            if height == L::Stretch {
+                assert_eq!(measured.margin().top, LengthPercentageAuto::length(0.0));
+                assert_eq!(measured.margin().bottom, LengthPercentageAuto::length(0.0));
+                assert_eq!(measured.margin().left, plain.margin().left);
+                assert_eq!(measured.margin().right, plain.margin().right);
+            } else {
+                assert_eq!(measured.margin(), plain.margin());
+            }
+            assert_eq!(measured.size().width, plain.size().width);
+        }
+    }
+}
+
+#[test]
+fn measured_stretch_height_preserves_non_stretch_positioning() {
+    let mut cv = ComputedValues::initial();
+    cv.height = L::Stretch;
+    cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Safe(
+        raikiri_style::property::SelfPosition::Center,
+    ));
+    cv.margin.top = L::Px(5.0);
+    cv.margin.bottom = L::Px(7.0);
+    let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let plain = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    let measured = plain.with_hidden_table_height();
+    assert_eq!(measured.oof_align_self(), plain.oof_align_self());
+    assert_eq!(measured.margin(), plain.margin());
+}
+
+#[test]
+fn a_measured_stretch_table_cannot_infer_its_height_from_the_width() {
+    let mut cv = ComputedValues::initial();
+    cv.height = L::Stretch;
+    cv.width = L::Px(20.0);
+    cv.aspect_ratio.auto = false;
+    cv.aspect_ratio.ratio = Some((1.0, 1.0));
+    let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let plain = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(plain.aspect_ratio(), Some(1.0));
+    let measured = plain.with_hidden_table_height();
+    assert_eq!(measured.aspect_ratio(), None);
+    assert_eq!(measured.stated_aspect_ratio(), Some(1.0));
+    assert_eq!(measured.size().width, plain.size().width);
+}
