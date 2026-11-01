@@ -8,6 +8,7 @@ use raikiri_traits::PaintRect;
 
 mod canvas_sharing_tests;
 mod conic_budget_tests;
+mod empty_clip_tests;
 mod gradient_tests;
 mod image_sharing_tests;
 
