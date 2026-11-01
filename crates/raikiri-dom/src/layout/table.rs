@@ -4146,6 +4146,35 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
         })
 }
 
+/// The final border-box extent that horizontal cell contents align within.
+/// Block flow publishes its existing alignment size; an unfragmented IFC
+/// keeps the actual line extent even when its caller fixed the cell height.
+fn horizontal_cell_alignment_height(
+    doc: &LayoutSession<'_>,
+    cell: usize,
+    width: f32,
+) -> Option<f32> {
+    let node = doc.ifc_layout_node(cell)?;
+    if let Some(height) = node.auto_block_size {
+        return Some(height);
+    }
+    let root = node.ifc.as_ref()?;
+    if root.writing_mode != shodo::geometry::WritingMode::HorizontalTb
+        || node.multicol.is_some()
+        || root.multicol_fragments.is_some()
+    {
+        return None;
+    }
+    let lines = root.lines.as_ref()?;
+    if lines.fragmentainer_line_ranges.is_some() {
+        return None;
+    }
+    let style = doc.table_style(cell);
+    let padding = style.padding().resolve_or_zero(Some(width));
+    let border = style.border().resolve_or_zero(Some(width));
+    Some(lines.height + padding.top + padding.bottom + border.top + border.bottom)
+}
+
 struct CellPlacementTracks<'a> {
     column_widths: &'a [f32],
     column_gaps: &'a [f32],
@@ -4309,7 +4338,7 @@ fn place_cells(
                     VerticalAlign::Middle | VerticalAlign::Bottom
                 );
                 resolved_natural_height = (cell_height_is_definite && aligned_by_its_end)
-                    .then(|| doc.nodes[cell.node_id].auto_block_size)
+                    .then(|| horizontal_cell_alignment_height(doc, cell.node_id, cell_width))
                     .flatten();
                 (
                     output.scrollable_overflow_rect,
@@ -4691,7 +4720,7 @@ fn relayout_horizontal_cell(
         VerticalAlign::Middle | VerticalAlign::Bottom
     );
     let natural = (cell_height_is_definite && aligned_by_its_end)
-        .then(|| doc.nodes[cell_node].auto_block_size)
+        .then(|| horizontal_cell_alignment_height(doc, cell_node, cell_width))
         .flatten()
         .unwrap_or(natural_height);
     (natural, output.oof_candidates)
