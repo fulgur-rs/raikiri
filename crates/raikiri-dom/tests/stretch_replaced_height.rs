@@ -385,9 +385,16 @@ fn a_stretched_image_in_a_table_cell_is_aligned_at_its_used_height() {
 
 #[test]
 fn table_cell_image_alignment_follows_final_constraints() {
-    let oracle: serde_json::Value =
-        serde_json::from_str(include_str!("data/table-cell-stretch-image.json"))
-            .expect("Chromium measurements");
+    check_cell_image_oracle(include_str!("data/table-cell-stretch-image.json"));
+}
+
+#[test]
+fn a_cell_does_not_stretch_its_height_determining_image_again() {
+    check_cell_image_oracle(include_str!("data/table-cell-stretch-min-height.json"));
+}
+
+fn check_cell_image_oracle(source: &str) {
+    let oracle: serde_json::Value = serde_json::from_str(source).expect("Chromium measurements");
     let mut mismatches = Vec::new();
     for case in oracle["cases"].as_array().expect("cases") {
         let body = case["html"].as_str().expect("markup");

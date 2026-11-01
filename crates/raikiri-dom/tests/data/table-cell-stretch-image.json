@@ -810,9 +810,7 @@
           50
         ]
       ]
-    }
-  ],
-  "known_preexisting_differences": [
+    },
     {
       "label": "image-min",
       "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch;min-height:220px'></td></tr></table>",
@@ -838,8 +836,7 @@
           88,
           220
         ]
-      ],
-      "issue": "RAIKIRI-1343"
+      ]
     }
   ]
 }
