@@ -1349,10 +1349,14 @@ impl PaginationState {
                 // A block taller than a page moves whole only to keep its
                 // orphans, as it fragments on the next page anyway. That
                 // takes content before it on a page it does not start, and a
-                // first line that fits a page.
+                // first line that fits a page. Edges above the lines that end
+                // this page move it whatever its height: the page breaks
+                // before the block, not between its edges and its lines, even
+                // when they run over a page.
                 let can_move_block = !moved_whole
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
+                        || line_fit.top_edges_end_page
                         || (block_effective_y > page_start + 0.001
                             && follows_flow_content(document, cascade, body_id, block_id)
                             && line_fit.gains_from_moving_tall_block(
