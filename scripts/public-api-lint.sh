@@ -10,10 +10,12 @@
 # item of raikiri-dom, raikiri-html, raikiri-paint, raikiri-traits, raikiri or
 # raikiri-layout-geometry may name a type of the `taffy` crate, and a published
 # crate may name only the types of other crates that THIRD_PARTY_ALLOWED lists
-# for it (docs/public-api.md has the policy).
+# for it (docs/public-api.md has the policy). The gate also runs the
+# `--first-tier` report and fails unless it is empty: every visible name of a
+# published crate is in the first tier of docs/public-api.md.
 #
 # Usage:
-#   scripts/public-api-lint.sh                  # gate mode: PASS/FAIL (runs cargo doc, ~10 s warm)
+#   scripts/public-api-lint.sh                  # gate mode: PASS/FAIL, includes --first-tier (runs cargo doc, ~25 s warm)
 #   scripts/public-api-lint.sh -v               # also counts the public items per crate
 #   scripts/public-api-lint.sh --dump CRATE     # prints the public API of CRATE, one line per item
 #   scripts/public-api-lint.sh --surface CRATE  # prints the names CRATE publishes (add --with-hidden for hidden ones)
@@ -28,8 +30,9 @@
 # Run it after the `cargo doc --workspace` step: the JSON comes from the same
 # dependency build, started with rustdoc alone allowed to use unstable flags.
 #
-# Exit status: 0 if no checked item names Taffy and no published crate names an
-# unlisted crate, 1 if some does, 2 on a tooling error (cargo failed, a JSON file is missing or of an unknown format).
+# Exit status: 0 if no checked item names Taffy, no published crate names an
+# unlisted crate and the first-tier report is empty, 1 otherwise, 2 on a
+# tooling error (cargo failed, a JSON file is missing or of an unknown format).
 
 set -euo pipefail
 

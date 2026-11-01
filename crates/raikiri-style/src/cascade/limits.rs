@@ -61,7 +61,7 @@ pub struct CascadeLimits {
     /// Other string bytes, including repeated borrowed class-token scans, are not
     /// counted; neither are arbitrary DOM trait implementations
     /// or total CPU time. Bounded DOM queries use a separate
-    /// [`crate::SelectorWorkBudget`]; compatibility bool methods are unlimited.
+    /// `SelectorWorkBudget`; compatibility bool methods are unlimited.
     /// `None` disables this limit. Defaults to `Some(2^26)`.
     pub max_selector_work: Option<u64>,
     /// The most bytes of candidate declarations the result may keep, for the
