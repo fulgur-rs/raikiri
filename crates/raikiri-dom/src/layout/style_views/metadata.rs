@@ -53,10 +53,10 @@ pub(super) fn prepare_metadata(
     node_metadata(node, flags)
 }
 
-/// For every node, whether it is an inline box: a non-atomic inline box in a
-/// horizontal writing mode that stays inline. The width, height, minimum and
-/// maximum sizes, vertical margins and vertical padding and border of such a
-/// box do not apply to it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1), whatever
+/// For every node, whether it is a non-atomic inline box that stays inline.
+/// The width, height, minimum and maximum sizes, block-axis margins, padding
+/// and border of such a box do not apply to it (CSS 2.1 sections 8.3, 10.3.1
+/// and 10.6.1), whatever
 /// it holds: text, a block that splits it (section 9.2.1.1), or nothing.
 ///
 /// An inline box with no content that makes a line is laid out as a block in
@@ -69,12 +69,11 @@ pub(in crate::layout) fn inline_boxes(doc: &Document, cascade: &CascadeResult) -
     boxes
 }
 
-/// Whether `idx` is an inline box of a horizontal writing mode that stays
-/// inline: not blockified, not replaced and not inline SVG.
+/// Whether `idx` is a non-atomic inline box that stays inline:
+/// not blockified, not replaced and not inline SVG.
 fn is_plain_inline_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let node = &doc.nodes[idx];
     node.kind() == NodeKind::Element
-        && !node.used_writing_mode.is_vertical()
         && !node.is_inline_svg_content()
         && super::super::fixed::generates_inline_box(doc, idx, &cascade.computed[idx])
 }

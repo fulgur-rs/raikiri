@@ -8,6 +8,7 @@ use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 mod calc_handle_tests;
 mod core_tests;
+mod inline_box_tests;
 mod math_tests;
 mod owned_tests;
 mod physical_sizing_tests;
