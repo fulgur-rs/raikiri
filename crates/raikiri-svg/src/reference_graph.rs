@@ -40,7 +40,7 @@ use roxmltree::{Node, NodeId};
 
 use crate::{
     InitialParseSelectorBudget, MAX_INITIAL_PARSE_EXPANDED_NODES, MAX_INITIAL_PARSE_XML_NODES,
-    SVG_NAMESPACE, SvgError, XLINK_NAMESPACE, budgeted_selector_matches_with_budget,
+    SVG_NAMESPACE, SvgError, XLINK_NAMESPACE, XML_NAMESPACE, budgeted_selector_matches_with_budget,
     initial_parse_selector_limit_error, svg_style_has_css_type,
 };
 
@@ -298,14 +298,13 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
         let mut resources_by_id: HashMap<&str, Vec<usize>> = HashMap::new();
         let mut copyable_by_id: HashMap<&str, Vec<Node<'_, '_>>> = HashMap::new();
         for node in xml.descendants().filter(|node| node.is_element()) {
-            let Some(id) = node.attribute("id") else {
-                continue;
-            };
-            if let Some(&resource) = index.get(&node.id()) {
-                resources_by_id.entry(id).or_default().push(resource);
-            }
-            if copied.contains(id) {
-                copyable_by_id.entry(id).or_default().push(node);
+            for id in ids_of(node) {
+                if let Some(&resource) = index.get(&node.id()) {
+                    resources_by_id.entry(id).or_default().push(resource);
+                }
+                if copied.contains(id) {
+                    copyable_by_id.entry(id).or_default().push(node);
+                }
             }
         }
         let mut rules_set_paint = false;
@@ -358,7 +357,7 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
         self.budget.charge_work(1)?;
         let mut references = declaration_references(
             node.attributes()
-                .filter(|attribute| attribute.namespace().is_none())
+                .filter(|attribute| is_read_by_usvg(attribute.namespace()))
                 .map(|attribute| (attribute.name(), attribute.value())),
         );
         if let Some(style) = node.attribute("style") {
@@ -420,7 +419,7 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
     fn inherits_of(&mut self, node: Node<'a, 'input>) -> Result<Vec<Property>, SvgError> {
         let mut inherits = declaration_inherits(
             node.attributes()
-                .filter(|attribute| attribute.namespace().is_none())
+                .filter(|attribute| is_read_by_usvg(attribute.namespace()))
                 .map(|attribute| (attribute.name(), attribute.value())),
         );
         if let Some(style) = node.attribute("style") {
@@ -712,7 +711,9 @@ fn paints(node: Node<'_, '_>) -> bool {
 
 /// Whether `node` gives `property`, `fill` or `stroke`, a value of its own with
 /// an attribute or its `style` attribute, so that the elements below it do not
-/// inherit one. `inherit` is not a value of its own.
+/// inherit one. `inherit` and an empty value are not a value of its own, and
+/// one such declaration is enough for the element to count as inheriting,
+/// whichever of the declarations `usvg` ends up reading.
 ///
 /// A declaration in a style rule is not looked at, so an element that sets its
 /// paint that way still counts as inheriting it.
@@ -722,26 +723,41 @@ fn declares(node: Node<'_, '_>, property: Property) -> bool {
     } else {
         "stroke"
     };
-    let own = |value: &str| {
+    let attributes = node
+        .attributes()
+        .filter(|attribute| attribute.name() == name && is_read_by_usvg(attribute.namespace()))
+        .map(|attribute| attribute.value());
+    let styled = node
+        .attribute("style")
+        .into_iter()
+        .flat_map(simplecss::DeclarationTokenizer::from)
+        .filter(|declaration| declaration.name.eq_ignore_ascii_case(name))
+        .map(|declaration| declaration.value);
+    let mut declared = false;
+    for value in attributes.chain(styled) {
         let value = value.trim();
-        !value.is_empty() && !value.eq_ignore_ascii_case("inherit")
-    };
-    // The `style` attribute wins over the presentation attribute, and the last
-    // declaration over the ones before it unless an earlier one is important.
-    let mut from_style: Option<(bool, &str)> = None;
-    if let Some(style) = node.attribute("style") {
-        for declaration in simplecss::DeclarationTokenizer::from(style) {
-            if declaration.name.eq_ignore_ascii_case(name)
-                && from_style.is_none_or(|(important, _)| declaration.important || !important)
-            {
-                from_style = Some((declaration.important, declaration.value));
-            }
+        if value.is_empty() || value.eq_ignore_ascii_case("inherit") {
+            return false;
         }
+        declared = true;
     }
-    match from_style {
-        Some((_, value)) => own(value),
-        None => node.attribute(name).is_some_and(own),
-    }
+    declared
+}
+
+/// Whether `usvg` reads an attribute in `namespace`.
+fn is_read_by_usvg(namespace: Option<&str>) -> bool {
+    matches!(
+        namespace,
+        None | Some(SVG_NAMESPACE) | Some(XLINK_NAMESPACE) | Some(XML_NAMESPACE)
+    )
+}
+
+/// The ids that `node` is known by to `usvg`, which takes an `id` attribute in
+/// any of the namespaces it reads.
+fn ids_of<'a>(node: Node<'a, '_>) -> impl Iterator<Item = &'a str> {
+    node.attributes()
+        .filter(|attribute| attribute.name() == "id" && is_read_by_usvg(attribute.namespace()))
+        .map(|attribute| attribute.value())
 }
 
 /// The id a `use` or a pattern refers to in the same document.
@@ -762,13 +778,25 @@ fn href_id<'a>(node: Node<'a, '_>) -> Option<&'a str> {
 fn declaration_references<'a>(
     declarations: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> Vec<(Property, &'a str)> {
-    let mut references = Vec::new();
-    for (name, value) in declarations {
-        if let Some(property) = Property::from_name(name) {
-            references.extend(url_fragments(value).map(|id| (property, id)));
-        }
+    declarations
+        .filter_map(|(name, value)| {
+            let property = Property::from_name(name)?;
+            Some((property, target_id(property, value)?))
+        })
+        .collect()
+}
+
+/// The id that `usvg` follows `value` to as the value of `property`. `usvg`
+/// reads a paint and a reference with the parsers that this reads them with, so
+/// an id that is quoted, or has a parenthesis in it, is the one it follows.
+fn target_id(property: Property, value: &str) -> Option<&str> {
+    match property {
+        Property::Fill | Property::Stroke => match svgtypes::Paint::from_str(value) {
+            Ok(svgtypes::Paint::FuncIRI(id, _)) => Some(id),
+            _ => None,
+        },
+        _ => svgtypes::FuncIRI::from_str(value).ok().map(|iri| iri.0),
     }
-    references
 }
 
 /// The `mask` and `clip-path` properties that the declarations `(name, value)`
@@ -781,26 +809,6 @@ fn declaration_inherits<'a>(
         .filter_map(|(name, _)| Property::from_name(name))
         .filter(|&property| Inheritance::Cutout.keeps(property))
         .collect()
-}
-
-/// The ids that the `url(#id)` functions in `value` name.
-fn url_fragments(value: &str) -> impl Iterator<Item = &str> {
-    let mut rest = value;
-    std::iter::from_fn(move || {
-        loop {
-            let start = rest
-                .as_bytes()
-                .windows(4)
-                .position(|window| window.eq_ignore_ascii_case(b"url("))?;
-            let after = &rest[start + 4..];
-            let (inside, next) = after.split_once(')').unwrap_or((after, ""));
-            rest = next;
-            let inside = inside.trim().trim_matches(['"', '\'']).trim();
-            if let Some(id) = inside.strip_prefix('#') {
-                return Some(id);
-            }
-        }
-    })
 }
 
 /// Refuses a cycle that `usvg` does not break, and a chain that is too deep.

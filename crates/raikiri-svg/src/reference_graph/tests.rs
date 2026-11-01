@@ -143,7 +143,7 @@ fn forms() -> Vec<Form> {
             resource: |i, j| {
                 format!(
                     "<mask id='r{i}'><rect width='5' height='5' \
-                     style='opacity:1; mask: URL( \"#r{j}\" )'/></mask>"
+                     style='opacity:1; mask: url( \"#r{j}\" )'/></mask>"
                 )
             },
         },
@@ -843,16 +843,89 @@ fn a_property_is_known_by_any_spelling_of_its_name() {
 }
 
 #[test]
-fn the_ids_of_url_functions_are_read_as_usvg_reads_them() {
-    fn ids(value: &str) -> Vec<&str> {
-        url_fragments(value).collect()
+fn the_ids_of_a_value_are_read_as_usvg_reads_them() {
+    use Property::{ClipPath, Fill, Mask, Stroke};
+    // A reference is the whole of the value.
+    assert_eq!(target_id(Mask, "url(#a)"), Some("a"));
+    assert_eq!(target_id(ClipPath, " url( \"#c\" ) "), Some("c"));
+    assert_eq!(target_id(Mask, "url(#a) url(#b)"), None);
+    assert_eq!(target_id(Mask, "url(#e"), None);
+    assert_eq!(target_id(Mask, "url(other.svg#f)"), None);
+    assert_eq!(target_id(Mask, "none"), None);
+    // The name of the function is lower case, as `usvg` reads it.
+    assert_eq!(target_id(Mask, "URL(#a)"), None);
+    // A quoted id runs to the closing quote, whatever is in it.
+    assert_eq!(target_id(Mask, "url('#b)')"), Some("b)"));
+    assert_eq!(
+        target_id(ClipPath, "url( '# spaced id ' )"),
+        Some(" spaced id")
+    );
+    assert_eq!(target_id(Mask, "url('#a\")"), None);
+    // A paint is a reference with a fallback after it, or something else.
+    assert_eq!(target_id(Fill, "url(#p) red"), Some("p"));
+    assert_eq!(target_id(Stroke, "url('#q)') none"), Some("q)"));
+    assert_eq!(target_id(Fill, "red"), None);
+    assert_eq!(target_id(Stroke, "none"), None);
+}
+
+#[test]
+fn a_reference_whose_id_has_a_parenthesis_in_it_is_followed() {
+    let ring: String = ["a)", "b)", "c)"]
+        .iter()
+        .zip(["b)", "c)", "a)"])
+        .map(|(id, next)| {
+            format!("<mask id=\"{id}\" mask=\"url('#{next}')\"><rect width='5' height='5'/></mask>")
+        })
+        .collect();
+    assert_cycle(&svg(
+        "",
+        &format!("<defs>{ring}</defs><rect width='20' height='20' mask=\"url('#a)')\"/>"),
+    ));
+}
+
+#[test]
+fn attributes_in_the_namespaces_usvg_reads_are_followed() {
+    let namespaces = "xmlns:s='http://www.w3.org/2000/svg' \
+                      xmlns:x='http://www.w3.org/1999/xlink'";
+    for (prefix, id) in [("s:", "id"), ("x:", "id"), ("s:", "s:id")] {
+        let masks: String = (0..3)
+            .map(|index| {
+                let id_attribute = if id == "id" {
+                    format!("id='r{index}'")
+                } else {
+                    format!("{id}='r{index}'")
+                };
+                format!(
+                    "<mask {id_attribute} {prefix}mask='url(#r{})'>\
+                     <rect width='5' height='5'/></mask>",
+                    (index + 1) % 3
+                )
+            })
+            .collect();
+        let source = svg(
+            namespaces,
+            &format!("<defs>{masks}</defs><rect width='20' height='20' mask='url(#r0)'/>"),
+        );
+        assert_cycle(&source);
     }
-    assert_eq!(ids("url(#a)"), ["a"]);
-    assert_eq!(ids("URL( '#b' ) none"), ["b"]);
-    assert_eq!(ids("url(\"#c\") red url(#d)"), ["c", "d"]);
-    assert_eq!(ids("url(#e"), ["e"]);
-    assert!(ids("url(other.svg#f) url(x.png)").is_empty());
-    assert!(ids("none").is_empty());
+    // The same goes for an `id` that is not in the namespace of the others.
+    let masks: String = (0..3)
+        .map(|index| {
+            format!(
+                "<mask s:id='r{index}' mask='url(#r{})'><rect width='5' height='5'/></mask>",
+                (index + 1) % 3
+            )
+        })
+        .collect();
+    assert_cycle(&svg(
+        namespaces,
+        &format!("<defs>{masks}</defs><rect width='20' height='20' mask='url(#r0)'/>"),
+    ));
+    // An attribute in another namespace is not one `usvg` reads.
+    assert_drawn(&svg(
+        "xmlns:o='urn:other'",
+        "<defs><mask id='a' o:mask='url(#a)'/></defs><rect width='20' height='20' mask='url(#a)'/>",
+    ));
 }
 
 #[test]

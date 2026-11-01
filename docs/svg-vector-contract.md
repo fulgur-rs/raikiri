@@ -176,6 +176,9 @@ reference, and so is a cycle through a marker, which `usvg` does not draw
 inside itself. A shape or text in a resource counts as inheriting the `fill` and
 `stroke` above the resource unless the shape, or an element between it and the
 resource, sets that property itself with an attribute or a `style` attribute.
+References and ids are read the way `usvg` reads them: a value is parsed with
+the same parsers (so a quoted id may hold a parenthesis), and an attribute counts
+in the namespaces `usvg` accepts, with none, SVG, XLink or XML.
 The graph otherwise takes what an element could inherit or match, so a document
 whose `fill` is overridden by a nearer ancestor, or by a style rule, before it
 reaches a pattern that the paint refers to can be refused too. So can one with
