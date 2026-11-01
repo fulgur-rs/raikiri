@@ -586,6 +586,64 @@ fn the_padding_of_a_box_around_a_paragraph_gets_the_same_break() {
 }
 
 #[test]
+fn a_paragraph_moved_whole_leaves_the_padding_of_its_box_with_its_last_line() {
+    // Three lines do not fit after the block, or too few for the orphans, so
+    // they move to the next page whole. The 15px of padding that close the box
+    // around them do not fit under them there either, and the last line goes
+    // on to a third page with them, as in Chromium.
+    for (height, style) in [
+        (20, "orphans:3"),
+        (30, "orphans:3"),
+        (40, "orphans:3"),
+        (50, ""),
+        (50, "widows:3"),
+        (50, "orphans:2;widows:4"),
+        (60, ""),
+        (60, "orphans:3"),
+    ] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}<div style='padding-bottom:15px'>{}</div>",
+                spacer(height),
+                paragraph(3, style)
+            )),
+            [vec![], vec![5.0, 35.0], vec![5.0]],
+            "{height}px block, {style}"
+        );
+    }
+    // A border does the same, and so do the edges of two boxes together.
+    for wrapped in [
+        "<div style='border-bottom:15px solid red'>PARAGRAPH</div>",
+        "<div style='padding-bottom:8px'><div style='padding-bottom:8px'>PARAGRAPH</div></div>",
+    ] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}{}",
+                spacer(50),
+                wrapped.replace("PARAGRAPH", &paragraph(3, ""))
+            )),
+            [vec![], vec![5.0, 35.0], vec![5.0]],
+            "{wrapped}"
+        );
+    }
+    // Lines that leave room for the edges stay together.
+    for wrapped in [
+        "<div style='padding-bottom:8px'>PARAGRAPH</div>",
+        "<div style='padding-bottom:4px'><div style='padding-bottom:4px'>PARAGRAPH</div></div>",
+    ] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}{}",
+                spacer(60),
+                wrapped.replace("PARAGRAPH", &paragraph(3, ""))
+            )),
+            [vec![], vec![5.0, 35.0, 65.0]],
+            "{wrapped}"
+        );
+    }
+}
+
+#[test]
 fn a_block_laid_out_after_the_lines_keeps_the_padding_from_the_last_line() {
     // The padding follows the block after the lines, not the last line, so no
     // line moves for it: the three lines stay on the first page.
