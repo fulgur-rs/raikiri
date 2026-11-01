@@ -112,7 +112,7 @@ fn a_block_taller_than_a_page_is_judged_by_its_first_line() {
 fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
     // Four 10px lines from y=70 on a page that ends at 100: three fit.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
-    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(fit.total_lines, 4);
     assert!(fit.starts_on_page);
     assert_eq!(fit.lines_before_break, 3);
@@ -121,17 +121,17 @@ fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
     assert!(fit.violates_line_constraints);
 
     // Non-positive values are used as 1, so a single widow is enough.
-    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 0, -1);
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 0, -1, 0.0);
     assert_eq!((fit.orphans, fit.widows), (1, 1));
     assert!(!fit.violates_line_constraints);
 
     // Lines that all fit need no break, whatever the constraints.
-    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 5, 5);
+    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 5, 5, 0.0);
     assert_eq!(fit.lines_before_break, 4);
     assert!(!fit.violates_line_constraints);
 
     // A first line that starts at the page end belongs to a later page.
-    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 1, 1);
+    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 1, 1, 0.0);
     assert!(!fit.starts_on_page);
     assert_eq!(fit.lines_before_break, 0);
 }
@@ -16116,8 +16116,8 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let pages = PageOrigins::new(&[], 100.0);
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
-    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
-    // Four lines hold two orphans and two widows, so the widows stay at two.
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2, 0.0);
+    // The used widows are the computed ones.
     assert_eq!(fit.widows, 2);
     // Room for both constraints and shiftable lines: the break moves up.
     assert_eq!(
@@ -16136,45 +16136,45 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     );
     // Too few lines for the orphans never ask whether lines can shift.
     let short = [(0.0, 10.0), (10.0, 20.0)];
-    let fit = ParagraphLineFit::measure(&short, 90.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&short, 90.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&short, 90.0, 0, &pages, true, || unreachable!()),
         LineBreakFix::MoveBlock
     );
     let three = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
-    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 3, 1);
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 3, 1, 0.0);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || unreachable!()),
         LineBreakFix::MoveBlock
     );
     // Three lines under the default orphans and widows of 2: the paragraph
     // keeps its orphans and the last piece takes the one line they leave.
-    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || true),
         LineBreakFix::Keep
     );
     // With one orphan and two widows the break moves up to leave two lines.
-    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2);
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2, 0.0);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || true),
         LineBreakFix::MoveLines(vec![(1, 10.0, 1)])
     );
     // A break that honors both constraints needs no repair.
-    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&lines, 60.0, 0, &pages, true, || true),
         LineBreakFix::Keep
     );
     // A paragraph that starts on a later page is left alone.
-    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&lines, 100.0, 0, &pages, true, || true),
         LineBreakFix::Keep
     );
     // A single orphan has no break to move up, so allowed lines still fall
     // back to the block, or to the natural break when it cannot move.
-    let fit = ParagraphLineFit::measure(&lines, 90.0, 0.0, 100.0, 2, 1);
+    let fit = ParagraphLineFit::measure(&lines, 90.0, 0.0, 100.0, 2, 1, 0.0);
     assert_eq!(
         fit.fix(&lines, 90.0, 0, &pages, true, || true),
         LineBreakFix::MoveBlock
@@ -16188,7 +16188,7 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let long: Vec<(f32, f32)> = (0..14)
         .map(|line| (line as f32 * 10.0, line as f32 * 10.0 + 10.0))
         .collect();
-    let fit = ParagraphLineFit::measure(&long, 70.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&long, 70.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&long, 70.0, 0, &pages, false, || true),
         LineBreakFix::MoveLines(vec![(12, 10.0, 2)])
@@ -16205,54 +16205,170 @@ fn paragraph_line_moves_start_each_page_with_the_line_that_does_not_fit() {
         .collect();
     // Lines that fit need no move.
     assert_eq!(
-        paragraph_line_moves(&lines[..3], 0.0, 0, 1, 1, &pages),
+        paragraph_line_moves(&lines[..3], 0.0, 0, 1, 1, 0.0, &pages),
         Vec::new()
     );
     // One orphan and one widow: the line that crosses each end moves, and the
     // lines after it follow with it.
     assert_eq!(
-        paragraph_line_moves(&lines, 0.0, 0, 1, 1, &pages),
+        paragraph_line_moves(&lines, 0.0, 0, 1, 1, 0.0, &pages),
         vec![(3, 10.0, 1), (6, 10.0, 2)]
     );
     // The first line of a paragraph is never pushed, as the block holding it
     // moves instead, and a line that the flow already carries past the page
     // end is not either.
     assert_eq!(
-        paragraph_line_moves(&lines[..2], 80.0, 0, 1, 1, &pages),
+        paragraph_line_moves(&lines[..2], 80.0, 0, 1, 1, 0.0, &pages),
         Vec::new()
     );
     // The last page would hold one line, fewer than the two widows the default
     // asks for: the page before gives up its last line, which it can spare
     // and keep its two orphans.
     assert_eq!(
-        paragraph_line_moves(&lines, 0.0, 0, 2, 2, &pages),
+        paragraph_line_moves(&lines, 0.0, 0, 2, 2, 0.0, &pages),
         vec![(3, 10.0, 1), (5, 40.0, 2)]
     );
     // Three widows ask for more than the page before can spare and still keep
     // its two orphans, so it gives up the one line it can.
     assert_eq!(
-        paragraph_line_moves(&lines, 0.0, 0, 2, 3, &pages),
+        paragraph_line_moves(&lines, 0.0, 0, 2, 3, 0.0, &pages),
         vec![(3, 10.0, 1), (5, 40.0, 2)]
     );
     // With as many orphans as the page before has lines, it spares none.
     assert_eq!(
-        paragraph_line_moves(&lines, 0.0, 0, 3, 3, &pages),
+        paragraph_line_moves(&lines, 0.0, 0, 3, 3, 0.0, &pages),
         vec![(3, 10.0, 1), (6, 10.0, 2)]
     );
     // Four widows are more lines than a page holds. The first break gives up
     // a line, though the lines then run past the end of the next page and the
     // last of them starts the page after it.
     assert_eq!(
-        paragraph_line_moves(&lines[..6], 0.0, 0, 2, 4, &pages),
+        paragraph_line_moves(&lines[..6], 0.0, 0, 2, 4, 0.0, &pages),
         vec![(2, 40.0, 1), (5, 10.0, 2)]
     );
     // A break after the first is left as it falls: no page holds the widows.
     assert_eq!(
-        paragraph_line_moves(&lines, 0.0, 0, 2, 4, &pages),
+        paragraph_line_moves(&lines, 0.0, 0, 2, 4, 0.0, &pages),
         vec![(3, 10.0, 1), (6, 10.0, 2)]
     );
     // A paragraph without lines has nothing to move.
-    assert_eq!(paragraph_line_moves(&[], 0.0, 0, 2, 2, &pages), Vec::new());
+    assert_eq!(
+        paragraph_line_moves(&[], 0.0, 0, 2, 2, 0.0, &pages),
+        Vec::new()
+    );
+}
+
+#[test]
+fn paragraph_line_moves_keep_the_edges_below_the_last_line_with_it() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines: Vec<(f32, f32)> = (0..7)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    // Three lines end at 90 on a page that ends at 100. Edges of 10px below
+    // them fit, and 15px do not: the last line starts the next page, 40px
+    // lower, with them. The page cannot keep two orphans and give up two
+    // widows, so it gives up only that line.
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 2, 2, 10.0, &pages),
+        Vec::new()
+    );
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 2, 2, 15.0, &pages),
+        vec![(2, 40.0, 1)]
+    );
+    assert_eq!(
+        paragraph_line_moves(&lines[..2], 30.0, 0, 2, 2, 15.0, &pages),
+        vec![(1, 40.0, 1)]
+    );
+    // A paragraph of one line has no break to make between lines.
+    assert_eq!(
+        paragraph_line_moves(&lines[..1], 70.0, 0, 1, 1, 15.0, &pages),
+        Vec::new()
+    );
+    // A page that can keep its orphans gives up the widows: three lines with
+    // one orphan and two widows split one and two.
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 1, 2, 15.0, &pages),
+        vec![(1, 70.0, 1)]
+    );
+    let tall = PageOrigins::new(&[], 280.0);
+    let long: Vec<(f32, f32)> = (0..9)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    for (orphans, widows, kept) in [(2, 2, 7), (1, 1, 8), (2, 3, 6), (1, 5, 4), (4, 4, 5)] {
+        assert_eq!(
+            paragraph_line_moves(&long, 0.0, 0, orphans, widows, 15.0, &tall),
+            vec![(kept, 280.0 - kept as f32 * 30.0, 1)],
+            "orphans {orphans}, widows {widows}"
+        );
+    }
+    // A last line that already starts a page stays, however tall the edges.
+    assert_eq!(
+        paragraph_line_moves(&lines[..4], 0.0, 0, 1, 1, 500.0, &pages),
+        vec![(3, 10.0, 1)]
+    );
+    // The lines that the page ends need are repaired first, for the widows,
+    // and the last line then goes with the edges from where it comes out.
+    // Five lines with three widows give up the line the first page can spare:
+    // (3 | 2) becomes (2 | 3), and the edges below the last line end the
+    // second page, so that line starts a third: (2 | 2 | 1).
+    // Seven lines with one orphan: the second page gives up the lines it can
+    // spare for the three widows, (3 | 3 | 1) becomes (3 | 1 | 3), and the
+    // edges then take the last line of the third page: (3 | 1 | 2 | 1).
+    assert_eq!(
+        lines_on_each_page(
+            &paragraph_line_moves(&lines[..5], 0.0, 0, 2, 3, 15.0, &pages),
+            5,
+            0.0,
+            &pages
+        ),
+        [2, 2, 1]
+    );
+    assert_eq!(
+        lines_on_each_page(
+            &paragraph_line_moves(&lines[..7], 0.0, 0, 1, 3, 15.0, &pages),
+            7,
+            0.0,
+            &pages
+        ),
+        [3, 1, 2, 1]
+    );
+}
+
+#[test]
+fn a_paragraph_whose_lines_fit_moves_its_last_line_for_the_edges_below_it() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = [(0.0, 30.0), (30.0, 60.0), (60.0, 90.0)];
+    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 2, 2, 0.0);
+    // The lines fit, so there is nothing to repair.
+    assert_eq!(
+        fit.fix(&lines, 0.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // Edges that fit leave it so.
+    let fits = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 2, 2, 10.0);
+    assert_eq!(
+        fits.fix(&lines, 0.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // Edges that do not fit take the last line to the next page, the block
+    // staying where it is.
+    let overflows = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 2, 2, 15.0);
+    assert_eq!(
+        overflows.fix(&lines, 0.0, 0, &pages, true, || true),
+        LineBreakFix::MoveLines(vec![(2, 40.0, 1)])
+    );
+    // Lines that cannot shift inside their paragraph are left alone.
+    assert_eq!(
+        overflows.fix(&lines, 0.0, 0, &pages, true, || false),
+        LineBreakFix::Keep
+    );
+    // A paragraph of one line has nothing to break between.
+    let single = ParagraphLineFit::measure(&lines[..1], 70.0, 0.0, 100.0, 2, 2, 15.0);
+    assert_eq!(
+        single.fix(&lines[..1], 70.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
 }
 
 /// The number of lines on each page, from the first to the last that holds one,
@@ -16307,7 +16423,7 @@ fn paragraph_line_moves_split_long_paragraphs_as_chromium_does() {
         let metrics: Vec<(f32, f32)> = (0..lines)
             .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
             .collect();
-        let moves = paragraph_line_moves(&metrics, y, 0, orphans, widows, &pages);
+        let moves = paragraph_line_moves(&metrics, y, 0, orphans, widows, 0.0, &pages);
         assert_eq!(
             lines_on_each_page(&moves, lines, y, &pages),
             expected,
@@ -19936,4 +20052,15 @@ fn a_tall_block_whose_first_line_is_inline_markup_moves_whole() {
 
 thread_local! {
     pub(super) static LINE_CENTER_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn an_edge_break_gives_up_the_widows_only_when_the_page_keeps_its_orphans() {
+    assert_eq!(edge_break_lines(9, 2, 2), 2);
+    assert_eq!(edge_break_lines(9, 4, 5), 5);
+    // One line left is fewer than two orphans, and no lines left is fewer
+    // than one.
+    assert_eq!(edge_break_lines(3, 2, 2), 1);
+    assert_eq!(edge_break_lines(3, 1, 3), 1);
+    assert_eq!(edge_break_lines(1, 1, 1), 1);
 }
