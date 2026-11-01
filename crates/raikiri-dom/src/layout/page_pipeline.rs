@@ -6599,6 +6599,39 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
 
+/// Whether the last box of a run of boxes tied by avoided breaks moves to the
+/// next page with the edges that close its block, the avoided break before it
+/// giving way.
+///
+/// The run moves to the next page as one when the edges do not fit after it
+/// (see [`closing_edges_move`]), and that happens before the walk reaches the
+/// last box. When the edges still do not fit after the box, the run has moved
+/// as far on as it goes, and the page breaks before the box instead, as
+/// browsers do: a break between boxes beats one between the box and the edges
+/// even when it is avoided. The box must end within its own page, and the next
+/// page must hold it.
+fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+    let edges = candidate.context.run_tail_edges();
+    let BoxFit {
+        flow_y,
+        margin_top,
+        page_start,
+        page_end,
+        next_page_step,
+        ..
+    } = *fit;
+    edges > 0.0
+        && flow_y + candidate.height <= page_end + 0.001
+        && candidate.height <= next_page_step + 0.001
+        && avoided_box_moves(
+            flow_y,
+            margin_top,
+            flow_y + candidate.height + edges,
+            page_start,
+            page_end,
+        )
+}
+
 /// The block size of the bottom padding and border of the block `node_id`
 /// that close it below its last box, when they follow that box: the block is
 /// not the body, stacks its boxes in block flow, and has a height that is that
