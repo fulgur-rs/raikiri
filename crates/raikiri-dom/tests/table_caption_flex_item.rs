@@ -1109,3 +1109,274 @@ fn a_flex_column_that_leaves_a_table_at_its_stated_height_gives_the_grid_that_he
         },
     ]);
 }
+
+/// A table of one row `r`, with no caption.
+fn plain(style: &str) -> String {
+    table(style, &row("r"))
+}
+
+#[test]
+fn a_flex_basis_wins_over_the_height_of_a_table_in_a_flex_column() {
+    let edges = "padding:3px;border:2px solid";
+    let column = "flex-direction:column;height:100px";
+    check(&[
+        // The basis sizes the item and the height only suggests a size, so a
+        // basis under the height wins (the row is the basis less the padding
+        // and the border), and so does one over it.
+        Case {
+            label: "a basis under the height",
+            body: flex(
+                column,
+                &plain(&format!("flex:0 0 50px;height:70px;{edges}")),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 40.0])],
+        },
+        Case {
+            label: "a basis over the height",
+            body: flex(
+                column,
+                &plain(&format!("flex:0 0 50px;height:30px;{edges}")),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 40.0])],
+        },
+        Case {
+            label: "a content-box basis",
+            body: flex(
+                column,
+                &plain(&format!(
+                    "flex:0 0 50px;height:70px;box-sizing:content-box;{edges}"
+                )),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 50.0])],
+        },
+        Case {
+            label: "no padding and border",
+            body: flex(column, &plain("flex:0 0 50px;height:70px")),
+            expected: &[("r", [8.0, 8.0, 784.0, 50.0])],
+        },
+        Case {
+            label: "a percentage basis",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &plain(&format!("flex:0 0 50%;height:70px;{edges}")),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 90.0])],
+        },
+        Case {
+            label: "a percentage height",
+            body: flex(
+                "flex-direction:column;height:200px",
+                &plain(&format!("flex:0 0 50px;height:50%;{edges}")),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 40.0])],
+        },
+        Case {
+            label: "an auto-height container",
+            body: flex(
+                "flex-direction:column",
+                &plain(&format!("flex:0 0 50px;height:70px;{edges}")),
+            ),
+            expected: &[
+                ("w", [8.0, 8.0, 784.0, 50.0]),
+                ("r", [13.0, 13.0, 774.0, 40.0]),
+            ],
+        },
+        Case {
+            label: "a max-height over the basis",
+            body: flex(
+                column,
+                &plain(&format!(
+                    "flex:0 0 50px;height:70px;max-height:60px;{edges}"
+                )),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 40.0])],
+        },
+        Case {
+            label: "a min-height over the basis",
+            body: flex(
+                column,
+                &plain(&format!(
+                    "flex:0 0 50px;height:70px;min-height:60px;{edges}"
+                )),
+            ),
+            expected: &[("r", [13.0, 13.0, 774.0, 50.0])],
+        },
+        // The height still sizes a table with no basis, and the basis grows
+        // and shrinks the item as it does any other.
+        Case {
+            label: "a height and no basis",
+            body: flex(column, &plain(&format!("height:70px;{edges}"))),
+            expected: &[("r", [13.0, 13.0, 774.0, 60.0])],
+        },
+        Case {
+            label: "a basis that grows",
+            body: flex(column, &plain("flex:1 1 50px;height:70px")),
+            expected: &[("r", [8.0, 8.0, 784.0, 100.0])],
+        },
+        Case {
+            label: "a basis that shrinks",
+            body: flex(
+                "flex-direction:column;height:30px",
+                &plain("flex:0 1 50px;height:70px"),
+            ),
+            expected: &[("r", [8.0, 8.0, 784.0, 30.0])],
+        },
+        Case {
+            label: "a basis along a row",
+            body: flex(
+                "height:100px",
+                &plain(&format!("flex:0 0 50px;height:70px;{edges}")),
+            ),
+            expected: &[("r", [13.0, 13.0, 40.0, 60.0])],
+        },
+        // With a caption the basis is the grid's, and the caption is on top.
+        Case {
+            label: "a basis under the height, with a caption",
+            body: flex(
+                column,
+                &captioned(&format!("flex:0 0 50px;height:70px;{edges}"), ""),
+            ),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 10.0]),
+                ("r", [13.0, 23.0, 774.0, 40.0]),
+            ],
+        },
+        Case {
+            label: "a content-box basis, with a caption",
+            body: flex(
+                column,
+                &captioned(
+                    &format!("flex:0 0 50px;height:70px;box-sizing:content-box;{edges}"),
+                    "",
+                ),
+            ),
+            expected: &[("r", [13.0, 23.0, 774.0, 50.0])],
+        },
+        Case {
+            label: "a basis that grows, with a caption",
+            body: flex(column, &captioned("flex:1 1 50px;height:70px", "")),
+            expected: &[("r", [8.0, 18.0, 784.0, 90.0])],
+        },
+        Case {
+            label: "a basis that shrinks, with a caption",
+            body: flex(
+                "flex-direction:column;height:30px",
+                &captioned("flex:0 1 50px;height:70px", ""),
+            ),
+            expected: &[("r", [8.0, 18.0, 784.0, 20.0])],
+        },
+        Case {
+            label: "an auto-height container, with a caption",
+            body: flex(
+                "flex-direction:column",
+                &captioned(&format!("flex:0 0 50px;height:70px;{edges}"), ""),
+            ),
+            expected: &[
+                ("w", [8.0, 8.0, 784.0, 60.0]),
+                ("r", [13.0, 23.0, 774.0, 40.0]),
+            ],
+        },
+    ]);
+}
+
+#[test]
+fn a_table_with_a_height_shrinks_in_a_flex_column_as_far_as_its_rows_and_caption_allow() {
+    let column = |height: &str| format!("flex-direction:column;height:{height}");
+    check(&[
+        // The automatic minimum size is that of the content, not the height.
+        Case {
+            label: "a row",
+            body: flex(&column("40px"), &plain("height:50px")),
+            expected: &[("r", [8.0, 8.0, 784.0, 40.0])],
+        },
+        Case {
+            label: "a caption and a row",
+            body: flex(&column("40px"), &captioned("height:50px", "")),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 10.0]),
+                ("r", [8.0, 18.0, 784.0, 30.0]),
+            ],
+        },
+        Case {
+            label: "a container lower than the caption and the row",
+            body: flex(&column("15px"), &captioned("height:50px", "")),
+            expected: &[
+                ("w", [8.0, 8.0, 784.0, 15.0]),
+                ("r", [8.0, 18.0, 784.0, 10.0]),
+            ],
+        },
+        Case {
+            label: "a container that leaves room",
+            body: flex(&column("200px"), &captioned("height:50px", "")),
+            expected: &[("r", [8.0, 18.0, 784.0, 50.0])],
+        },
+        Case {
+            label: "an item that may not shrink",
+            body: flex(&column("40px"), &captioned("height:50px;flex-shrink:0", "")),
+            expected: &[("r", [8.0, 18.0, 784.0, 50.0])],
+        },
+    ]);
+}
+
+#[test]
+fn a_min_height_bounds_the_whole_wrapper_of_a_table_a_flex_column_flexes() {
+    let column = "flex-direction:column;height:400px";
+    check(&[
+        // In a flex column the minimum is the item's, the caption included.
+        Case {
+            label: "a height and a min-height",
+            body: flex(column, &captioned("height:50px;min-height:120px", "")),
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 10.0]),
+                ("r", [8.0, 18.0, 784.0, 110.0]),
+            ],
+        },
+        Case {
+            label: "a basis and a min-height",
+            body: flex(column, &captioned("flex:0 0 50px;min-height:120px", "")),
+            expected: &[("r", [8.0, 18.0, 784.0, 110.0])],
+        },
+        Case {
+            label: "no caption",
+            body: flex(column, &plain("height:50px;min-height:120px")),
+            expected: &[("r", [8.0, 8.0, 784.0, 120.0])],
+        },
+        // The minimum under the height does not move the table.
+        Case {
+            label: "a min-height under the height",
+            body: flex(column, &captioned("height:50px;min-height:30px", "")),
+            expected: &[("r", [8.0, 18.0, 784.0, 50.0])],
+        },
+    ]);
+}
+
+#[test]
+fn a_table_without_rows_shrinks_in_a_flex_column_like_one_with_rows() {
+    let column = |height: &str| format!("flex-direction:column;height:{height}");
+    check(&[
+        Case {
+            label: "a caption and a container lower than the height",
+            body: flex(&column("20px"), &table("height:50px", &empty_caption(""))),
+            // The grid box takes what the caption leaves of the 20px.
+            expected: &[
+                ("c", [8.0, 8.0, 784.0, 10.0]),
+                ("o", [8.0, 18.0, 784.0, 10.0]),
+            ],
+        },
+        Case {
+            label: "no caption and a container lower than the height",
+            body: flex(&column("20px"), &table("height:50px", "")),
+            expected: &[("o", [8.0, 8.0, 784.0, 20.0])],
+        },
+        Case {
+            label: "a caption and a container that leaves room",
+            body: flex(&column("200px"), &table("height:50px", &empty_caption(""))),
+            expected: &[("o", [8.0, 18.0, 784.0, 50.0])],
+        },
+        Case {
+            label: "a basis and a container lower than the basis",
+            body: flex(&column("20px"), &table("flex:0 1 50px", &empty_caption(""))),
+            expected: &[("o", [8.0, 18.0, 784.0, 10.0])],
+        },
+    ]);
+}

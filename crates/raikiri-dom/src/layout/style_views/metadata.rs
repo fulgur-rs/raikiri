@@ -53,10 +53,10 @@ pub(super) fn prepare_metadata(
     node_metadata(node, flags)
 }
 
-/// For every node, whether it is an inline box: a non-atomic inline box in a
-/// horizontal writing mode that stays inline. The width, height, minimum and
-/// maximum sizes, vertical margins and vertical padding and border of such a
-/// box do not apply to it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1), whatever
+/// For every node, whether it is a non-atomic inline box that stays inline.
+/// The width, height, minimum and maximum sizes, block-axis margins, padding
+/// and border of such a box do not apply to it (CSS 2.1 sections 8.3, 10.3.1
+/// and 10.6.1), whatever
 /// it holds: text, a block that splits it (section 9.2.1.1), or nothing.
 ///
 /// An inline box with no content that makes a line is laid out as a block in
@@ -69,12 +69,11 @@ pub(in crate::layout) fn inline_boxes(doc: &Document, cascade: &CascadeResult) -
     boxes
 }
 
-/// Whether `idx` is an inline box of a horizontal writing mode that stays
-/// inline: not blockified, not replaced and not inline SVG.
+/// Whether `idx` is a non-atomic inline box that stays inline:
+/// not blockified, not replaced and not inline SVG.
 fn is_plain_inline_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let node = &doc.nodes[idx];
     node.kind() == NodeKind::Element
-        && !node.used_writing_mode.is_vertical()
         && !node.is_inline_svg_content()
         && super::super::fixed::generates_inline_box(doc, idx, &cascade.computed[idx])
 }
@@ -128,7 +127,7 @@ pub(in crate::layout) fn sizing_flags(
     }
     let cv = &cascade.computed[idx];
     let mut flags = F::EMPTY;
-    let content_keyword = |size| {
+    let content_keyword = |size: &ComputedLengthPercentageOrAuto| {
         matches!(
             size,
             ComputedLengthPercentageOrAuto::MaxContent
@@ -137,8 +136,8 @@ pub(in crate::layout) fn sizing_flags(
         )
     };
     let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
+    let width = logical.as_ref().map_or(&cv.width, |size| &size.width);
+    let height = logical.as_ref().map_or(&cv.height, |size| &size.height);
     if logical.is_some() {
         flags = flags.union(F::VERTICAL_LOGICAL_SIZE);
     }
@@ -158,7 +157,7 @@ pub(in crate::layout) fn sizing_flags(
     if !honors_content_limits(doc, cascade, idx, cv) {
         flags = flags.union(F::IGNORE_LIMIT_KEYWORDS);
     }
-    if cv.min_block_size.is_some_and(is_sizing_keyword)
+    if cv.min_block_size.as_ref().is_some_and(is_sizing_keyword)
         && (is_supported_flex_grid_item(doc, cascade, idx, cv)
             || is_supported_flex_grid_container(doc, idx, cv))
     {
@@ -240,17 +239,17 @@ pub(in crate::layout) fn is_replaced(doc: &Document, cascade: &CascadeResult, id
     let cv = &cascade.computed[idx];
     let flags = sizing_flags(doc, cascade, idx);
     let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
+    let width = logical.as_ref().map_or(&cv.width, |size| &size.width);
+    let height = logical.as_ref().map_or(&cv.height, |size| &size.height);
     let width = if flags.contains(F::IGNORE_WIDTH_KEYWORD)
-        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO) && width == L::MinContent)
+        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO) && *width == L::MinContent)
     {
-        L::Auto
+        &L::Auto
     } else {
         width
     };
     let height = if flags.contains(F::IGNORE_HEIGHT_KEYWORD) {
-        L::Auto
+        &L::Auto
     } else {
         height
     };

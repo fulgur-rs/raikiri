@@ -2147,7 +2147,7 @@ fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
     let mut diag = Vec::new();
     let size = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut calc_values,
-        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+        &ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
             percent: 50.0,
             px: 10.0,
         }),
@@ -2166,7 +2166,7 @@ fn a_stretch_size_is_handed_to_taffy_as_stretch() {
     let mut diag = Vec::new();
     let size = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut calc_values,
-        ComputedLengthPercentageOrAuto::Stretch,
+        &ComputedLengthPercentageOrAuto::Stretch,
         "width",
         &mut diag,
     );
@@ -2894,3 +2894,34 @@ mod clamp_warning_tests;
 mod content_limit_bridge_tests;
 mod keyword_height_inset_tests;
 mod replaced_sizing_tests;
+
+#[test]
+fn content_limit_bridge_retains_programmatic_comparison_owners() {
+    use raikiri_layout_style::values::ExpandedDimension;
+    let mut owners = Vec::new();
+    let mut warnings = Vec::new();
+    let pixel = ComputedLengthPercentageOrAuto::Px(15.0);
+    assert_eq!(
+        computed_length_percentage_or_auto_to_taffy_dimension(
+            &mut owners,
+            &pixel,
+            "min-width",
+            &mut warnings
+        ),
+        Dimension::length(15.0)
+    );
+    let compared = crate::layout::test_support::compared_length("min(30px, calc(10px + 5%))");
+    let value = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut owners,
+        &compared,
+        "min-width",
+        &mut warnings,
+    );
+    let ExpandedDimension::Calc(handle) = value.expand() else {
+        panic!("comparison must retain its owner")
+    };
+    assert_eq!(handle.resolve(10.0), 10.5);
+    assert_eq!(handle.resolve(1000.0), 30.0);
+    assert_eq!(owners.len(), 1);
+    assert!(warnings.is_empty());
+}

@@ -96,12 +96,12 @@ pub(super) fn inherited_last_baseline(
     if !(block || inline) {
         return overrides;
     }
-    let auto = |value: ComputedLengthPercentageOrAuto| {
+    let auto = |value: &ComputedLengthPercentageOrAuto| {
         matches!(value, ComputedLengthPercentageOrAuto::Auto)
     };
     let (vertical_insets_auto, horizontal_insets_auto) = (
-        auto(cv.top) && auto(cv.bottom),
-        auto(cv.left) && auto(cv.right),
+        auto(&cv.top) && auto(&cv.bottom),
+        auto(&cv.left) && auto(&cv.right),
     );
     let (block_insets_auto, inline_insets_auto) = if parent_vertical && containing_block_vertical()
     {
@@ -172,7 +172,7 @@ pub(super) fn is_stretched_by_keyword_width(
     settled: &[Settled],
 ) -> bool {
     let keyword_width =
-        is_sizing_keyword(cv.width) || replaced_keyword_width(doc.document, cascade, idx);
+        is_sizing_keyword(&cv.width) || replaced_keyword_width(doc.document, cascade, idx);
     if !keyword_width || lays_out_vertically(cascade, idx) {
         return false;
     }
@@ -352,8 +352,8 @@ pub(super) fn keyword_height_insets(
     let fixed = values.position == PositionValue::Fixed;
     if !(fixed || values.position == PositionValue::Absolute)
         || values.height_keyword.is_none()
-        || inset_is_auto(values.top)
-        || inset_is_auto(values.bottom)
+        || inset_is_auto(&values.top)
+        || inset_is_auto(&values.bottom)
         || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
         || crate::paint_rules::is_replaced_element(doc.document, idx)
     {
@@ -364,8 +364,10 @@ pub(super) fn keyword_height_insets(
     // reverses it, and `text-orientation: upright` does not change either.
     let block = &cascade.computed[containing_block];
     let vertical_axis_is_inline = uses_vertical_axes(cascade, containing_block);
-    let auto = |margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto);
-    if auto(values.margin.top) || auto(values.margin.bottom) {
+    let auto = |margin: &ComputedLengthPercentageOrAuto| {
+        matches!(margin, ComputedLengthPercentageOrAuto::Auto)
+    };
+    if auto(&values.margin.top) || auto(&values.margin.bottom) {
         // Taffy swaps the two alignments only where the container that holds
         // the box is on vertical axes as well (`get_oof_item_style`), which is
         // the property that stretches the box here.
@@ -498,18 +500,18 @@ pub(super) fn stretches_on_both_grid_axes(
             .keyword
             == AlignItemsKeyword::Stretch
     };
-    let any_auto = |margins: [ComputedLengthPercentageOrAuto; 2]| {
+    let any_auto = |margins: [&ComputedLengthPercentageOrAuto; 2]| {
         margins
             .iter()
             .any(|margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto))
     };
     let horizontal = !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
         || (stretch(settled[idx].justify_self, container.justify_items)
-            && !any_auto([cv.margin.left, cv.margin.right]));
+            && !any_auto([&cv.margin.left, &cv.margin.right]));
     let vertical = !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
         || (cv.height_keyword.is_none()
             && stretch(settled[idx].align_self, container.align_items)
-            && !any_auto([cv.margin.top, cv.margin.bottom]));
+            && !any_auto([&cv.margin.top, &cv.margin.bottom]));
     horizontal && vertical && has_only_fixed_rows(doc, cascade, parent, container)
 }
 
@@ -556,7 +558,7 @@ pub(super) fn is_sized_through_block_stretch(
     };
     keyword(settled[idx].justify_self, container.justify_items) == AlignItemsKeyword::Normal
         && keyword(settled[idx].align_self, container.align_items) == AlignItemsKeyword::Stretch
-        && ![cv.margin.top, cv.margin.bottom]
+        && ![&cv.margin.top, &cv.margin.bottom]
             .iter()
             .any(|margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto))
         && !uses_vertical_axes(cascade, parent)

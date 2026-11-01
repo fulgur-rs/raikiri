@@ -1840,7 +1840,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raikiri-dom"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "bitflags",
  "cssparser",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-js"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -1925,11 +1925,11 @@ dependencies = [
 
 [[package]]
 name = "raikiri-layout-geometry"
-version = "0.0.4"
+version = "0.0.6"
 
 [[package]]
 name = "raikiri-layout-style"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "raikiri-layout-geometry",
  "raikiri-style",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-style"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "cssparser",
  "precomputed-hash",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-traits"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "bytes",
  "libc",

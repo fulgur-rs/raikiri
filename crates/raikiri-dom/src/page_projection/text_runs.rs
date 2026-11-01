@@ -745,16 +745,21 @@ fn fixed_omission(
     // `bottom` against each page's area, which layout cannot follow when
     // the page areas differ. A right-to-left page area places a box with
     // both horizontal insets from `right`.
-    let length = |inset| matches!(inset, ComputedLengthPercentageOrAuto::Px(_));
-    let placed = |start, end, from_end: bool| {
+    let length = |inset: &ComputedLengthPercentageOrAuto| {
+        matches!(inset, ComputedLengthPercentageOrAuto::Px(_))
+    };
+    let placed = |start: &ComputedLengthPercentageOrAuto,
+                  end: &ComputedLengthPercentageOrAuto,
+                  from_end: bool| {
         (length(start) && !from_end)
             || (!page_areas_vary
                 && (from_end || matches!(start, ComputedLengthPercentageOrAuto::Auto))
                 && length(end))
     };
-    let horizontal_from_end = rtl && length(cv.left) && length(cv.right);
+    let horizontal_from_end = rtl && length(&cv.left) && length(&cv.right);
     (position == &PositionValue::Fixed
-        && !(placed(cv.left, cv.right, horizontal_from_end) && placed(cv.top, cv.bottom, false)))
+        && !(placed(&cv.left, &cv.right, horizontal_from_end)
+            && placed(&cv.top, &cv.bottom, false)))
     .then_some(TextRunOmission::FixedPlacement)
 }
 

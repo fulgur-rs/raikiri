@@ -52,7 +52,10 @@ impl LayoutStyleView<'_> {
         if matches!(c.box_sizing, BoxSizing::BorderBox)
             || (side_borders
                 && vertical_clean
-                && matches!(self.base_length(LengthProperty::Width).value, L::Auto))
+                && matches!(
+                    self.base_length(LengthProperty::Width).value.as_ref(),
+                    L::Auto
+                ))
         {
             values::BoxSizing::BorderBox
         } else {
@@ -142,19 +145,54 @@ impl LayoutStyleView<'_> {
         } else {
             self.library_height(LengthProperty::MinHeight).auto(false)
         };
-        self.size_axes(self.length(LengthProperty::MinWidth).auto(false), height)
+        let min = self.size_axes(self.length(LengthProperty::MinWidth).auto(false), height);
+        self.with_held_cross_size(min, |held| held.min)
     }
     /// The maximum size.
     #[inline]
     pub fn max_size(&self) -> Size<LengthPercentageAuto> {
-        self.size_axes(
+        let max = self.size_axes(
             self.length(LengthProperty::MaxWidth).auto(false),
             self.library_height(LengthProperty::MaxHeight).auto(false),
-        )
+        );
+        self.with_held_cross_size(max, |held| held.max)
+    }
+    /// `limit`, a minimum or maximum size, with the side of the cross axis of a
+    /// flex item replaced by the cross size the item states where
+    /// [`HeldCrossSize`] holds it.
+    #[inline]
+    fn with_held_cross_size(
+        &self,
+        mut limit: Size<LengthPercentageAuto>,
+        is_held: impl FnOnce(&HeldCrossSize) -> bool,
+    ) -> Size<LengthPercentageAuto> {
+        let Some(held) = self.context.held_cross_size.filter(is_held) else {
+            return limit;
+        };
+        let stated = self.size_axes(
+            self.length(LengthProperty::Width).auto(false),
+            self.library_height(LengthProperty::Height).auto(false),
+        );
+        match held.axis {
+            Axis::X => limit.width = stated.width,
+            Axis::Y => limit.height = stated.height,
+        }
+        limit
     }
     /// The preferred aspect ratio after projection into the returned axes.
     #[inline]
     pub fn aspect_ratio(&self) -> Option<f32> {
+        // The measured table supplies this height; a width-to-height ratio
+        // transfer must not replace it before measurement.
+        if self.table_owns_stretch_height() {
+            return None;
+        }
+        if matches!(
+            self.context.grid_item_ratio,
+            crate::GridItemRatio::MeasuredByItem { .. } | crate::GridItemRatio::Replaced
+        ) {
+            return None;
+        }
         match self.context.flex_item_ratio {
             FlexItemRatio::CrossFollowsMain => return None,
             FlexItemRatio::BasisFromCross => return self.stated_aspect_ratio(),
@@ -206,18 +244,25 @@ impl LayoutStyleView<'_> {
             let width = self.base_length(LengthProperty::Width).value;
             let height = self.base_length(LengthProperty::Height).value;
             let contained = self.flags().contains(StyleFlags::CONTAIN_WIDTH);
-            preferred_aspect_ratio_with(c.aspect_ratio, width, height, None, contained, false)
-                .or_else(|| {
-                    preferred_aspect_ratio_with(
-                        c.aspect_ratio,
-                        width,
-                        height,
-                        None,
-                        contained,
-                        true,
-                    )
-                    .filter(|_| keep_for_percentage())
-                })
+            preferred_aspect_ratio_with(
+                c.aspect_ratio,
+                width.as_ref(),
+                height.as_ref(),
+                None,
+                contained,
+                false,
+            )
+            .or_else(|| {
+                preferred_aspect_ratio_with(
+                    c.aspect_ratio,
+                    width.as_ref(),
+                    height.as_ref(),
+                    None,
+                    contained,
+                    true,
+                )
+                .filter(|_| keep_for_percentage())
+            })
         };
         if self.geometry_transposed() {
             ratio.map(|r| 1.0 / r)
@@ -233,16 +278,26 @@ impl LayoutStyleView<'_> {
             && max.width.is_auto()
             && max.height.is_auto())
     }
-    /// The margin edges; `auto` is preserved.
+    /// The margin edges; `auto` is preserved except on a table-owned stretch
+    /// height in the measurement-only view, where vertical auto margins are zero.
     #[inline]
     pub fn margin(&self) -> Edges<LengthPercentageAuto> {
         use LengthProperty::*;
-        self.edges(
+        let mut margin = self.edges(
             self.length(MarginTop).auto(true),
             self.length(MarginRight).auto(true),
             self.length(MarginBottom).auto(true),
             self.length(MarginLeft).auto(true),
-        )
+        );
+        if self.table_owns_stretch_height() {
+            if margin.top.is_auto() {
+                margin.top = LengthPercentageAuto::length(0.0);
+            }
+            if margin.bottom.is_auto() {
+                margin.bottom = LengthPercentageAuto::length(0.0);
+            }
+        }
+        margin
     }
     /// The inset edges.
     #[inline]
@@ -258,11 +313,29 @@ impl LayoutStyleView<'_> {
     /// The padding edges.
     #[inline]
     pub fn padding(&self) -> Edges<LengthPercentage> {
-        if let Some(padding) = self.context.resolved_padding {
-            return padding.map(LengthPercentage::length);
-        }
         use LengthProperty::*;
-        self.percentage_edges([PaddingTop, PaddingRight, PaddingBottom, PaddingLeft])
+        let properties = [PaddingTop, PaddingRight, PaddingBottom, PaddingLeft];
+        if let Some(padding) = self.context.resolved_padding {
+            // A frozen frame has already resolved its baseline edges. Late
+            // overrides replace only their projected sides, leaving the other
+            // sides on the basis the frame captured.
+            let from = self.edges(PaddingTop, PaddingRight, PaddingBottom, PaddingLeft);
+            let current = self.percentage_edges(properties);
+            let edge = |property, used, fallback| {
+                if self.scoped_length(property).is_some() {
+                    used
+                } else {
+                    LengthPercentage::length(fallback)
+                }
+            };
+            return Edges {
+                top: edge(from.top, current.top, padding.top),
+                right: edge(from.right, current.right, padding.right),
+                bottom: edge(from.bottom, current.bottom, padding.bottom),
+                left: edge(from.left, current.left, padding.left),
+            };
+        }
+        self.percentage_edges(properties)
     }
     /// The border edges.
     #[inline]
@@ -319,8 +392,8 @@ pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> values::Clear
 #[doc(hidden)]
 pub fn preferred_aspect_ratio(
     ratio: raikiri_style::property::AspectRatioValue,
-    width: L,
-    height: L,
+    width: &L,
+    height: &L,
     natural: Option<f32>,
     size_contained: bool,
 ) -> Option<f32> {
@@ -333,16 +406,17 @@ pub fn preferred_aspect_ratio(
 /// resolves both sizes and leaves the ratio nothing to do.
 fn preferred_aspect_ratio_with(
     ratio: raikiri_style::property::AspectRatioValue,
-    width: L,
-    height: L,
+    width: &L,
+    height: &L,
     natural: Option<f32>,
     size_contained: bool,
     cyclic_percentage: bool,
 ) -> Option<f32> {
-    let cyclic = |size: L| match size {
+    let cyclic = |size: &L| match size {
         L::Auto => true,
         L::Percent(_) => cyclic_percentage,
         L::Calc(calc) => cyclic_percentage && calc.percent != 0.0,
+        L::Math(expression) => cyclic_percentage && expression.has_percentage(),
         _ => false,
     };
     // A `stretch` height fills a containing block that may have no definite

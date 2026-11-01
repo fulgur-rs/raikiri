@@ -2,7 +2,8 @@
 
 use super::{
     CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, QuoteDepth,
-    SnapshotCollection, format_counter, format_counter_component, format_counters_component,
+    SnapshotCollection, author_style_name, format_counter, format_counter_component,
+    format_counters_component,
 };
 use crate::{CompactCounterSnapshots, CounterSnapshots, Document};
 use raikiri_style::property::{ContentComponent, CounterStyle, DisplayValue, ListStyleType};
@@ -92,19 +93,6 @@ fn list_item_ordinal(document: &Document, cascade: &CascadeResult, node_id: usiz
     1
 }
 
-fn alpha_marker(mut value: u32) -> String {
-    if value == 0 {
-        return String::new();
-    }
-    let mut result = String::new();
-    while value > 0 {
-        value -= 1;
-        result.insert(0, char::from(b'a' + (value % 26) as u8));
-        value /= 26;
-    }
-    result
-}
-
 fn custom_marker_text(registry: &CounterStyleRegistry, name: &str, value: i32) -> Option<String> {
     let rule = registry.get(name)?;
     // A value no style in the fallback chain can render uses `decimal`, but
@@ -136,49 +124,41 @@ fn list_marker_text_with_ordinal(
     list_style_type: &ListStyleType,
     ordinal: i32,
 ) -> Option<String> {
-    // Ordered marker styles use the CSS default `". "` suffix. The
-    // author-supplied string form is handled separately and remains verbatim.
-    let suffix = |text: String| format!("{text}. ");
-    // CSS Counter Styles 3 §6: the alphabetic styles cover positive values
-    // and the roman styles 1 to 3999; other values fall back to `decimal`.
-    let in_range = |max: u32, format: &dyn Fn(u32) -> String| match u32::try_from(ordinal) {
-        Ok(value @ 1..) if value <= max => suffix(format(value)),
-        _ => suffix(ordinal.to_string()),
-    };
     match list_style_type {
-        ListStyleType::Disc => Some("• ".to_string()),
         ListStyleType::None => None,
         ListStyleType::String(value) => Some(value.as_str().to_string()),
         ListStyleType::Named(name) => {
-            let lower = name.to_ascii_lowercase();
-            let marker = match lower.as_str() {
-                "disc" => "• ".to_string(),
-                "circle" => "◦ ".to_string(),
-                "square" => "▪ ".to_string(),
-                "decimal" => suffix(ordinal.to_string()),
-                // The negative sign counts toward the two-symbol pad (CSS
-                // Counter Styles 3, the `pad` descriptor), so `-3` stays `-3`.
-                "decimal-leading-zero" => suffix(raikiri_traits::page::format_predefined_counter(
+            // The bullets cannot be redefined by an author style, so they
+            // need no lookup.
+            for (bullet, marker) in [("disc", "• "), ("circle", "◦ "), ("square", "▪ ")] {
+                if name.eq_ignore_ascii_case(bullet) {
+                    return Some(marker.to_string());
+                }
+            }
+            // An author `@counter-style` comes first, since it can redefine
+            // any other predefined name.
+            let author_name = author_style_name(&cascade.counter_styles, name.as_str());
+            if let Some(marker) = custom_marker_text(&cascade.counter_styles, &author_name, ordinal)
+            {
+                return Some(marker);
+            }
+            // Every other predefined style, and `decimal` for a name that is
+            // not one (`disclosure-open` and `disclosure-closed` among them,
+            // which this does not draw yet). A value the style cannot show is
+            // decimal, with the suffix of the style asked for (CSS Counter
+            // Styles 3, the `fallback` and `suffix` descriptors).
+            Some(format!(
+                "{}{}",
+                raikiri_traits::page::format_predefined_counter(
                     ordinal,
-                    &CounterStyle::Named("decimal-leading-zero".into()),
-                )),
-                "lower-alpha" | "lower-latin" => in_range(u32::MAX, &alpha_marker),
-                "upper-alpha" | "upper-latin" => {
-                    in_range(u32::MAX, &|value| alpha_marker(value).to_uppercase())
-                }
-                "lower-roman" | "upper-roman" => {
-                    let style = CounterStyle::Named(lower.as_str().into());
-                    in_range(3999, &|value| {
-                        format_counter(value as i32, &style, &cascade.counter_styles)
-                    })
-                }
-                _ => custom_marker_text(&cascade.counter_styles, name.as_str(), ordinal)
-                    .unwrap_or_else(|| suffix(ordinal.to_string())),
-            };
-            Some(marker)
+                    &CounterStyle::Named(name.clone()),
+                ),
+                raikiri_traits::page::predefined_counter_suffix(name)
+            ))
         }
-        // cov:ignore: non-exhaustive enum fallback is not constructible here
-        _ => Some(suffix(ordinal.to_string())),
+        // `disc`, which is the initial value of `list-style-type`, and so
+        // also the marker for a style this match does not know about.
+        _ => Some("• ".to_string()),
     }
 }
 

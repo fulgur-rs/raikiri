@@ -115,11 +115,39 @@ fn outer_width(
     };
     let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
     inputs.available_space.width = space;
-    let margins_collapse = shares_parent_context(tree, parent, child, &child_style(tree, child));
+    let mut style = child_style(tree, child);
+    let margins_collapse = shares_parent_context(tree, parent, child, &style);
     inputs.vertical_margins_are_collapsible = Line {
         start: margins_collapse,
         end: margins_collapse,
     };
+    // A child that states `height: stretch` fills the definite height of the
+    // parent's content box, as it does once it is laid out, and an `auto`
+    // width follows from that height through the aspect ratio of the box. Its
+    // vertical margins are taken as held inside the parent.
+    if let Some(height) =
+        percent_height.filter(|_| matches!(style.size.height.expand(), ExpandedDimension::Stretch))
+    {
+        let edges = style
+            .margin
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
+        let room = (height - edges.top - edges.bottom).max(0.0);
+        crate::layout::dispatch::content_limits::resolve_stretch_height_limits_in_style(
+            tree,
+            child,
+            &mut style,
+            Some(room),
+            0.0,
+        );
+        inputs.known_dimensions.height = Some(room);
+        let metrics = Metrics::resolve(
+            &style,
+            tree.nodes[usize::from(child)].svg_width_follows_available,
+            tree.nodes[usize::from(child)].ratio_in_content_box,
+            inputs,
+        );
+        inputs.known_dimensions.height = Some(metrics.clamp_height(room));
+    }
     let measured =
         measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
             tree.compute_child_layout_with_block_ctx(child, inputs, None)
@@ -243,6 +271,65 @@ fn is_inline_box(tree: &LayoutSession<'_>, node: NodeId, style: &Style) -> bool 
             .is_some_and(|parent| tree.nodes[parent].display().is_flex_or_grid_container())
 }
 
+/// The metrics of the block `node`, as [`Metrics::resolve`] settles them for
+/// `inputs`, except that a size taken from the cross size a wrapping flex
+/// container stretches the box to does not carry across its aspect ratio.
+///
+/// A container that wraps its items onto more than one line does not take that
+/// cross size as definite (CSS Flexbox 1 §9.4), so the box takes its main size
+/// from its content, as it does when no cross size is given.
+fn item_metrics(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    style: &Style,
+    width_stands_in: bool,
+    content_box_ratio: bool,
+    inputs: LayoutInput,
+) -> Metrics {
+    let metrics = Metrics::resolve(style, width_stands_in, content_box_ratio, inputs);
+    let known = inputs.known_dimensions;
+    // Only a box with a ratio takes a size from the other axis, and a stretch
+    // hint is the one size known while the other is not.
+    if style.aspect_ratio.is_none()
+        || known.width.is_some() == known.height.is_some()
+        || !tree.is_wrapping_stretch_hint(usize::from(node), style, known)
+    {
+        return metrics;
+    }
+    let ignoring_hint = Metrics::resolve(
+        style,
+        width_stands_in,
+        content_box_ratio,
+        LayoutInput {
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            ..inputs
+        },
+    );
+    if known.height.is_some() {
+        Metrics {
+            preferred: Size {
+                width: ignoring_hint.preferred.width,
+                height: metrics.preferred.height,
+            },
+            ratio_width: ignoring_hint.ratio_width,
+            ..metrics
+        }
+    } else {
+        Metrics {
+            preferred: Size {
+                width: metrics.preferred.width,
+                height: ignoring_hint.preferred.height,
+            },
+            ratio_height: ignoring_hint.ratio_height,
+            ..metrics
+        }
+    }
+}
+
 pub(crate) fn compute_block_flow(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
@@ -265,7 +352,9 @@ pub(crate) fn compute_block_flow(
         },
         ..metrics
     };
-    let metrics = in_the_block_around(Metrics::resolve(
+    let metrics = in_the_block_around(item_metrics(
+        tree,
+        node,
         &style,
         width_stands_in,
         content_box_ratio,
@@ -438,13 +527,15 @@ fn layout_context(
     if ctx.is_bfc_root() {
         natural_end = natural_end.max(ctx.floated_content_height_contribution());
     }
+    let auto_height = metrics.clamp_height(natural_end + metrics.inset.bottom);
+    tree.nodes[usize::from(node)].auto_block_size = Some(auto_height);
     let height = match metrics.preferred.height {
         // The content raises the height up to the maximum the box states,
         // not one carried over from its width.
         Some(height) if metrics.ratio_height => height
             .max((natural_end + metrics.inset.bottom).maybe_clamp(None, metrics.own_max.height)),
         Some(height) => height,
-        None => metrics.clamp_height(natural_end + metrics.inset.bottom),
+        None => auto_height,
     };
     // When `min-height` raises the used height above the content, the last
     // child's bottom margin no longer adjoins the bottom edge. As in

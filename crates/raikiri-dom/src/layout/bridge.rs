@@ -107,8 +107,8 @@ pub(crate) fn vertical_logical_size(
 fn vertical_logical_sized(cascade: &CascadeResult, idx: usize) -> Option<ComputedValues> {
     let size = vertical_logical_size(cascade, idx)?;
     let mut sized = cascade.computed[idx].clone();
-    sized.width = size.width;
-    sized.height = size.height;
+    sized.width = size.width.clone();
+    sized.height = size.height.clone();
     Some(sized)
 }
 
@@ -364,13 +364,13 @@ fn apply_computed_to_style_in_session_inner(
             }
         }
         if let Some((intrinsic_width, intrinsic_height)) =
-            bridge_known_image_intrinsic_size(doc, idx, cv.width, cv.height)
+            bridge_known_image_intrinsic_size(doc, idx, &cv.width, &cv.height)
         {
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 for (property, value, original) in [
-                    (P::Width, intrinsic_width, cv.width),
-                    (P::Height, intrinsic_height, cv.height),
+                    (P::Width, intrinsic_width, &cv.width),
+                    (P::Height, intrinsic_height, &cv.height),
                 ] {
                     if matches!(original, ComputedLengthPercentageOrAuto::Auto) {
                         doc.record_pass_override(
@@ -517,8 +517,8 @@ fn apply_computed_to_style_in_session_inner(
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 doc.record_pass_override(idx, O::aspect_ratio(contained_ratio));
                 for (property, contained, original) in [
-                    (P::Width, containment.width, cv.width),
-                    (P::Height, containment.height, cv.height),
+                    (P::Width, containment.width, &cv.width),
+                    (P::Height, containment.height, &cv.height),
                 ] {
                     if contained && matches!(original, ComputedLengthPercentageOrAuto::Auto) {
                         doc.record_pass_override(
@@ -799,11 +799,11 @@ fn layout_values<'a>(
     let cv = vertical_sized.unwrap_or(&cascade.computed[idx]);
     // Only intrinsic keywords need contextual normalization. Keep the ordinary
     // scalar path free of repeated ancestor and formatting-context queries.
-    if ![cv.width, cv.height].into_iter().any(is_sizing_keyword)
-        && ![cv.min_width, cv.max_width, cv.min_height, cv.max_height]
+    if ![&cv.width, &cv.height].into_iter().any(is_sizing_keyword)
+        && ![&cv.min_width, &cv.max_width, &cv.min_height, &cv.max_height]
             .into_iter()
             .any(is_limit_keyword)
-        && !cv.min_block_size.is_some_and(is_sizing_keyword)
+        && !cv.min_block_size.as_ref().is_some_and(is_sizing_keyword)
     {
         return std::borrow::Cow::Borrowed(cv);
     }
@@ -814,7 +814,7 @@ fn layout_values<'a>(
             && cv.width == ComputedLengthPercentageOrAuto::MinContent);
     let height = flags.contains(F::IGNORE_HEIGHT_KEYWORD);
     let plain_limits = flags.contains(F::IGNORE_LIMIT_KEYWORDS)
-        && [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
+        && [&cv.min_width, &cv.max_width, &cv.min_height, &cv.max_height]
             .into_iter()
             .any(is_limit_keyword);
     let ignore_logical_min_block = flags.contains(F::IGNORE_LOGICAL_MIN_BLOCK);
@@ -835,7 +835,7 @@ fn layout_values<'a>(
             &mut plain.min_height,
             &mut plain.max_height,
         ] {
-            if is_limit_keyword(*size) {
+            if is_limit_keyword(size) {
                 *size = ComputedLengthPercentageOrAuto::Auto;
             }
         }
@@ -866,7 +866,7 @@ pub(super) fn layout_values_of<'a>(
 }
 
 /// Whether `size` is one of the intrinsic sizing keywords.
-pub(super) fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
+pub(super) fn is_sizing_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
     matches!(
         size,
         ComputedLengthPercentageOrAuto::MinContent
@@ -880,8 +880,8 @@ pub(super) fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
 /// to a length when it lays the box out: an intrinsic sizing keyword, or
 /// `stretch`. Taffy's minimum and maximum sizes hold neither (see
 /// [`ContentLimits`]).
-pub(super) fn is_limit_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
-    is_sizing_keyword(size) || size == ComputedLengthPercentageOrAuto::Stretch
+pub(super) fn is_limit_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
+    is_sizing_keyword(size) || *size == ComputedLengthPercentageOrAuto::Stretch
 }
 
 /// Whether element `idx`, whose computed values are `cv`, uses an intrinsic
@@ -1073,8 +1073,8 @@ fn preferred_aspect_ratio(
 ) -> Option<f32> {
     raikiri_layout_style::preferred_aspect_ratio(
         cv.aspect_ratio,
-        cv.width,
-        cv.height,
+        &cv.width,
+        &cv.height,
         natural,
         size_contained,
     )
@@ -1122,8 +1122,8 @@ fn replaced_keyword_width(doc: &Document, cascade: &CascadeResult, idx: usize) -
 pub(super) fn bridge_known_image_intrinsic_size(
     doc: &Document,
     node_id: usize,
-    width: ComputedLengthPercentageOrAuto,
-    height: ComputedLengthPercentageOrAuto,
+    width: &ComputedLengthPercentageOrAuto,
+    height: &ComputedLengthPercentageOrAuto,
 ) -> Option<(f32, f32)> {
     let node = &doc.nodes[node_id];
     let has_natural_size = node
@@ -1153,14 +1153,14 @@ pub(super) fn bridge_known_image_intrinsic_size(
 pub(super) fn physical_min_height(
     cv: &ComputedValues,
     vertical_axes: bool,
-) -> ComputedLengthPercentageOrAuto {
+) -> &ComputedLengthPercentageOrAuto {
     if !vertical_axes
         && cv.cssom_writing_mode.is_vertical()
         && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
     {
-        cv.min_block_size.unwrap_or(cv.min_height)
+        cv.min_block_size.as_ref().unwrap_or(&cv.min_height)
     } else {
-        cv.min_height
+        &cv.min_height
     }
 }
 
@@ -1213,12 +1213,12 @@ fn bridge_content_limits(
     };
     ContentLimits {
         min: Size {
-            width: keyword(cv.min_width, "min-width"),
-            height: keyword(cv.min_height, "min-height"),
+            width: keyword(&cv.min_width, "min-width"),
+            height: keyword(&cv.min_height, "min-height"),
         },
         max: Size {
-            width: keyword(cv.max_width, "max-width"),
-            height: keyword(cv.max_height, "max-height"),
+            width: keyword(&cv.max_width, "max-width"),
+            height: keyword(&cv.max_height, "max-height"),
         },
     }
 }
@@ -1232,13 +1232,13 @@ fn bridge_content_limits(
 /// `site` names the property in [`LayoutWarn::NonFiniteClamped`] events.
 fn computed_length_percentage_or_auto_to_taffy_dimension(
     calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
-    loa: ComputedLengthPercentageOrAuto,
+    loa: &ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> Dimension {
     match loa {
         // Site 2.
-        ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(v, site, diag)),
+        ComputedLengthPercentageOrAuto::Px(v) => Dimension::length(sanitize_taffy(*v, site, diag)),
         ComputedLengthPercentageOrAuto::Percent(p) => {
             Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
         }
@@ -1253,18 +1253,22 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
         // for Taffy to resolve against the containing block.
         ComputedLengthPercentageOrAuto::FitContentOf(limit) => match limit {
             ComputedLengthPercentageOrCalc::Px(v) => {
-                Dimension::fit_content_px(sanitize_taffy(v, site, diag))
+                Dimension::fit_content_px(sanitize_taffy(*v, site, diag))
             }
             ComputedLengthPercentageOrCalc::Percent(p) => {
                 Dimension::fit_content_percent(sanitize_taffy(p / 100.0, site, diag))
             }
             ComputedLengthPercentageOrCalc::Calc(value) => {
-                let pointer = crate::layout::dispatch::push_calc(calc_values, value, true);
+                let pointer = crate::layout::dispatch::push_calc(calc_values, *value, true);
                 Dimension::fit_content_calc(pointer)
             }
         },
+        ComputedLengthPercentageOrAuto::Math(value) => {
+            let pointer = crate::layout::dispatch::push_calc(calc_values, value.clone(), true);
+            Dimension::calc(pointer)
+        }
         ComputedLengthPercentageOrAuto::Calc(value) => {
-            let pointer = crate::layout::dispatch::push_calc(calc_values, value, true);
+            let pointer = crate::layout::dispatch::push_calc(calc_values, *value, true);
             Dimension::calc(pointer)
         }
     }

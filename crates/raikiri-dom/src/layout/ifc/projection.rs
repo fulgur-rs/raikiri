@@ -421,7 +421,26 @@ fn push_generated(
         }
         None => None,
     };
-    if text.is_empty() && !has_images && block.is_none() && !atomic {
+    let empty = text.is_empty() && !has_images;
+    let (edges, edge_percents) = if inline_level
+        && pseudo != PseudoElem::Marker
+        && (!empty || cv.display != DisplayValue::Contents)
+    {
+        style::inline_edges(cv, element, fonts)?
+    } else {
+        Default::default()
+    };
+    // Block-axis decoration alone does not make an empty inline create a line.
+    let has_edges = [
+        edges.margin,
+        edges.border,
+        edges.padding,
+        edge_percents.margin,
+        edge_percents.padding,
+    ]
+    .iter()
+    .any(|side| side.inline_start != 0.0 || side.inline_end != 0.0);
+    if empty && block.is_none() && !atomic && !has_edges {
         return Ok(());
     }
     // The pseudo-element's own relative offset moves its text and images
@@ -470,23 +489,20 @@ fn push_generated(
     } else {
         None
     };
-    let (edges, edge_percents) = if inline_level && pseudo != PseudoElem::Marker {
-        style::inline_edges(cv, element, fonts)?
-    } else {
-        Default::default()
-    };
     if let Some(block) = &block {
         builder.push_block_in_inline(NodeId(block.start));
-        images.blocks.push(*block);
+        images.blocks.push(block.clone());
     }
-    let empty = text.is_empty() && !has_images;
     if empty && atomic {
         // An atomic box without content is still a box: an empty atomic
         // inline of its own size in place of the pseudo-element.
         images.boxes.push(GeneratedAtomic::new(id.0, cv));
         builder.push_atomic(id, &inline_style, InlineEdges::default());
     }
-    if !empty {
+    // Empty non-atomic inlines still need their edges projected. The line
+    // engine decides whether those edges make a line in the document's mode.
+    let open_inline = !empty || (!atomic && has_edges);
+    if open_inline {
         let first_line = if inline_level && pseudo != PseudoElem::Marker {
             first_letter
                 .first_line
@@ -554,7 +570,7 @@ fn push_generated(
     if !inline_level && block.is_none() && pseudo == PseudoElem::Before {
         builder.push_forced_break(id);
     }
-    if !empty {
+    if open_inline {
         builder.close_inline();
     }
     if let Some(block) = &block {

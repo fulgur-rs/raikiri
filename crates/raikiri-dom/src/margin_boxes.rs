@@ -135,7 +135,7 @@ fn margin_box_background_layers(style: &ComputedValues) -> Vec<MarginBoxBackgrou
             };
             Some(MarginBoxBackgroundImage {
                 url: url.to_string(),
-                size: layer.size,
+                size: layer.size.clone(),
                 position: layer.position,
                 repeat: layer.repeat,
                 origin: layer.origin,
@@ -796,10 +796,11 @@ fn finite_or_zero(value: f32) -> f32 {
 
 /// The used px of a box length against `basis`; `None` for `auto` and the
 /// intrinsic sizing keywords, which size the box to its content.
-fn length_or_auto_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
+fn length_or_auto_px(value: &ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
     let px = match value {
-        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Px(px) => *px,
         ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentageOrAuto::Math(value) => value.resolve(basis),
         ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
         _ => return None,
     };
@@ -808,7 +809,7 @@ fn length_or_auto_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> Optio
 
 /// The sizing keyword `value` is, if it is one. A `fit-content()` limit
 /// resolves against `basis`.
-fn size_keyword(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<SizeKeyword> {
+fn size_keyword(value: &ComputedLengthPercentageOrAuto, basis: f32) -> Option<SizeKeyword> {
     match value {
         ComputedLengthPercentageOrAuto::MinContent => Some(SizeKeyword::MinContent),
         ComputedLengthPercentageOrAuto::MaxContent => Some(SizeKeyword::MaxContent),
@@ -1357,16 +1358,16 @@ fn margin_box_spec(
     // layout.
     let margin_px = |value, basis| length_or_auto_px(value, basis).unwrap_or(0.0);
     let margin = [
-        margin_px(style.margin.top, height_basis),
-        margin_px(style.margin.right, width_basis),
-        margin_px(style.margin.bottom, height_basis),
-        margin_px(style.margin.left, width_basis),
+        margin_px(&style.margin.top, height_basis),
+        margin_px(&style.margin.right, width_basis),
+        margin_px(&style.margin.bottom, height_basis),
+        margin_px(&style.margin.left, width_basis),
     ];
     let margin_auto = [
-        style.margin.top,
-        style.margin.right,
-        style.margin.bottom,
-        style.margin.left,
+        &style.margin.top,
+        &style.margin.right,
+        &style.margin.bottom,
+        &style.margin.left,
     ]
     .map(|value| matches!(value, ComputedLengthPercentageOrAuto::Auto));
     let padding_px = |value: raikiri_style::ComputedLengthPercentageOrCalc| {
@@ -1384,10 +1385,10 @@ fn margin_box_spec(
         .iter()
         .any(|layer| layer.url.ends_with("/green.png") || layer.url == "green.png");
     let border = margin_box_borders(&style);
-    let width = length_or_auto_px(style.width, width_basis).map(|width| width.max(0.0));
-    let height = length_or_auto_px(style.height, height_basis).map(|height| height.max(0.0));
-    let width_keyword = size_keyword(style.width, width_basis);
-    let height_keyword = size_keyword(style.height, height_basis);
+    let width = length_or_auto_px(&style.width, width_basis).map(|width| width.max(0.0));
+    let height = length_or_auto_px(&style.height, height_basis).map(|height| height.max(0.0));
+    let width_keyword = size_keyword(&style.width, width_basis);
+    let height_keyword = size_keyword(&style.height, height_basis);
     let alignment = match style.text_align {
         TextAlign::Right => StandaloneAlign::Right,
         TextAlign::End => StandaloneAlign::End,

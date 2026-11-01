@@ -282,8 +282,8 @@ impl RootOwnFlow {
             cssom_writing_mode: values.cssom_writing_mode,
             direction: values.direction,
             text_orientation: values.text_orientation,
-            width: values.width,
-            height: values.height,
+            width: values.width.clone(),
+            height: values.height.clone(),
             vertical_logical_size: values.vertical_logical_size.clone(),
         }
     }
@@ -294,14 +294,14 @@ impl RootOwnFlow {
         values.cssom_writing_mode = self.cssom_writing_mode;
         values.direction = self.direction;
         values.text_orientation = self.text_orientation;
-        values.width = self.width;
-        values.height = self.height;
+        values.width = self.width.clone();
+        values.height = self.height.clone();
         values.vertical_logical_size = self.vertical_logical_size.clone();
     }
 }
 
 impl CascadeResult {
-    /// The device pixels per CSS pixel the cascade snapped border widths to,
+    /// The device pixels per CSS pixel used for border widths and table spacing,
     /// `None` for an output-neutral or vector cascade, or for a scale that is
     /// not finite and positive, which the cascade ignores.
     pub fn border_width_device_scale(&self) -> Option<f32> {

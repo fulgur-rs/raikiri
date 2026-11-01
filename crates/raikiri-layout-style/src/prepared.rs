@@ -3,9 +3,10 @@ use raikiri_style::{
     ComputedFlexBasis as F, ComputedGridTemplateTracks as G, ComputedGridTrackBreadth as B,
     ComputedGridTrackListComponent as C, ComputedGridTrackSize as S,
     ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P,
-    ComputedLengthPercentageOrNormal as N, ComputedValues, property::CalcLengthPercentage,
+    ComputedLengthPercentageOrNormal as N, ComputedValues,
 };
-use std::{ops::Deref, sync::Arc};
+use std::borrow::Cow::{Borrowed, Owned};
+use std::{borrow::Cow, ops::Deref, sync::Arc};
 
 mod data;
 pub use data::PreparedData;
@@ -21,15 +22,18 @@ macro_rules! scalar_properties {
             pub(crate) const ALL: &'static [Self] = &[$(Self::$property),+];
         }
         impl PreparedStyle<'_> {
-            fn scalar_value($c: &ComputedValues, property: LengthProperty) -> L {
+            fn scalar_value<'s>($c: &'s ComputedValues, property: LengthProperty) -> Cow<'s, L> {
                 match property { $(LengthProperty::$property => $value),+ }
             }
 
             fn visit_scalar_calcs(
                 $c: &ComputedValues,
-                mut visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+                mut visit: impl FnMut(CalcSlot, CalcExpression, bool) -> Result<(), PrepareError>,
             ) -> Result<(), PrepareError> {
-                $(Self::visit_scalar_calc($c, LengthProperty::$property, $value, &mut visit)?;)+
+                $({
+                    let value: Cow<'_, L> = $value;
+                    Self::visit_scalar_calc($c, LengthProperty::$property, value.as_ref(), &mut visit)?;
+                })+
                 Ok(())
             }
         }
@@ -55,29 +59,29 @@ fn scalar_gap(value: N) -> L {
 
 scalar_properties! {
     c;
-    Width => c.width,
-    Height => c.height,
-    MinWidth => c.min_width,
-    MinHeight => c.min_height,
-    MaxWidth => c.max_width,
-    MaxHeight => c.max_height,
-    MarginTop => c.margin.top,
-    MarginRight => c.margin.right,
-    MarginBottom => c.margin.bottom,
-    MarginLeft => c.margin.left,
-    PaddingTop => scalar_padding(c.padding.top),
-    PaddingRight => scalar_padding(c.padding.right),
-    PaddingBottom => scalar_padding(c.padding.bottom),
-    PaddingLeft => scalar_padding(c.padding.left),
-    BorderTop => L::Px(c.border.top.width().px()),
-    BorderRight => L::Px(c.border.right.width().px()),
-    BorderBottom => L::Px(c.border.bottom.width().px()),
-    BorderLeft => L::Px(c.border.left.width().px()),
-    Top => c.top,
-    Right => c.right,
-    Bottom => c.bottom,
-    Left => c.left,
-    FlexBasis => match c.flex_basis {
+    Width => Borrowed(&c.width),
+    Height => Borrowed(&c.height),
+    MinWidth => Borrowed(&c.min_width),
+    MinHeight => Borrowed(&c.min_height),
+    MaxWidth => Borrowed(&c.max_width),
+    MaxHeight => Borrowed(&c.max_height),
+    MarginTop => Borrowed(&c.margin.top),
+    MarginRight => Borrowed(&c.margin.right),
+    MarginBottom => Borrowed(&c.margin.bottom),
+    MarginLeft => Borrowed(&c.margin.left),
+    PaddingTop => Owned(scalar_padding(c.padding.top)),
+    PaddingRight => Owned(scalar_padding(c.padding.right)),
+    PaddingBottom => Owned(scalar_padding(c.padding.bottom)),
+    PaddingLeft => Owned(scalar_padding(c.padding.left)),
+    BorderTop => Owned(L::Px(c.border.top.width().px())),
+    BorderRight => Owned(L::Px(c.border.right.width().px())),
+    BorderBottom => Owned(L::Px(c.border.bottom.width().px())),
+    BorderLeft => Owned(L::Px(c.border.left.width().px())),
+    Top => Borrowed(&c.top),
+    Right => Borrowed(&c.right),
+    Bottom => Borrowed(&c.bottom),
+    Left => Borrowed(&c.left),
+    FlexBasis => Owned(match c.flex_basis {
         F::Auto | F::Content => L::Auto,
         F::MinContent => L::MinContent,
         F::MaxContent => L::MaxContent,
@@ -86,18 +90,18 @@ scalar_properties! {
         F::Px(v) => L::Px(v),
         F::Percent(v) => L::Percent(v),
         F::Calc(v) => L::Calc(v),
-    },
-    ColumnGap => scalar_gap(c.column_gap),
-    RowGap => scalar_gap(c.row_gap),
+    }),
+    ColumnGap => Owned(scalar_gap(c.column_gap)),
+    RowGap => Owned(scalar_gap(c.row_gap)),
     LogicalWidth => c
         .vertical_logical_size
         .as_ref()
-        .map_or(c.width, |s| s.width),
+        .map_or(Borrowed(&c.width), |s| Borrowed(&s.width)),
     LogicalHeight => c
         .vertical_logical_size
         .as_ref()
-        .map_or(c.height, |s| s.height),
-    MinBlock => c.min_block_size.unwrap_or(L::Auto),
+        .map_or(Borrowed(&c.height), |s| Borrowed(&s.height)),
+    MinBlock => c.min_block_size.as_ref().map_or(Owned(L::Auto), Borrowed),
 }
 
 /// A preparation error, detected before any getter runs.
@@ -197,8 +201,8 @@ impl<'a> PreparedStyle<'a> {
     fn visit_scalar_calc(
         values: &ComputedValues,
         property: LengthProperty,
-        value: L,
-        visit: &mut impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+        value: &L,
+        visit: &mut impl FnMut(CalcSlot, CalcExpression, bool) -> Result<(), PrepareError>,
     ) -> Result<(), PrepareError> {
         // Logical aliases are distinct slots only when explicitly present.
         if matches!(
@@ -211,7 +215,12 @@ impl<'a> PreparedStyle<'a> {
         match value {
             L::Calc(expression) | L::FitContentOf(P::Calc(expression)) => visit(
                 CalcSlot::Property(property),
-                expression,
+                CalcExpression::Affine(*expression),
+                property.non_negative(),
+            ),
+            L::Math(expression) => visit(
+                CalcSlot::Property(property),
+                CalcExpression::Math(expression.clone()),
                 property.non_negative(),
             ),
             _ => Ok(()),
@@ -295,7 +304,7 @@ impl<'a> PreparedStyle<'a> {
     pub fn prepare_with(
         values: &'a ComputedValues,
         metadata: StyleMetadata,
-        owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+        owner: impl FnMut(CalcSlot, &CalcExpression, bool) -> Arc<AlignedCalc>,
     ) -> Result<Self, PrepareError> {
         Self::prepare_source_with(ComputedSource::Borrowed(values), metadata, owner)
     }
@@ -307,7 +316,7 @@ impl<'a> PreparedStyle<'a> {
     pub fn prepare_shared_with(
         values: Arc<ComputedValues>,
         metadata: StyleMetadata,
-        owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+        owner: impl FnMut(CalcSlot, &CalcExpression, bool) -> Arc<AlignedCalc>,
     ) -> Result<PreparedStyle<'static>, PrepareError> {
         PreparedStyle::prepare_source_with(ComputedSource::Shared(values), metadata, owner)
     }
@@ -322,7 +331,7 @@ impl<'a> PreparedStyle<'a> {
     fn prepare_source_with(
         values: ComputedSource<'a>,
         metadata: StyleMetadata,
-        mut owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+        mut owner: impl FnMut(CalcSlot, &CalcExpression, bool) -> Arc<AlignedCalc>,
     ) -> Result<Self, PrepareError> {
         let mut prepared = Self {
             values,
@@ -331,8 +340,8 @@ impl<'a> PreparedStyle<'a> {
         };
         let mut calcs = Vec::new();
         prepared.visit_calcs(|slot, expression, range| {
-            let payload = owner(slot, expression, range);
-            if !payload.matches(expression, range) {
+            let payload = owner(slot, &expression, range);
+            if !payload.matches(&expression, range) {
                 return Err(PrepareError::Mismatch(slot));
             }
             calcs.push((slot, payload));
@@ -368,7 +377,7 @@ impl<'a> PreparedStyle<'a> {
                 .iter()
                 .find(|b| b.slot == slot)
                 .ok_or(PrepareError::Missing(slot))?;
-            if binding.payload.matches(expression, range) {
+            if binding.payload.matches(&expression, range) {
                 Ok(())
             } else {
                 Err(PrepareError::Mismatch(slot))
@@ -416,20 +425,20 @@ impl<'a> PreparedStyle<'a> {
             CalcBindings::Shared(data) => data.owners().map(|payload| &**payload).find(|p| at(p)),
         }
     }
-    pub(crate) fn scalar(&self, property: LengthProperty) -> L {
+    pub(crate) fn scalar(&self, property: LengthProperty) -> Cow<'_, L> {
         Self::scalar_value(&self.values, property)
     }
 
     fn visit_calcs(
         &self,
-        visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+        visit: impl FnMut(CalcSlot, CalcExpression, bool) -> Result<(), PrepareError>,
     ) -> Result<(), PrepareError> {
         Self::visit_values_calcs(&self.values, visit)
     }
 
     fn visit_values_calcs(
         values: &ComputedValues,
-        mut visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+        mut visit: impl FnMut(CalcSlot, CalcExpression, bool) -> Result<(), PrepareError>,
     ) -> Result<(), PrepareError> {
         Self::visit_scalar_calcs(values, &mut visit)?;
         let mut track = |axis, list, component, repeat_track, size| {
@@ -448,7 +457,7 @@ impl<'a> PreparedStyle<'a> {
                             repeat_track,
                             part,
                         },
-                        c,
+                        CalcExpression::Affine(c),
                         true,
                     )?;
                 }

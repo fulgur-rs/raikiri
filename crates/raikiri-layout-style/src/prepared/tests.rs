@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::property::CalcLengthPercentage;
 
 fn expression(px: f32) -> CalcLengthPercentage {
     CalcLengthPercentage { px, percent: -0.0 }
@@ -39,6 +40,9 @@ fn scalar_rows(c: &ComputedValues) -> Vec<(LengthProperty, u32, u32, bool)> {
     let mut rows = Vec::new();
     PreparedStyle::visit_values_calcs(c, |slot, e, range| {
         if let CalcSlot::Property(p) = slot {
+            let CalcExpression::Affine(e) = e else {
+                panic!("affine fixture")
+            };
             rows.push((p, e.px.to_bits(), e.percent.to_bits(), range));
         }
         Ok(())
@@ -133,10 +137,10 @@ fn scalar_scan_matches_dynamic_queries_for_keywords_and_optional_sources() {
     ] {
         for logical in [false, true] {
             let mut c = scalar_fixture();
-            c.width = value;
-            c.min_block_size = Some(value);
+            c.width = value.clone();
+            c.min_block_size = Some(value.clone());
             if logical {
-                c.vertical_logical_size.as_mut().unwrap().height = value;
+                c.vertical_logical_size.as_mut().unwrap().height = value.clone();
             } else {
                 c.vertical_logical_size = None;
             }
@@ -151,7 +155,7 @@ fn scalar_scan_matches_dynamic_queries_for_keywords_and_optional_sources() {
                     continue;
                 }
                 if let L::Calc(e) | L::FitContentOf(P::Calc(e)) =
-                    PreparedStyle::scalar_value(&c, property)
+                    PreparedStyle::scalar_value(&c, property).as_ref()
                 {
                     expected.push((
                         property,

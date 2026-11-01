@@ -138,10 +138,10 @@ pub(crate) fn constrain_with_ratio(
     }
 }
 
-fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Option<f64> {
+fn background_length(value: &ComputedLengthPercentageOrAuto, basis: f64) -> Option<f64> {
     match value {
-        ComputedLengthPercentageOrAuto::Px(px) => Some(px as f64),
-        ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * percent as f64 / 100.0),
+        ComputedLengthPercentageOrAuto::Px(px) => Some(*px as f64),
+        ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * *percent as f64 / 100.0),
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
@@ -151,6 +151,9 @@ fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Optio
         // `background-size` does not accept negative values, so a `calc()`
         // that resolves below zero clamps to zero (CSS Values 4 "Range
         // Checking").
+        ComputedLengthPercentageOrAuto::Math(value) => {
+            Some(value.resolve(basis as f32).max(0.0) as f64)
+        }
         ComputedLengthPercentageOrAuto::Calc(calc) => {
             Some((basis * calc.percent as f64 / 100.0 + calc.px as f64).max(0.0))
         }
@@ -205,8 +208,8 @@ pub fn background_image_dimensions(
             (intrinsic_w * scale, intrinsic_h * scale)
         }
         ComputedBackgroundSize::Explicit { width, height } => {
-            let width = background_length(*width, area_w);
-            let height = background_length(*height, area_h);
+            let width = background_length(width, area_w);
+            let height = background_length(height, area_h);
             match (width, height) {
                 (Some(width), Some(height)) => (width.max(0.0), height.max(0.0)),
                 (Some(width), None) => (width.max(0.0), width.max(0.0) * intrinsic_h / intrinsic_w),
@@ -243,8 +246,8 @@ pub fn rounded_background_tile_size(
     let (pos_w, pos_h) = positioning;
     let (auto_w, auto_h) = match size {
         ComputedBackgroundSize::Explicit { width, height } => (
-            background_length(*width, pos_w).is_none(),
-            background_length(*height, pos_h).is_none(),
+            background_length(width, pos_w).is_none(),
+            background_length(height, pos_h).is_none(),
         ),
         _ => (false, false),
     };

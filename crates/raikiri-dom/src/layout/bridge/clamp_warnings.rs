@@ -18,12 +18,12 @@ fn check(value: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) {
 /// The lengths and percentages that a `<length-percentage> | auto` value
 /// hands Taffy: percentages as fractions.
 fn check_length_percentage_or_auto(
-    value: ComputedLengthPercentageOrAuto,
+    value: &ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) {
     match value {
-        ComputedLengthPercentageOrAuto::Px(px) => check(px, site, diag),
+        ComputedLengthPercentageOrAuto::Px(px) => check(*px, site, diag),
         ComputedLengthPercentageOrAuto::Percent(percent) => check(percent / 100.0, site, diag),
         _ => {}
     }
@@ -32,13 +32,13 @@ fn check_length_percentage_or_auto(
 /// Like [`check_length_percentage_or_auto`], for a preferred size, whose
 /// `fit-content()` limit is handed to Taffy as well.
 fn check_size(
-    value: ComputedLengthPercentageOrAuto,
+    value: &ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) {
     match value {
         ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(px)) => {
-            check(px, site, diag);
+            check(*px, site, diag);
         }
         ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Percent(
             percent,
@@ -56,21 +56,21 @@ pub(super) fn report_non_finite_sizes(
     vertical_axes: bool,
     diag: &mut Vec<LayoutWarn>,
 ) {
-    check_size(cv.width, "width", diag);
-    check_size(cv.height, "height", diag);
+    check_size(&cv.width, "width", diag);
+    check_size(&cv.height, "height", diag);
     for (value, site) in [
-        (cv.top, "top"),
-        (cv.right, "right"),
-        (cv.bottom, "bottom"),
-        (cv.left, "left"),
+        (&cv.top, "top"),
+        (&cv.right, "right"),
+        (&cv.bottom, "bottom"),
+        (&cv.left, "left"),
     ] {
         check_length_percentage_or_auto(value, site, diag);
     }
     for margin in [
-        cv.margin.top,
-        cv.margin.right,
-        cv.margin.bottom,
-        cv.margin.left,
+        &cv.margin.top,
+        &cv.margin.right,
+        &cv.margin.bottom,
+        &cv.margin.left,
     ] {
         check_length_percentage_or_auto(margin, "margin", diag);
     }
@@ -89,10 +89,10 @@ pub(super) fn report_non_finite_sizes(
         }
     }
     for (value, site) in [
-        (cv.min_width, "min-width"),
+        (&cv.min_width, "min-width"),
         (physical_min_height(cv, vertical_axes), "min-height"),
-        (cv.max_width, "max-width"),
-        (cv.max_height, "max-height"),
+        (&cv.max_width, "max-width"),
+        (&cv.max_height, "max-height"),
     ] {
         check_length_percentage_or_auto(value, site, diag);
     }

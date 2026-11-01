@@ -8,6 +8,8 @@ use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 mod calc_handle_tests;
 mod core_tests;
+mod inline_box_tests;
+mod math_tests;
 mod owned_tests;
 mod physical_sizing_tests;
 mod policy_tests;
@@ -219,3 +221,24 @@ mod pass_tests;
 
 mod block_tests;
 mod bridge_projection_tests;
+
+pub(crate) fn comparison(
+    source: &str,
+) -> std::sync::Arc<raikiri_style::property::ComputedLengthMath> {
+    use raikiri_style::property::{LengthMath, LengthOrAuto};
+    use raikiri_style::{ComputedLength, ResolveContext, resolve_size_length_percentage_or_auto};
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let specified = LengthMath::parse(&mut parser).expect("valid comparison fixture");
+    parser.expect_exhausted().unwrap();
+    let value = resolve_size_length_percentage_or_auto(
+        LengthOrAuto::Math(specified),
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let L::Math(value) = value else {
+        panic!("percentage tree must survive")
+    };
+    value
+}

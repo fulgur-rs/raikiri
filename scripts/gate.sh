@@ -413,11 +413,12 @@ echo
 echo "-- scripts/public-api-lint.sh --"
 # Fails when a public item of a consumer-facing crate names a Taffy type in its
 # signature, fields or trait impls, or when a published crate names a type of a
-# crate it is not allowed to. It reads the rustdoc JSON of the workspace,
-# which it builds itself (cargo doc --no-deps, reusing the dependency build of
-# the steps above). See scripts/lib/public_api_lint.py's module docstring.
+# crate it is not allowed to, or when a visible name of a published crate is
+# outside the first tier of docs/public-api.md (the --first-tier report). It
+# reads the rustdoc JSON of the workspace, which it builds itself (cargo doc
+# --no-deps, reusing the dependency build of the steps above). See scripts/lib/public_api_lint.py's module docstring.
 if ! "$SCRIPT_DIR/public-api-lint.sh"; then
-  echo "FAIL: scripts/public-api-lint.sh found a Taffy type, or a type of an unlisted crate, in a public API"
+  echo "FAIL: scripts/public-api-lint.sh found a Taffy type or a type of an unlisted crate in a public API, or a name outside the first tier"
   FAIL=1
 fi
 echo

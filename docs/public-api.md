@@ -112,10 +112,12 @@ two more things with the same exit status: a name in the list below that no
 crate publishes any more, and a link in the docs of a visible item to a hidden
 item, which the rendered docs would show as a dead link (write the bare name
 in a code span instead; a `crate::…` path in a plain span is what the
-documentation rule keeps for intra-doc links). The report is empty at this point and must be empty
-at the first publication. Adding a name that fulgur-raikiri
-starts to use means adding it below; a new `pub` item that no consumer reaches
-is hidden.
+documentation rule keeps for intra-doc links). The gate (`scripts/gate.sh` and
+CI) runs the same report and fails unless it is empty, so the first tier holds
+at the first publication and after it. A change that adds a visible `pub` item
+to a published crate therefore does one of two things: it adds
+`#[doc(hidden)]` when only crates of this workspace call the item, or it adds
+the name to the list below when fulgur-raikiri starts to use it.
 
 <!-- first-tier-names:begin -->
 ```text
@@ -465,8 +467,11 @@ soundness is theirs.
 ## Gates
 
 - `scripts/public-api-lint.sh` runs in `scripts/gate.sh` and in CI. It fails
-  when a public item names a Taffy type, and when a published crate names a
-  type of a crate that `THIRD_PARTY_ALLOWED` does not list.
+  when a public item names a Taffy type, when a published crate names a
+  type of a crate that `THIRD_PARTY_ALLOWED` does not list, and when the
+  `--first-tier` report is not empty (a visible name outside the first tier, a
+  stale listed name, a link to a hidden item, or an exhaustive type that is
+  not a listed value type).
 - Every crate that can contain `unsafe` code is checked by the compiler:
   seven publishable crates forbid it and `raikiri-layout-style` denies it
   outside three `Send` impls (the section on soundness above).

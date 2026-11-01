@@ -2635,6 +2635,9 @@ fn inherited_box_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
             LengthOrAuto::Length(Length::Percent(percent))
         }
         ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+        ComputedLengthPercentageOrAuto::Math(value) => {
+            LengthOrAuto::Math(crate::property::LengthMath::from_computed(&value))
+        }
         ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
         ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
@@ -2679,28 +2682,40 @@ fn box_defaulting_value(
     };
     let (physical_width, physical_height) = inherited_physical_sizes(inherited);
     Some(match key {
-        PropertyKey::MarginTop => PropertyValue::MarginTop(margin(inherited.margin.top)),
-        PropertyKey::MarginRight => PropertyValue::MarginRight(margin(inherited.margin.right)),
-        PropertyKey::MarginBottom => PropertyValue::MarginBottom(margin(inherited.margin.bottom)),
-        PropertyKey::MarginLeft => PropertyValue::MarginLeft(margin(inherited.margin.left)),
+        PropertyKey::MarginTop => PropertyValue::MarginTop(margin(inherited.margin.top.clone())),
+        PropertyKey::MarginRight => {
+            PropertyValue::MarginRight(margin(inherited.margin.right.clone()))
+        }
+        PropertyKey::MarginBottom => {
+            PropertyValue::MarginBottom(margin(inherited.margin.bottom.clone()))
+        }
+        PropertyKey::MarginLeft => PropertyValue::MarginLeft(margin(inherited.margin.left.clone())),
         PropertyKey::PaddingTop => PropertyValue::PaddingTop(padding(inherited.padding.top)),
         PropertyKey::PaddingRight => PropertyValue::PaddingRight(padding(inherited.padding.right)),
         PropertyKey::PaddingBottom => {
             PropertyValue::PaddingBottom(padding(inherited.padding.bottom))
         }
         PropertyKey::PaddingLeft => PropertyValue::PaddingLeft(padding(inherited.padding.left)),
-        PropertyKey::Top => PropertyValue::Top(size_or_offset(inherited.top)),
-        PropertyKey::Right => PropertyValue::Right(size_or_offset(inherited.right)),
-        PropertyKey::Bottom => PropertyValue::Bottom(size_or_offset(inherited.bottom)),
-        PropertyKey::Left => PropertyValue::Left(size_or_offset(inherited.left)),
+        PropertyKey::Top => PropertyValue::Top(size_or_offset(inherited.top.clone())),
+        PropertyKey::Right => PropertyValue::Right(size_or_offset(inherited.right.clone())),
+        PropertyKey::Bottom => PropertyValue::Bottom(size_or_offset(inherited.bottom.clone())),
+        PropertyKey::Left => PropertyValue::Left(size_or_offset(inherited.left.clone())),
         PropertyKey::Width => PropertyValue::Width(size_or_offset(physical_width)),
         PropertyKey::Height => {
             PropertyValue::Height(size_or_offset(inherited_height(inherited, physical_height)))
         }
-        PropertyKey::MinWidth => PropertyValue::MinWidth(size_or_offset(inherited.min_width)),
-        PropertyKey::MinHeight => PropertyValue::MinHeight(size_or_offset(inherited.min_height)),
-        PropertyKey::MaxWidth => PropertyValue::MaxWidth(size_or_offset(inherited.max_width)),
-        PropertyKey::MaxHeight => PropertyValue::MaxHeight(size_or_offset(inherited.max_height)),
+        PropertyKey::MinWidth => {
+            PropertyValue::MinWidth(size_or_offset(inherited.min_width.clone()))
+        }
+        PropertyKey::MinHeight => {
+            PropertyValue::MinHeight(size_or_offset(inherited.min_height.clone()))
+        }
+        PropertyKey::MaxWidth => {
+            PropertyValue::MaxWidth(size_or_offset(inherited.max_width.clone()))
+        }
+        PropertyKey::MaxHeight => {
+            PropertyValue::MaxHeight(size_or_offset(inherited.max_height.clone()))
+        }
         _ => return None,
     })
 }
@@ -2744,16 +2759,16 @@ pub(crate) fn resolve_logical_size_keyword(
     let parent = match (marker.key, vertical) {
         (PropertyKey::InlineSize, false) | (PropertyKey::BlockSize, true) => physical_width,
         (PropertyKey::MinBlockSize, false) | (PropertyKey::MinInlineSize, true) => {
-            inherited.min_height
+            inherited.min_height.clone()
         }
         (PropertyKey::MinBlockSize, true) | (PropertyKey::MinInlineSize, false) => {
-            inherited.min_width
+            inherited.min_width.clone()
         }
         (PropertyKey::MaxBlockSize, false) | (PropertyKey::MaxInlineSize, true) => {
-            inherited.max_height
+            inherited.max_height.clone()
         }
         (PropertyKey::MaxBlockSize, true) | (PropertyKey::MaxInlineSize, false) => {
-            inherited.max_width
+            inherited.max_width.clone()
         }
         // `inline-size` of a vertical box and `block-size` of a horizontal one.
         _ => inherited_height(inherited, physical_height),
@@ -2792,12 +2807,10 @@ fn inherited_physical_sizes(
     ComputedLengthPercentageOrAuto,
     ComputedLengthPercentageOrAuto,
 ) {
-    inherited
-        .vertical_logical_size
-        .as_ref()
-        .map_or((inherited.width, inherited.height), |size| {
-            (size.width, size.height)
-        })
+    inherited.vertical_logical_size.as_ref().map_or(
+        (inherited.width.clone(), inherited.height.clone()),
+        |size| (size.width.clone(), size.height.clone()),
+    )
 }
 
 /// The `key` border-image longhand of `inherited`, mapped back to the
@@ -3193,22 +3206,22 @@ pub(crate) fn resolve_against_inherited(
             PropertyValue::BorderRadius(Box::new(inherited_border_radius_value(inherited)))
         },
         PropertyValue::MarginTopInherit => {
-            PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top))
+            PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top.clone()))
         }
         PropertyValue::MarginRightInherit => {
-            PropertyValue::MarginRight(inherited_margin_length(inherited.margin.right))
+            PropertyValue::MarginRight(inherited_margin_length(inherited.margin.right.clone()))
         }
         PropertyValue::MarginBottomInherit => {
-            PropertyValue::MarginBottom(inherited_margin_length(inherited.margin.bottom))
+            PropertyValue::MarginBottom(inherited_margin_length(inherited.margin.bottom.clone()))
         }
         PropertyValue::MarginLeftInherit => {
-            PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left))
+            PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left.clone()))
         }
         PropertyValue::MarginInherit => PropertyValue::Margin(Box::new(Sides {
-            top: inherited_margin_length(inherited.margin.top),
-            right: inherited_margin_length(inherited.margin.right),
-            bottom: inherited_margin_length(inherited.margin.bottom),
-            left: inherited_margin_length(inherited.margin.left),
+            top: inherited_margin_length(inherited.margin.top.clone()),
+            right: inherited_margin_length(inherited.margin.right.clone()),
+            bottom: inherited_margin_length(inherited.margin.bottom.clone()),
+            left: inherited_margin_length(inherited.margin.left.clone()),
         })),
         PropertyValue::BorderTopWidthCssWide(kw) => {
             PropertyValue::BorderTopWidth(resolve_border_page_longhand(kw, inherited, true, false, false))

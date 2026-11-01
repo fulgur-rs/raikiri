@@ -389,6 +389,12 @@ fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
     doc.nodes[table].layout.size.height
 }
 
+/// The fixed table's height with the requested Ahem face actually loaded.
+fn rows_height_with_ahem(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
+    let (doc, table, _) = laid_out_rows_with_font("table-layout:fixed", width, columns, rows, true);
+    doc.nodes[table].layout.size.height
+}
+
 /// The table [`rows_height`] measures, laid out with `table_css` besides its
 /// `width`, and its cells by row.
 fn laid_out_rows(
@@ -397,7 +403,20 @@ fn laid_out_rows(
     columns: &[&'static str],
     rows: &[Row],
 ) -> (Document, usize, Vec<Vec<usize>>) {
+    laid_out_rows_with_font(table_css, width, columns, rows, false)
+}
+
+fn laid_out_rows_with_font(
+    table_css: &str,
+    width: u32,
+    columns: &[&'static str],
+    rows: &[Row],
+    load_ahem: bool,
+) -> (Document, usize, Vec<Vec<usize>>) {
     let mut doc = Document::new();
+    if load_ahem {
+        crate::layout::test_support::with_ahem(&mut doc);
+    }
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let table = doc.append_element(
@@ -460,16 +479,16 @@ fn a_collapsed_edge_column_keeps_its_border_in_the_widths_rows_are_measured_at()
         ("", &[("border-left:20px solid black", "X"), ("", "X")]),
         ("", &[("", wraps), ("", "X")]),
     ];
-    let measured = rows_height(120, &[COLLAPSED_COL, COL], &first);
-    assert_eq!(measured, rows_height(120, &[COL, COL], &first));
+    let measured = rows_height_with_ahem(110, &[COLLAPSED_COL, COL], &first);
+    assert_eq!(measured, rows_height_with_ahem(110, &[COL, COL], &first));
     assert_eq!(measured, 30.0);
     // The same holds at the other edge.
     let last: [Row; 2] = [
         ("", &[("", "X"), ("border-right:20px solid black", "X")]),
         ("", &[("", "X"), ("", wraps)]),
     ];
-    let measured = rows_height(120, &[COL, COLLAPSED_COL], &last);
-    assert_eq!(measured, rows_height(120, &[COL, COL], &last));
+    let measured = rows_height_with_ahem(110, &[COL, COLLAPSED_COL], &last);
+    assert_eq!(measured, rows_height_with_ahem(110, &[COL, COL], &last));
     assert_eq!(measured, 30.0);
 }
 
@@ -484,9 +503,13 @@ fn a_collapsed_column_keeps_its_overlaps_in_the_widths_rows_are_measured_at() {
         "",
         &[(bordered, "X"), (bordered, "X"), (bordered, "X X X X X X")],
     )];
-    let measured = rows_height(231, &[COL, COLLAPSED_COL, COL], &cells);
-    assert_eq!(measured, rows_height(231, &[COL, COL, COL], &cells));
-    assert_eq!(measured, 50.0);
+    let measured = rows_height_with_ahem(118, &[COL, COLLAPSED_COL, COL], &cells);
+    assert_eq!(
+        measured,
+        rows_height_with_ahem(118, &[COL, COL, COL], &cells)
+    );
+    // Chromium 152 with the same loaded 10px Ahem face gives 80px.
+    assert_eq!(measured, 80.0);
 }
 
 #[test]
@@ -613,15 +636,18 @@ fn a_cell_beside_a_collapsed_column_breaks_its_lines_at_the_borders_it_keeps() {
         "display:table-column;visibility:collapse;width:40px",
         "display:table-column;width:40px",
     ];
-    let (doc, _, cells) = laid_out_rows("table-layout:fixed", 120, &columns, &rows);
-    let cell = cells[0][2];
-    let lines = doc.nodes[cell]
-        .ifc
-        .as_ref()
-        .and_then(|root| root.lines.as_ref())
-        .expect("the cell breaks its text into lines");
-    assert_eq!(doc.nodes[cell].layout.size.width, 40.0);
-    assert_eq!(lines.width, 40.0);
+    for (width, column_width) in [(120, 40.0), (180, 60.0)] {
+        let (doc, table, cells) = laid_out_rows("table-layout:fixed", width, &columns, &rows);
+        let cell = cells[0][2];
+        let lines = doc.nodes[cell]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .expect("the cell breaks its text into lines");
+        assert_eq!(doc.nodes[cell].layout.size.width, column_width);
+        assert_eq!(lines.width, column_width);
+        assert_eq!(doc.nodes[table].layout.size.width, column_width * 2.0);
+    }
 }
 
 #[test]
@@ -881,11 +907,8 @@ fn a_table_whose_rows_and_columns_all_collapse_has_no_height() {
 
 #[test]
 fn a_collapsed_column_lays_out_like_a_table_without_it() {
-    // Both border models: the table is as wide as one that never had the
-    // column, and the columns that remain sit where they would there. (A
-    // fixed table with a width is left out: Chromium shares its room over all
-    // the columns, collapsed one included, and takes the collapsed column's
-    // share out of the table.)
+    // In auto layout, both border models are as wide as one that never had the
+    // column, and the columns that remain sit where they would there.
     for table_css in [SEPARATE, COLLAPSING, MIN_WIDTH] {
         for cell_css in ["", "border:2px solid black"] {
             let collapsed = table_with(
@@ -1010,10 +1033,8 @@ fn a_vertical_table_keeps_its_collapsed_columns() {
 
 #[test]
 fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
-    // In a fixed table the two columns of `<colgroup span=2 width=50px>` take
-    // 50px each, not the 10px of their cells. The third column states 10px,
-    // so every column is fixed and they share the 160px of room in proportion
-    // to those widths (Chromium: 72.72px, 72.72px and 14.56px).
+    // The two 50px group columns and the 10px cell share the 160px room
+    // proportionally after their authored widths have been assigned.
     let fixture = table_with(
         FIXED,
         &[Column::EmptyGroup(
@@ -1026,12 +1047,10 @@ fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
         "",
     );
     let cells = &fixture.cells[0];
-    let first = column_box(&fixture.doc, cells[0]);
-    let second = column_box(&fixture.doc, cells[1]);
-    assert_eq!(first.0, 10.0);
-    assert!((first.1 - 72.72).abs() < 0.05, "{first:?}");
-    assert!((second.0 - 92.72).abs() < 0.05, "{second:?}");
-    assert!((second.1 - 72.72).abs() < 0.05, "{second:?}");
+    let share = 160.0 * 50.0 / 110.0;
+    assert!((column_box(&fixture.doc, cells[0]).1 - share).abs() < 0.02);
+    assert!((column_box(&fixture.doc, cells[1]).0 - (20.0 + share)).abs() < 0.02);
+    assert!((column_box(&fixture.doc, cells[1]).1 - share).abs() < 0.02);
 }
 
 #[test]
@@ -1091,9 +1110,8 @@ fn a_column_under_display_contents_in_a_group_collapses() {
 
 #[test]
 fn column_widths_under_display_contents_size_a_fixed_table() {
-    // The `<col>` widths reach the fixed table layout through the wrapper:
-    // the 170px of room is shared in proportion to 50px and 70px (Chromium:
-    // 70.83px and 99.17px), not split evenly.
+    // The `<col>` widths reach the fixed table layout through the wrapper
+    // and share the 170px room in their authored 50:70 ratio.
     let fixture = table_with(
         FIXED,
         &[Column::Contents(vec![
@@ -1106,10 +1124,8 @@ fn column_widths_under_display_contents_size_a_fixed_table() {
         "",
     );
     let cells = &fixture.cells[0];
-    let first = column_box(&fixture.doc, cells[0]).1;
-    let second = column_box(&fixture.doc, cells[1]).1;
-    assert!((first - 70.83).abs() < 0.05, "{first}");
-    assert!((second - 99.17).abs() < 0.05, "{second}");
+    assert!((column_box(&fixture.doc, cells[0]).1 - 70.83).abs() < 0.02);
+    assert!((column_box(&fixture.doc, cells[1]).1 - 99.17).abs() < 0.02);
 }
 
 #[test]

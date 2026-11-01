@@ -59,8 +59,8 @@ fn fifth_review_empty_caption_uses_grid_border_box_without_double_padding() {
 }
 
 #[test]
-fn fifth_review_all_hidden_empty_row_has_zero_height_and_one_spacing_side() {
-    for rows in [1, 2] {
+fn hidden_empty_rows_keep_authored_height_and_both_spacing_sides() {
+    for (rows, table_height) in [(1, 40.0), (2, 75.0)] {
         let (mut doc, body) = document();
         let table = element(
             &mut doc,
@@ -78,16 +78,21 @@ fn fifth_review_all_hidden_empty_row_has_zero_height_and_one_spacing_side() {
         }
         for _ in 0..2 {
             let computed = layout(&mut doc);
-            assert_eq!(doc.get_node(table).unwrap().layout().size.height, 5.0);
-            for &cell in &cells {
-                assert_eq!(doc.get_node(cell).unwrap().layout().size.height, 0.0);
-                assert_eq!(doc.get_node(cell).unwrap().layout().location.y, 5.0);
+            assert_eq!(
+                doc.get_node(table).unwrap().layout().size.height,
+                table_height
+            );
+            for (&cell, y) in cells.iter().zip([5.0, 40.0]) {
+                assert_eq!(doc.get_node(cell).unwrap().layout().size.height, 30.0);
+                assert_eq!(doc.get_node(cell).unwrap().layout().location.y, y);
             }
             let (mut reference, body) = document();
             element(
                 &mut reference,
                 body,
-                "position:absolute;left:0;top:0;width:40px;height:5px;background:green",
+                &format!(
+                    "position:absolute;left:0;top:0;width:40px;height:{table_height}px;background:green"
+                ),
             );
             let expected = layout(&mut reference);
             assert_exact_pixels(
@@ -121,7 +126,7 @@ fn fifth_review_hidden_first_middle_and_last_rows_keep_visible_row_origins() {
             cells.push(cell);
         }
         let computed = layout(&mut doc);
-        assert_eq!(doc.get_node(table).unwrap().layout().size.height, 35.0);
+        assert_eq!(doc.get_node(table).unwrap().layout().size.height, 40.0);
         let mut next_y = 5.0;
         for (index, cell) in cells.into_iter().enumerate() {
             let actual = doc.get_node(cell).unwrap().layout();
@@ -130,17 +135,20 @@ fn fifth_review_hidden_first_middle_and_last_rows_keep_visible_row_origins() {
                 actual.size.height,
                 if index == hidden_row { 0.0 } else { 10.0 }
             );
-            if index != hidden_row {
-                next_y += 15.0;
-            }
+            next_y += if index == hidden_row { 5.0 } else { 15.0 };
         }
         let (mut reference, body) = document();
         element(
             &mut reference,
             body,
-            "position:absolute;left:0;top:0;width:40px;height:35px;background:green",
+            "position:absolute;left:0;top:0;width:40px;height:40px;background:green",
         );
-        for y in [5, 20] {
+        let visible_y = match hidden_row {
+            0 => [10, 25],
+            1 => [5, 25],
+            _ => [5, 20],
+        };
+        for y in visible_y {
             element(
                 &mut reference,
                 body,
@@ -172,18 +180,18 @@ fn fifth_review_empty_row_classification_resets_for_show_collapse_and_new_conten
         "display:table-cell;height:20px;background:blue",
     );
     for (model, empty, height) in [
-        ("separate", "hide", 5.0),
+        ("separate", "hide", 30.0),
         ("separate", "show", 30.0),
-        ("separate", "hide", 5.0),
+        ("separate", "hide", 30.0),
         ("collapse", "hide", 20.0),
-        ("separate", "hide", 5.0),
+        ("separate", "hide", 30.0),
     ] {
         doc.set_element_attribute(table, "style", format!("display:table;width:40px;border-spacing:0 5px;empty-cells:{empty};border-collapse:{model};background:green")).unwrap();
         let computed = layout(&mut doc);
         assert_eq!(doc.get_node(table).unwrap().layout().size.height, height);
         assert_eq!(
             raikiri_dom::paint_rules::hides_empty_table_cell(&doc, &computed, cell),
-            height == 5.0
+            model == "separate" && empty == "hide"
         );
     }
     element(&mut doc, cell, "display:block;height:10px");
@@ -239,7 +247,7 @@ fn fifth_review_nonempty_rowspan_prevents_empty_rows_from_collapsing() {
 }
 
 #[test]
-fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() {
+fn extra_table_height_includes_hidden_empty_rows_and_preserves_mixed_rows() {
     for visible in [false, true] {
         let (mut doc, body) = document();
         let table = element(
@@ -261,11 +269,8 @@ fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() 
         );
         layout(&mut doc);
         assert_eq!(doc.get_node(table).unwrap().layout().size.height, 50.0);
-        assert_eq!(doc.get_node(hidden).unwrap().layout().size.height, 0.0);
-        assert_eq!(
-            doc.get_node(other).unwrap().layout().size.height,
-            if visible { 40.0 } else { 0.0 }
-        );
+        assert_eq!(doc.get_node(hidden).unwrap().layout().size.height, 17.5);
+        assert_eq!(doc.get_node(other).unwrap().layout().size.height, 17.5);
     }
     let (mut doc, body) = document();
     let table = element(
@@ -284,7 +289,7 @@ fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() 
     }
     layout(&mut doc);
     assert_eq!(doc.get_node(table).unwrap().layout().size.height, 50.0);
-    for (cell, height) in cells.into_iter().zip([17.5, 0.0, 17.5]) {
+    for (cell, height) in cells.into_iter().zip([15.0, 0.0, 15.0]) {
         assert_eq!(doc.get_node(cell).unwrap().layout().size.height, height);
     }
     let (mut doc, body) = document();
@@ -487,7 +492,7 @@ fn fourth_review_vertical_caption_minimum_includes_margins_and_grid_edges() {
                 &mut doc,
                 body,
                 &format!(
-                    "display:table;writing-mode:{mode};width:40px;height:40px;padding:2px;border:1px solid black;border-spacing:0 2px;background:green"
+                    "display:table;writing-mode:{mode};width:40px;height:40px;padding:2px;border:1px solid black;border-spacing:2px 0;background:green"
                 ),
             );
             let caption = element(
@@ -637,9 +642,9 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
             layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
             (parsed.dom, computed)
         };
-        // The reference boxes fill their line. A vertical table is not yet as wide as
-        // its content, so `width: fit-content` boxes would not match it.
-        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}";
+        // A vertical table is as wide as its cells, so the reference boxes shrink to
+        // their content too.
+        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}.box{width:fit-content}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}";
         let source = format!(
             "<!doctype html><style>{css}</style><table style='writing-mode:{mode}'><tr><td><div class=ink></div></td><td><div class=ink></div></td></tr></table>"
         );
@@ -656,8 +661,8 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
                 (cell.location.x, cell.location.y),
                 (12.0, 6.0 + 36.0 * index as f32)
             );
-            assert_eq!((cell.size.width, cell.size.height), (100.0, 36.0));
-            assert_eq!((cell.padding.left, cell.padding.right), (8.0, 76.0));
+            assert_eq!((cell.size.width, cell.size.height), (30.0, 36.0));
+            assert_eq!((cell.padding.left, cell.padding.right), (8.0, 6.0));
         }
         let children: Vec<_> = (0..doc.node_count())
             .filter_map(|id| {
@@ -2433,6 +2438,12 @@ fn vertical_cell_alignment_keeps_relative_insets_out_of_natural_size() {
                     "display:block;width:10px;height:10px;position:relative;{insets};background:green"
                 ),
             );
+            // Chromium gives the block-start inset priority in vertical flow.
+            let offset = if mode == "vertical-rl" && insets == "left:3px;right:7px" {
+                -7
+            } else {
+                offset
+            };
             let left = normal_left + offset;
             let (mut reference, body) = document();
             element(
@@ -2488,6 +2499,13 @@ fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() 
                 10,
             ),
         ] {
+            // The block axis follows writing mode; RTL reverses the inline axis.
+            let (raw_left, painted_left, painted_top) = if cell_direction == "direction:rtl" {
+                let left = if mode == "vertical-lr" { 3 } else { -10 };
+                (left, left, 20)
+            } else {
+                (raw_left, painted_left, 0)
+            };
             let (mut doc, body) = document();
             let table = element(
                 &mut doc,
@@ -2527,7 +2545,7 @@ fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() 
                 &mut reference,
                 body,
                 &format!(
-                    "position:absolute;left:{painted_left}px;top:0;width:{width}px;height:10px;background:green"
+                    "position:absolute;left:{painted_left}px;top:{painted_top}px;width:{width}px;height:10px;background:green"
                 ),
             );
             let expected = layout(&mut reference);
@@ -3206,5 +3224,44 @@ fn third_review_hidden_cell_descendants_only_count_restored_visible_boxes() {
             raster(scene(&doc, &computed)),
             raster(scene(&reference, &expected)),
         );
+    }
+}
+
+#[test]
+fn an_absolute_child_does_not_change_vertical_cell_flow() {
+    for (mode, left) in [("vertical-rl", 8.0), ("vertical-lr", 18.0)] {
+        for (direction, top) in [("ltr", 0.0), ("rtl", 20.0)] {
+            for absolute in [false, true] {
+                let (mut doc, body) = document();
+                let table = element(
+                    &mut doc,
+                    body,
+                    &format!(
+                        "display:table;position:relative;writing-mode:{mode};direction:{direction};width:40px;height:30px;border-spacing:0"
+                    ),
+                );
+                let row = element(&mut doc, table, "display:table-row");
+                let cell = element(
+                    &mut doc,
+                    row,
+                    "display:table-cell;width:40px;height:30px;vertical-align:middle",
+                );
+                let child = element(
+                    &mut doc,
+                    cell,
+                    "display:block;width:10px;height:10px;position:relative;left:3px;right:7px",
+                );
+                if absolute {
+                    element(&mut doc, cell, "position:absolute;width:0;height:0");
+                }
+                let _computed = layout(&mut doc);
+                let location = doc.get_node(child).unwrap().layout().location;
+                assert_eq!(
+                    (location.x, location.y),
+                    (left, top),
+                    "{mode}/{direction}/{absolute}"
+                );
+            }
+        }
     }
 }

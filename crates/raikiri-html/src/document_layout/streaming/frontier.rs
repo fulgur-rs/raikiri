@@ -312,7 +312,7 @@ fn paints_from_whole_height(values: &ComputedValues) -> bool {
 /// §10.3.7). A later child with a wider unbreakable line can widen the box
 /// and reflow every earlier line in it.
 fn has_intrinsic_width(values: &ComputedValues) -> bool {
-    match values.width {
+    match &values.width {
         ComputedLengthPercentageOrAuto::Auto => {
             values.float != FloatValue::None
                 || matches!(

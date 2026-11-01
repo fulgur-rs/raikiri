@@ -19,7 +19,7 @@ fn intrinsic_scope_preserves_unrelated_updates() {
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
         assert!(tree.style_view(parent).max_size().width.is_auto());
-        with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
+        with_flex_item_basis_bounds(tree, NodeId::from(parent), None, |tree| {
             let view = tree.style_view(child);
             assert!(view.size().width.is_auto());
             assert_eq!(view.min_size().width, Lpa::length(100.0));
@@ -34,6 +34,26 @@ fn intrinsic_scope_preserves_unrelated_updates() {
     assert_eq!(tree.style_view(child).flex_shrink(), 0.0);
     assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
     assert_eq!(tree.override_checkpoint(), 0);
+}
+
+#[test]
+fn intrinsic_scope_measures_a_stretched_item_with_the_room_of_its_container() {
+    for (room, minimum) in [(Some(50.0), 50.0), (None, 0.0)] {
+        let (mut doc, cascade, child, _) =
+            fixture_with_styles("display:flex", "flex:0 0 0px;aspect-ratio:1/1");
+        let parent = doc.nodes[child].parent.unwrap();
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+        with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
+            with_flex_item_basis_bounds(tree, NodeId::from(parent), room, |tree| {
+                assert_eq!(
+                    tree.style_view(child).min_size().width,
+                    Lpa::length(minimum),
+                    "room {room:?}"
+                );
+            });
+        });
+        assert_eq!(tree.override_checkpoint(), 0);
+    }
 }
 
 #[test]
@@ -54,7 +74,7 @@ fn intrinsic_scope_restores_marker_and_original_panic() {
             let mut run = || {
                 with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
                     assert_eq!(tree.context.flex_intrinsic_probe, Some(parent));
-                    with_flex_item_basis_bounds(tree, NodeId::from(parent), |_| {
+                    with_flex_item_basis_bounds(tree, NodeId::from(parent), None, |_| {
                         panic!("intrinsic body failure")
                     });
                 })
@@ -119,7 +139,7 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
     CHILD_PAIR.set(Some((first, second)));
     SAW_PRIOR_BOUND.set(false);
     let _reset = Reset;
-    with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |tree| {
+    with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), None, |tree| {
         assert_eq!(tree.style_view(first).min_size().width, Lpa::length(100.0));
         assert_eq!(tree.style_view(second).min_size().width, Lpa::length(200.0));
     });
@@ -134,8 +154,12 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
 #[test]
 fn intrinsic_scope_sets_the_bounded_item_cache_apart_and_keeps_the_generation() {
     use raikiri_layout_style::ViewContext;
-    let (mut doc, cascade, child, _) =
-        fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
+    // The item states `min-width: 0` so that its automatic minimum width is not
+    // measured inside the scope; this test is about where the cache answers go.
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:flex;max-width:50px",
+        "flex:1 0 100px;width:auto;min-width:0",
+    );
     let parent = doc.nodes[child].parent.unwrap();
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let id = NodeId::from(child);
@@ -168,7 +192,7 @@ fn intrinsic_scope_sets_the_bounded_item_cache_apart_and_keeps_the_generation() 
         assert_eq!(tree.cache_get(id, &input), Some(outside.clone()));
         let ordinary_epoch = tree.layout_cache_context.epoch();
         with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
-            with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
+            with_flex_item_basis_bounds(tree, NodeId::from(parent), None, |tree| {
                 // The item is measured under bounds of its own, so what it kept
                 // for its ordinary style is not read, and what it keeps now is
                 // not for the ordinary style.
@@ -220,7 +244,7 @@ fn intrinsic_scope_discards_the_saved_item_cache_when_the_generation_moves() {
         tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         let ordinary_epoch = tree.layout_cache_context.epoch();
         with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
-            with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
+            with_flex_item_basis_bounds(tree, NodeId::from(parent), None, |tree| {
                 tree.layout_cache_context.invalidate();
             });
         });
@@ -329,7 +353,7 @@ fn intrinsic_scope_dirty_descendant_preserves_original_panic() {
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
-            with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
+            with_flex_item_basis_bounds(tree, NodeId::from(parent), None, |tree| {
                 tree.layout_dirty = true;
                 panic!("dirty intrinsic descendant");
             });
@@ -369,7 +393,9 @@ fn intrinsic_scope_later_child_setup_failure_restores_prefix() {
     let _reset = Reset;
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
-            with_flex_item_basis_bounds(tree, NodeId::from(parent), |_| panic!("unreachable body"));
+            with_flex_item_basis_bounds(tree, NodeId::from(parent), None, |_| {
+                panic!("unreachable body")
+            });
         });
     }))
     .unwrap_err();

@@ -1,4 +1,4 @@
-use super::super::{Bounds, height_bounds, scoped};
+use super::super::{Bounds, HeldMargins, height_bounds, scoped};
 use super::*;
 use raikiri_layout_style::values::Dimension;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
@@ -27,6 +27,53 @@ fn input(width: f32, height: f32) -> LayoutInput {
         },
         vertical_margins_are_collapsible: Line::FALSE,
     }
+}
+
+#[test]
+fn table_stretch_remeasures_when_only_parent_held_margins_change() {
+    let mut table = 0;
+    let fixture = block_fixture_with_ahem("width:200px;height:100px", |doc, root| {
+        table = doc.append_element(
+            Some(root),
+            "div",
+            Some("display:table;height:stretch;max-height:80px;margin:5px 0 7px"),
+        );
+        doc.append_element(
+            Some(table),
+            "div",
+            Some("display:table-caption;width:30px;height:30px"),
+        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "div", Some("display:table-cell"));
+        doc.append_element(Some(cell), "div", Some("width:10px;height:10px"));
+    });
+    let mut doc = fixture.doc;
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.sync_layout_cache_mutations();
+    let inputs = LayoutInput {
+        parent_size: Size {
+            width: Some(200.0),
+            height: Some(100.0),
+        },
+        ..input(30.0, 80.0)
+    };
+    let heights = [false, true, false].map(|held| {
+        tree.context.held_margins.push(HeldMargins::new(
+            table,
+            Line {
+                start: held,
+                end: held,
+            },
+        ));
+        let height = tree
+            .compute_child_layout_with_block_ctx(NodeId::from(table), inputs, None)
+            .size
+            .height;
+        tree.context.held_margins.pop();
+        height
+    });
+    assert_eq!(heights, [100.0, 88.0, 100.0]);
 }
 
 #[test]
@@ -327,4 +374,54 @@ fn measure_lengths_keep_calc_identity_and_canonicalize_nan_and_zero() {
     assert_eq!(number(f32::NAN), number(f32::from_bits(0x7fc0_0001)));
     assert_eq!(number(-0.0), number(0.0));
     assert_ne!(number(1.0), number(2.0));
+}
+
+#[test]
+fn ratio_grid_measurements_restore_content_height_after_a_wider_measurement() {
+    let mut grid = 0;
+    let fixture = block_fixture_with_ahem("width:400px", |doc, root| {
+        grid = doc.append_element(Some(root), "div", Some("display:grid;width:min-content"));
+        let child = doc.append_element(Some(grid), "div", Some("min-width:0;aspect-ratio:2/1"));
+        doc.append_text(child, "AAAA BBBB");
+    });
+    let mut doc = fixture.doc;
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.sync_layout_cache_mutations();
+    let sizes = [0.0, 50.0, 0.0].map(|width| {
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(width),
+                height: None,
+            },
+            parent_size: Size {
+                width: Some(400.0),
+                height: None,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::MaxContent,
+            },
+            ..input(width, 0.0)
+        };
+        tree.compute_child_layout_with_block_ctx(NodeId::from(grid), inputs, None)
+            .size
+    });
+    assert_eq!(
+        sizes,
+        [
+            Size {
+                width: 0.0,
+                height: 20.0
+            },
+            Size {
+                width: 50.0,
+                height: 25.0
+            },
+            Size {
+                width: 0.0,
+                height: 20.0
+            }
+        ]
+    );
 }

@@ -22,11 +22,12 @@ use std::collections::HashMap;
 
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::fit_content_room;
+use crate::layout::dispatch::intrinsic_scopes::with_saved_probe_caches;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
-use crate::layout::taffy_adapter::LayoutCache;
+use crate::layout::taffy_adapter::{LayoutCache, columns_have_no_content_minimum};
 use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
@@ -517,8 +518,54 @@ pub(crate) fn with_oof_content_limits<R>(
     })
 }
 
-/// The `max-width` overrides that keep the absolutely positioned tables among
-/// `candidates` at least as wide as their min-content width.
+/// Used percentage padding and intrinsic width floors for tables positioned
+/// against a physical containing area. Padding refers to its inline size;
+/// width constraints continue to refer to its physical width.
+pub(super) fn table_size_overrides(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_size: Size<f32>,
+    vertical: bool,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let mut overrides = Vec::new();
+    if vertical {
+        for &candidate in candidates {
+            let idx = usize::from(candidate);
+            if !is_table_content_limits(tree, idx) {
+                continue;
+            }
+            let padding = tree.physical_style(idx).padding();
+            let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
+            for (property, edge) in [
+                (LengthProperty::PaddingTop, padding.top),
+                (LengthProperty::PaddingRight, padding.right),
+                (LengthProperty::PaddingBottom, padding.bottom),
+                (LengthProperty::PaddingLeft, padding.left),
+            ] {
+                if super::edge_depends_on_basis(edge) {
+                    let used = edge.resolve_or_zero(Some(containing_size.height));
+                    let entry = OwnedPropertyOverride::length(
+                        property,
+                        raikiri_style::ComputedLengthPercentageOrAuto::Px(used),
+                        true,
+                    )
+                    .expect("resolved pixel padding");
+                    overrides.push((key, entry));
+                }
+            }
+        }
+    }
+    let floors = tree.with_overrides(overrides.clone(), |tree| {
+        table_width_floors(tree, candidates, containing_size)
+    });
+    overrides.extend(floors);
+    overrides
+}
+
+/// Width bounds that preserve the intrinsic width of positioned tables.
+/// Horizontal tables whose used padding differs also need a minimum before
+/// the parent fixes an authored width; their intrinsic border box is kept
+/// while final column layout subtracts the used edges.
 ///
 /// A table is never narrower than its columns can be, whatever its `max-width`
 /// says (CSS Tables 3 §3, csswg-drafts#5336), but the library clamps every
@@ -527,13 +574,15 @@ pub(crate) fn with_oof_content_limits<R>(
 /// its min-content width, without its own `width`, `min-width` and `max-width`,
 /// and a `max-width` below that width is raised to it. A `max-width` the
 /// content fits in stays as it is: the library also offers the table that room
-/// to wrap its content in. `containing_width` is the width of the containing
-/// block, which the percentages resolve against.
-pub(super) fn table_max_width_floors(
+/// to wrap its content in. Width percentages use the physical width of
+/// `containing_size`; percentage padding has already been resolved by
+/// [`table_size_overrides`].
+fn table_width_floors(
     tree: &mut LayoutSession<'_>,
     candidates: &[NodeId],
-    containing_width: f32,
+    containing_size: Size<f32>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let containing_width = containing_size.width;
     let limited = candidates
         .iter()
         .copied()
@@ -542,14 +591,19 @@ pub(super) fn table_max_width_floors(
             if !is_table_content_limits(tree, idx) || ignores_content_for_width(tree, idx) {
                 return None;
             }
+            let style = tree.physical_style(idx);
+            let minimum_floor = !tree.has_vertical_writing_mode(idx)
+                && style.padding() != style.intrinsic_table_padding();
             let adjustment = box_sizing_adjustment(tree, idx, containing_width);
-            let maximum = tree
-                .physical_style(idx)
+            let maximum = style
                 .max_size()
                 .width
-                .maybe_resolve(Some(containing_width))?
-                + adjustment;
-            Some((candidate, maximum, adjustment))
+                .maybe_resolve(Some(containing_width))
+                .map(|maximum| maximum + adjustment);
+            if maximum.is_none() && !minimum_floor {
+                return None;
+            }
+            Some((candidate, maximum, adjustment, minimum_floor))
         })
         .collect::<Vec<_>>();
     if limited.is_empty() {
@@ -558,47 +612,307 @@ pub(super) fn table_max_width_floors(
     scoped(tree, |tree| {
         limited
             .into_iter()
-            .filter_map(|(node_id, maximum, adjustment)| {
+            .flat_map(|(node_id, maximum, adjustment, minimum_floor)| {
                 let idx = usize::from(node_id);
-                let along = LayoutInput {
-                    run_mode: RunMode::ComputeSize,
-                    sizing_mode: SizingMode::InherentSize,
-                    axis: RequestedAxis::Both,
-                    known_dimensions: Size::NONE,
-                    known_dimensions_are_definite: Size {
-                        width: false,
-                        height: false,
-                    },
-                    parent_size: Size {
-                        width: Some(containing_width),
-                        height: None,
-                    },
-                    available_space: Size {
-                        width: AvailableSpace::MinContent,
-                        height: AvailableSpace::MaxContent,
-                    },
-                    vertical_margins_are_collapsible: Line::FALSE,
-                };
-                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+                let minimum =
+                    min_content_width_without_limits(tree, node_id, containing_width, Vec::new());
                 use LengthProperty::*;
-                let minimum = probe(
-                    tree,
-                    node_id,
-                    key,
-                    along,
-                    neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
-                );
-                (minimum > maximum).then(|| {
-                    let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
-                    let floor = OwnedPropertyOverride::length(
-                        MaxWidth,
-                        raikiri_style::ComputedLengthPercentageOrAuto::Px(
-                            (minimum - adjustment).max(0.0),
-                        ),
+                let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
+                let mut floors = Vec::new();
+                if minimum_floor {
+                    let authored_minimum = tree
+                        .physical_style(idx)
+                        .min_size()
+                        .width
+                        .maybe_resolve(Some(containing_width))
+                        .unwrap_or(0.0)
+                        + adjustment;
+                    if minimum > authored_minimum {
+                        floors.push((
+                            key,
+                            OwnedPropertyOverride::length(
+                                MinWidth,
+                                raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                                    (minimum - adjustment).max(0.0),
+                                ),
+                                true,
+                            )
+                            .expect("resolved pixel bound"),
+                        ));
+                    }
+                }
+                if maximum.is_some_and(|maximum| minimum > maximum) {
+                    floors.push((
+                        key,
+                        OwnedPropertyOverride::length(
+                            MaxWidth,
+                            raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                                (minimum - adjustment).max(0.0),
+                            ),
+                            true,
+                        )
+                        .expect("resolved pixel bound"),
+                    ));
+                }
+                floors
+            })
+            .collect()
+    })
+}
+
+/// The min-content border-box width of the out-of-flow box `node_id`, measured
+/// without its `width`, `min-width` and `max-width` and with the `extra`
+/// overrides, as a box in a containing block `containing_width` wide.
+fn min_content_width_without_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    containing_width: f32,
+    extra: Vec<OwnedPropertyOverride>,
+) -> f32 {
+    let idx = usize::from(node_id);
+    let along = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(containing_width),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::MinContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+    use LengthProperty::*;
+    let mut neutral = neutral_size_overrides(&[Width, MinWidth, MaxWidth]);
+    neutral.extend(extra);
+    probe(tree, node_id, key, along, neutral)
+}
+
+/// The padding and border of the box `idx` summed along each axis, whatever its
+/// `box-sizing`: the smallest border box it can have.
+fn padding_border_sum(tree: &LayoutSession<'_>, idx: usize, basis: Option<f32>) -> Size<f32> {
+    let style = tree.physical_style(idx);
+    (style.padding().resolve_or_zero(basis) + style.border().resolve_or_zero(basis)).sum_axes()
+}
+
+/// Lay out a vertical flex or grid container with any authored ratio source
+/// size raised to its padding and border before its axes are transposed.
+/// Parent-imposed dimensions and intrinsic content measurements stay intact.
+pub(super) fn with_vertical_ratio_stated_size_clamp(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    layout: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    if !tree.has_vertical_writing_mode(idx)
+        || inputs.sizing_mode != SizingMode::InherentSize
+        || tree.nodes[idx].ratio_in_content_box
+    {
+        return layout(tree, node_id, inputs);
+    }
+    let padding_basis = super::vertical_block::containing_inline_size(tree, idx, &inputs);
+    let Some(clamp) = ratio_stated_size_clamp(tree, idx, inputs.parent_size, padding_basis) else {
+        return layout(tree, node_id, inputs);
+    };
+    with_saved_probe_caches(tree, 1, |tree, saved| {
+        saved.push((idx, tree.take_layout_cache(idx)));
+        tree.push_local_overrides(vec![clamp]);
+        layout(tree, node_id, inputs)
+    })
+}
+
+/// The border-box sizes of the out-of-flow `candidates` with an aspect ratio
+/// that are smaller than the padding and border they hold, raised to them.
+///
+/// A border box is no smaller than its padding and border, and the ratio
+/// relates the box that results. The library derives the size the box does not
+/// state from the one it states before it raises that to the padding and
+/// border, so `aspect-ratio: 2 / 1; height: 40px` with 25px of border would be
+/// 80px wide, not 100px as the 50px-tall box is.
+pub(super) fn ratio_stated_size_clamps(
+    tree: &LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_size: Size<f32>,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    candidates
+        .iter()
+        .filter_map(|&candidate| {
+            ratio_stated_size_clamp(
+                tree,
+                usize::from(candidate),
+                containing_size.map(Some),
+                Some(containing_size.width),
+            )
+        })
+        .collect()
+}
+
+/// One authored physical ratio source below its edge floor, resolved with
+/// independent physical size and containing-inline padding bases.
+fn ratio_stated_size_clamp(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    size_basis: Size<Option<f32>>,
+    padding_basis: Option<f32>,
+) -> Option<(BoxKey, OwnedPropertyOverride)> {
+    let style = tree.physical_style(idx);
+    if style.stated_aspect_ratio().is_none() || style.box_sizing() == BoxSizing::ContentBox {
+        return None;
+    }
+    let edges = padding_border_sum(tree, idx, padding_basis);
+    let size = style.size();
+    // The ratio derives a size only from the one the box states in the
+    // other axis, so a box that states both has nothing to relate.
+    for (property, stated, other, floor, basis) in [
+        (
+            LengthProperty::Width,
+            size.width,
+            size.height,
+            edges.width,
+            size_basis.width,
+        ),
+        (
+            LengthProperty::Height,
+            size.height,
+            size.width,
+            edges.height,
+            size_basis.height,
+        ),
+    ] {
+        if other.is_auto()
+            && stated
+                .maybe_resolve(basis)
+                .is_some_and(|stated| stated < floor)
+        {
+            let entry = OwnedPropertyOverride::length(
+                property,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px(floor),
+                true,
+            )
+            .expect("resolved pixel size");
+            let key = tree.nodes.box_key(idx).expect("live aspect-ratio box");
+            return Some((key, entry));
+        }
+    }
+    None
+}
+
+/// Whether the `min-height` of the out-of-flow box `idx`, if it states one, is
+/// no taller than the border-box height the box states. Such a minimum leaves
+/// the height as it is, and so the width the ratio gives for it.
+fn min_height_is_met(tree: &LayoutSession<'_>, idx: usize, containing_size: Size<f32>) -> bool {
+    let style = tree.physical_style(idx);
+    if style.min_size().height.is_auto() {
+        return true;
+    }
+    let basis = Some(containing_size.height);
+    let adjustment = box_sizing_height_adjustment(tree, idx, containing_size.width);
+    let edges = padding_border_sum(tree, idx, Some(containing_size.width)).height;
+    match (
+        style.min_size().height.maybe_resolve(basis),
+        style.size().height.maybe_resolve(basis),
+    ) {
+        (Some(minimum), Some(height)) => minimum + adjustment <= (height + adjustment).max(edges),
+        _ => false,
+    }
+}
+
+/// The automatic minimum width of the out-of-flow `candidates` whose width
+/// follows from a height they state through their aspect ratio: their
+/// min-content width, which the content raises that width to unless the box
+/// scrolls or states a `min-width` (CSS Sizing 4 §5.1). The `max-width` of the
+/// box caps it.
+///
+/// The library takes the width the ratio gives for an out-of-flow box as final,
+/// so a box whose content needs more room is narrower than its content. It
+/// clamps that width to the `min-width` of the box, so the floor goes there. A
+/// minimum width carries across the ratio into a minimum height, which a box
+/// that states its height must not get, so the minimum height is `0`. A box
+/// that states a `min-height` taller than its height keeps the minimum width
+/// that carries across the ratio from it, and is left alone.
+///
+/// The width is measured without the `width`, `min-width`, `max-width` and
+/// aspect ratio of the box, at its min-content size.
+pub(super) fn ratio_width_floors(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_size: Size<f32>,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let containing_width = containing_size.width;
+    let following = candidates
+        .iter()
+        .copied()
+        .filter(|&candidate| {
+            let idx = usize::from(candidate);
+            if tree.nodes[idx].content_limits != ContentLimits::NONE
+                || is_table_content_limits(tree, idx)
+                || is_replaced_content(tree, idx)
+                || tree.has_vertical_writing_mode(idx)
+            {
+                return false;
+            }
+            let style = tree.physical_style(idx);
+            style.stated_aspect_ratio().is_some()
+                && style.size().width.is_auto()
+                && style.min_size().width.is_auto()
+                && min_height_is_met(tree, idx, containing_size)
+                && !style.overflow().x.is_scroll_container()
+                && style
+                    .size()
+                    .height
+                    .maybe_resolve(Some(containing_size.height))
+                    .is_some()
+        })
+        .collect::<Vec<_>>();
+    if following.is_empty() {
+        return Vec::new();
+    }
+    scoped(tree, |tree| {
+        following
+            .into_iter()
+            .flat_map(|node_id| {
+                let idx = usize::from(node_id);
+                // The height of the box is no part of its intrinsic width: a
+                // wrapping column container breaks its items into columns at
+                // the room it is given, not at the height it ends up with.
+                let mut unlimited = vec![OwnedPropertyOverride::aspect_ratio(None)];
+                unlimited.extend(neutral_size_overrides(&[
+                    LengthProperty::Height,
+                    LengthProperty::MinHeight,
+                    LengthProperty::MaxHeight,
+                ]));
+                let minimum =
+                    min_content_width_without_limits(tree, node_id, containing_width, unlimited);
+                let adjustment = box_sizing_adjustment(tree, idx, containing_width);
+                let maximum = tree
+                    .physical_style(idx)
+                    .max_size()
+                    .width
+                    .maybe_resolve(Some(containing_width))
+                    .map(|maximum| maximum + adjustment);
+                let floor = maximum.map_or(minimum, |maximum| minimum.min(maximum));
+                let key = tree.nodes.box_key(idx).expect("live out-of-flow box");
+                let floors = [
+                    (LengthProperty::MinWidth, (floor - adjustment).max(0.0)),
+                    (LengthProperty::MinHeight, 0.0),
+                ];
+                floors.into_iter().map(move |(property, size)| {
+                    let entry = OwnedPropertyOverride::length(
+                        property,
+                        raikiri_style::ComputedLengthPercentageOrAuto::Px(size),
                         true,
                     )
                     .expect("resolved pixel bound");
-                    (key, floor)
+                    (key, entry)
                 })
             })
             .collect()
@@ -829,10 +1143,126 @@ pub(super) fn with_item_content_limits(
     with_item_content_limits_for_parent_sizes(tree, node_id, inputs, |_| parent_size, dispatch)
 }
 
+/// The in-flow items of the grid container `node_id` that a measure of the
+/// container's min-content width must not widen past their `min-width`, each
+/// with that `min-width` in the box-sizing box of the item's style.
+///
+/// Sized under a min-content constraint, a track takes the min-content
+/// contribution of an item in place of its minimum contribution (CSS Grid 2
+/// §11.5). Browsers do this only for an item whose `min-width` is `auto`: one
+/// that states a `min-width` contributes no more than that, so a grid of
+/// `min-width: 0` items can be as narrow as `0`. Taffy takes the min-content
+/// contribution of every item that is not a scroll container, so the items
+/// here are measured as if their `width` were their `min-width`, which makes
+/// both contributions the minimum one.
+fn items_held_to_minimum_width(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> Vec<(usize, f32)> {
+    if inputs.run_mode != RunMode::ComputeSize
+        || inputs.known_dimensions.width.is_some()
+        || !matches!(inputs.available_space.width, AvailableSpace::MinContent)
+        || super::grid_oof::right_to_left(tree, usize::from(node_id)).is_some()
+        || !columns_have_no_content_minimum(&tree.physical_style(usize::from(node_id)))
+    {
+        return Vec::new();
+    }
+    tree.child_ids(node_id)
+        .filter_map(|child| {
+            let idx = usize::from(child);
+            if tree.nodes[idx].layout_display() == Display::None
+                || is_oof_box(tree, idx)
+                || tree.context.content_limit_probes.contains(&idx)
+            {
+                return None;
+            }
+            let style = tree.physical_style(idx);
+            // This probe measures only the minimum width contribution.
+            // Replaced items keep their natural ratio in the authored-style
+            // layout that follows, even when that size overflows the track.
+            if !style.size().width.is_auto() || super::is_scroll_container(style.overflow()) {
+                return None;
+            }
+            // Cyclic minimum-size percentages resolve against zero for the
+            // intrinsic contribution, including those inside calc(). The
+            // authored expression is restored for the final track-based size
+            // (CSS Sizing 3 section 5.2.1).
+            let minimum = match style.min_size().width.expand() {
+                ExpandedLengthPercentageAuto::Length(minimum) => minimum,
+                ExpandedLengthPercentageAuto::Percent(_) => 0.0,
+                ExpandedLengthPercentageAuto::Calc(_) => {
+                    crate::layout::used_style_length_percentage_auto(style.min_size().width, 0.0)?
+                        .max(0.0)
+                }
+                _ => return None,
+            };
+            Some((idx, minimum))
+        })
+        .collect()
+}
+
+/// Lay out the grid `node_id` with `dispatch`, measuring its min-content width
+/// with the items [`items_held_to_minimum_width`] names held to their
+/// `min-width`.
+///
+/// The width is measured on its own, without the rows, since an item held to
+/// its minimum is narrower than the track it stands in whenever another item
+/// of the track is wider. Every other measure of the grid then runs at that
+/// width, with the items as the author styled them.
+pub(super) fn with_grid_item_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    parent_size: Size<Option<f32>>,
+    mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let held = items_held_to_minimum_width(tree, node_id, &inputs);
+    if held.is_empty() {
+        return with_resolved_grid_item_limits(tree, node_id, inputs, parent_size, dispatch);
+    }
+
+    let width_inputs = LayoutInput {
+        axis: RequestedAxis::Horizontal,
+        ..inputs
+    };
+    // The override changes the inputs the box inside an item is asked with and
+    // the item's own sizes, so it stays out of the cache generation and the
+    // item's caches are kept apart while it lasts. Moving the generation would
+    // have a chain of nested grids measure the one inside it again at each width
+    // its parent tries.
+    let width_output = scoped(tree, |tree| {
+        with_saved_probe_caches(tree, held.len(), |tree, saved| {
+            for &(idx, minimum) in &held {
+                let key = tree.nodes.box_key(idx).expect("live grid item");
+                let width = OwnedPropertyOverride::length(
+                    LengthProperty::Width,
+                    raikiri_style::ComputedLengthPercentageOrAuto::Px(minimum),
+                    true,
+                )
+                .expect("resolved pixel width");
+                saved.push((idx, tree.take_layout_cache(idx)));
+                tree.push_local_overrides(vec![(key, width)]);
+            }
+            with_resolved_grid_item_limits(tree, node_id, width_inputs, parent_size, &mut dispatch)
+        })
+    });
+    if inputs.axis == RequestedAxis::Horizontal {
+        return width_output;
+    }
+
+    let width = width_output.size.width;
+    let mut inputs = inputs;
+    inputs.known_dimensions.width = Some(width);
+    inputs.known_dimensions_are_definite.width = true;
+    inputs.available_space.width = AvailableSpace::Definite(width);
+    with_resolved_grid_item_limits(tree, node_id, inputs, parent_size, dispatch)
+}
+
 /// Resolve percentage fit-content and `stretch` limits on grid items against
 /// the grid area sizes from a preliminary track layout, then lay out the grid
 /// with those resolved limits installed.
-pub(super) fn with_grid_item_content_limits(
+fn with_resolved_grid_item_limits(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
@@ -1919,7 +2349,8 @@ pub(super) fn stretch_fit_width(
 /// its margins out of the room; a block child keeps those its parent holds in
 /// (see [`HeldMargins`]). Without a definite height the keyword has no effect.
 /// An out-of-flow box stretches to the room between its insets instead.
-pub(super) fn stretch_fit_height(
+/// Shared with table sizing before the grid's height limits are applied.
+pub(in crate::layout) fn stretch_fit_height(
     tree: &LayoutSession<'_>,
     idx: usize,
     inputs: &LayoutInput,
@@ -1962,11 +2393,14 @@ impl HeldMargins {
     }
 }
 
-/// Whether the box `child` states a `stretch` height as a `min-height` or a
-/// `max-height`.
-pub(crate) fn has_stretch_height_limit(tree: &LayoutSession<'_>, child: usize) -> bool {
+/// Whether sizing needs the parent's held-margin context for a stretch
+/// height limit, or for a table's own stretch height before its grid limits.
+pub(crate) fn needs_stretch_height_room(tree: &LayoutSession<'_>, child: usize) -> bool {
     let limits = tree.nodes[child].content_limits;
-    is_stretch(limits.min.height) || is_stretch(limits.max.height)
+    is_stretch(limits.min.height)
+        || is_stretch(limits.max.height)
+        || (is_table_content_limits(tree, child)
+            && is_stretch(tree.physical_style(child).size().height))
 }
 
 /// Whether the box `child` states a `stretch` width as a `min-width` and as a

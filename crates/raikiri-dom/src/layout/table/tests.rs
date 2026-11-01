@@ -15,6 +15,7 @@ use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentage
 
 mod absolute_table_caption_tests;
 mod absolute_table_width_tests;
+mod alignment_height_tests;
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
 mod authored_length_tests;
@@ -22,6 +23,7 @@ pub(super) mod border_scope_tests;
 mod border_state_tests;
 mod cache_tests;
 mod cell_index_tests;
+mod cell_maximum_tests;
 pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
 mod intrinsic_keyword_tests;
@@ -29,6 +31,7 @@ mod part_containing_block_tests;
 mod percent_column_width_tests;
 mod rowspan_tests;
 mod sparse_border_tests;
+mod vertical_static_position_tests;
 mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;
 
@@ -142,9 +145,11 @@ fn place_cells_in_session(
                 row_spacing: spacing.1,
                 vertical_writing,
                 height_is_definite: true,
+                stretch_height_is_resolved: false,
             },
             &mut oof_candidates,
         )
+        .map(|_| ())
     })
 }
 
@@ -1348,8 +1353,18 @@ fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
     let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let first = doc.append_element(Some(row), "td", Some("display: table-cell"));
     let second = doc.append_element(Some(row), "td", Some("display: table-cell"));
-    let _first_child = doc.append_element(Some(first), "div", Some("width: 50px; height: 100px"));
-    let _second_child = doc.append_element(Some(second), "div", Some("width: 50px; height: 100px"));
+    // This programmatic document has no UA stylesheet; request block boxes
+    // explicitly so their dimensions apply in every writing mode.
+    let _first_child = doc.append_element(
+        Some(first),
+        "div",
+        Some("display: block; width: 50px; height: 100px"),
+    );
+    let _second_child = doc.append_element(
+        Some(second),
+        "div",
+        Some("display: block; width: 50px; height: 100px"),
+    );
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade");
@@ -1690,12 +1705,13 @@ fn collapse_overlaps_adjoining_borders_by_pairwise_min() {
         "collapsed interior line should overlap by 4px, got {overlap}"
     );
     let tl = doc.nodes[table_idx].layout;
-    // Right-flush invariant: the last cell's far edge plus the 4px
-    // collapsed outer border (no padding, no table border) meets the
-    // table's right edge — the interior overlap must not leave slack.
+    // Right-flush invariant: the 4px border of the last cell is the table's
+    // right edge (no padding, no table border), so the cell's far edge meets
+    // it — the interior overlap must not leave slack, and the border must not
+    // be counted again outside the cell.
     assert!(
-        (tl.size.width - (l1.location.x + l1.size.width + 4.0)).abs() < 2.0,
-        "table right edge should flush with last cell + outer collapsed border, got {}",
+        (tl.size.width - (l1.location.x + l1.size.width)).abs() < 1.0,
+        "table right edge should flush with the last cell, got {}",
         tl.size.width
     );
 }
@@ -2195,10 +2211,12 @@ fn fixed_cell(row: u16, col_start: u16, col_span: u16, width: Dimension) -> supe
         col_span,
         row_span: 1,
         specified_width: width,
+        percent_border_padding: 0.0,
         specified_min_width: Dimension::auto(),
-        fixed_extra: 0.0,
         resolved: None,
         natural_height: 0.0,
+        measured_height: 0.0,
+        alignment: None,
         baseline: 0.0,
         baseline_from_flow: false,
         row_pass: None,
@@ -2216,7 +2234,7 @@ fn resolve_fixed_column_widths_first_row_length_fixes_column_remainder_splits() 
         ],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [100.0, 300.0]);
 }
 
@@ -2236,7 +2254,7 @@ fn fixed_auto_columns_keep_free_space_while_respecting_first_row_floors() {
             col_widths: vec![],
         };
         assert_eq!(
-            super::resolve_fixed_column_widths(&grid, 50.0, true),
+            super::resolve_fixed_column_widths(&grid, 50.0, 0.0),
             expected
         );
     }
@@ -2253,7 +2271,7 @@ fn fixed_first_row_colspan_minimum_grows_its_columns() {
         col_widths: vec![],
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 40.0, true),
+        super::resolve_fixed_column_widths(&grid, 40.0, 0.0),
         [30.0, 30.0]
     );
 }
@@ -2411,7 +2429,7 @@ fn resolve_fixed_column_widths_first_row_percent_resolves_against_avail() {
         ],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [100.0, 300.0]);
 }
 
@@ -2428,7 +2446,7 @@ fn resolve_fixed_column_widths_ignores_non_first_row_width() {
         ],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [200.0, 200.0]);
 }
 
@@ -2441,7 +2459,7 @@ fn resolve_fixed_column_widths_spanning_first_row_width_leaves_no_auto_columns()
         cells: vec![fixed_cell(0, 0, 2, Dimension::length(300.0))],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [200.0, 200.0]);
 }
 
@@ -2454,7 +2472,7 @@ fn a_first_row_span_leaves_the_remainder_for_other_auto_columns() {
         col_widths: vec![],
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 400.0, true),
+        super::resolve_fixed_column_widths(&grid, 400.0, 0.0),
         [100.0, 100.0, 200.0]
     );
 }
@@ -2483,7 +2501,7 @@ fn resolve_fixed_column_widths_col_element_length_fixes_unspecified_column() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [60.0, 340.0]);
 }
 
@@ -2511,7 +2529,7 @@ fn resolve_fixed_column_widths_col_element_takes_priority_over_first_row_cell() 
     };
 
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 400.0, true),
+        super::resolve_fixed_column_widths(&grid, 400.0, 0.0),
         [50.0, 350.0]
     );
 }
@@ -2535,7 +2553,7 @@ fn resolve_fixed_column_widths_col_element_percent_resolves_against_avail() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [200.0, 200.0]);
 }
 
@@ -2560,33 +2578,8 @@ fn resolve_fixed_column_widths_col_element_min_only_floors_column() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [50.0, 350.0]);
-}
-
-#[test]
-fn resolve_fixed_column_widths_col_minimum_does_not_make_a_column_share_the_room() {
-    // The first column is fixed only by its minimum, not by a width it
-    // states, so the room the columns leave is not shared out.
-    let grid = super::TableGrid {
-        n_cols: 2,
-        rows: vec![],
-        cells: vec![],
-        col_widths: vec![
-            super::ColSizing {
-                width: Dimension::auto(),
-                min_width: Dimension::length(50.0),
-                max_width: Dimension::auto(),
-            },
-            super::ColSizing {
-                width: Dimension::length(100.0),
-                min_width: Dimension::auto(),
-                max_width: Dimension::auto(),
-            },
-        ],
-    };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
-    assert_eq!(widths, [50.0, 100.0]);
 }
 
 #[test]
@@ -2608,7 +2601,7 @@ fn resolve_fixed_column_widths_col_element_width_clamped_by_max_width() {
             },
         ],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [60.0, 340.0]);
 }
 
@@ -2623,7 +2616,7 @@ fn resolve_fixed_column_widths_underflow_clamps_unfixed_columns_to_zero() {
         cells: vec![fixed_cell(0, 0, 1, Dimension::length(500.0))],
         col_widths: vec![],
     };
-    let widths = super::resolve_fixed_column_widths(&grid, 400.0, true);
+    let widths = super::resolve_fixed_column_widths(&grid, 400.0, 0.0);
     assert_eq!(widths, [500.0, 0.0]);
 }
 
@@ -2872,10 +2865,12 @@ fn make_cell(
         col_span,
         row_span,
         specified_width: width,
+        percent_border_padding: 0.0,
         specified_min_width: Dimension::auto(),
-        fixed_extra: 0.0,
         resolved: None,
         natural_height: 0.0,
+        measured_height: 0.0,
+        alignment: None,
         baseline: 0.0,
         baseline_from_flow: false,
         row_pass: None,
@@ -2915,11 +2910,14 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         ],
         col_widths: vec![],
     };
+    // The narrowest border of the edge cells is 4 on the left, 2 on the right,
+    // 2 at the top and 3 at the bottom; the table's own border shows outside
+    // the cells where it is wider than that.
     let table_border = Edges {
-        left: 1.0,
+        left: 7.0,
         right: 1.0,
-        top: 1.0,
-        bottom: 1.0,
+        top: 5.0,
+        bottom: 9.0,
     };
     let lines = compute_collapsed_lines_in_document(
         &mut doc,
@@ -2939,10 +2937,50 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         vec![4.0],
         "col0 min(4,6)=4 vs col1 min(2,3)=2 -> max 4"
     );
-    assert_eq!(lines.outer_left, 6.0);
-    assert_eq!(lines.outer_right, 3.0);
-    assert_eq!(lines.outer_top, 4.0);
-    assert_eq!(lines.outer_bottom, 6.0);
+    assert_eq!(lines.outer_left, 3.0, "7 beyond the 4 of c00");
+    assert_eq!(lines.outer_right, 0.0, "1 is within the 2 of c01");
+    assert_eq!(lines.outer_top, 3.0, "5 beyond the 2 of c01");
+    assert_eq!(lines.outer_bottom, 6.0, "9 beyond the 3 of c11");
+}
+
+#[test]
+fn compute_collapsed_lines_keeps_room_for_the_table_border_beside_a_cell_without_one() {
+    // Two rows of one cell. The first cell has a 3px border and the second
+    // none, so the table's 2px border is the second cell's edge: the table
+    // keeps those 2px outside, where the content of that cell is clear of the
+    // border, though the first cell has more than that itself.
+    let mut doc = Document::new();
+    let wide = bordered_cell(&mut doc, 3.0);
+    let bare = bordered_cell(&mut doc, 0.0);
+    let grid = super::TableGrid {
+        n_cols: 1,
+        rows: vec![0, 0],
+        cells: vec![
+            make_cell(wide, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(bare, 1, 0, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![],
+    };
+    let table_border = Edges {
+        left: 2.0,
+        right: 2.0,
+        top: 2.0,
+        bottom: 2.0,
+    };
+    let lines = compute_collapsed_lines_in_document(
+        &mut doc,
+        &grid,
+        &super::CellIndex::new(&grid),
+        &table_border,
+        None,
+    );
+    assert_eq!(lines.outer_left, 2.0);
+    assert_eq!(lines.outer_right, 2.0);
+    assert_eq!(lines.outer_top, 0.0, "the first cell has 3px at the top");
+    assert_eq!(
+        lines.outer_bottom, 2.0,
+        "the last cell has none at the bottom"
+    );
 }
 
 #[test]
@@ -3758,16 +3796,16 @@ fn separate_border_spacing_gaps_the_stacked_tracks_of_a_vertical_table() {
     let first = doc.nodes[first].layout;
     let second = doc.nodes[second].layout;
     let table = doc.nodes[table].layout.size;
-    assert_eq!((first.location.x, first.location.y), (3.0, 5.0));
+    assert_eq!((first.location.x, first.location.y), (5.0, 3.0));
     assert_eq!(
         (second.location.x, second.location.y),
-        (3.0, 5.0 + first.size.height + 5.0)
+        (5.0, 3.0 + first.size.height + 3.0)
     );
     assert_eq!(
         table.height,
-        5.0 + first.size.height + 5.0 + second.size.height + 5.0
+        3.0 + first.size.height + 3.0 + second.size.height + 3.0
     );
-    assert_eq!(table.width, 3.0 + first.size.width + 3.0);
+    assert_eq!(table.width, 5.0 + first.size.width + 5.0);
 }
 
 #[test]
@@ -3813,7 +3851,7 @@ fn fixed_colspan_minimum_reclaims_only_unconstrained_column_space() {
             col_widths: vec![],
         };
         assert_eq!(
-            super::resolve_fixed_column_widths(&grid, 90.0, true),
+            super::resolve_fixed_column_widths(&grid, 90.0, 0.0),
             expected
         );
     }
@@ -3832,7 +3870,7 @@ fn fixed_span_redistribution_preserves_another_spans_minimum() {
         col_widths: vec![],
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 100.0, true),
+        super::resolve_fixed_column_widths(&grid, 100.0, 0.0),
         [15.0, 15.0, 40.0, 40.0]
     );
 }
@@ -3854,7 +3892,7 @@ fn a_satisfied_span_minimum_keeps_all_authored_column_widths() {
             .to_vec(),
     };
     assert_eq!(
-        super::resolve_fixed_column_widths(&grid, 90.0, true),
+        super::resolve_fixed_column_widths(&grid, 90.0, 0.0),
         [40.0, 40.0, 10.0]
     );
 }

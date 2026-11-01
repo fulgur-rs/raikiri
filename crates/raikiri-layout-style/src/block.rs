@@ -33,11 +33,21 @@ impl LayoutStyleView<'_> {
     /// Alignment read by project block primitives, independent of trait defaults.
     #[inline]
     pub fn bridge_align_self(&self) -> Option<values::AlignSelf> {
+        if let crate::GridItemRatio::MeasuredByItem { align_self, .. } =
+            self.context.grid_item_ratio
+        {
+            return Some(align_self);
+        }
         self.self_alignment(false)
     }
     /// Inline alignment read by project block primitives.
     #[inline]
     pub fn bridge_justify_self(&self) -> Option<values::AlignSelf> {
+        if let crate::GridItemRatio::MeasuredByItem { justify_self, .. } =
+            self.context.grid_item_ratio
+        {
+            return Some(justify_self);
+        }
         self.self_alignment(true)
     }
     /// The block-axis alignment of a box in the static-position rectangle of its
@@ -62,6 +72,16 @@ impl LayoutStyleView<'_> {
     #[inline]
     pub(crate) fn oof_align_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(self.swapped_oof_alignment)
+            .map(|mut alignment| {
+                // The projected auto height asks for measurement, not a second
+                // stretch-fit floor. Start keeps stretch's placement and safety.
+                if self.table_owns_stretch_height()
+                    && alignment.keyword == values::AlignItemsKeyword::Stretch
+                {
+                    alignment.keyword = values::AlignItemsKeyword::Start;
+                }
+                alignment
+            })
     }
     /// The alignment of an out-of-flow box along the physical horizontal axis
     /// (see [`Self::with_swapped_oof_alignment`]).

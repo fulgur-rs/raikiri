@@ -24,6 +24,7 @@ mod filter_source;
 mod filters;
 mod fonts;
 mod images;
+mod reference_graph;
 mod scene;
 
 pub use fonts::{SvgFontFamily, SvgFontRequest, SvgFontSource, SvgFontStyle};
@@ -433,6 +434,7 @@ impl SvgDocument {
             .is_some();
         let root_has_color = root.attribute("color").is_some();
         preflight_initial_svg_selectors(&xml)?;
+        reference_graph::check_resource_references(&xml)?;
         let tree = parse_tree(&normalized)?;
         let tree_size = tree.size();
         if !tree_size.width().is_finite()
@@ -725,7 +727,14 @@ impl SvgDocument {
         } else {
             source
         };
-        with_inherited_color(&source, root_style.inherited_color)
+        let source = with_inherited_color(&source, root_style.inherited_color)?;
+        // The declarations a host resolved for the elements can refer to
+        // resources the document does not, so the source is checked again
+        // before it is drawn or handed out.
+        if !source_style.elements.is_empty() {
+            reference_graph::check_source(&source)?;
+        }
+        Ok(source)
     }
 
     /// Rasterizes the SVG to straight-alpha RGBA8 at `viewport`.

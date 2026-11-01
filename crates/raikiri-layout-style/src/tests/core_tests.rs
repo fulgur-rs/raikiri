@@ -96,9 +96,9 @@ fn sizing_keywords_and_non_finite_numbers_follow_bridge_policy() {
         L::FitContentOf(raikiri_style::ComputedLengthPercentageOrCalc::Percent(25.0)),
     ] {
         let mut cv = ComputedValues::initial();
-        cv.width = value;
-        cv.min_width = value;
-        cv.max_height = value;
+        cv.width = value.clone();
+        cv.min_width = value.clone();
+        cv.max_height = value.clone();
         cv.margin.left = value;
         query(&cv, StyleFlags::default(), |v| {
             assert_ne!(v.size().width, values::Dimension::auto());
@@ -325,4 +325,124 @@ fn physical_edges_and_logical_minimum_are_not_confused() {
             bottom: values::LengthPercentageAuto::length(4.0)
         }
     );
+}
+
+#[test]
+fn a_grid_item_defers_ratio_height_without_changing_its_own_ratio_or_alignment() {
+    let mut cv = ComputedValues::initial();
+    cv.aspect_ratio.auto = false;
+    cv.aspect_ratio.ratio = Some((2.0, 1.0));
+    query(&cv, StyleFlags::default(), |own| {
+        assert_eq!(own.aspect_ratio(), Some(2.0));
+        assert_eq!(own.bridge_align_self(), None);
+        for alignment in [values::AlignSelf::START, values::AlignSelf::STRETCH] {
+            let parent = own.with_context(ViewContext {
+                grid_item_ratio: GridItemRatio::MeasuredByItem {
+                    align_self: alignment,
+                    justify_self: values::AlignSelf::START,
+                },
+                ..ViewContext::default()
+            });
+            assert_eq!(parent.aspect_ratio(), None);
+            assert_eq!(parent.stated_aspect_ratio(), Some(2.0));
+            assert_eq!(parent.block_aspect_ratio(), Some(2.0));
+            assert_eq!(parent.bridge_align_self(), Some(alignment));
+        }
+        assert_eq!(own.aspect_ratio(), Some(2.0));
+        assert_eq!(own.bridge_align_self(), None);
+    });
+}
+
+#[test]
+fn a_replaced_grid_item_keeps_its_identity_and_bounds_while_sizing_its_own_ratio() {
+    let mut cv = ComputedValues::initial();
+    cv.aspect_ratio.auto = false;
+    cv.aspect_ratio.ratio = Some((2.0, 1.0));
+    cv.height = L::Px(10.0);
+    cv.min_width = L::Px(20.0);
+    cv.max_width = L::Px(30.0);
+    query(&cv, StyleFlags::REPLACED, |own| {
+        let parent = own.with_context(ViewContext {
+            grid_item_ratio: GridItemRatio::Replaced,
+            ..ViewContext::default()
+        });
+        assert!(parent.is_replaced());
+        assert_eq!(own.aspect_ratio(), Some(2.0));
+        assert_eq!(parent.aspect_ratio(), None);
+        assert_eq!(parent.block_aspect_ratio(), Some(2.0));
+        assert_eq!(parent.size(), own.size());
+        assert_eq!(parent.min_size(), own.min_size());
+        assert_eq!(parent.max_size(), own.max_size());
+        assert_eq!(parent.bridge_align_self(), own.bridge_align_self());
+        assert_eq!(parent.bridge_justify_self(), own.bridge_justify_self());
+    });
+}
+
+#[test]
+fn late_padding_changes_only_its_projected_edge_of_resolved_padding() {
+    let cv = ComputedValues::initial();
+    let prepared = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+    let resolved = raikiri_layout_geometry::Edges {
+        top: 11.0,
+        right: 13.0,
+        bottom: 17.0,
+        left: 19.0,
+    };
+    let baseline =
+        [OwnedPropertyOverride::length(LengthProperty::PaddingTop, L::Px(91.0), true).unwrap()];
+    let late =
+        [OwnedPropertyOverride::length(LengthProperty::PaddingTop, L::Px(7.0), true).unwrap()];
+    for (mode, projection, expected) in [
+        (
+            WritingMode::HorizontalTb,
+            BridgeProjection::Identity,
+            raikiri_layout_geometry::Edges {
+                top: 7.0,
+                ..resolved
+            },
+        ),
+        (
+            WritingMode::VerticalRl,
+            BridgeProjection::Identity,
+            raikiri_layout_geometry::Edges {
+                left: 7.0,
+                ..resolved
+            },
+        ),
+        (
+            WritingMode::VerticalLr,
+            BridgeProjection::BlockTranspose {
+                right_to_left: false,
+            },
+            raikiri_layout_geometry::Edges {
+                top: 7.0,
+                ..resolved
+            },
+        ),
+        (
+            WritingMode::VerticalRl,
+            BridgeProjection::BlockTranspose {
+                right_to_left: true,
+            },
+            raikiri_layout_geometry::Edges {
+                bottom: 7.0,
+                ..resolved
+            },
+        ),
+    ] {
+        let context = ViewContext {
+            layout_wm: mode,
+            bridge_projection: projection,
+            resolved_padding: Some(resolved),
+            ..ViewContext::default()
+        };
+        assert_eq!(
+            LayoutStyleView::with_owned_overrides(&prepared, context, &baseline, &[]).padding(),
+            resolved.map(LengthPercentage::length)
+        );
+        assert_eq!(
+            LayoutStyleView::with_owned_overrides(&prepared, context, &baseline, &late).padding(),
+            expected.map(LengthPercentage::length)
+        );
+    }
 }

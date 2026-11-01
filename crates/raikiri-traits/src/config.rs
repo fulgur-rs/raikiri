@@ -49,7 +49,7 @@ pub struct RenderLimits {
     /// Not enforced by built-in stages. The default `Some(100_000)` is
     /// retained for compatibility and does not bound target references.
     pub max_target_slots: Option<u32>,
-    /// Reserved maximum entries stored in [`crate::LayoutBuffer`].
+    /// Reserved maximum entries stored in `LayoutBuffer`.
     ///
     /// Not enforced: the buffer is a placeholder. The default `Some(10_000)`
     /// is retained for compatibility and does not bound layout storage.

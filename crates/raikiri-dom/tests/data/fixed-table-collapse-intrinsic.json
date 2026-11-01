@@ -1,0 +1,320 @@
+{
+  "browser": "Chromium 152.0.7977.82 Arch Linux",
+  "conditions": "800x600; Ahem 10px/10px; table width 200px; border-spacing 10px; cell padding 0 unless edges specified; expected boxes relative to table origin",
+  "sources": [
+    "https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/core/layout/table/table_layout_algorithm_types.h",
+    "https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/core/layout/table/table_layout_utils.cc"
+  ],
+  "cases": [
+    {
+      "label": "normal-mixed-over-shown",
+      "limit": "",
+      "widths": ["30px", "120%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": false,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 200, 30], ["a", 10, 10, 30, 10], ["b", 50, 10, 80, 10], ["c", 140, 10, 50, 10]]
+    },
+    {
+      "label": "min-max-percent-edges",
+      "limit": "min-width:max-content",
+      "widths": ["30%", "40%", "50%"],
+      "edges": "padding:5px;border:1px solid",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 563.34375, 42], ["a", 10, 10, 202.859375, 22], ["b", 212.859375, 10, 0, 22], ["c", 222.859375, 10, 330.484375, 22]]
+    },
+    {
+      "label": "min-max-colpercent-celllength",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "100px", "50px"],
+      "edges": "",
+      "column": "40%",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 180, 30], ["a", 10, 10, 56.25, 10], ["b", 66.25, 10, 0, 10], ["c", 76.25, 10, 93.75, 10]]
+    },
+    {
+      "label": "min-max-colpercent-celllength-edges",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "100px", "50px"],
+      "edges": "padding:5px;border:1px solid",
+      "column": "40%",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 197.984375, 42], ["a", 10, 10, 67.84375, 22], ["b", 77.84375, 10, 0, 22], ["c", 87.84375, 10, 100.140625, 22]]
+    },
+    {
+      "label": "min-max-collength-cellauto",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "auto", "50px"],
+      "edges": "",
+      "column": "40px",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 136.671875, 30], ["a", 10, 10, 40, 10], ["b", 50, 10, 0, 10], ["c", 60, 10, 66.671875, 10]]
+    },
+    {
+      "label": "min-max-auto",
+      "limit": "min-width:max-content",
+      "widths": ["auto", "auto", "auto"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 430, 30], ["a", 10, 10, 200, 10], ["b", 210, 10, 0, 10], ["c", 220, 10, 200, 10]]
+    },
+    {
+      "label": "min-min-auto",
+      "limit": "min-width:min-content",
+      "widths": ["auto", "auto", "auto"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 136.671875, 30], ["a", 10, 10, 53.328125, 10], ["b", 63.328125, 10, 0, 10], ["c", 73.328125, 10, 53.34375, 10]]
+    },
+    {
+      "label": "min-max-half-percent",
+      "limit": "min-width:max-content",
+      "widths": ["10%", "20%", "30%"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 1363.34375, 30], ["a", 10, 10, 333.328125, 10], ["b", 343.328125, 10, 0, 10], ["c", 353.328125, 10, 1000.015625, 10]]
+    },
+    {
+      "label": "normal-zero-length",
+      "limit": "",
+      "widths": ["0px", "40px", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 118.890625, 30], ["a", 10, 10, 0, 10], ["b", 10, 10, 0, 10], ["c", 20, 10, 88.890625, 10]]
+    },
+    {
+      "label": "normal-zero-percent",
+      "limit": "",
+      "widths": ["0%", "40px", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 118.890625, 30], ["a", 10, 10, 0.015625, 10], ["b", 10.015625, 10, 0, 10], ["c", 20.015625, 10, 88.875, 10]]
+    },
+    {
+      "label": "min-max-mixed",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "40%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 330, 30], ["a", 10, 10, 112.5, 10], ["b", 122.5, 10, 0, 10], ["c", 132.5, 10, 187.5, 10]]
+    },
+    {
+      "label": "min-fit-mixed",
+      "limit": "min-width:fit-content",
+      "widths": ["30px", "40%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 330, 30], ["a", 10, 10, 112.5, 10], ["b", 122.5, 10, 0, 10], ["c", 132.5, 10, 187.5, 10]]
+    },
+    {
+      "label": "min-max-percent",
+      "limit": "min-width:max-content",
+      "widths": ["30%", "40%", "50%"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 563.34375, 30], ["a", 10, 10, 200, 10], ["b", 210, 10, 0, 10], ["c", 220, 10, 333.34375, 10]]
+    },
+    {
+      "label": "min-max-empty-mixed",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "40%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "",
+      "expected": [["t", 0, 0, 126, 20], ["a", 10, 10, 36, 0], ["b", 46, 10, 0, 0], ["c", 56, 10, 60, 0]]
+    },
+    {
+      "label": "normal-half-percent",
+      "limit": "",
+      "widths": ["10%", "20%", "30%"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 136.671875, 30], ["a", 10, 10, 26.65625, 10], ["b", 36.65625, 10, 0, 10], ["c", 46.65625, 10, 80.015625, 10]]
+    },
+    {
+      "label": "normal-mixed-over",
+      "limit": "",
+      "widths": ["30px", "120%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 110, 30], ["a", 10, 10, 30, 10], ["b", 40, 10, 0, 10], ["c", 50, 10, 50, 10]]
+    },
+    {
+      "label": "min-length",
+      "limit": "min-width:min-content",
+      "widths": ["30px", "40px", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 136.671875, 30], ["a", 10, 10, 40, 10], ["b", 50, 10, 0, 10], ["c", 60, 10, 66.671875, 10]]
+    },
+    {
+      "label": "max-min-length",
+      "limit": "max-width:min-content",
+      "widths": ["30px", "40px", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 110, 30], ["a", 10, 10, 30, 10], ["b", 40, 10, 0, 10], ["c", 50, 10, 50, 10]]
+    },
+    {
+      "label": "max-max-length",
+      "limit": "max-width:max-content",
+      "widths": ["30px", "40px", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 110, 30], ["a", 10, 10, 30, 10], ["b", 40, 10, 0, 10], ["c", 50, 10, 50, 10]]
+    },
+    {
+      "label": "max-fit-length",
+      "limit": "max-width:fit-content",
+      "widths": ["30px", "40px", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 110, 30], ["a", 10, 10, 30, 10], ["b", 40, 10, 0, 10], ["c", 50, 10, 50, 10]]
+    },
+    {
+      "label": "min-mixed",
+      "limit": "min-width:min-content",
+      "widths": ["30px", "40%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 126, 30], ["a", 10, 10, 36, 10], ["b", 46, 10, 0, 10], ["c", 56, 10, 60, 10]]
+    },
+    {
+      "label": "max-min-mixed",
+      "limit": "max-width:min-content",
+      "widths": ["30px", "40%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 110, 30], ["a", 10, 10, 30, 10], ["b", 40, 10, 0, 10], ["c", 50, 10, 50, 10]]
+    },
+    {
+      "label": "max-max-mixed",
+      "limit": "max-width:max-content",
+      "widths": ["30px", "40%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 126, 30], ["a", 10, 10, 36, 10], ["b", 46, 10, 0, 10], ["c", 56, 10, 60, 10]]
+    },
+    {
+      "label": "min-percent",
+      "limit": "min-width:min-content",
+      "widths": ["30%", "40%", "50%"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 136.671875, 30], ["a", 10, 10, 40, 10], ["b", 50, 10, 0, 10], ["c", 60, 10, 66.671875, 10]]
+    },
+    {
+      "label": "max-percent",
+      "limit": "max-width:min-content",
+      "widths": ["30%", "40%", "50%"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 30, 30], ["a", 10, 10, 0, 10], ["b", 10, 10, 0, 10], ["c", 20, 10, 0, 10]]
+    },
+    {
+      "label": "max-percent-edges",
+      "limit": "max-width:min-content",
+      "widths": ["30%", "40%", "50%"],
+      "edges": "padding:5px;border:1px solid",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 30, 42], ["a", 10, 10, 0, 22], ["b", 10, 10, 0, 22], ["c", 20, 10, 0, 22]]
+    },
+    {
+      "label": "min-max-colpercent-cellmax",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "100px;max-width:50px", "50px"],
+      "edges": "",
+      "column": "40%",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 126, 30], ["a", 10, 10, 36, 10], ["b", 46, 10, 0, 10], ["c", 56, 10, 60, 10]]
+    },
+    {
+      "label": "min-max-colpercent-cellpercent",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "60%", "50px"],
+      "edges": "",
+      "column": "40%",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 163.328125, 30], ["a", 10, 10, 50, 10], ["b", 60, 10, 0, 10], ["c", 70, 10, 83.328125, 10]]
+    },
+    {
+      "label": "min-max-over-percent",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "120%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 110, 30], ["a", 10, 10, 30, 10], ["b", 40, 10, 0, 10], ["c", 50, 10, 50, 10]]
+    },
+    {
+      "label": "min-max-over-percent-shown",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "120%", "50px"],
+      "edges": "",
+      "column": "",
+      "collapse": false,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 1000040, 30], ["a", 10, 10, 30, 10], ["b", 50, 10, 999920, 10], ["c", 999980, 10, 50, 10]]
+    },
+    {
+      "label": "min-max-colpercent-cellmax-borderbox",
+      "limit": "min-width:max-content",
+      "widths": ["30px", "100px;max-width:70px", "50px"],
+      "edges": "padding:5px;border:1px solid;box-sizing:border-box",
+      "column": "40%",
+      "collapse": true,
+      "text": "xxxxxxxxxxxxxxxxxxxx",
+      "expected": [["t", 0, 0, 135, 42], ["a", 10, 10, 39.375, 22], ["b", 49.375, 10, 0, 22], ["c", 59.375, 10, 65.625, 22]]
+    }
+  ]
+}
