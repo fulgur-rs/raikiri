@@ -209,7 +209,9 @@ fn background_tiles_cover_the_painting_area() {
 
 #[test]
 fn background_dimensions_fill_missing_natural_sizes() {
-    let auto = raikiri_style::ComputedValues::initial().background_layers()[0].size;
+    let auto = raikiri_style::ComputedValues::initial().background_layers()[0]
+        .size
+        .clone();
     let size = |width, height, ratio, area: (f64, f64)| {
         background_image_dimensions(
             &auto,
@@ -449,8 +451,8 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
     repeat.x = BackgroundRepeatKeyword::Round;
     repeat.y = BackgroundRepeatKeyword::NoRepeat;
     let size = ComputedBackgroundSize::Explicit {
-        width: auto,
-        height: auto,
+        width: auto.clone(),
+        height: auto.clone(),
     };
     assert_eq!(
         rounded_background_tile_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
@@ -467,7 +469,7 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
     // A width that is explicit keeps its used value: only an auto axis follows.
     let size = ComputedBackgroundSize::Explicit {
         width: px(40.0),
-        height: auto,
+        height: auto.clone(),
     };
     repeat.x = BackgroundRepeatKeyword::Repeat;
     assert_eq!(
@@ -490,7 +492,7 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
 fn rounding_leaves_the_other_cases_without_an_auto_axis_to_follow() {
     let auto = ComputedLengthPercentageOrAuto::Auto;
     let size = ComputedBackgroundSize::Explicit {
-        width: auto,
+        width: auto.clone(),
         height: auto,
     };
     let mut repeat = raikiri_style::ComputedValues::initial().background_layers()[0].repeat;

@@ -2147,7 +2147,7 @@ fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
     let mut diag = Vec::new();
     let size = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut calc_values,
-        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+        &ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
             percent: 50.0,
             px: 10.0,
         }),
@@ -2166,7 +2166,7 @@ fn a_stretch_size_is_handed_to_taffy_as_stretch() {
     let mut diag = Vec::new();
     let size = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut calc_values,
-        ComputedLengthPercentageOrAuto::Stretch,
+        &ComputedLengthPercentageOrAuto::Stretch,
         "width",
         &mut diag,
     );

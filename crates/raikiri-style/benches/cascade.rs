@@ -705,7 +705,7 @@ fn has_child_chain_workload(doc_depth: usize) -> (BenchDoc, RuleTree, u64) {
         let expected = if i < doc_depth {
             ComputedLengthPercentageOrAuto::Px(want.box_px)
         } else {
-            initial.margin.top
+            initial.margin.top.clone()
         };
         assert_eq!(
             probe.computed[i].margin.top, expected,
@@ -979,13 +979,13 @@ fn workload(n_rules: usize, n_elems: usize, wrapped: bool) -> (BenchDoc, RuleTre
             continue;
         }
         for (name, got) in [
-            ("margin-top", cv.margin.top),
-            ("margin-right", cv.margin.right),
-            ("margin-bottom", cv.margin.bottom),
-            ("margin-left", cv.margin.left),
+            ("margin-top", &cv.margin.top),
+            ("margin-right", &cv.margin.right),
+            ("margin-bottom", &cv.margin.bottom),
+            ("margin-left", &cv.margin.left),
         ] {
             assert_eq!(
-                got, want_margin,
+                got, &want_margin,
                 "element at node {idx}: {name} does not carry the winning \
                  rule's value"
             );

@@ -2255,9 +2255,11 @@ fn page_has_auto_margin(
     ]
     .iter()
     .any(|key| match declarations.get(key) {
-        Some(PropertyValue::Margin(sides)) => [sides.top, sides.right, sides.bottom, sides.left]
-            .iter()
-            .any(|value| matches!(value, LengthOrAuto::Auto)),
+        Some(PropertyValue::Margin(sides)) => {
+            [&sides.top, &sides.right, &sides.bottom, &sides.left]
+                .iter()
+                .any(|value| matches!(value, LengthOrAuto::Auto))
+        }
         Some(PropertyValue::MarginTop(value))
         | Some(PropertyValue::MarginRight(value))
         | Some(PropertyValue::MarginBottom(value))

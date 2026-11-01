@@ -849,9 +849,8 @@ impl Length {
 /// keywords such as `min-content` / `max-content`) without breaking users.
 /// This follows the pattern of sibling [`Length`] / [`CounterStyle`].
 ///
-/// Implement [`Copy`] because the underlying [`Length`] is `Copy` (each
-/// Px/Em/Rem/Percent/Pt variant holds a single f32). A `Sides<LengthOrAuto>`
-/// is four values of about 8 bytes each, so per-node copies are cheap.
+/// Ordinary lengths remain inline; comparison expressions own an immutable
+/// shared tree. Borrow values for reads and clone only when storing an owner.
 ///
 /// # Primary sources
 ///
@@ -1213,7 +1212,7 @@ pub enum LetterSpacingValue {
 pub type WordSpacingValue = LetterSpacingValue;
 
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LengthOrAuto {
     /// Authored length-percentage (`10px` / `1em` / `50%` / etc.).
     Length(Length),
@@ -1227,6 +1226,8 @@ pub enum LengthOrAuto {
     /// A mixed-unit `calc()` with font-relative or viewport terms, absolutized
     /// at computed-value time into [`Self::Calc`]'s computed counterpart.
     RelativeCalc(RelativeCalcLengthPercentage),
+    /// A comparison expression retained until its percentage basis is known.
+    Math(std::sync::Arc<super::LengthMath>),
     /// The `min-content` sizing keyword (CSS Sizing 3 §3.1.1). Only the
     /// `width` / `inline-size` parser produces it. Block-level boxes sized by
     /// Taffy honor it; inline-block shrink-to-fit, block children laid out
@@ -9381,7 +9382,7 @@ impl VisualBox {
 /// accepts 1-2 values but copies the first when the second is omitted
 /// (see [`parse_background_size`] docs).
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BackgroundSize {
     /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — each axis independently
     /// takes a length or `auto`.
@@ -9559,7 +9560,7 @@ impl BackgroundShorthand {
                 PropertyValue::BackgroundPositionY(self.column(|layer| layer.position.vertical))
             }
             PropertyKey::BackgroundSize => {
-                PropertyValue::BackgroundSize(self.column(|layer| layer.size))
+                PropertyValue::BackgroundSize(self.column(|layer| layer.size.clone()))
             }
             PropertyKey::BackgroundClip => {
                 PropertyValue::BackgroundClip(self.column(|layer| layer.clip))

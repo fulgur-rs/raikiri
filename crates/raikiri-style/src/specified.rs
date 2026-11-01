@@ -859,7 +859,7 @@ fn logical_size_wins(
 /// The value a logical size and the physical size on its axis share, see
 /// [`logical_size_wins`]. A winner that was invalid at computed-value time
 /// still takes its place in cascade order and computes to the initial `auto`.
-fn pick_by_precedence<T: Copy>(
+fn pick_by_precedence<T>(
     physical: T,
     physical_rank: Option<CascadePrecedence>,
     logical: Option<T>,
@@ -2056,8 +2056,8 @@ impl SpecifiedValues {
     /// `fit-content` as the physical width, where `height` and the horizontal
     /// mapping compute them to `auto`.
     fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
-        let declared_height = self.height;
-        let declared_block_size = self.block_size;
+        let declared_height = self.height.clone();
+        let declared_block_size = self.block_size.clone();
         let keeps_keywords = self.keeps_block_size_keywords;
         let marks_keyword = |size| {
             if keeps_keywords {
@@ -2067,8 +2067,8 @@ impl SpecifiedValues {
             }
         };
         if !self.keeps_block_size_keywords {
-            self.height = without_sizing_keyword(self.height);
-            self.block_size = self.block_size.map(without_sizing_keyword);
+            self.height = without_sizing_keyword(self.height.clone());
+            self.block_size = self.block_size.take().map(without_sizing_keyword);
         }
         let inline_size = self.inline_size.take();
         let block_size = self.block_size.take();
@@ -2096,27 +2096,27 @@ impl SpecifiedValues {
         let vertical = self.writing_mode.is_vertical().then(|| {
             (
                 pick(
-                    self.width,
+                    self.width.clone(),
                     precedence.width,
-                    declared_block_size,
+                    declared_block_size.clone(),
                     precedence.block_size,
                 ),
                 pick(
-                    self.height,
+                    self.height.clone(),
                     precedence.height,
-                    inline_size,
+                    inline_size.clone(),
                     precedence.inline_size,
                 ),
             )
         });
         self.width = pick(
-            self.width,
+            self.width.clone(),
             precedence.width,
-            inline_size,
+            inline_size.clone(),
             precedence.inline_size,
         );
         self.height = pick(
-            self.height,
+            self.height.clone(),
             precedence.height,
             block_size,
             precedence.block_size,
@@ -2169,7 +2169,7 @@ impl SpecifiedValues {
         };
         let share = |(physical, physical_rank): (&mut LengthOrAuto, _), logical, logical_rank| {
             *physical = pick_by_precedence(
-                *physical,
+                physical.clone(),
                 physical_rank,
                 logical,
                 logical_rank,
@@ -2297,7 +2297,9 @@ impl SpecifiedValues {
         // the initial `auto`.
         let shared_min = |physical| {
             if logical_min_wins {
-                logical_min.unwrap_or(ComputedLengthPercentageOrAuto::Auto)
+                logical_min
+                    .clone()
+                    .unwrap_or(ComputedLengthPercentageOrAuto::Auto)
             } else {
                 physical
             }
@@ -3128,7 +3130,7 @@ pub(crate) fn computed_background_layers(
     let position_x = resolved(lists.position_x, offset);
     let position_y = resolved(lists.position_y, offset);
     let size = resolved(lists.size, |size| {
-        resolve_background_size(*size, font_size, own_line_height, ctx)
+        resolve_background_size(size.clone(), font_size, own_line_height, ctx)
     });
     let initial_layer = ComputedBackgroundLayer::initial();
     let layers: Arc<[ComputedBackgroundLayer]> = (0..count)
@@ -3152,7 +3154,7 @@ pub(crate) fn computed_background_layers(
                     initial_layer.position.vertical,
                 ),
             };
-            layer.size = item(size.as_deref(), index, initial_layer.size);
+            layer.size = item(size.as_deref(), index, initial_layer.size.clone());
             layer.repeat = item(lists.repeat, index, initial.repeat);
             layer.attachment = item(lists.attachment, index, initial.attachment);
             layer.origin = item(lists.origin, index, initial.origin);

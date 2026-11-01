@@ -37,23 +37,23 @@ fn lengths_resolve_against_a_basis_only_when_there_is_one() {
         percent: 50.0,
         px: 5.0,
     });
-    assert_eq!(length_or_auto(calc, Some(100.0)), Some(55.0));
-    assert_eq!(length_or_auto(calc, None), None);
+    assert_eq!(length_or_auto(&calc, Some(100.0)), Some(55.0));
+    assert_eq!(length_or_auto(&calc, None), None);
     let absolute = ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
         percent: 0.0,
         px: 40.0,
     });
-    assert_eq!(length_or_auto(absolute, None), Some(40.0));
+    assert_eq!(length_or_auto(&absolute, None), Some(40.0));
     assert_eq!(
-        length_or_auto(ComputedLengthPercentageOrAuto::Percent(10.0), Some(100.0)),
+        length_or_auto(&ComputedLengthPercentageOrAuto::Percent(10.0), Some(100.0)),
         Some(10.0)
     );
     assert_eq!(
-        length_or_auto(ComputedLengthPercentageOrAuto::Percent(10.0), None),
+        length_or_auto(&ComputedLengthPercentageOrAuto::Percent(10.0), None),
         None
     );
     assert_eq!(
-        length_or_auto(ComputedLengthPercentageOrAuto::Auto, None),
+        length_or_auto(&ComputedLengthPercentageOrAuto::Auto, None),
         None
     );
 }
@@ -245,12 +245,12 @@ fn a_token_is_found_past_a_stale_hint() {
         GeneratedBlock {
             start: 3,
             end: 4,
-            ..base
+            ..base.clone()
         },
         GeneratedBlock {
             start: 5,
             end: 6,
-            ..base
+            ..base.clone()
         },
     ];
     assert!(matches!(token(&blocks, 6, 0), Some((1, Token::End(_)))));
@@ -524,23 +524,26 @@ fn a_paragraph_that_runs_from_the_bottom_places_no_block_box() {
 #[test]
 fn a_box_takes_the_sides_of_a_vertical_root() {
     let base = block("margin: 1px 2px 3px 4px; width: 50px; height: 60px; min-width: 5px");
-    let rl = base.on_root_axes(WritingMode::VerticalRl, false);
+    let rl = base.clone().on_root_axes(WritingMode::VerticalRl, false);
     // The block start is the right, the inline start the top.
     assert!(rl.on_root_axes);
     assert_eq!(rl.margin.top, base.margin.right);
     assert_eq!(rl.margin.right, base.margin.bottom);
     assert_eq!(rl.margin.bottom, base.margin.left);
     assert_eq!(rl.margin.left, base.margin.top);
-    assert_eq!((rl.width, rl.height), (base.height, base.width));
+    assert_eq!(
+        (rl.width, rl.height),
+        (base.height.clone(), base.width.clone())
+    );
     assert_eq!(rl.min_height, base.min_width);
-    let lr = base.on_root_axes(WritingMode::VerticalLr, false);
+    let lr = base.clone().on_root_axes(WritingMode::VerticalLr, false);
     assert_eq!(lr.margin.top, base.margin.left);
     assert_eq!(lr.margin.bottom, base.margin.right);
     // A horizontal root, and one that runs from the bottom, keep the box.
     for kept in [
-        base.on_root_axes(WritingMode::HorizontalTb, false),
-        base.on_root_axes(WritingMode::VerticalRl, true),
-        base.on_root_axes(WritingMode::SidewaysLr, false),
+        base.clone().on_root_axes(WritingMode::HorizontalTb, false),
+        base.clone().on_root_axes(WritingMode::VerticalRl, true),
+        base.clone().on_root_axes(WritingMode::SidewaysLr, false),
     ] {
         assert!(!kept.on_root_axes);
         assert_eq!(kept.margin.top, base.margin.top);

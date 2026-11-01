@@ -196,13 +196,13 @@ fn inset_values_and_keys_follow_the_abstract_to_physical_table() {
                 "{writing_mode:?} {direction:?}"
             );
             let value = match key {
-                T => PropertyValue::Top(auto),
-                R => PropertyValue::Right(auto),
-                B => PropertyValue::Bottom(auto),
-                _ => PropertyValue::Left(auto),
+                T => PropertyValue::Top(auto.clone()),
+                R => PropertyValue::Right(auto.clone()),
+                B => PropertyValue::Bottom(auto.clone()),
+                _ => PropertyValue::Left(auto.clone()),
             };
             // Whichever physical value the parser stored, the value lands on the mapped side.
-            assert_eq!(flow.value(PropertyValue::Left(auto), *side), value);
+            assert_eq!(flow.value(PropertyValue::Left(auto.clone()), *side), value);
         }
     }
 }

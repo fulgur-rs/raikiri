@@ -491,7 +491,7 @@ fn push_generated(
     };
     if let Some(block) = &block {
         builder.push_block_in_inline(NodeId(block.start));
-        images.blocks.push(*block);
+        images.blocks.push(block.clone());
     }
     if empty && atomic {
         // An atomic box without content is still a box: an empty atomic

@@ -530,11 +530,11 @@ fn margin_collapsing_quirk_first_and_last_substantial_child_per_parent() {
     let zero = ComputedLengthPercentageOrAuto::Px(0.0);
     let kept = ComputedLengthPercentageOrAuto::Px(16.0);
     for (name, node, top, bottom) in [
-        ("p1", p1, zero, kept),
-        ("p2", p2, kept, kept),
-        ("p3", p3, kept, kept),
-        ("p4", p4, kept, zero),
-        ("q1", q1, kept, kept),
+        ("p1", p1, zero.clone(), kept.clone()),
+        ("p2", p2, kept.clone(), kept.clone()),
+        ("p3", p3, kept.clone(), kept.clone()),
+        ("p4", p4, kept.clone(), zero.clone()),
+        ("q1", q1, kept.clone(), kept.clone()),
         ("q2", q2, kept, zero),
     ] {
         assert_eq!(r.computed[node].margin.top, top, "{name} margin-top");

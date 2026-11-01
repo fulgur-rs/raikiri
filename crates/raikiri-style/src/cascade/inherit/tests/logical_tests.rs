@@ -9,7 +9,7 @@ fn margins(style: &str) -> Sides<ComputedLengthPercentageOrAuto> {
     let root = doc.push_element(0, "div", Some(style));
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).expect("cascade Ok");
-    result.computed[root].margin
+    result.computed[root].margin.clone()
 }
 
 fn px(value: f32) -> ComputedLengthPercentageOrAuto {
@@ -301,7 +301,7 @@ fn sheet_margins(css: &str) -> Sides<ComputedLengthPercentageOrAuto> {
     let div = doc.push_element(html, "div", None);
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).expect("cascade Ok");
-    result.computed[div].margin
+    result.computed[div].margin.clone()
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn nested_margins(ancestors: &[&str]) -> Sides<ComputedLengthPercentageOrAuto> {
     let child = doc.push_element(parent, "p", Some(ALL_FOUR));
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).expect("cascade Ok");
-    result.computed[child].margin
+    result.computed[child].margin.clone()
 }
 
 #[test]

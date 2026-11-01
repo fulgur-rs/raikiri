@@ -3,13 +3,13 @@ use raikiri_style::{
     ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P,
     property::{ClearValue, OverflowValue},
 };
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 /// A length override with an explicit calc owner or resolution tag.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 #[doc(hidden)]
 pub struct LengthValue<'a> {
-    pub(crate) value: L,
+    pub(crate) value: Cow<'a, L>,
     pub(crate) payload: Option<&'a AlignedCalc>,
     pub(crate) resolved: bool,
 }
@@ -36,16 +36,27 @@ impl std::fmt::Display for OverrideError {
 }
 impl std::error::Error for OverrideError {}
 impl<'a> LengthValue<'a> {
+    pub(crate) fn as_borrowed(&self) -> LengthValue<'_> {
+        LengthValue {
+            value: Cow::Borrowed(self.value.as_ref()),
+            payload: self.payload,
+            resolved: self.resolved,
+        }
+    }
+
     /// A computed length without a calc payload.
     ///
     /// # Errors
     /// Rejects inline calc expressions. Use the calc constructor for those.
     pub fn computed(value: L) -> Result<Self, OverrideError> {
-        if matches!(value, L::Calc(_) | L::FitContentOf(P::Calc(_))) {
+        if matches!(
+            &value,
+            L::Calc(_) | L::Math(_) | L::FitContentOf(P::Calc(_))
+        ) {
             return Err(OverrideError::UnpreparedCalc);
         }
         Ok(Self {
-            value,
+            value: Cow::Owned(value),
             payload: None,
             resolved: false,
         })
@@ -53,7 +64,7 @@ impl<'a> LengthValue<'a> {
     /// A calc whose owner is borrowed for the override's lifetime.
     pub fn calc(payload: &'a AlignedCalc) -> Self {
         Self {
-            value: L::Calc(payload.expression()),
+            value: Cow::Borrowed(payload.projected()),
             payload: Some(payload),
             resolved: false,
         }
@@ -61,7 +72,7 @@ impl<'a> LengthValue<'a> {
     /// A value already resolved in physical pixels.
     pub const fn resolved(px: f32) -> Self {
         Self {
-            value: L::Px(px),
+            value: Cow::Owned(L::Px(px)),
             payload: None,
             resolved: true,
         }
@@ -69,10 +80,10 @@ impl<'a> LengthValue<'a> {
 }
 
 /// A sparse override entry; later entries win within each layer.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 #[doc(hidden)]
 pub struct PropertyOverride<'a>(pub(crate) OverrideKind<'a>);
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum OverrideKind<'a> {
     Length(LengthProperty, LengthValue<'a>),
     AspectRatio(Option<f32>),
@@ -83,6 +94,15 @@ pub(crate) enum OverrideKind<'a> {
     JustifySelf(Option<crate::values::AlignSelf>),
 }
 impl<'a> PropertyOverride<'a> {
+    pub(crate) fn as_borrowed(&self) -> PropertyOverride<'_> {
+        PropertyOverride(match &self.0 {
+            OverrideKind::Length(property, value) => {
+                OverrideKind::Length(*property, value.as_borrowed())
+            }
+            other => other.clone(),
+        })
+    }
+
     /// Override one physical length property.
     ///
     /// # Errors
@@ -224,16 +244,20 @@ impl OwnedPropertyOverride {
         if resolved && !matches!(value, L::Px(_)) {
             return Err(OverrideError::ResolvedNonPixel);
         }
-        let payload = match value {
+        let payload = match &value {
             L::Calc(expression) | L::FitContentOf(P::Calc(expression)) => Some(Arc::new(
-                AlignedCalc::new(expression, property.non_negative()),
+                AlignedCalc::new(*expression, property.non_negative()),
             )),
+            L::Math(expression) => Some(Arc::new(AlignedCalc::new(
+                expression.clone(),
+                property.non_negative(),
+            ))),
             _ => None,
         };
         PropertyOverride::length(
             property,
             LengthValue {
-                value,
+                value: Cow::Borrowed(&value),
                 payload: payload.as_deref(),
                 resolved,
             },
@@ -257,7 +281,7 @@ impl OwnedPropertyOverride {
     /// Borrow the entry without cloning its payload owner.
     pub fn as_borrowed(&self) -> PropertyOverride<'_> {
         match &self.0 {
-            OwnedOverrideKind::Inline(entry) => *entry,
+            OwnedOverrideKind::Inline(entry) => entry.as_borrowed(),
             OwnedOverrideKind::Length {
                 property,
                 value,
@@ -266,7 +290,7 @@ impl OwnedPropertyOverride {
             } => PropertyOverride(OverrideKind::Length(
                 *property,
                 LengthValue {
-                    value: *value,
+                    value: Cow::Borrowed(value),
                     payload: payload.as_deref(),
                     resolved: *resolved,
                 },

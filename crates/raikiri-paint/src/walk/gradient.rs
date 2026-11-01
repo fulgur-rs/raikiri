@@ -50,9 +50,10 @@ pub(super) enum GradientFill {
 /// all take the size of the positioning area on that axis.
 pub(super) fn gradient_image_size(size: &ComputedBackgroundSize, area: Rect) -> Option<(f64, f64)> {
     let (area_w, area_h) = (area.width(), area.height());
-    let resolve = |value: ComputedLengthPercentageOrAuto, basis: f64| match value {
-        ComputedLengthPercentageOrAuto::Px(px) => f64::from(px),
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis * f64::from(percent) / 100.0,
+    let resolve = |value: &ComputedLengthPercentageOrAuto, basis: f64| match value {
+        ComputedLengthPercentageOrAuto::Px(px) => f64::from(*px),
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * f64::from(*percent) / 100.0,
+        ComputedLengthPercentageOrAuto::Math(value) => f64::from(value.resolve(basis as f32)),
         ComputedLengthPercentageOrAuto::Calc(calc) => {
             basis * f64::from(calc.percent) / 100.0 + f64::from(calc.px)
         }
@@ -60,7 +61,7 @@ pub(super) fn gradient_image_size(size: &ComputedBackgroundSize, area: Rect) -> 
     };
     let (width, height) = match size {
         ComputedBackgroundSize::Explicit { width, height } => {
-            (resolve(*width, area_w), resolve(*height, area_h))
+            (resolve(width, area_w), resolve(height, area_h))
         }
         _ => (area_w, area_h),
     };

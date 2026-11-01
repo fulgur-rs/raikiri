@@ -303,7 +303,7 @@ impl<'a> StyleViews<'a> {
         let mut has_calcs = false;
         let data = PreparedData::prepare_with(values, |_, expression, range| {
             has_calcs = true;
-            let key = (expression.px.to_bits(), expression.percent.to_bits(), range);
+            let key = (expression.clone(), range);
             owners
                 .entry(key)
                 .or_insert_with(|| {

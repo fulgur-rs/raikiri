@@ -8361,3 +8361,33 @@ fn balanced_columns_count_floats_that_share_a_line_once() {
     );
     assert_eq!(doc.nodes[container].layout.size.height, 20.0);
 }
+
+#[test]
+fn comparison_widths_supply_the_containing_width_of_descendants() {
+    for (source, expected) in [
+        ("min(30px, calc(10px + 5%))", 20.0),
+        ("max(10px, 5%)", 10.0),
+        ("clamp(5px, calc(10px + 5%), 15px)", 15.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let container = doc.append_element(Some(body), "div", Some("display:block;width:200px"));
+        let sized = doc.append_element(
+            Some(container),
+            "div",
+            Some(format!("display:block;width:{source}").as_str()),
+        );
+        let child = doc.append_element(Some(sized), "div", Some("display:block;width:50%"));
+        let text = doc.append_text(child, "text");
+        let cascade = cascaded(&doc);
+        let facts = AncestorFacts::new(&doc, &cascade, 800.0);
+        assert_eq!(facts.content_width[sized], expected, "{source}");
+        assert_eq!(facts.content_width[child], expected / 2.0, "{source}");
+        assert_eq!(
+            facts.authored_containing_width(text),
+            Some(expected / 2.0),
+            "{source}"
+        );
+    }
+}

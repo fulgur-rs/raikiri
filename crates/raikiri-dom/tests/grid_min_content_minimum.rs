@@ -395,6 +395,23 @@ fn calculated_minimums_resolve_cyclic_percentages_only_after_the_intrinsic_measu
 }
 
 #[test]
+fn compared_minimums_preserve_percentage_branches_until_the_final_track() {
+    for (expression, item_width) in [
+        ("min(30px, calc(10px + 5%))", 10.5),
+        ("max(10px, 5%)", 10.0),
+        ("clamp(5px, calc(10px + 5%), 20px)", 10.5),
+    ] {
+        assert_boxes(
+            &flex_grid("max-width:300px", &format!("min-width:{expression}")),
+            &[
+                ("g", [8.0, 8.0, 10.0, 20.0]),
+                ("i", [8.0, 8.0, item_width, 20.0]),
+            ],
+        );
+    }
+}
+
+#[test]
 fn nested_ratio_grids_preserve_content_height_without_repeating_intrinsic_work() {
     let depth = 24;
     let nested =

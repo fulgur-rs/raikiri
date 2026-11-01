@@ -671,27 +671,27 @@ fn fixed_height_edge_boxes_sit_against_the_page_area_or_center() {
 
 #[test]
 fn box_lengths_resolve_against_their_basis() {
-    let px = |value| length_or_auto_px(value, 200.0);
-    assert_eq!(px(ComputedLengthPercentageOrAuto::Auto), None);
-    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(5.0)), Some(5.0));
+    let px = |value: &ComputedLengthPercentageOrAuto| length_or_auto_px(value, 200.0);
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::Auto), None);
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::Px(5.0)), Some(5.0));
     assert_eq!(
-        px(ComputedLengthPercentageOrAuto::Percent(50.0)),
+        px(&ComputedLengthPercentageOrAuto::Percent(50.0)),
         Some(100.0)
     );
-    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(-5.0)), Some(-5.0));
-    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(f32::NAN)), Some(0.0));
-    assert_eq!(px(ComputedLengthPercentageOrAuto::MinContent), None);
-    assert_eq!(px(ComputedLengthPercentageOrAuto::MaxContent), None);
-    assert_eq!(px(ComputedLengthPercentageOrAuto::FitContent), None);
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::Px(-5.0)), Some(-5.0));
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::Px(f32::NAN)), Some(0.0));
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::MinContent), None);
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::MaxContent), None);
+    assert_eq!(px(&ComputedLengthPercentageOrAuto::FitContent), None);
     let calc = |px, percent| {
         ComputedLengthPercentageOrAuto::Calc(raikiri_style::property::CalcLengthPercentage {
             px,
             percent,
         })
     };
-    assert_eq!(px(calc(10.0, 10.0)), Some(30.0));
-    assert_eq!(px(calc(f32::NAN, f32::NAN)), Some(0.0));
-    assert_eq!(px(calc(-50.0, 0.0)), Some(-50.0));
+    assert_eq!(px(&calc(10.0, 10.0)), Some(30.0));
+    assert_eq!(px(&calc(f32::NAN, f32::NAN)), Some(0.0));
+    assert_eq!(px(&calc(-50.0, 0.0)), Some(-50.0));
 }
 
 #[test]

@@ -96,9 +96,9 @@ fn sizing_keywords_and_non_finite_numbers_follow_bridge_policy() {
         L::FitContentOf(raikiri_style::ComputedLengthPercentageOrCalc::Percent(25.0)),
     ] {
         let mut cv = ComputedValues::initial();
-        cv.width = value;
-        cv.min_width = value;
-        cv.max_height = value;
+        cv.width = value.clone();
+        cv.min_width = value.clone();
+        cv.max_height = value.clone();
         cv.margin.left = value;
         query(&cv, StyleFlags::default(), |v| {
             assert_ne!(v.size().width, values::Dimension::auto());

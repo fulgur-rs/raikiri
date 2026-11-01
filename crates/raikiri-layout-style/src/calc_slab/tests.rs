@@ -209,3 +209,94 @@ fn a_stale_handle_is_rejected_while_its_slot_is_reused_on_other_threads() {
         }
     });
 }
+
+#[test]
+fn math_snapshots_survive_retirement_and_reuse_across_payload_kinds() {
+    let table = Table::new();
+    let expression = crate::tests::comparison("min(30px, calc(10px + 5%))");
+    let weak = Arc::downgrade(&expression);
+    let first = table
+        .insert(CalcValue::new(expression.clone(), true))
+        .unwrap();
+    drop(expression);
+    let snapshot = table.get(first).unwrap();
+    assert_eq!(snapshot.resolve(10.0), 10.5);
+    table.remove(first);
+    assert!(table.get(first).is_none());
+    let affine = table.insert(value(42.0)).unwrap();
+    assert_eq!(index_of(first), index_of(affine));
+    assert_eq!(px_of(&table, affine), Some(42.0));
+    assert_eq!(snapshot.resolve(1000.0), 30.0);
+    table.remove(affine);
+    let last = table
+        .insert(CalcValue::new(
+            crate::tests::comparison("max(10px, 5%)"),
+            false,
+        ))
+        .unwrap();
+    assert_eq!(index_of(first), index_of(last));
+    assert_eq!(table.get(last).unwrap().resolve(1000.0), 50.0);
+    assert!(table.get(first).is_none());
+    assert!(table.get(affine).is_none());
+    assert!(table.get(last | 1).is_none());
+    drop(snapshot);
+    assert!(weak.upgrade().is_none());
+    table.remove(last);
+    assert!(
+        table
+            .entry(index_of(last))
+            .unwrap()
+            .math
+            .get()
+            .unwrap()
+            .read()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn retiring_math_waits_for_a_reader_snapshot_to_release_the_slot_lock() {
+    use std::sync::mpsc;
+    let table = Arc::new(Table::new());
+    let expression = crate::tests::comparison("min(30px, calc(10px + 5%))");
+    let handle = table.insert(CalcValue::new(expression, true)).unwrap();
+    let lock = table.entry(index_of(handle)).unwrap().math.get().unwrap();
+    let reader = lock.read().unwrap();
+    let snapshot = reader.as_ref().unwrap().clone();
+    assert!(lock.try_write().is_err());
+    let (started, receiver) = mpsc::channel();
+    let (done, completion) = mpsc::channel();
+    let writer = {
+        let table = table.clone();
+        std::thread::spawn(move || {
+            started.send(()).unwrap();
+            table.remove(handle);
+            done.send(()).unwrap();
+        })
+    };
+    receiver.recv().unwrap();
+    assert!(matches!(
+        completion.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(snapshot.resolve(10.0), 10.5);
+    drop(reader);
+    completion.recv().unwrap();
+    writer.join().unwrap();
+    assert!(table.get(handle).is_none());
+    assert!(lock.read().unwrap().is_none());
+    assert_eq!(snapshot.resolve(1000.0), 30.0);
+}
+
+#[test]
+fn affine_slots_do_not_allocate_comparison_locks() {
+    let table = Table::new();
+    let handle = table.insert(value(42.0)).unwrap();
+    assert!(table.entry(index_of(handle)).unwrap().math.get().is_none());
+    assert_eq!(table.get(handle).unwrap().resolve(100.0), 42.0);
+    assert!(table.entry(index_of(handle)).unwrap().math.get().is_none());
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(std::mem::size_of::<Entry>(), 32);
+    table.remove(handle);
+}

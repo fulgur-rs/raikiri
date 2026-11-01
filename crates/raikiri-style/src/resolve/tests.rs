@@ -969,20 +969,17 @@ fn resolve_margin_length_or_auto_drops_the_sizing_keywords() {
     }
 }
 
-/// A `flex-basis` length is never a sizing keyword of `width`; a stray one
-/// computes to `auto`.
 #[test]
-fn computed_flex_basis_reads_a_stray_sizing_keyword_as_auto() {
-    for specified in [
-        LengthOrAuto::MinContent,
-        LengthOrAuto::MaxContent,
-        LengthOrAuto::FitContent,
-        LengthOrAuto::Stretch,
-        LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(Length::Px(10.0))),
+fn flex_basis_sizing_keywords_keep_their_computed_identity() {
+    for (specified, expected) in [
+        (FlexBasisValue::MinContent, ComputedFlexBasis::MinContent),
+        (FlexBasisValue::MaxContent, ComputedFlexBasis::MaxContent),
+        (FlexBasisValue::FitContent, ComputedFlexBasis::FitContent),
+        (FlexBasisValue::Stretch, ComputedFlexBasis::Stretch),
     ] {
         assert_eq!(
-            computed_flex_basis(specified, ComputedLength(16.0), None, &CTX),
-            ComputedFlexBasis::Auto,
+            resolve_flex_basis(specified, ComputedLength(16.0), None, &CTX),
+            expected
         );
     }
 }
@@ -2611,23 +2608,36 @@ fn used_line_height_length_or_takes_normal_from_the_caller() {
 }
 
 #[test]
-fn a_resolved_calc_that_is_no_length_folds_to_zero() {
-    for resolved in [
-        ComputedLengthPercentageOrAuto::Auto,
-        ComputedLengthPercentageOrAuto::MinContent,
-        ComputedLengthPercentageOrAuto::MaxContent,
-        ComputedLengthPercentageOrAuto::FitContent,
-        ComputedLengthPercentageOrAuto::Stretch,
+fn resolved_affine_calcs_fold_percentage_free_offsets() {
+    for (resolved, expected) in [
+        (
+            ComputedLengthPercentageOrCalc::Px(3.0),
+            ComputedLengthPercentageOrCalc::Px(3.0),
+        ),
+        (
+            ComputedLengthPercentageOrCalc::Percent(20.0),
+            ComputedLengthPercentageOrCalc::Percent(20.0),
+        ),
+        (
+            ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+                px: 3.0,
+                percent: 0.0,
+            }),
+            ComputedLengthPercentageOrCalc::Px(3.0),
+        ),
+        (
+            ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+                px: 3.0,
+                percent: 20.0,
+            }),
+            ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+                px: 3.0,
+                percent: 20.0,
+            }),
+        ),
     ] {
-        assert_eq!(
-            fold_resolved_calc(resolved),
-            ComputedLengthPercentageOrCalc::Px(0.0)
-        );
+        assert_eq!(fold_resolved_calc(resolved), expected);
     }
-    assert_eq!(
-        fold_resolved_calc(ComputedLengthPercentageOrAuto::Px(3.0)),
-        ComputedLengthPercentageOrCalc::Px(3.0)
-    );
 }
 
 #[test]
@@ -2816,4 +2826,37 @@ fn lifting_a_computed_background_size_keeps_each_axis() {
         lift_background_size(ComputedBackgroundSize::Contain),
         BackgroundSize::Contain
     );
+}
+
+#[test]
+fn comparison_line_height_leaves_follow_the_existing_unresolved_size_policy() {
+    for source in ["min(1lh, 5%)", "min(1rlh, 5%)"] {
+        let mut input = cssparser::ParserInput::new(source);
+        let specified =
+            crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        assert_eq!(
+            resolve_size_length_percentage_or_auto(
+                LengthOrAuto::Math(specified),
+                ComputedLength(10.0),
+                None,
+                &ctx
+            ),
+            ComputedLengthPercentageOrAuto::Auto
+        );
+    }
+    let mut input = cssparser::ParserInput::new("min(1lh, calc(10px + 5%))");
+    let specified =
+        crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+    let value = resolve_size_length_percentage_or_auto(
+        LengthOrAuto::Math(specified),
+        ComputedLength(10.0),
+        Some(ComputedLength(20.0)),
+        &CTX,
+    );
+    let ComputedLengthPercentageOrAuto::Math(value) = value else {
+        panic!("resolved line-height retains percentage comparison")
+    };
+    assert_eq!(value.resolve(100.0), 15.0);
+    assert_eq!(value.resolve(1000.0), 20.0);
 }

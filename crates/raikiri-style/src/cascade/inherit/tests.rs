@@ -855,7 +855,7 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
             vertical
                 .vertical_logical_size
                 .as_ref()
-                .map(|size| (size.width, size.height)),
+                .map(|size| (size.width.clone(), size.height.clone())),
             Some((
                 ComputedLengthPercentageOrAuto::Px(30.0),
                 ComputedLengthPercentageOrAuto::Px(80.0),
@@ -873,7 +873,7 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
         vertical_inline_only
             .vertical_logical_size
             .as_ref()
-            .map(|size| (size.width, size.height)),
+            .map(|size| (size.width.clone(), size.height.clone())),
         Some((
             ComputedLengthPercentageOrAuto::Px(10.0),
             ComputedLengthPercentageOrAuto::Percent(50.0),
@@ -917,7 +917,7 @@ fn logical_and_physical_preferred_sizes_compete_in_cascade_order() {
         vertical
             .vertical_logical_size
             .as_ref()
-            .map(|size| (size.width, size.height)),
+            .map(|size| (size.width.clone(), size.height.clone())),
         Some((
             ComputedLengthPercentageOrAuto::Px(6.0),
             ComputedLengthPercentageOrAuto::Px(20.0),
@@ -940,7 +940,7 @@ fn min_content_preferred_width_survives_the_cascade() {
         vertical
             .vertical_logical_size
             .as_ref()
-            .map(|size| size.height),
+            .map(|size| size.height.clone()),
         Some(ComputedLengthPercentageOrAuto::MinContent)
     );
 }
@@ -960,7 +960,7 @@ fn max_content_and_fit_content_preferred_widths_survive_the_cascade() {
         vertical
             .vertical_logical_size
             .as_ref()
-            .map(|size| size.height),
+            .map(|size| size.height.clone()),
         Some(ComputedLengthPercentageOrAuto::MaxContent)
     );
     assert!(ComputedLengthPercentageOrAuto::MinContent.is_content_keyword());
@@ -1079,7 +1079,7 @@ fn the_fit_content_function_keeps_its_limit_through_the_cascade() {
         vertical
             .vertical_logical_size
             .as_ref()
-            .map(|size| size.height),
+            .map(|size| size.height.clone()),
         Some(ComputedLengthPercentageOrAuto::FitContentOf(
             ComputedLengthPercentageOrCalc::Px(30.0)
         ))
@@ -4878,9 +4878,9 @@ fn ruby_annotations_keep_the_inherited_writing_mode_otherwise() {
         assert_eq!(r.computed[rtc].cssom_writing_mode, expected, "{rtc_style}");
         assert_eq!(r.computed[rt].cssom_writing_mode, expected, "{rtc_style}");
         let start = if expected.is_vertical() {
-            r.computed[rtc].margin.top
+            r.computed[rtc].margin.top.clone()
         } else {
-            r.computed[rtc].margin.left
+            r.computed[rtc].margin.left.clone()
         };
         assert_eq!(
             start,
@@ -6610,6 +6610,8 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
                 LengthOrAuto::Length(Length::Percent(percent))
             }
             ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+            ComputedLengthPercentageOrAuto::Math(value) =>
+                LengthOrAuto::Math(crate::property::LengthMath::from_computed(&value)),
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
@@ -8779,7 +8781,7 @@ fn apply_value_direct_margin_inherit_marker_is_panic_free() {
     // parser; `apply_value` must stay a no-op (not panic) if an
     // internal caller supplies one.
     let mut cv = SpecifiedValues::initial();
-    let before = cv.margin;
+    let before = cv.margin.clone();
     apply_value(PropertyValue::MarginInherit, &mut cv);
     assert_eq!(cv.margin, before);
 }
@@ -9167,7 +9169,7 @@ fn apply_value_direct_margin_shorthand_fall_through() {
         bottom: LengthOrAuto::Length(Length::Px(3.0)),
         left: LengthOrAuto::Length(Length::Px(4.0)),
     };
-    apply_value(PropertyValue::Margin(Box::new(sides)), &mut cv);
+    apply_value(PropertyValue::Margin(Box::new(sides.clone())), &mut cv);
     assert_eq!(cv.margin, sides);
 }
 
@@ -9179,7 +9181,7 @@ fn apply_value_direct_margin_inline_shorthand_fall_through() {
         start: LengthOrAuto::Length(Length::Px(1.0)),
         end: LengthOrAuto::Length(Length::Px(2.0)),
     };
-    apply_value(PropertyValue::MarginInline(pair), &mut cv);
+    apply_value(PropertyValue::MarginInline(pair.clone()), &mut cv);
     assert_eq!(cv.margin.left, pair.start);
     assert_eq!(cv.margin.right, pair.end);
     // untouched axis stays at initial (0).
@@ -9195,7 +9197,7 @@ fn apply_value_direct_margin_block_shorthand_fall_through() {
         start: LengthOrAuto::Length(Length::Px(3.0)),
         end: LengthOrAuto::Length(Length::Px(4.0)),
     };
-    apply_value(PropertyValue::MarginBlock(pair), &mut cv);
+    apply_value(PropertyValue::MarginBlock(pair.clone()), &mut cv);
     assert_eq!(cv.margin.top, pair.start);
     assert_eq!(cv.margin.bottom, pair.end);
     assert_eq!(cv.margin.left, LengthOrAuto::Length(Length::Px(0.0)));
@@ -9659,7 +9661,10 @@ fn apply_value_direct_background_shorthand_fall_through() {
         cv.background_position_y.as_deref(),
         Some(&[layer.position.vertical][..])
     );
-    assert_eq!(cv.background_size.as_deref(), Some(&[layer.size][..]));
+    assert_eq!(
+        cv.background_size.as_deref(),
+        Some(&[layer.size.clone()][..])
+    );
     assert_eq!(cv.background_clip.as_deref(), Some(&[layer.clip][..]));
     assert_eq!(cv.background_origin.as_deref(), Some(&[layer.origin][..]));
 }
@@ -13532,7 +13537,12 @@ fn apply_value_direct_inset_shorthands() {
         &mut cv,
     );
     assert_eq!(
-        (cv.top, cv.right, cv.bottom, cv.left),
+        (
+            cv.top.clone(),
+            cv.right.clone(),
+            cv.bottom.clone(),
+            cv.left.clone()
+        ),
         (px(1.0), px(2.0), px(3.0), px(4.0))
     );
     apply_value(
@@ -13542,7 +13552,7 @@ fn apply_value_direct_inset_shorthands() {
         }),
         &mut cv,
     );
-    assert_eq!((cv.left, cv.right), (px(5.0), px(6.0)));
+    assert_eq!((cv.left.clone(), cv.right.clone()), (px(5.0), px(6.0)));
     apply_value(
         PropertyValue::InsetBlock(crate::property::StartEnd {
             start: px(7.0),
@@ -13550,7 +13560,7 @@ fn apply_value_direct_inset_shorthands() {
         }),
         &mut cv,
     );
-    assert_eq!((cv.top, cv.bottom), (px(7.0), px(8.0)));
+    assert_eq!((cv.top.clone(), cv.bottom.clone()), (px(7.0), px(8.0)));
 }
 
 #[test]
@@ -13617,4 +13627,33 @@ fn an_attribute_beaten_by_a_value_is_replaced_by_that_value() {
         exported(&root, PropertyKey::Fill),
         Some((false, Some("rgba(0,128,0,1)".into())))
     );
+}
+
+#[test]
+fn inherited_comparisons_keep_absolute_font_terms_and_defer_percentages() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("font-size:20px; min-width:min(3em, calc(1em + 5%))"),
+    );
+    let inherited = doc.push_element(parent, "div", Some("font-size:10px; min-width:inherit"));
+    let own = doc.push_element(
+        parent,
+        "div",
+        Some("font-size:10px; min-width:min(3em, calc(1em + 5%))"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    let expression = |node: usize| {
+        let ComputedLengthPercentageOrAuto::Math(value) = &result.computed[node].min_width else {
+            panic!("comparison must survive inheritance")
+        };
+        value
+    };
+    assert_eq!(expression(parent).resolve(0.0), 20.0);
+    assert_eq!(expression(inherited).resolve(10.0), 20.5);
+    assert_eq!(expression(inherited).resolve(1000.0), 60.0);
+    assert_eq!(expression(own).resolve(10.0), 10.5);
+    assert_eq!(expression(own).resolve(1000.0), 30.0);
 }

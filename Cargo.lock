@@ -2764,6 +2764,7 @@ version = "0.0.5"
 name = "raikiri-layout-style"
 version = "0.0.5"
 dependencies = [
+ "cssparser",
  "raikiri-layout-geometry",
  "raikiri-style",
  "taffy 0.15.0",

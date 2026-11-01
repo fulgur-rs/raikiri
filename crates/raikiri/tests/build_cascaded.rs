@@ -462,7 +462,7 @@ fn umbrella_re_exports_cover_computed_sides_container_fields() {
     let computed = &result.computed[p_id.0 as usize];
 
     let _padding: Sides<ComputedLengthPercentageOrCalc> = computed.padding;
-    let _margin: Sides<ComputedLengthPercentageOrAuto> = computed.margin;
+    let _margin: &Sides<ComputedLengthPercentageOrAuto> = &computed.margin;
     let _border: Sides<ComputedBorder> = computed.border;
 }
 
