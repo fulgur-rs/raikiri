@@ -209,6 +209,26 @@ fn a_cell_spanning_columns_leaves_out_the_spacing_padding_and_neighbours() {
                 ("c", [14.0, 14.0, 60.0, 80.0]),
             ],
         ));
+        // The first of two spacings is along the inline axis, the height of
+        // the table: it is the gap between the columns and around them.
+        let uneven = table_element(
+            mode,
+            "6px 4px",
+            &format!(
+                "<tr id=r>{}{}</tr>",
+                td("c", "colspan=2", [60, 80], "0", "x"),
+                td("d", "", [40, 30], "0", "y")
+            ),
+        );
+        mismatches.extend(check(
+            &format!("{mode}, uneven spacing"),
+            &uneven,
+            &[
+                ("t", [8.0, 8.0, 68.0, 128.0]),
+                ("c", [12.0, 14.0, 60.0, 80.0]),
+                ("d", [12.0, 100.0, 60.0, 30.0]),
+            ],
+        ));
         // The padding of the cell is added to its size once.
         let padded = table_element(
             mode,
