@@ -283,8 +283,7 @@ impl LayoutSession<'_> {
 /// space less the scrollbars of the root, anchored at the origin of the canvas
 /// as the library anchors it. The page area is definite in both axes.
 ///
-/// The tables among them keep the `max-width` floor of
-/// [`super::content_limits::table_size_overrides`], as the tables a box
+/// They keep the size floors of [`size_floor_overrides`], as the boxes a box
 /// contains do.
 fn root_static_position_overrides(
     tree: &mut LayoutSession<'_>,
@@ -326,7 +325,7 @@ fn root_static_position_overrides(
             .iter()
             .map(|candidate| candidate.node)
             .collect::<Vec<_>>();
-        overrides.extend(table_size_overrides(tree, root, &nodes, area, None));
+        overrides.extend(size_floor_overrides(tree, root, &nodes, area, None));
         overrides
     })
 }
@@ -340,15 +339,40 @@ struct GridAreaBasis {
     axes: Option<grid_oof::GridAxes>,
 }
 
-/// [`super::content_limits::table_size_overrides`] for the `candidates` that
-/// `owner` positions against `area`, its positioning area.
+/// The overrides that keep `candidates`, boxes in a containing block of `size`,
+/// from being sized under their content: those of
+/// [`super::content_limits::table_size_overrides`], the sizes of
+/// [`super::content_limits::ratio_stated_size_clamps`] and the minimum width of
+/// [`super::content_limits::ratio_width_floors`].
+fn size_overrides_in(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    size: Size<f32>,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let mut overrides = super::content_limits::table_size_overrides(
+        tree,
+        candidates,
+        size,
+        tree.context.oof_axes_vertical,
+    );
+    overrides.extend(super::content_limits::ratio_stated_size_clamps(
+        tree, candidates, size,
+    ));
+    overrides.extend(super::content_limits::ratio_width_floors(
+        tree, candidates, size,
+    ));
+    overrides
+}
+
+/// [`size_overrides_in`] for the `candidates` that `owner` positions against
+/// `area`, its positioning area.
 ///
 /// A grid container places a box that names a grid area in that area. Width
 /// constraints use the area's physical width; percentage padding uses its
 /// inline size. `basis` resolves both dimensions of that area. Without it,
 /// or without the tracks, placed boxes keep their authored values until a
 /// positioning area is available.
-fn table_size_overrides(
+fn size_floor_overrides(
     tree: &mut LayoutSession<'_>,
     owner: NodeId,
     candidates: &[NodeId],
@@ -356,12 +380,7 @@ fn table_size_overrides(
     basis: Option<GridAreaBasis>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
     if tree.nodes[usize::from(owner)].formatting_context != FormattingContext::Grid {
-        return super::content_limits::table_size_overrides(
-            tree,
-            candidates,
-            area.size,
-            tree.context.oof_axes_vertical,
-        );
+        return size_overrides_in(tree, candidates, area.size);
     }
     let mut floors = Vec::new();
     let mut in_containing_block = Vec::new();
@@ -377,20 +396,10 @@ fn table_size_overrides(
                 .map(|areas| areas.positioning_area(&style, basis.direction, area).size)
         });
         if let Some(size) = containing_size {
-            floors.extend(super::content_limits::table_size_overrides(
-                tree,
-                &[candidate],
-                size,
-                tree.context.oof_axes_vertical,
-            ));
+            floors.extend(size_overrides_in(tree, &[candidate], size));
         }
     }
-    floors.extend(super::content_limits::table_size_overrides(
-        tree,
-        &in_containing_block,
-        area.size,
-        tree.context.oof_axes_vertical,
-    ));
+    floors.extend(size_overrides_in(tree, &in_containing_block, area.size));
     floors
 }
 
@@ -432,7 +441,7 @@ pub(super) fn layout_candidates(
                 direction,
                 axes: grid,
             });
-            let floors = table_size_overrides(tree, owner, &candidate_ids, area, basis);
+            let floors = size_floor_overrides(tree, owner, &candidate_ids, area, basis);
             match grid {
                 Some(axes) => tree.with_overrides(floors, |tree| {
                     grid_oof::compute_oof_layout(tree, owner, span, area, direction, claims, axes)
