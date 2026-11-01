@@ -1,0 +1,495 @@
+{
+  "oracle": "Chromium152.0.7977.82, actual800x600viewport, standardsmode, body8, bundledAhem10px/10px; img20x50natural (SVGdataURI inbrowser, Portraitresolver inRust)",
+  "cases": [
+    {
+      "label": "middle",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "top",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='vertical-align:top'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "bottom",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='vertical-align:bottom'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "padding-border",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='padding:10px;border:3px solid'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          46,
+          200
+        ],
+        [
+          "i",
+          21,
+          21,
+          69.59375,
+          174
+        ]
+      ]
+    },
+    {
+      "label": "image-max-middle",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch;max-height:50px'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          82,
+          20,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "image-max-bottom",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='vertical-align:bottom'><img id=i src='https://stretch.test/portrait.png' style='height:stretch;max-height:50px'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          155,
+          20,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "percent-middle",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:50%'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          57.5,
+          39.59375,
+          99
+        ]
+      ]
+    },
+    {
+      "label": "percent-bottom",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='vertical-align:bottom'><img id=i src='https://stretch.test/portrait.png' style='height:50%'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          106,
+          39.59375,
+          99
+        ]
+      ]
+    },
+    {
+      "label": "cell-min",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='min-height:300px'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "cell-authored",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='height:200px'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          82,
+          202
+        ],
+        [
+          "c",
+          8,
+          8,
+          82,
+          202
+        ],
+        [
+          "i",
+          9,
+          9,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "table-min-only",
+      "html": "<table id=t style='min-height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          82,
+          20,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "block-image",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch;display:block'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "flex-table",
+      "html": "<div style='display:flex;align-items:start'><table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table></div>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "grid-table",
+      "html": "<div style='display:grid;justify-items:start'><table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table></div>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "float-control",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='float:left;height:50px'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          83,
+          20,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "ordinary-image",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:50px'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          82,
+          20,
+          50
+        ]
+      ]
+    }
+  ],
+  "known_preexisting_differences": [
+    {
+      "label": "image-min",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src='https://stretch.test/portrait.png' style='height:stretch;min-height:220px'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ],
+      "issue": "RAIKIRI-1343"
+    },
+    {
+      "label": "cell-max",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ],
+      "issue": "RAIKIRI-1344"
+    }
+  ]
+}

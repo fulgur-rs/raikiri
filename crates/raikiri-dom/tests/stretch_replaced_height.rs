@@ -359,3 +359,56 @@ fn the_other_kinds_of_container_stretch_the_image_as_well() {
         ],
     );
 }
+
+#[test]
+fn a_stretched_image_in_a_table_cell_is_aligned_at_its_used_height() {
+    let body = "<table id=t style='height:200px;border-spacing:0'><tr><td id=c>\
+        <img id=i src='https://stretch.test/portrait.png' style='height:stretch'>\
+        </td></tr></table>";
+    let found = border_boxes(body);
+    // Chromium quantizes the ratio width to 1/64px (79.1875px).
+    for (id, expected) in [
+        ("t", [8.0, 8.0, 22.0, 200.0]),
+        ("c", [8.0, 8.0, 22.0, 200.0]),
+        ("i", [9.0, 9.0, 79.1875, 198.0]),
+    ] {
+        let (_, actual) = found.iter().find(|(name, _)| name == id).expect("box");
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 0.04),
+            "#{id} is {actual:?}, expected {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn table_cell_image_alignment_follows_final_constraints() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/table-cell-stretch-image.json"))
+            .expect("Chromium measurements");
+    let mut mismatches = Vec::new();
+    for case in oracle["cases"].as_array().expect("cases") {
+        let body = case["html"].as_str().expect("markup");
+        let boxes = border_boxes(body);
+        for entry in case["expected"].as_array().expect("expected boxes") {
+            let id = entry[0].as_str().expect("id");
+            let (_, actual) = boxes.iter().find(|(name, _)| name == id).expect("box");
+            let expected: Vec<_> = (1..5)
+                .map(|i| entry[i].as_f64().expect("coordinate") as f32)
+                .collect();
+            if !actual
+                .iter()
+                .zip(&expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 0.04)
+            {
+                mismatches.push(format!(
+                    "{}: #{id} is {actual:?}, expected {expected:?}",
+                    case["label"]
+                ));
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
