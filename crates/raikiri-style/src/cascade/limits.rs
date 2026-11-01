@@ -129,11 +129,12 @@ pub struct CascadeOptions {
     /// `line-height: normal`, this provider replaces the document provider,
     /// preserving the existing options precedence.
     pub normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
-    /// Device pixels per CSS pixel for computed border-width snapping.
+    /// Device pixels per CSS pixel for computed border widths and table spacing.
     ///
-    /// `None` preserves fractional CSS-pixel widths for output-neutral and
+    /// `None` preserves fractional CSS-pixel lengths for output-neutral and
     /// vector consumers. Raster consumers should pass the scale of the output
     /// they are preparing (for example, `Some(1.0)` for 1x output).
+    /// Table spacing may become zero, unlike positive border widths.
     pub border_width_device_scale: Option<f32>,
 }
 

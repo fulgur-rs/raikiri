@@ -5242,10 +5242,7 @@ property_key_samples! {
     // unit exercises phase-3 absolutization (`resolve_border_spacing`)
     // instead of trivially round-tripping an already-absolute length.
     // Two axes differ so the sample is not shortest-serializable either.
-    BorderSpacing => PropertyValue::BorderSpacing(BorderSpacingValue {
-        horizontal: Length::Em(0.5),
-        vertical: Length::Rem(0.75),
-    }),
+    BorderSpacing => PropertyValue::BorderSpacing(BorderSpacingValue::new(Length::Em(0.5), Length::Rem(0.75))),
     // CSS Tables 3 §7 caption-side — non-initial (`bottom`, not `top`),
     // same rationale as `TableLayout` above.
     CaptionSide => PropertyValue::CaptionSide(CaptionSideValue::Bottom),

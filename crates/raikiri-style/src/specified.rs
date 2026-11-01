@@ -1223,10 +1223,7 @@ impl SpecifiedValues {
             border_collapse: BorderCollapseValue::Separate,
             // CSS Tables 3 §6.1: border-spacing is initially `0` on both axes (0px). For nodes
             // with a parent, `Self::inherit_from` replaces it with the inherited value.
-            border_spacing: BorderSpacingValue {
-                horizontal: Length::Px(0.0),
-                vertical: Length::Px(0.0),
-            },
+            border_spacing: BorderSpacingValue::new(Length::Px(0.0), Length::Px(0.0)),
             // CSS Tables 3 §7: caption-side is initially `top`. For nodes with a parent,
             // `Self::inherit_from` replaces it with the inherited value.
             caption_side: CaptionSideValue::Top,

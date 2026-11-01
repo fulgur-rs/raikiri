@@ -7893,6 +7893,10 @@ css_keywords!(EmptyCellsValue {
 /// absolutizes each component with `resolve_border_spacing`;
 /// unlike its sibling keyword-only types [`CaptionSideValue`] / [`EmptyCellsValue`],
 /// the values are not simply passed through.
+///
+/// Lifted computed components retain their provenance so raster inheritance
+/// does not quantize them repeatedly. Editing a component makes that length
+/// resolve as a new specified value. Provenance participates in staging equality.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct BorderSpacingValue {
@@ -7900,6 +7904,9 @@ pub struct BorderSpacingValue {
     pub horizontal: Length,
     /// Vertical (block-axis) spacing — the second component, or `horizontal` if omitted.
     pub vertical: Length,
+    /// Original absolute components lifted from a computed value. An unchanged
+    /// component keeps its exact value instead of snapping again on inheritance.
+    pub(crate) computed_lengths: Option<[f32; 2]>,
 }
 
 impl BorderSpacingValue {
@@ -7908,6 +7915,7 @@ impl BorderSpacingValue {
         Self {
             horizontal,
             vertical,
+            computed_lengths: None,
         }
     }
 }
