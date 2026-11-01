@@ -1352,16 +1352,41 @@ fn compute_table_layout_checked(
         // Vertical tables stack each column's inline track along the physical
         // height, so the physical spacing applies across that stack: the
         // vertical gap between and around the stacked tracks, the horizontal gap
-        // on both sides of the single physical column.
-        let vertical_content_width =
-            column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
+        // on both sides of the single physical column. Every stacked track is as
+        // wide as its cell, so the column is as wide as the widest cell. The
+        // columns share the width of a cell that spans several of them, less the
+        // spacing between them, so the cell is as wide as those columns and that
+        // spacing.
+        let vertical_cell_width = grid
+            .cells
+            .iter()
+            .map(|cell| {
+                let start = usize::from(cell.col_start).min(column_widths.len());
+                let end = (start + usize::from(cell.col_span)).min(column_widths.len());
+                column_widths[start..end].iter().sum::<f32>()
+                    + border_spacing.0 * (end - start).saturating_sub(1) as f32
+            })
+            .chain(column_widths.iter().copied())
+            .fold(0.0, f32::max);
+        let vertical_content_width = vertical_cell_width + border_spacing.0 * 2.0;
         // CSS 2.1 §17.5.2: the used table width is at least the columns plus
         // the spacing and borders, even when the specified width is smaller.
         let min_table_width = content_width + padding_border_size.width;
         let final_width = if vertical_writing {
+            // The width of a vertical table is its extent along the block axis,
+            // which its rows set and the room around it does not change, so a
+            // table that states no width shrinks to them. Only a stated width,
+            // or the used width a flex or grid parent gives its item, sets it.
             effective_known
                 .width
-                .unwrap_or(vertical_content_width + padding_border_size.width)
+                .filter(|_| specified_width.is_some() || parent_is_flex_or_grid)
+                .unwrap_or_else(|| {
+                    clamp_min_max(
+                        vertical_content_width + padding_border_size.width,
+                        min_w_outer,
+                        max_w_outer,
+                    )
+                })
         } else if fixed_columns_collapse {
             min_table_width
         } else {
@@ -4403,13 +4428,10 @@ fn reposition_cells_for_vertical_writing(
             VerticalAlign::Bottom => extra,
             _ => 0.0,
         };
-        // Baseline-aligned block content retains its normal-flow placement;
-        // without an inline baseline, treating it as block-start alignment
-        // would move it across the entire physical cell in vertical-rl.
         let rtl = matches!(
             cell_writing_mode,
             WritingMode::VerticalRl | WritingMode::SidewaysRl
-        ) && (has_lines || !cell_baseline_aligned(node.table_vertical_align));
+        );
         let child_shift = if rtl {
             if has_lines { -shift } else { extra - shift }
         } else {

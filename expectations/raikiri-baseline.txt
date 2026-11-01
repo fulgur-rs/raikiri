@@ -5530,3 +5530,7 @@ css/css-sizing/aspect-ratio/flex-aspect-ratio-055.html
 # --- A stretched replaced flex item with a percentage height container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
 # An image that a row flex container stretches to a definite height, here half of a 50px box, is as wide as that height gives along its aspect ratio, and not the 60px of its natural width (CSS Flexbox 1 sections 4.5 and 9.8). The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
 css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html
+
+# --- A vertical table as wide as its cells (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# A table in a vertical writing mode is as wide as its rows (CSS 2 section 17.5.2), not as wide as the room around it, so its cells shrink to their content the way the `width: fit-content` boxes of the reference do. The test was XFAIL before and KEEP in an audit-vacuous-passes run.
+css/css-tables/baseline-vertical.html
