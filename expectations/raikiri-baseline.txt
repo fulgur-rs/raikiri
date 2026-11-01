@@ -5522,3 +5522,11 @@ css/css-multicol/multicol-span-float-003.html
 # --- An image in a column flex container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
 # An image that is an item of a column flex container takes its width from a height along its aspect ratio (CSS Sizing 4 section 5.1): the height it states while the width of the container is measured, and the height the container flexed it to once that width is fixed. A container that wraps its items is as wide as the stated height gives, and the image on its line is as wide as the grown height gives.
 css/css-sizing/aspect-ratio/flex-aspect-ratio-024.html
+
+# --- The automatic minimum width of a row flex item (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# A row flex item with an aspect ratio and a height of its own keeps the width that height gives along the ratio as its automatic minimum width (CSS Flexbox 1 section 4.5), however small its flex basis is, so the inline flex container around it is as wide as that item. The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-055.html
+
+# --- A stretched replaced flex item with a percentage height container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# An image that a row flex container stretches to a definite height, here half of a 50px box, is as wide as that height gives along its aspect ratio, and not the 60px of its natural width (CSS Flexbox 1 sections 4.5 and 9.8). The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html

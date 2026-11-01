@@ -633,6 +633,14 @@ impl LayoutSession<'_> {
             .is_some_and(|parent| !self.physical_style(parent).flex_direction_is_row())
     }
 
+    /// Whether box `node` is an item of a flex container with a horizontal main
+    /// axis.
+    pub(crate) fn in_row_flex_container(&self, node: usize) -> bool {
+        self.taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)
+            .is_some_and(|parent| self.physical_style(parent).flex_direction_is_row())
+    }
+
     /// Whether `known` is only the cross size that a flex container stretches
     /// its item `node`, with the box style `style`, to while the item's main
     /// size is measured.
@@ -2796,7 +2804,18 @@ fn compute_inline_block_shrink_wrap(
             && inputs.sizing_mode == SizingMode::ContentSize
             && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
     });
-    let sides_style = flexed_height.map(|height| {
+    // An item of a row flex container whose height is fixed before its width is
+    // measured, because it states the height or the container stretches it to a
+    // definite one, takes its width from that height along its ratio, say for its
+    // automatic minimum size.
+    let row_height = inputs.known_dimensions.height.filter(|_| {
+        leaf_intrinsic.is_some()
+            && !in_column_flex
+            && inputs.sizing_mode == SizingMode::ContentSize
+            && inputs.known_dimensions_are_definite.height
+            && tree.in_row_flex_container(idx)
+    });
+    let sides_style = flexed_height.or(row_height).map(|height| {
         let mut style = leaf_style.clone();
         apply_border_box_height(
             tree,
@@ -2812,7 +2831,7 @@ fn compute_inline_block_shrink_wrap(
             sides_style.as_ref().unwrap_or(&leaf_style),
             &LayoutInput {
                 known_dimensions: Size::NONE,
-                sizing_mode: if in_column_flex {
+                sizing_mode: if in_column_flex || row_height.is_some() {
                     SizingMode::InherentSize
                 } else {
                     inputs.sizing_mode
