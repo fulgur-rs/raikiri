@@ -1356,17 +1356,12 @@ pub(crate) fn is_monolithic_for_pagination_with_transposed_axes(
     )
 }
 
-fn monolithic_with_boxes(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    boxes: BoxTree<'_>,
-    pagination_on_transposed_axes: bool,
-) -> bool {
+/// Whether `node_id` is a replaced element or an inline SVG root: content that
+/// no page break goes through.
+pub(crate) fn is_replaced_for_pagination(document: &Document, node_id: usize) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     let node = &document.nodes[node_id];
-    let replaced = node
-        .flags
+    node.flags
         .contains(crate::node::NodeFlags::IS_INLINE_SVG_ROOT)
         || node.tag_name().is_some_and(|tag| {
             // Programmatically created DOM nodes can retain mixed-case tags.
@@ -1374,8 +1369,18 @@ fn monolithic_with_boxes(
                 .iter()
                 .chain(REPLACED_BOX_TAGS)
                 .any(|replaced_tag| tag.eq_ignore_ascii_case(replaced_tag))
-        });
-    replaced
+        })
+}
+
+fn monolithic_with_boxes(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    boxes: BoxTree<'_>,
+    pagination_on_transposed_axes: bool,
+) -> bool {
+    let node = &document.nodes[node_id];
+    is_replaced_for_pagination(document, node_id)
         || (!page_applies_with_boxes(boxes, node_id)
             && boxes.identity(node_id).display().is_atomic_inline_level())
         || orthogonal_flow_with_boxes(document, cascade, node_id, boxes)

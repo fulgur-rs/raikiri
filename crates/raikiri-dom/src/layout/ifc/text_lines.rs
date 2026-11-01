@@ -99,18 +99,29 @@ fn is_placing_text_owner(doc: &Document, owner: usize) -> bool {
         )
 }
 
+/// The single line of a paragraph that no text node places (see
+/// [`single_unplaced_line`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct UnplacedLine {
+    /// The line, in the root's content box.
+    pub(crate) line: IfcTextLine,
+    /// Whether the line holds atomic inlines and no text, as opposed to
+    /// generated text.
+    pub(crate) atomic: bool,
+}
+
 /// The line of the paragraph rooted at `root` when the paragraph is a single
-/// line of generated text that no text node places: the line of an empty list
-/// item holding only its inside marker, or of `::before` or `::after` text
-/// alone.
+/// line that no text node places: the line of an empty list item holding only
+/// its inside marker, of `::before` or `::after` text alone, or of atomic
+/// inlines alone, such as an image.
 ///
 /// Pagination places the lines of a paragraph through the text nodes that own
-/// them, and generated text belongs to none, so a line like this one is never
-/// placed by itself and a page edge would cut it in two. A line whose only
-/// real text is white space is such a line: the white space of an unclosed
-/// `<li>` before the next one is a text node, but never a page candidate. A
-/// line of atomic inlines alone holds no text at all and is not covered.
-pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<IfcTextLine> {
+/// them, and generated text and atomic inlines belong to none, so a line like
+/// this one is never placed by itself and a page edge would cut it in two. A
+/// line whose only real text is white space is such a line: the white space of
+/// an unclosed `<li>` before the next one is a text node, but never a page
+/// candidate.
+pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<UnplacedLine> {
     let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
     // The lines of a multicol container sit in its columns, not at the offset
     // the paragraph lays them out at.
@@ -122,20 +133,29 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<IfcTex
         return None;
     };
     let owners = glyph_owners(line);
-    // The ids of generated text name no node of the document.
-    let has_generated_text = owners.iter().any(|&owner| doc.nodes.get(owner).is_none());
-    if !has_generated_text
-        || owners
-            .iter()
-            .any(|&owner| is_placing_text_owner(doc, owner))
+    if owners
+        .iter()
+        .any(|&owner| is_placing_text_owner(doc, owner))
     {
         return None;
     }
+    // The ids of generated text name no node of the document.
+    let has_generated_text = owners.iter().any(|&owner| doc.nodes.get(owner).is_none());
+    let atomic = !has_generated_text
+        && line
+            .fragments()
+            .any(|fragment| matches!(fragment, Fragment::Atomic(_)));
+    if !has_generated_text && !atomic {
+        return None;
+    }
     let top = lines.line_top(0);
-    Some(IfcTextLine {
-        line: 0,
-        top,
-        bottom: top + line.block_size(),
+    Some(UnplacedLine {
+        line: IfcTextLine {
+            line: 0,
+            top,
+            bottom: top + line.block_size(),
+        },
+        atomic,
     })
 }
 

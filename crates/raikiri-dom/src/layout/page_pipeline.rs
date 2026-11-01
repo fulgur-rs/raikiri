@@ -4735,6 +4735,11 @@ struct BoxOverflow {
     /// The box avoids breaks inside it and would cross the page edge, or it
     /// ends its parent and the parent's closing edges would break away from it.
     page: bool,
+    /// The box is one that no page break goes through (see
+    /// [`box_is_unbreakable`]) and moves to the next page for that, which is
+    /// also counted in `page`. It does so even as the first box of the flow
+    /// when a margin above it keeps it from starting the page.
+    unbreakable: bool,
     /// The box starts a run of boxes joined by avoided breaks that would
     /// cross the page edge.
     avoided_run: bool,
@@ -4830,36 +4835,39 @@ impl AvoidedBreaks {
                 next_page_step,
             )
         });
-        let page = if box_avoids_page_break_inside(
+        let page_box_end = flow_y + height + trailing_margin;
+        let unplaced_line = candidate.context.unplaced_line();
+        // A replaced element is unbreakable whole, and so is a line of
+        // atomic inlines alone, which keeps the block that holds it whole.
+        let unbreakable_end = if candidate.context.is_unbreakable() {
+            Some(page_box_end)
+        } else {
+            unplaced_line
+                .filter(|line| line.atomic)
+                .map(|line| flow_y + line.end.min(height))
+        };
+        let unbreakable = unbreakable_end.is_some_and(|end| {
+            unbreakable_box_moves(flow_y, margin_top, end, page_start, page_end)
+        });
+        // A paragraph of one line of generated text is kept whole by its
+        // line alone: the margin and padding after the line break across
+        // the edge like those of a paragraph of text. A box shorter than the
+        // line ends where the box does.
+        let avoided_end = if box_avoids_page_break_inside(
             document,
             node_id,
             cascade.computed[node_id].break_inside,
         ) {
-            avoided_box_moves(
-                flow_y,
-                margin_top,
-                flow_y + height + trailing_margin,
-                page_start,
-                page_end,
-            )
+            Some(page_box_end)
         } else {
-            // A paragraph of one line of generated text is kept whole by its
-            // line alone: the margin and padding after the line break across
-            // the edge like those of a paragraph of text. A box shorter than
-            // the line ends where the box does.
-            candidate
-                .context
-                .unplaced_line_end()
-                .is_some_and(|line_end| {
-                    avoided_box_moves(
-                        flow_y,
-                        margin_top,
-                        flow_y + line_end.min(height),
-                        page_start,
-                        page_end,
-                    )
-                })
+            unplaced_line
+                .filter(|line| !line.atomic)
+                .map(|line| flow_y + line.end.min(height))
         };
+        let page = unbreakable
+            || avoided_end.is_some_and(|end| {
+                avoided_box_moves(flow_y, margin_top, end, page_start, page_end)
+            });
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
         let page = page || (avoided_run && !candidate.context.is_direct_body_element());
@@ -4909,6 +4917,7 @@ impl AvoidedBreaks {
         let grid_item = candidate.context.is_grid_item() && item_overflow();
         BoxOverflow {
             page,
+            unbreakable,
             avoided_run,
             table_row,
             table_row_lead,
@@ -6373,14 +6382,43 @@ fn box_avoids_page_break_inside(
             || page_applies_to_box(document, node_id))
 }
 
-/// How far below the border-box top of the in-flow block `node_id` the line
-/// of its paragraph ends, when the paragraph is a single line of generated
-/// text that no text node places (see [`single_unplaced_line`]).
+/// Whether the box `node_id` is a replaced element or an inline SVG laid out
+/// as a block-level box: no page break goes through it, so it moves to the
+/// next page whole when it would cross the page end, as if it said
+/// `break-inside: avoid`. It stays where it is only at the top of its page
+/// (CSS Fragmentation 3 section 5.1.1, Chromium).
+///
+/// A box with inline outer display is left out: it takes part in the lines of
+/// its paragraph, which move it (see [`unplaced_line`]), and moving it on its
+/// own as well would shift it twice.
+fn box_is_unbreakable(document: &Document, node_id: usize) -> bool {
+    !document.nodes[node_id].display().is_inline_level()
+        && is_replaced_for_pagination(document, node_id)
+}
+
+/// The single line of a paragraph that no text node places, as the block
+/// that holds it sees it.
+#[derive(Clone, Copy)]
+struct UnplacedBlockLine {
+    /// How far below the border-box top of the block the line ends.
+    end: f32,
+    /// Whether the line holds atomic inlines and no text: no page break goes
+    /// through it, as through the box of one.
+    atomic: bool,
+}
+
+/// The line of the in-flow block `node_id` when its paragraph is a single line
+/// that no text node places: generated text, or atomic inlines alone (see
+/// [`single_unplaced_line`]).
 ///
 /// No text candidate moves such a line, so its block moves whole when the
 /// line would cross a page edge, as a line of text does. Only a horizontal
 /// paragraph is measured: the lines of a vertical one are columns.
-fn unplaced_line_end(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<f32> {
+fn unplaced_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<UnplacedBlockLine> {
     let node = &document.nodes[node_id];
     if !node.is_ifc_root()
         || !is_block_level_flow_box(node.display())
@@ -6393,9 +6431,12 @@ fn unplaced_line_end(document: &Document, cascade: &CascadeResult, node_id: usiz
     {
         return None;
     }
-    let line = single_unplaced_line(document, node_id)?;
+    let unplaced = single_unplaced_line(document, node_id)?;
     let layout = document.ifc_layout_node(node_id)?.layout;
-    Some(layout.border.top + layout.padding.top + line.bottom)
+    Some(UnplacedBlockLine {
+        end: layout.border.top + layout.padding.top + unplaced.line.bottom,
+        atomic: unplaced.atomic,
+    })
 }
 
 /// The deepest box [`first_piece_end`] looks into.
@@ -6419,9 +6460,12 @@ fn first_piece_end(
     depth: usize,
 ) -> Option<f32> {
     let node = &document.nodes[node_id];
+    // A box in the orthogonal flow of its parent is monolithic, and its
+    // block size along the parent's axis is the whole of it.
+    let orthogonal_item = depth > 0 && establishes_orthogonal_flow(document, cascade, node_id);
     if depth > FIRST_PIECE_DEPTH
         || node.kind() != NodeKind::Element
-        || node.used_writing_mode.is_vertical()
+        || (node.used_writing_mode.is_vertical() && !orthogonal_item)
         || node.multicol.is_some()
         || node.has_before_or_after_content
         || !matches!(
@@ -6555,6 +6599,33 @@ fn avoided_box_moves(
     page_end: f32,
 ) -> bool {
     flow_y - margin_top.max(0.0) > page_start + 0.001
+        && starts_on_page_and_runs_past_it(flow_y, box_end, page_start, page_end)
+}
+
+/// Whether a box that no page break goes through (see [`box_is_unbreakable`])
+/// moves to the next page: it starts on this page and runs past its end, and
+/// does not start the page.
+///
+/// Unlike a block that avoids a break inside it, which stays where its margin
+/// box starts the page, such a box stays only where its border box does.
+/// Browsers truncate the margin at a break between pages but keep the one at
+/// the start of the first page, which leaves a box with a margin there to
+/// move on even when nothing precedes it.
+fn unbreakable_box_moves(
+    flow_y: f32,
+    margin_top: f32,
+    box_end: f32,
+    page_start: f32,
+    page_end: f32,
+) -> bool {
+    // The first page starts at the flow origin; a margin above the box is
+    // cut by any break after it.
+    let top = if page_start > 0.001 {
+        flow_y - margin_top.max(0.0)
+    } else {
+        flow_y
+    };
+    top > page_start + 0.001
         && starts_on_page_and_runs_past_it(flow_y, box_end, page_start, page_end)
 }
 
