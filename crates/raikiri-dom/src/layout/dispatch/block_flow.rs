@@ -115,11 +115,39 @@ fn outer_width(
     };
     let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
     inputs.available_space.width = space;
-    let margins_collapse = shares_parent_context(tree, parent, child, &child_style(tree, child));
+    let mut style = child_style(tree, child);
+    let margins_collapse = shares_parent_context(tree, parent, child, &style);
     inputs.vertical_margins_are_collapsible = Line {
         start: margins_collapse,
         end: margins_collapse,
     };
+    // A child that states `height: stretch` fills the definite height of the
+    // parent's content box, as it does once it is laid out, and an `auto`
+    // width follows from that height through the aspect ratio of the box. Its
+    // vertical margins are taken as held inside the parent.
+    if let Some(height) =
+        percent_height.filter(|_| matches!(style.size.height.expand(), ExpandedDimension::Stretch))
+    {
+        let edges = style
+            .margin
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
+        let room = (height - edges.top - edges.bottom).max(0.0);
+        crate::layout::dispatch::content_limits::resolve_stretch_height_limits_in_style(
+            tree,
+            child,
+            &mut style,
+            Some(room),
+            0.0,
+        );
+        inputs.known_dimensions.height = Some(room);
+        let metrics = Metrics::resolve(
+            &style,
+            tree.nodes[usize::from(child)].svg_width_follows_available,
+            tree.nodes[usize::from(child)].ratio_in_content_box,
+            inputs,
+        );
+        inputs.known_dimensions.height = Some(metrics.clamp_height(room));
+    }
     let measured =
         measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
             tree.compute_child_layout_with_block_ctx(child, inputs, None)
