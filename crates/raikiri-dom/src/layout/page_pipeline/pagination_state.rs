@@ -1837,15 +1837,25 @@ impl PaginationState {
         // own position.
         let in_flow = !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant();
-        if let Some(page) = self.deferred_shifts.apply_reached(
+        let reached_page = self.deferred_shifts.apply_reached(
             document,
             text_lines,
             node_id,
             candidate.ifc_root,
+            self.current_page,
             &mut self.flow_shift,
-        ) && in_flow
+        );
+        if let Some(page) = reached_page
+            && in_flow
         {
             self.current_page = self.current_page.max(page);
+        }
+        // A box that kept its height ends on an earlier page than its moved
+        // lines, and the flow goes on from there, never from before the page
+        // it was on when it reached them.
+        if in_flow && let Some(floor) = self.deferred_shifts.page_floor.take() {
+            let box_end_page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
+            self.current_page = self.current_page.min(floor.max(box_end_page));
         }
         if let Some(page) = self
             .subtree_shifts

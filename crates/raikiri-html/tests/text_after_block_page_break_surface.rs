@@ -848,3 +848,109 @@ fn a_set_height_paragraph_with_a_block_after_its_lines_breaks_between_the_lines(
         [vec![5.0, 35.0], vec![5.0, 35.0], vec![5.0]]
     );
 }
+
+#[test]
+fn the_box_after_a_set_height_paragraph_with_inline_elements_stays_at_the_box_end() {
+    // A later text of the paragraph, in an inline element or after a `<br>`,
+    // takes the whole shift of the lines that moved, but the block after the
+    // paragraph still follows the end of its box.
+    for inner in ["z z z <u>z</u>", "z z z<br>z", "z <u>z z</u> z"] {
+        for (style, expected) in [
+            (
+                "height:45px;orphans:1;widows:1",
+                vec![vec![35.0, 65.0], vec![5.0, 35.0]],
+            ),
+            (
+                "max-height:90px;orphans:1;widows:1",
+                vec![vec![35.0, 65.0], vec![5.0, 25.0, 35.0]],
+            ),
+        ] {
+            let mut tops = tops_per_page(&format!(
+                "{}<div style='width:20px;{style}'>{inner}</div><div style='width:20px'>Y</div>",
+                spacer(30)
+            ));
+            for page in &mut tops {
+                page.sort_by(f32::total_cmp);
+            }
+            assert_eq!(tops, expected, "{inner} {style}");
+        }
+    }
+}
+
+#[test]
+fn a_box_taken_out_of_the_flow_after_a_set_height_paragraph_leaves_the_box_end_alone() {
+    // An out-of-flow box between the paragraph and the block after it does
+    // not stop the flow from going back to the page the box ends on: the
+    // block still sits at the end of the box, as it does without the
+    // out-of-flow one.
+    let positioned = "<div style='position:absolute;left:60px;top:0;width:20px'>F</div>";
+    for inner in ["z z z z", "z z z <u>z</u>", "z z z<br>z"] {
+        for (style, expected) in [
+            (
+                "height:45px;orphans:1;widows:1",
+                vec![vec![5.0, 35.0, 65.0], vec![5.0, 35.0]],
+            ),
+            (
+                "max-height:90px;orphans:1;widows:1",
+                vec![vec![5.0, 35.0, 65.0], vec![5.0, 25.0, 35.0]],
+            ),
+            (
+                "min-height:150px;orphans:1;widows:1",
+                vec![vec![5.0, 35.0, 65.0], vec![5.0, 35.0], vec![5.0]],
+            ),
+        ] {
+            let mut tops = tops_per_page(&format!(
+                "{}<div style='width:20px;{style}'>{inner}</div>{positioned}\
+                 <div style='width:20px'>Y</div>",
+                spacer(30)
+            ));
+            for page in &mut tops {
+                page.sort_by(f32::total_cmp);
+                page.dedup();
+            }
+            assert_eq!(tops, expected, "{inner} {style}");
+        }
+    }
+}
+
+#[test]
+fn a_set_height_paragraph_that_breaks_more_than_once_keeps_the_block_after_at_its_box_end() {
+    // Each page the lines of the paragraph go on to is one more the flow has
+    // to come back from to the end of the box.
+    let inner = "z z z <u>z z z z z z z z z</u> z";
+    for (spacer_height, style, expected) in [
+        (
+            30,
+            "height:45px",
+            vec![
+                vec![35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0],
+            ],
+        ),
+        (
+            0,
+            "max-height:90px",
+            vec![
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0],
+            ],
+        ),
+    ] {
+        let mut tops = tops_per_page(&format!(
+            "{}<div style='width:20px;orphans:1;widows:1;{style}'>{inner}</div>\
+             <div style='width:20px'>Y</div>",
+            spacer(spacer_height)
+        ));
+        for page in &mut tops {
+            page.sort_by(f32::total_cmp);
+            page.dedup();
+        }
+        assert_eq!(tops, expected, "{style}");
+    }
+}

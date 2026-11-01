@@ -18775,6 +18775,33 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
 }
 
 #[test]
+fn the_excess_of_a_paragraph_is_given_back_once_the_flow_leaves_it_to_the_earliest_page() {
+    let (doc, _, body, root, text) = unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);
+    let after = doc.nodes[body].children[0];
+    let lines = TextLineIndex::default();
+    let mut shifts = DeferredShifts {
+        // Two texts of the paragraph took a shift that its box did not grow
+        // by, the second one when the flow was already on a later page.
+        excess_shifts: vec![(root, -20.0, 1), (root, -5.0, 3)],
+        ..Default::default()
+    };
+    let mut flow_shift = 40.0;
+    // Inside the paragraph nothing is given back.
+    let reached = shifts.apply_reached(&doc, &lines, text, None, 3, &mut flow_shift);
+    assert_eq!((reached, flow_shift, shifts.page_floor), (None, 40.0, None));
+    assert_eq!(shifts.excess_shifts.len(), 2);
+    // Past the paragraph both are, and the flow goes back no further than the
+    // page it was on before the first one.
+    let reached = shifts.apply_reached(&doc, &lines, after, None, 3, &mut flow_shift);
+    assert_eq!((reached, flow_shift), (None, 15.0));
+    assert_eq!(shifts.page_floor, Some(1));
+    assert!(shifts.excess_shifts.is_empty());
+    // Once given back they are not given back again.
+    shifts.apply_reached(&doc, &lines, after, None, 3, &mut flow_shift);
+    assert_eq!(flow_shift, 15.0);
+}
+
+#[test]
 fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_opens_one() {
     let (mut doc, cascade, body, _, text) =
         unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);

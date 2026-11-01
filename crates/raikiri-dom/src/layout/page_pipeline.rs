@@ -7504,6 +7504,13 @@ struct DeferredShifts {
     /// shift once they are reached, and are on its page or after it; its texts
     /// before that line stay where they are.
     line_splits: Vec<LineSplit>,
+    /// What the flow after a paragraph gives back once pagination leaves it,
+    /// when a text inside it took a whole line shift but its box grew by less:
+    /// `(paragraph, correction, page the flow was on before that text)`.
+    excess_shifts: Vec<(usize, f32, u32)>,
+    /// The page the flow goes back to, at the earliest, at the next candidate
+    /// in the flow after such a paragraph: the box ends before its moved lines.
+    page_floor: Option<u32>,
 }
 
 /// Lines of a paragraph moved down inside it: see [`DeferredShifts`].
@@ -7526,17 +7533,31 @@ struct LineSplit {
 
 impl DeferredShifts {
     /// Adds to `flow_shift` every pending shift that `node_id` has reached,
-    /// line splits first, and drops them. Returns the last page that a line
-    /// split it reached moved lines to.
+    /// and drops them: the corrections of the paragraphs it left, then the
+    /// line splits. Returns the last page that a line split it reached moved
+    /// lines to. `current_page` is the page the flow is on before `node_id`.
     fn apply_reached(
         &mut self,
         document: &Document,
         text_lines: &TextLineIndex,
         node_id: usize,
         ifc_root: Option<(usize, f32)>,
+        current_page: u32,
         flow_shift: &mut f32,
     ) -> Option<u32> {
         let mut reached_page: Option<u32> = None;
+        let page_floor = &mut self.page_floor;
+        self.excess_shifts
+            .retain(|&(root, correction, page_before)| {
+                let left = !is_descendant_or_self(document, node_id, root);
+                if left {
+                    *flow_shift += correction;
+                    *page_floor =
+                        Some(page_floor.map_or(page_before, |floor| floor.min(page_before)));
+                }
+                !left
+            });
+        let excess_shifts = &mut self.excess_shifts;
         self.line_splits.retain(
             |&LineSplit {
                  root,
@@ -7555,6 +7576,10 @@ impl DeferredShifts {
                     || follows_line_of_paragraph(document, node_id, root, first_moved);
                 if reached {
                     *flow_shift += if after_paragraph { growth } else { shift };
+                    // The flow after the paragraph takes the growth alone.
+                    if !after_paragraph && growth != shift {
+                        excess_shifts.push((root, growth - shift, current_page));
+                    }
                     // A box that kept its height leaves what follows it where
                     // it is, on an earlier page than the moved lines.
                     if !after_paragraph || growth > 0.0 {
