@@ -6,7 +6,8 @@
 //!
 //! The expected boxes are the ones Chromium computes for the same markup in an
 //! 800px by 600px viewport, with the body margin of 8px and a font of 10px
-//! Ahem: each is an element's left, top, width and height.
+//! Ahem: each is an element's left, top, width and height. The table is
+//! positioned so that it is the containing block of the absolute box.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -73,7 +74,7 @@ fn cell(table: Table, mode: &str, align: &str, content: &str) -> String {
         Table::Vertical => (format!("writing-mode: {mode};"), String::new()),
     };
     format!(
-        "<div id=t style='display: table; {table_mode}'>\
+        "<div id=t style='display: table; position: relative; {table_mode}'>\
          <div id=r style='display: table-row'>\
          <div id=c style='display: table-cell; width: 80px; height: 80px; \
          vertical-align: {align}; {cell_mode}'>{content}</div></div></div>"
@@ -226,6 +227,37 @@ fn a_box_and_a_text_block_in_a_vertical_rl_cell_move_together() {
                 ("q", [28.0, 8.0, 10.0, 10.0]),
             ],
         ));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn an_out_of_flow_box_in_a_vertical_cell_stays_at_its_insets() {
+    // The cell is the containing block of `q`: aligning the in-flow content
+    // moves `p` and leaves `q` where its insets put it.
+    let content = "<div id=p style='width: 30px; height: 20px'></div>\
+                   <div id=q style='position: absolute; left: 3px; top: 4px; \
+                   width: 5px; height: 5px'></div>";
+    // (alignment, left of `p` in vertical-rl, and in vertical-lr)
+    let lefts = [
+        ("top", 58.0, 8.0),
+        ("middle", 33.0, 33.0),
+        ("bottom", 8.0, 58.0),
+    ];
+    let mut mismatches = Vec::new();
+    for table in [Table::Horizontal, Table::Vertical] {
+        for (align, rl, lr) in lefts {
+            for (mode, left) in [("vertical-rl", rl), ("vertical-lr", lr)] {
+                mismatches.extend(check(
+                    &format!("{table:?} table, an absolute box, {mode}, {align}"),
+                    &cell(table, mode, align, content),
+                    &[
+                        ("p", [left, 8.0, 30.0, 20.0]),
+                        ("q", [11.0, 12.0, 5.0, 5.0]),
+                    ],
+                ));
+            }
+        }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
