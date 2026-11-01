@@ -16122,7 +16122,7 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     // Room for both constraints and shiftable lines: the break moves up.
     assert_eq!(
         fit.fix(&lines, 70.0, 0, &pages, true, || true),
-        LineBreakFix::MoveLines([Some((2, 10.0, 1)), None])
+        LineBreakFix::MoveLines(vec![(2, 10.0, 1)])
     );
     // Lines that cannot shift fall back to moving the whole block.
     assert_eq!(
@@ -16158,7 +16158,7 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || true),
-        LineBreakFix::MoveLines([Some((1, 10.0, 1)), None])
+        LineBreakFix::MoveLines(vec![(1, 10.0, 1)])
     );
     // A break that honors both constraints needs no repair.
     let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2);
@@ -16191,8 +16191,129 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let fit = ParagraphLineFit::measure(&long, 70.0, 0.0, 100.0, 2, 2);
     assert_eq!(
         fit.fix(&long, 70.0, 0, &pages, false, || true),
-        LineBreakFix::MoveLines([None, Some((12, 10.0, 2))])
+        LineBreakFix::MoveLines(vec![(12, 10.0, 2)])
     );
+}
+
+#[test]
+fn paragraph_line_moves_start_each_page_with_the_line_that_does_not_fit() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // Seven 30px lines. Each page of 100px holds three, and the line after
+    // them crosses the page end, so it starts the next page 10px lower.
+    let lines: Vec<(f32, f32)> = (0..7)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    // Lines that fit need no move.
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 1, 1, &pages),
+        Vec::new()
+    );
+    // One orphan and one widow: the line that crosses each end moves, and the
+    // lines after it follow with it.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 1, 1, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // The first line of a paragraph is never pushed, as the block holding it
+    // moves instead, and a line that the flow already carries past the page
+    // end is not either.
+    assert_eq!(
+        paragraph_line_moves(&lines[..2], 80.0, 0, 1, 1, &pages),
+        Vec::new()
+    );
+    // The last page would hold one line, fewer than the two widows the default
+    // asks for: the page before gives up its last line, which it can spare
+    // and keep its two orphans.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 2, 2, &pages),
+        vec![(3, 10.0, 1), (5, 40.0, 2)]
+    );
+    // Three widows ask for more than the page before can spare and still keep
+    // its two orphans, so it gives up the one line it can.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 2, 3, &pages),
+        vec![(3, 10.0, 1), (5, 40.0, 2)]
+    );
+    // With as many orphans as the page before has lines, it spares none.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 3, 3, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // Four widows are more lines than a page holds. The first break gives up
+    // a line, though the lines then run past the end of the next page and the
+    // last of them starts the page after it.
+    assert_eq!(
+        paragraph_line_moves(&lines[..6], 0.0, 0, 2, 4, &pages),
+        vec![(2, 40.0, 1), (5, 10.0, 2)]
+    );
+    // A break after the first is left as it falls: no page holds the widows.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 2, 4, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // A paragraph without lines has nothing to move.
+    assert_eq!(paragraph_line_moves(&[], 0.0, 0, 2, 2, &pages), Vec::new());
+}
+
+/// The number of lines on each page, from the first to the last that holds one,
+/// when `lines` lines of 30px that start at `effective_y` are moved by `moves`.
+fn lines_on_each_page(
+    moves: &[LineBreakMove],
+    lines: usize,
+    effective_y: f32,
+    pages: &PageOrigins,
+) -> Vec<usize> {
+    let mut counts: Vec<usize> = Vec::new();
+    for line in 0..lines {
+        let shift: f32 = moves
+            .iter()
+            .filter(|&&(first, _, _)| first <= line)
+            .map(|&(_, delta, _)| delta)
+            .sum();
+        let top = effective_y + line as f32 * 30.0 + shift;
+        let page = pages.page_index_for_y(top + 0.001) as usize;
+        if counts.len() <= page {
+            counts.resize(page + 1, 0);
+        }
+        counts[page] += 1;
+    }
+    counts
+}
+
+#[test]
+fn paragraph_line_moves_split_long_paragraphs_as_chromium_does() {
+    // Pages of ten 30px lines. (lines, y of the first, orphans, widows, lines on
+    // each page): the counts Chromium prints for the same paragraphs, read with
+    // `pdftotext -bbox` from `page.pdf`.
+    let pages = PageOrigins::new(&[], 300.0);
+    let cases: &[(usize, f32, usize, usize, &[usize])] = &[
+        (21, 0.0, 2, 2, &[10, 9, 2]),
+        (22, 0.0, 2, 2, &[10, 10, 2]),
+        (22, 0.0, 2, 4, &[10, 8, 4]),
+        (32, 0.0, 2, 4, &[10, 10, 8, 4]),
+        (22, 0.0, 3, 4, &[10, 8, 4]),
+        (22, 0.0, 2, 6, &[10, 6, 6]),
+        (23, 0.0, 2, 6, &[10, 7, 6]),
+        (22, 0.0, 4, 6, &[10, 6, 6]),
+        (32, 0.0, 4, 6, &[10, 10, 6, 6]),
+        (22, 0.0, 2, 9, &[10, 3, 9]),
+        (12, 0.0, 2, 9, &[3, 9]),
+        (21, 15.0, 2, 4, &[9, 8, 4]),
+        (22, 60.0, 2, 4, &[8, 10, 4]),
+        (30, 15.0, 2, 5, &[9, 10, 6, 5]),
+        (13, 60.0, 2, 9, &[4, 9]),
+    ];
+    for &(lines, y, orphans, widows, expected) in cases {
+        let metrics: Vec<(f32, f32)> = (0..lines)
+            .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+            .collect();
+        let moves = paragraph_line_moves(&metrics, y, 0, orphans, widows, &pages);
+        assert_eq!(
+            lines_on_each_page(&moves, lines, y, &pages),
+            expected,
+            "{lines} lines at {y}, orphans {orphans}, widows {widows}"
+        );
+    }
 }
 
 #[test]
@@ -18493,7 +18614,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     // break moves up a line, which the text grows by.
     let (_, (moved, text), state, root, _) = keep("aaaa bbbb cccc dddd", 70.0, 100.0);
     moved.unwrap();
-    assert_eq!(state.deferred_shifts.line_splits, [(root, 2, 10.0)]);
+    assert_eq!(state.deferred_shifts.line_splits, [(root, 2, 10.0, 1)]);
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 70.0));
     assert_eq!(text.height, 50.0);
 

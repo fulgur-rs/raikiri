@@ -1006,6 +1006,101 @@ fn a_paragraph_taller_than_a_page_moved_whole_keeps_its_widows_on_its_last_page(
     }
 }
 
+#[test]
+fn a_paragraph_after_a_spacer_breaks_between_its_lines_as_chromium_does() {
+    // (spacer height, block style, lines, lines on each page). The counts are
+    // the lines Chromium prints on each page of `page.pdf`, read with
+    // `pdftotext -bbox`, for spacers that leave the paragraph's first line
+    // off the 30px grid of the pages: a line that crosses a page end starts
+    // the next page, and the lines after it follow. The first page lists no
+    // lines when the paragraph moves whole.
+    let cases: &[(f32, &str, usize, &[usize])] = &[
+        // The default orphans and widows (2 each).
+        (45.0, "", 5, &[0, 3, 2]),
+        (45.0, "", 7, &[0, 3, 2, 2]),
+        (45.0, "", 6, &[0, 3, 3]),
+        (15.0, "", 3, &[2, 1]),
+        (15.0, "", 4, &[2, 2]),
+        (15.0, "", 6, &[2, 2, 2]),
+        (15.0, "", 5, &[2, 3]),
+        (15.0, "", 7, &[2, 3, 2]),
+        (0.0, "", 5, &[3, 2]),
+        (0.0, "", 7, &[3, 2, 2]),
+        (0.0, "", 6, &[3, 3]),
+        // One orphan and one widow allowed.
+        (75.0, "orphans:1;widows:1", 4, &[0, 3, 1]),
+        (75.0, "orphans:1;widows:1", 5, &[0, 3, 2]),
+        (75.0, "orphans:1;widows:1", 6, &[0, 3, 3]),
+        (75.0, "orphans:1;widows:1", 7, &[0, 3, 3, 1]),
+        (45.0, "orphans:1;widows:1", 2, &[1, 1]),
+        (45.0, "orphans:1;widows:1", 3, &[1, 2]),
+        (45.0, "orphans:1;widows:1", 4, &[1, 3]),
+        (45.0, "orphans:1;widows:1", 5, &[1, 3, 1]),
+        (45.0, "orphans:1;widows:1", 6, &[1, 3, 2]),
+        (45.0, "orphans:1;widows:1", 7, &[1, 3, 3]),
+        (15.0, "orphans:1;widows:1", 3, &[2, 1]),
+        (15.0, "orphans:1;widows:1", 4, &[2, 2]),
+        (15.0, "orphans:1;widows:1", 5, &[2, 3]),
+        (15.0, "orphans:1;widows:1", 6, &[2, 3, 1]),
+        (15.0, "orphans:1;widows:1", 7, &[2, 3, 2]),
+        (0.0, "orphans:1;widows:1", 4, &[3, 1]),
+        (0.0, "orphans:1;widows:1", 5, &[3, 2]),
+        (0.0, "orphans:1;widows:1", 6, &[3, 3]),
+        (0.0, "orphans:1;widows:1", 7, &[3, 3, 1]),
+        // Three orphans and three widows.
+        (15.0, "orphans:3;widows:3", 4, &[0, 3, 1]),
+        (15.0, "orphans:3;widows:3", 5, &[0, 3, 2]),
+        (15.0, "orphans:3;widows:3", 6, &[0, 3, 3]),
+        (15.0, "orphans:3;widows:3", 7, &[0, 3, 3, 1]),
+        (0.0, "orphans:3;widows:3", 4, &[3, 1]),
+        (0.0, "orphans:3;widows:3", 5, &[3, 2]),
+        (0.0, "orphans:3;widows:3", 6, &[3, 3]),
+        (0.0, "orphans:3;widows:3", 7, &[3, 3, 1]),
+        // Three widows: a break moves up only as far as the orphans allow.
+        (45.0, "widows:3", 7, &[0, 3, 2, 2]),
+        (45.0, "widows:3", 8, &[0, 3, 2, 3]),
+        (45.0, "widows:3", 6, &[0, 3, 3]),
+        (15.0, "widows:3", 3, &[2, 1]),
+        (15.0, "widows:3", 4, &[2, 2]),
+        (15.0, "widows:3", 6, &[2, 2, 2]),
+        (15.0, "widows:3", 7, &[2, 2, 3]),
+        (15.0, "widows:3", 5, &[2, 3]),
+        (15.0, "widows:3", 9, &[2, 3, 2, 2]),
+        (0.0, "widows:3", 7, &[3, 2, 2]),
+        (0.0, "widows:3", 8, &[3, 2, 3]),
+        (0.0, "widows:3", 6, &[3, 3]),
+        // More widows than a page holds: the first break gives up lines for
+        // them, and no later break does.
+        (0.0, "widows:4", 6, &[2, 3, 1]),
+        (0.0, "widows:4", 7, &[3, 3, 1]),
+        (0.0, "widows:4", 9, &[3, 3, 3]),
+        (0.0, "widows:5", 7, &[2, 3, 2]),
+        (0.0, "orphans:1;widows:4", 5, &[1, 3, 1]),
+        (0.0, "widows:6", 8, &[2, 3, 3]),
+        // Four orphans: no page holds them, so the lines that fit go together.
+        (5.0, "orphans:4", 4, &[0, 3, 1]),
+        (5.0, "orphans:4", 5, &[0, 3, 2]),
+        (5.0, "orphans:4", 6, &[0, 3, 3]),
+        (5.0, "orphans:4", 7, &[0, 3, 3, 1]),
+        (0.0, "orphans:4", 4, &[3, 1]),
+        (0.0, "orphans:4", 5, &[3, 2]),
+        (0.0, "orphans:4", 6, &[3, 3]),
+        (0.0, "orphans:4", 7, &[3, 3, 1]),
+    ];
+    for (spacer_height, style, lines, expected) in cases {
+        assert_eq!(
+            lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "{spacer_height} {style} {lines} lines"
+        );
+        assert_eq!(
+            bare_lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "bare {spacer_height} {style} {lines} lines"
+        );
+    }
+}
+
 /// `html > body > (15px spacer, root)`: the root holds `<span>aa </span>`
 /// on line 0 and a direct text "bbbb cccc" on lines 1 and 2 (Ahem 10px,
 /// width 40), so the direct text starts 10px below the content box. Returns,
@@ -3462,13 +3557,16 @@ fn a_flex_item_beside_another_keeps_its_natural_break() {
 }
 
 #[test]
-fn widows_taller_than_the_next_page_keep_the_natural_break() {
+fn widows_taller_than_the_next_page_give_up_lines_at_the_first_break() {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
-    // Eight 10px lines on 40px pages: six widows would not fit on the next
-    // page anyway, so the paragraph breaks where `widows: 1` breaks it.
-    let fragments = |css: &str| {
-        let (mut doc, cascade, root) =
-            ahem_paragraph("a b c d e f g h", &format!("width:10px;{css}"));
+    // `words` one-letter words in a 10px-wide paragraph of 10px lines on 40px
+    // pages: the lines on each page.
+    let lines_on_each_page = |css: &str, words: usize| {
+        let text = (0..words)
+            .map(|word| char::from(b'a' + word as u8).to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (mut doc, cascade, root) = ahem_paragraph(&text, &format!("width:10px;{css}"));
         doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
@@ -3476,10 +3574,32 @@ fn widows_taller_than_the_next_page_keep_the_natural_break() {
         let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
         let text = doc.nodes[root].children[0];
         text_fragments(&doc, &cascade, page, &slices, text)
+            .iter()
+            .filter_map(|(_, range)| range.map(|r| (r.end - r.start) as usize))
+            .collect::<Vec<_>>()
     };
-    let natural = fragments("orphans:1;widows:1");
-    assert!(natural.len() > 1, "{natural:?}");
-    assert_eq!(fragments("orphans:1;widows:6"), natural);
+    // (block style, words, lines on each page). The counts are the lines
+    // Chromium prints on each page of `page.pdf`, read with `pdftotext -bbox`.
+    // Widows of more lines than a page holds still take lines from the first
+    // break, as far as the orphans allow, though the lines then run past the
+    // end of the page after it; the breaks after the first stay where they fall.
+    let cases: &[(&str, usize, &[usize])] = &[
+        ("orphans:1;widows:1", 8, &[4, 4]),
+        ("orphans:1;widows:6", 8, &[2, 4, 2]),
+        ("orphans:1;widows:6", 6, &[1, 4, 1]),
+        ("orphans:1;widows:6", 12, &[4, 4, 4]),
+        ("orphans:1;widows:5", 7, &[2, 4, 1]),
+        ("orphans:1;widows:8", 10, &[2, 4, 4]),
+        ("widows:6", 7, &[2, 4, 1]),
+        ("widows:6", 9, &[3, 4, 2]),
+    ];
+    for (css, words, expected) in cases {
+        assert_eq!(
+            lines_on_each_page(css, *words),
+            *expected,
+            "{css} {words} words"
+        );
+    }
 }
 
 #[test]
