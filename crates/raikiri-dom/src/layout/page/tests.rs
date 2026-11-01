@@ -1677,6 +1677,10 @@ fn page_calc_margin_sanitization_and_comparison_overflow_keep_geometry_finite() 
         raikiri_style::Origin::Author,
     );
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    assert!(matches!(
+        cascade.page.declarations().get(&PropertyKey::Width),
+        Some(PropertyValue::Width(LengthOrAuto::Math(_)))
+    ));
     assert_eq!(
         page_dimension(cascade.page.declarations(), PropertyKey::Width, 500.0),
         None
