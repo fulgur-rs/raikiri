@@ -637,9 +637,9 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
             layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
             (parsed.dom, computed)
         };
-        // The reference boxes fill their line. A vertical table is not yet as wide as
-        // its content, so `width: fit-content` boxes would not match it.
-        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}";
+        // A vertical table is as wide as its cells, so the reference boxes shrink to
+        // their content too.
+        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}.box{width:fit-content}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}";
         let source = format!(
             "<!doctype html><style>{css}</style><table style='writing-mode:{mode}'><tr><td><div class=ink></div></td><td><div class=ink></div></td></tr></table>"
         );
@@ -656,8 +656,8 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
                 (cell.location.x, cell.location.y),
                 (12.0, 6.0 + 36.0 * index as f32)
             );
-            assert_eq!((cell.size.width, cell.size.height), (100.0, 36.0));
-            assert_eq!((cell.padding.left, cell.padding.right), (8.0, 76.0));
+            assert_eq!((cell.size.width, cell.size.height), (30.0, 36.0));
+            assert_eq!((cell.padding.left, cell.padding.right), (8.0, 6.0));
         }
         let children: Vec<_> = (0..doc.node_count())
             .filter_map(|id| {

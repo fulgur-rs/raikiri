@@ -8180,9 +8180,10 @@ fn a_vertical_cell_in_a_horizontal_table_paints_every_background_layer_across_it
 
 #[test]
 fn a_cell_in_a_vertical_table_clips_each_background_layer_to_its_own_box() {
-    // The vertical table stretches the cell across the page. Its content box
-    // is the child's 20px after the 4px border and 8px padding on the left;
-    // the padding box runs to the 2px right border.
+    // The vertical table is as wide as its cell: the 4px border and 8px
+    // padding on the left, the child's 20px, then the padding and the 2px
+    // right border. The content box is the child's 20px; the padding box runs
+    // to the right border; the page is white beyond the 40px table.
     let row = |background: &str| {
         background_clip_row(
             &format!(
@@ -8197,15 +8198,15 @@ fn a_cell_in_a_vertical_table_clips_each_background_layer_to_its_own_box() {
     };
     assert_eq!(
         row("linear-gradient(blue,blue) content-box"),
-        row_of(&[('?', 4), ('.', 8), ('B', 20), ('.', 66), ('?', 2)])
+        row_of(&[('?', 4), ('.', 8), ('B', 20), ('.', 6), ('?', 2), ('.', 60)])
     );
     assert_eq!(
         row("linear-gradient(blue,blue) content-box, linear-gradient(red,red) border-box"),
-        row_of(&[('?', 4), ('R', 8), ('B', 20), ('R', 66), ('?', 2)])
+        row_of(&[('?', 4), ('R', 8), ('B', 20), ('R', 6), ('?', 2), ('.', 60)])
     );
     assert_eq!(
         row("linear-gradient(red,red) border-box, linear-gradient(blue,blue) content-box"),
-        row_of(&[('?', 4), ('R', 94), ('?', 2)])
+        row_of(&[('?', 4), ('R', 34), ('?', 2), ('.', 60)])
     );
 }
 
