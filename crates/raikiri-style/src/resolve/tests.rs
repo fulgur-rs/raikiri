@@ -18,6 +18,7 @@ const CTX: ResolveContext = ResolveContext {
     viewport_height: 288.0,
     vertical_root: false,
     border_width_device_scale: None,
+    current_color_modern: false,
 };
 
 #[test]

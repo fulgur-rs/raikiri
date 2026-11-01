@@ -653,6 +653,14 @@ impl ContentSizeKeyword {
 pub struct ComputedValues {
     /// `color`. Inherited; initial: opaque black.
     pub color: CssColor,
+    /// Whether [`Self::color`] is written in a modern color syntax: anything
+    /// but hex, a named color, `rgb()`, `hsl()` and `hwb()` (CSS Color 4 §4),
+    /// which are the legacy syntaxes. A computed color keeps this about its
+    /// syntax, and so does the inherited one. A `currentcolor` stop in a
+    /// gradient takes it: with no `in <color-space>` clause and only legacy
+    /// colors besides, the gradient interpolates in Oklab if this is set and in
+    /// sRGB if not. Inherited; initial: `false`.
+    pub color_modern: bool,
     /// `background-color`. **Not inherited**; initial: `transparent`
     /// (= [`CssColor::TRANSPARENT`]). CSS Backgrounds 3 §2.2, "Base Color:
     /// the background-color property"
@@ -2191,6 +2199,7 @@ impl ComputedValues {
     pub fn initial() -> Self {
         Self {
             color: CssColor::BLACK,
+            color_modern: false,
             // CSS Backgrounds 3 §2.2: initial background-color is `transparent`.
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,

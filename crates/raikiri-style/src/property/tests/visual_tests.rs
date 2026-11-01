@@ -1638,6 +1638,7 @@ fn srgb_shorter() -> GradientColorInterpolation {
     GradientColorInterpolation {
         color_space: MixColorSpace::Srgb,
         hue_method: HueInterpolationMethod::Shorter,
+        follows_current_color: false,
     }
 }
 
@@ -1992,6 +1993,7 @@ fn background_image_parses_linear_gradient_color_interpolation_method() {
         GradientColorInterpolation {
             color_space: MixColorSpace::Oklch,
             hue_method: HueInterpolationMethod::Longer,
+            follows_current_color: false,
         }
     );
 }
@@ -2086,6 +2088,76 @@ fn a_gradient_stop_nested_deeper_than_colors_may_be_is_rejected() {
     }
 }
 
+/// The interpolation a gradient written as `function(<stops>)` parses to.
+fn parsed_interpolation(function: &str, stops: &str) -> GradientColorInterpolation {
+    let value = parse(&format!("{function}({stops})"), "background-image");
+    match background_gradient(&value).expect("the callers pass gradients that parse") {
+        Gradient::Linear(g) => g.interpolation,
+        Gradient::Radial(g) => g.interpolation,
+        Gradient::Conic(g) => g.interpolation,
+    }
+}
+
+#[test]
+fn a_currentcolor_stop_among_legacy_colors_leaves_the_default_space_to_the_color() {
+    // The stop takes the syntax of the element's `color`, which is not known
+    // here: the space stays sRGB meanwhile and the gradient says so.
+    for stops in [
+        "currentcolor, #1e88e5",
+        "#e53935, CurrentColor",
+        r"curren\74 color, transparent",
+        "red 0%, 30%, currentcolor 80%, #fff",
+        "currentcolor, currentcolor",
+        "light-dark(currentcolor, red), #1e88e5",
+        "rgb(from #e53935 r g b) , currentcolor",
+    ] {
+        for function in [
+            "linear-gradient",
+            "repeating-linear-gradient",
+            "radial-gradient",
+            "conic-gradient",
+        ] {
+            let interpolation = parsed_interpolation(function, stops);
+            let modern = stops.starts_with("rgb(from");
+            assert_eq!(
+                interpolation.color_space,
+                if modern {
+                    MixColorSpace::Oklab
+                } else {
+                    MixColorSpace::Srgb
+                },
+                "{function}({stops})"
+            );
+            assert_eq!(
+                interpolation.follows_current_color, !modern,
+                "{function}({stops})"
+            );
+        }
+    }
+}
+
+#[test]
+fn no_other_gradient_leaves_its_default_space_open() {
+    for stops in [
+        // No `currentcolor` stop.
+        "#e53935, #1e88e5",
+        "oklch(0.6 0.2 25), #1e88e5",
+        // Another stop settles it in Oklab.
+        "currentcolor, oklch(0.6 0.2 25)",
+        "color-mix(in srgb, currentcolor, red), #1e88e5",
+        // The space is given.
+        "in srgb, currentcolor, #1e88e5",
+        "in oklab, currentcolor, #1e88e5",
+    ] {
+        for function in ["linear-gradient", "radial-gradient", "conic-gradient"] {
+            assert!(
+                !parsed_interpolation(function, stops).follows_current_color,
+                "{function}({stops})"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_space_given_in_a_gradient_wins_over_the_color_syntax_of_its_stops() {
     assert_eq!(
@@ -2149,6 +2221,7 @@ fn background_image_parses_linear_gradient_direction_and_interpolation_together_
     let expected_interpolation = GradientColorInterpolation {
         color_space: MixColorSpace::Lab,
         hue_method: HueInterpolationMethod::Shorter,
+        follows_current_color: false,
     };
     assert_eq!(direction_first.direction, expected_direction);
     assert_eq!(direction_first.interpolation, expected_interpolation);
@@ -2396,6 +2469,7 @@ fn background_image_parses_radial_gradient_explicit_color_interpolation_method()
         GradientColorInterpolation {
             color_space: MixColorSpace::Oklch,
             hue_method: HueInterpolationMethod::Shorter,
+            follows_current_color: false,
         }
     );
 }
@@ -2548,6 +2622,7 @@ fn background_image_parses_conic_gradient_explicit_color_interpolation_method() 
         GradientColorInterpolation {
             color_space: MixColorSpace::Oklch,
             hue_method: HueInterpolationMethod::Shorter,
+            follows_current_color: false,
         }
     );
 }

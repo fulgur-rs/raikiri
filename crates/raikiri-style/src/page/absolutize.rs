@@ -446,6 +446,7 @@ pub(super) fn absolutize_in_page_context(
         // here would apply it against its own value instead of the parent's.
         v @ (PropertyValue::All(_)
         | PropertyValue::Color(_)
+        | PropertyValue::ModernColor(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::GridArea(_)

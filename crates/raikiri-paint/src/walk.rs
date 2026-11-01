@@ -392,9 +392,14 @@ pub(crate) fn paint_page_border(
 
 /// The `color` of the page context, which inherits it from the root element.
 fn page_current_color(document: &Document, cascade: &CascadeResult) -> CssColor {
-    match cascade.page.declarations().get(&PropertyKey::Color) {
-        Some(PropertyValue::Color(color)) => *color,
-        _ => find_html(document)
+    match cascade
+        .page
+        .declarations()
+        .get(&PropertyKey::Color)
+        .and_then(PropertyValue::element_color)
+    {
+        Some(color) => color,
+        None => find_html(document)
             .and_then(|node_id| cascade.computed.get(node_id))
             .map_or(CssColor::BLACK, |computed| computed.color),
     }
@@ -514,10 +519,10 @@ pub(crate) fn paint_page_outline(
     if outer_width <= 0.0 || outer_height <= 0.0 {
         return;
     }
-    let current_color = match declarations.get(&PropertyKey::Color) {
-        Some(PropertyValue::Color(color)) => *color,
-        _ => CssColor::BLACK,
-    };
+    let current_color = declarations
+        .get(&PropertyKey::Color)
+        .and_then(PropertyValue::element_color)
+        .unwrap_or(CssColor::BLACK);
     let color = match declarations.get(&PropertyKey::OutlineColor) {
         Some(PropertyValue::OutlineColor(OutlineColor::Resolved(color))) => {
             BorderColor::Resolved(*color)
@@ -579,8 +584,11 @@ fn page_background_color(
         }
         has_background_declaration = true;
     }
-    if let Some(PropertyValue::Color(value)) = declarations.get(&PropertyKey::Color) {
-        current_color = *value;
+    if let Some(value) = declarations
+        .get(&PropertyKey::Color)
+        .and_then(PropertyValue::element_color)
+    {
+        current_color = value;
     }
 
     if !has_background_declaration {
@@ -891,10 +899,11 @@ fn paint_page_background_image(
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
     // The page context inherits `color` from the root element.
-    let current_color = match page_property(cascade, PropertyKey::Color) {
-        Some(PropertyValue::Color(color)) => *color,
-        _ => root.map_or(initial.color, |computed| computed.color),
-    };
+    let current_color =
+        match page_property(cascade, PropertyKey::Color).and_then(PropertyValue::element_color) {
+            Some(color) => color,
+            None => root.map_or(initial.color, |computed| computed.color),
+        };
     // CSS Backgrounds 3 §2.1: the first layer is on top, so paint from the
     // last to the first.
     let painted = painted_background_layers(images, warnings);

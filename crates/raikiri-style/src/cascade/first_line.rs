@@ -331,6 +331,7 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.border_spacing = first.border_spacing;
     parent.caption_side = first.caption_side;
     parent.color = first.color;
+    parent.color_modern = first.color_modern;
     parent.empty_cells = first.empty_cells;
     parent.font_family = first.font_family.clone();
     parent.font_kerning = first.font_kerning;
