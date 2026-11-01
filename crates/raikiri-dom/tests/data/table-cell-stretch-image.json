@@ -432,6 +432,384 @@
           50
         ]
       ]
+    },
+    {
+      "label": "cell-max",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-percent",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:25%'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-calc",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:calc(10% + 20px)'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-padding",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px;padding:10px;border:3px solid'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          46,
+          200
+        ],
+        [
+          "i",
+          21,
+          21,
+          69.59375,
+          174
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-borderbox",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px;box-sizing:border-box;padding:10px;border:3px solid'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          46,
+          200
+        ],
+        [
+          "i",
+          21,
+          21,
+          69.59375,
+          174
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-stated",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='height:200px;max-height:50px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          202
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          202
+        ],
+        [
+          "i",
+          9,
+          9,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-fixed-image",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='max-height:50px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          42,
+          104
+        ],
+        [
+          "c",
+          8,
+          8,
+          42,
+          104
+        ],
+        [
+          "i",
+          9,
+          9,
+          40,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-child-limit",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;max-height:80px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          67,
+          32,
+          80
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-percent-image",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:50%\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          57.5,
+          39.59375,
+          99
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-block",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><div id=i style=\"width:20px;height:stretch\">x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          20,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-percent-block",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><div id=i style=\"width:20px;height:50%\">x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          58.5,
+          20,
+          99
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-flowroot",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><div id=i style=\"display:flow-root;width:20px;height:50%\">x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          58.5,
+          20,
+          99
+        ]
+      ]
+    },
+    {
+      "label": "cell-max-child-ordinary-limit",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><div id=i style=\"width:20px;height:stretch;max-height:70px\">x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          200
+        ],
+        [
+          "i",
+          9,
+          73,
+          20,
+          70
+        ]
+      ]
+    },
+    {
+      "label": "ordinary-block-max",
+      "html": "<div id=t style=\"height:200px\"><div id=c style=\"height:stretch;max-height:50px\"><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></div></div>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          784,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          784,
+          50
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          50
+        ]
+      ]
     }
   ],
   "known_preexisting_differences": [
@@ -462,34 +840,6 @@
         ]
       ],
       "issue": "RAIKIRI-1343"
-    },
-    {
-      "label": "cell-max",
-      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='max-height:50px'><img id=i src='https://stretch.test/portrait.png' style='height:stretch'></td></tr></table>",
-      "expected": [
-        [
-          "t",
-          8,
-          8,
-          22,
-          200
-        ],
-        [
-          "c",
-          8,
-          8,
-          22,
-          200
-        ],
-        [
-          "i",
-          9,
-          9,
-          79.1875,
-          198
-        ]
-      ],
-      "issue": "RAIKIRI-1344"
     }
   ]
 }
