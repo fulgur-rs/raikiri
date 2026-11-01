@@ -4994,6 +4994,24 @@ fn content_sizes_on_axis(
         AcrossLines::Room(room) => (None, AvailableSpace::Definite(room)),
         AcrossLines::Width(width) => (Some(width), AvailableSpace::Definite(width)),
     };
+    // A replaced box that states `height: stretch` fills the definite height
+    // of the root, less its margins, as it does once it is laid out: its width
+    // along the ratio follows from that height.
+    let known_height = basis
+        .max_content
+        .height
+        .filter(|_| {
+            !vertical
+                && matches!(
+                    tree.physical_style(node).size().height.expand(),
+                    ExpandedDimension::Stretch
+                )
+                && crate::paint_rules::is_replaced_element(tree.document, node)
+        })
+        .map(|room| {
+            let margin = resolved_margins(tree, node, 0.0);
+            (room - margin.top - margin.bottom).max(0.0)
+        });
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
         let parent_size = if available == AvailableSpace::MinContent {
             basis.min_content
@@ -5008,7 +5026,7 @@ fn content_sizes_on_axis(
                 axis,
                 known_dimensions: Size {
                     width: known_width,
-                    height: None,
+                    height: known_height,
                 },
                 known_dimensions_are_definite: Size {
                     width: true,
