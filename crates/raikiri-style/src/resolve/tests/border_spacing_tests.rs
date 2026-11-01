@@ -30,7 +30,7 @@ fn raster_spacing_has_zero_and_near_integer_device_boundaries() {
 #[test]
 fn lifted_spacing_keeps_each_computed_component_without_snapping_again() {
     let ctx = CTX.with_border_width_device_scale(Some(1.1));
-    let first = spacing(747_714.812_5, 4.99, Some(1.1));
+    let first = spacing(747_714.8, 4.99, Some(1.1));
     assert_eq!(first.horizontal.px(), 747_714.5);
     let mut current = first;
     for _ in 0..64 {
