@@ -3461,13 +3461,20 @@ pub(crate) fn flex_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
-    let inputs = with_ratio_width(tree, node_id, inputs, flex_layout_sized);
-    let inputs = with_fit_content_width(tree, node_id, inputs);
-    let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
-    if block_right_to_left(tree, usize::from(node_id)).is_none() {
-        return laid_out_with_ratio_height(tree, node_id, inputs, flex_layout_sized);
-    }
-    flex_layout_sized(tree, node_id, inputs)
+    content_limits::with_vertical_ratio_stated_size_clamp(
+        tree,
+        node_id,
+        inputs,
+        |tree, node_id, inputs| {
+            let inputs = with_ratio_width(tree, node_id, inputs, flex_layout_sized);
+            let inputs = with_fit_content_width(tree, node_id, inputs);
+            let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
+            if block_right_to_left(tree, usize::from(node_id)).is_none() {
+                return laid_out_with_ratio_height(tree, node_id, inputs, flex_layout_sized);
+            }
+            flex_layout_sized(tree, node_id, inputs)
+        },
+    )
 }
 
 /// The border-box width CSS Flexbox 1 section 9.9.1 gives a row flex container
@@ -3999,13 +4006,20 @@ fn with_clamped_keyword_width(
 /// A container with a preferred aspect ratio and an `auto` height is given the
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
-    let idx = usize::from(node_id);
-    let inputs = with_ratio_width(tree, node_id, inputs, grid_layout_sized);
-    let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
-    if grid_oof::right_to_left(tree, idx).is_none() {
-        return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
-    }
-    grid_layout_sized(tree, node_id, inputs)
+    content_limits::with_vertical_ratio_stated_size_clamp(
+        tree,
+        node_id,
+        inputs,
+        |tree, node_id, inputs| {
+            let idx = usize::from(node_id);
+            let inputs = with_ratio_width(tree, node_id, inputs, grid_layout_sized);
+            let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
+            if grid_oof::right_to_left(tree, idx).is_none() {
+                return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
+            }
+            grid_layout_sized(tree, node_id, inputs)
+        },
+    )
 }
 
 /// Give a flex or grid container with a preferred aspect ratio and an `auto`
@@ -4082,25 +4096,43 @@ fn with_ratio_width(
     if inputs.known_dimensions.width.is_some() {
         return inputs;
     }
-    let style = block_flow::style_input::physical(tree, idx);
+    let mut style = block_flow::style_input::physical(tree, idx);
     // A `min-content` or `max-content` width of a box with a definite height
     // is the width its ratio gives, as browsers lay it out, so such a width
     // takes the same minimum as an `auto` one.
-    if style.aspect_ratio.is_none() || block_right_to_left(tree, idx).is_some() {
+    let vertical = block_right_to_left(tree, idx).is_some();
+    if style.aspect_ratio.is_none() || (vertical && inputs.sizing_mode != SizingMode::InherentSize)
+    {
         return inputs;
+    }
+    if vertical {
+        // Padding follows the containing inline size; physical width and
+        // height percentages keep their independent parent-size bases.
+        let basis = vertical_block::containing_inline_size(tree, idx, &inputs);
+        style.padding = style
+            .padding
+            .resolve_or_zero(basis)
+            .map(LengthPercentage::length);
     }
     let metrics =
         block_flow::Metrics::resolve(&style, false, tree.nodes[idx].ratio_in_content_box, inputs);
     let Some(width) = metrics.preferred.width.filter(|_| metrics.ratio_width) else {
         return inputs;
     };
-    // The height is no part of the intrinsic width, so the probe is measured
-    // without the one the parent imposed.
+    // A horizontal container is probed without an imposed height. In a
+    // vertical container that height is its inline size, which its lines
+    // and tracks still need while their block-axis width is measured.
     let probe = LayoutInput {
         run_mode: RunMode::ComputeSize,
         axis: RequestedAxis::Horizontal,
-        known_dimensions: Size::NONE,
-        known_dimensions_are_definite: Size::splat(false),
+        known_dimensions: Size {
+            width: None,
+            height: inputs.known_dimensions.height.filter(|_| vertical),
+        },
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: vertical && inputs.known_dimensions_are_definite.height,
+        },
         available_space: Size {
             width: AvailableSpace::MinContent,
             height: inputs.available_space.height,
