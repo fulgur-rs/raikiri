@@ -2797,12 +2797,16 @@ fn compute_inline_block_shrink_wrap(
     // item states, though the item is measured for its content there: its main
     // size is not content-sized. Once the container's width is fixed, which Taffy
     // says by offering the item a definite width, it is the height the
-    // container flexed the item to.
+    // container flexed the item to. An item that states `height: stretch` states
+    // the height of its container, which is the height it is offered at any
+    // width.
     let in_column_flex = leaf_intrinsic.is_some() && tree.in_column_flex_container(idx);
+    let stretches_height = matches!(leaf_style.size.height.expand(), ExpandedDimension::Stretch);
     let flexed_height = inputs.known_dimensions.height.filter(|_| {
         in_column_flex
             && inputs.sizing_mode == SizingMode::ContentSize
-            && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+            && (stretches_height
+                || matches!(inputs.available_space.width, AvailableSpace::Definite(_)))
     });
     // An item of a row flex container whose height is fixed before its width is
     // measured, because it states the height or the container stretches it to a
@@ -2860,10 +2864,8 @@ fn compute_inline_block_shrink_wrap(
     // The height that `height: stretch` gave an empty box is as good as one it
     // states, so the width follows from it through the aspect ratio: it is put
     // in the style the box is sized with.
-    let stretched_height = known_height.filter(|_| {
-        leaf_style.aspect_ratio.is_some()
-            && matches!(leaf_style.size.height.expand(), ExpandedDimension::Stretch)
-    });
+    let stretched_height =
+        known_height.filter(|_| leaf_style.aspect_ratio.is_some() && stretches_height);
     if let Some(height) = stretched_height {
         apply_border_box_height(
             tree,
