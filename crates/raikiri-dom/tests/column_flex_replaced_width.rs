@@ -425,3 +425,144 @@ fn a_percentage_height_refers_to_the_height_of_the_container_that_wraps_or_grows
         ],
     );
 }
+
+#[test]
+fn a_stretched_height_gives_the_width_along_the_ratio_of_the_container_height() {
+    // `height: stretch` states the height of the container, 200px here, so the
+    // image is 80px wide along its natural ratio, and so is the container.
+    assert_boxes(
+        &column("height:200px", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+    assert_boxes(
+        &column("height:200px", "height:stretch;aspect-ratio:1/1"),
+        &[
+            ("o", [8.0, 8.0, 200.0, 200.0]),
+            ("i", [8.0, 8.0, 200.0, 200.0]),
+        ],
+    );
+    assert_boxes(
+        &column("height:200px;align-items:flex-start", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_stretched_height_is_kept_within_the_height_bounds_of_the_image() {
+    assert_boxes(
+        &column("height:200px", "height:stretch;max-height:100px"),
+        &[
+            ("o", [8.0, 8.0, 40.0, 200.0]),
+            ("i", [8.0, 8.0, 40.0, 100.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_stretched_height_needs_a_height_of_the_container_to_stretch_to() {
+    assert_boxes(
+        &column("", "height:stretch"),
+        &[("o", [8.0, 8.0, 20.0, 50.0]), ("i", [8.0, 8.0, 20.0, 50.0])],
+    );
+}
+
+#[test]
+fn an_image_that_does_not_state_a_stretched_height_keeps_the_width_it_had() {
+    assert_boxes(
+        &column("height:200px", ""),
+        &[
+            ("o", [8.0, 8.0, 20.0, 200.0]),
+            ("i", [8.0, 8.0, 20.0, 50.0]),
+        ],
+    );
+    assert_boxes(
+        &column("height:200px", "height:100px"),
+        &[
+            ("o", [8.0, 8.0, 40.0, 200.0]),
+            ("i", [8.0, 8.0, 40.0, 100.0]),
+        ],
+    );
+    assert_boxes(
+        &column("height:200px", "flex:1 1 0px"),
+        &[
+            ("o", [8.0, 8.0, 20.0, 200.0]),
+            ("i", [8.0, 8.0, 20.0, 200.0]),
+        ],
+    );
+}
+
+#[test]
+fn the_padding_and_margin_of_a_stretched_image_stay_inside_the_height_it_fills() {
+    // The image fills the height of the container with its margin box, and the
+    // padding is part of its border box whatever `box-sizing` is.
+    for image_css in [
+        "height:stretch;padding:10px",
+        "height:stretch;padding:10px;box-sizing:border-box",
+    ] {
+        assert_boxes(
+            &column("height:200px", image_css),
+            &[
+                ("o", [8.0, 8.0, 92.0, 200.0]),
+                ("i", [8.0, 8.0, 92.0, 200.0]),
+            ],
+        );
+    }
+    assert_boxes(
+        &column("height:200px", "height:stretch;margin:5px"),
+        &[
+            ("o", [8.0, 8.0, 86.0, 200.0]),
+            ("i", [13.0, 13.0, 76.0, 190.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_stretched_image_that_grows_or_wraps_is_as_wide_as_the_container_height_gives() {
+    assert_boxes(
+        &column("height:200px", "height:stretch;flex-grow:1"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+    assert_boxes(
+        &column("height:200px;flex-wrap:wrap", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 80.0, 200.0]),
+            ("i", [8.0, 8.0, 80.0, 200.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_container_whose_height_follows_its_items_leaves_a_stretched_image_at_its_natural_size() {
+    // Without a height of its own to stretch to, `height: stretch` is `auto`,
+    // whether a sibling makes the container taller or a bound limits it.
+    assert_boxes(
+        "<div id=o style=\"display:inline-flex;flex-direction:column\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"height:stretch\">\
+         <div id=j style=\"height:100px;width:10px\"></div></div>",
+        &[
+            ("o", [8.0, 8.0, 20.0, 150.0]),
+            ("i", [8.0, 8.0, 20.0, 50.0]),
+            ("j", [8.0, 58.0, 10.0, 100.0]),
+        ],
+    );
+    assert_boxes(
+        &column("max-height:100px", "height:stretch"),
+        &[("o", [8.0, 8.0, 20.0, 50.0]), ("i", [8.0, 8.0, 20.0, 50.0])],
+    );
+    assert_boxes(
+        &column("min-height:100px", "height:stretch"),
+        &[
+            ("o", [8.0, 8.0, 20.0, 100.0]),
+            ("i", [8.0, 8.0, 20.0, 50.0]),
+        ],
+    );
+}
