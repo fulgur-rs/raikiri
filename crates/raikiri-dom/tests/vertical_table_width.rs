@@ -62,6 +62,27 @@ type Expected<'a> = [&'a [(&'a str, [f32; 4])]; 2];
 
 const MODES: [&str; 2] = ["vertical-rl", "vertical-lr"];
 
+#[test]
+fn border_spacing_follows_the_inline_and_block_axes() {
+    let expected = &[
+        ("t", [8.0, 8.0, 68.0, 118.0]),
+        ("c1", [12.0, 14.0, 60.0, 50.0]),
+        ("c2", [12.0, 70.0, 60.0, 50.0]),
+    ][..];
+    check(
+        "unequal border spacing",
+        |mode| {
+            table(
+                mode,
+                "border-spacing:6px 4px",
+                "<div id=c1 style='display:table-cell;width:60px;height:50px'>x</div>\
+                 <div id=c2 style='display:table-cell;width:40px;height:50px'>y</div>",
+            )
+        },
+        [expected, expected],
+    );
+}
+
 /// Lays out the markup `body` makes for each writing mode and compares the
 /// elements the expectation names, reporting every mismatch at once.
 fn check(label: &str, body: impl Fn(&str) -> String, expected: Expected<'_>) {
