@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn vertical_cell_maximum_height_limits_inline_text_wrapping() {
+    use crate::layout::test_support::{page_box_800x600, with_ahem};
+
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
+        let table = doc.append_element(Some(body), "div", Some("display:table;border-spacing:0"));
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+        let cell = doc.append_element(
+            Some(row),
+            "div",
+            Some(&format!(
+                "display:table-cell;max-height:100px;font:50px/50px Ahem;writing-mode:{mode}"
+            )),
+        );
+        doc.append_text(cell, "xx xx");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        with_ahem(&mut doc);
+        crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        assert_eq!(doc.nodes[cell].layout.size.width, 100.0, "{mode}");
+        assert_eq!(doc.nodes[cell].layout.size.height, 100.0, "{mode}");
+    }
+}
+
+#[test]
 fn cell_content_maximum_scope_restores_limits_and_separates_cached_sizes() {
     let mut doc = Document::new();
     let cell = doc.append_element(
