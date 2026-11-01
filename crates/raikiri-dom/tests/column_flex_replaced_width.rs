@@ -33,10 +33,10 @@ impl ReplacedResolver for Portrait {
 }
 
 /// The border box `(x, y, width, height)` of every element with an `id` when
-/// `body` is laid out on a page with an 8px margin.
-fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
+/// `body` is laid out on a page of the given height with an 8px margin.
+fn boxes_on_page(body: &str, page_height: u32) -> Vec<(String, [f32; 4])> {
     let html = format!(
-        "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
+        "<!DOCTYPE html><style>@page {{ size: 800px {page_height}px; margin: 0 }} \
          body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
     );
     let fonts = FontCollectionBuilder::new()
@@ -71,7 +71,13 @@ fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
 
 /// Check that every `(id, expected box)` of `expected` is laid out as given.
 fn assert_boxes(body: &str, expected: &[(&str, [f32; 4])]) {
-    let laid_out = boxes(body);
+    assert_boxes_on_page(body, 600, expected);
+}
+
+/// Like `assert_boxes`, on a page of the given height. A page taller than the
+/// content keeps an image taller than 600px whole on the first page.
+fn assert_boxes_on_page(body: &str, page_height: u32, expected: &[(&str, [f32; 4])]) {
+    let laid_out = boxes_on_page(body, page_height);
     for (id, want) in expected {
         let got = laid_out
             .iter()
@@ -563,6 +569,103 @@ fn a_container_whose_height_follows_its_items_leaves_a_stretched_image_at_its_na
         &[
             ("o", [8.0, 8.0, 20.0, 100.0]),
             ("i", [8.0, 8.0, 20.0, 50.0]),
+        ],
+    );
+}
+
+/// A block-level column flex container of the given size with one image.
+fn block_column(width: u32, height: u32, container_css: &str, image_css: &str) -> String {
+    format!(
+        "<div id=o style=\"display:flex;flex-direction:column;width:{width}px;height:{height}px;{container_css}\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"{image_css}\"></div>"
+    )
+}
+
+#[test]
+fn an_image_stretched_to_the_width_of_a_block_column_takes_its_height_from_that_width() {
+    // The image is 20x50, so a width of 300px along its ratio is 750px high,
+    // more than the 200px of the container, and its automatic minimum height
+    // keeps it from shrinking to fit. The page is tall enough to hold it.
+    let tall = 3000;
+    for image_css in ["flex-grow:1", "", "flex:1 1 0px"] {
+        assert_boxes_on_page(
+            &block_column(300, 200, "", image_css),
+            tall,
+            &[
+                ("o", [8.0, 8.0, 300.0, 200.0]),
+                ("i", [8.0, 8.0, 300.0, 750.0]),
+            ],
+        );
+    }
+    assert_boxes_on_page(
+        &block_column(100, 200, "", "flex-grow:1"),
+        tall,
+        &[("i", [8.0, 8.0, 100.0, 250.0])],
+    );
+    assert_boxes_on_page(
+        &block_column(200, 100, "", "flex-grow:1"),
+        tall,
+        &[("i", [8.0, 8.0, 200.0, 500.0])],
+    );
+    assert_boxes_on_page(
+        &block_column(300, 200, "", "flex-grow:1;aspect-ratio:1/1"),
+        tall,
+        &[("i", [8.0, 8.0, 300.0, 300.0])],
+    );
+}
+
+#[test]
+fn an_image_that_grows_beyond_its_stretched_height_or_does_not_stretch() {
+    let tall = 3000;
+    // A container taller than the image makes it grow to the container.
+    assert_boxes_on_page(
+        &block_column(300, 1000, "", "flex-grow:1"),
+        tall,
+        &[
+            ("o", [8.0, 8.0, 300.0, 1000.0]),
+            ("i", [8.0, 8.0, 300.0, 1000.0]),
+        ],
+    );
+    // One that is shorter than the image does not shrink it, whatever its grow.
+    assert_boxes_on_page(
+        &block_column(300, 600, "", "flex-grow:1"),
+        tall,
+        &[
+            ("o", [8.0, 8.0, 300.0, 600.0]),
+            ("i", [8.0, 8.0, 300.0, 750.0]),
+        ],
+    );
+    // Without a stretch the image keeps its width and grows in height only.
+    assert_boxes_on_page(
+        &block_column(300, 200, "align-items:flex-start", "flex-grow:1"),
+        tall,
+        &[("i", [8.0, 8.0, 80.0, 200.0])],
+    );
+    // A stated height is the flex basis, and the grow takes the image to 200px.
+    assert_boxes_on_page(
+        &block_column(300, 200, "", "flex-grow:1;height:50px"),
+        tall,
+        &[("i", [8.0, 8.0, 300.0, 200.0])],
+    );
+    // In a row the container height is what the image stretches to.
+    assert_boxes_on_page(
+        "<div id=o style=\"display:flex;width:300px;height:200px\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"flex-grow:1\"></div>",
+        tall,
+        &[("i", [8.0, 8.0, 300.0, 200.0])],
+    );
+}
+
+#[test]
+fn two_images_that_cannot_shrink_follow_each_other_at_their_full_height() {
+    assert_boxes_on_page(
+        "<div id=o style=\"display:flex;flex-direction:column;width:300px;height:200px\">\
+         <img id=i src=\"https://flex.test/portrait.png\" style=\"flex-grow:1\">\
+         <img id=j src=\"https://flex.test/portrait.png\" style=\"flex-grow:1\"></div>",
+        3000,
+        &[
+            ("i", [8.0, 8.0, 300.0, 750.0]),
+            ("j", [8.0, 758.0, 300.0, 750.0]),
         ],
     );
 }
