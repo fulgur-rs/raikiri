@@ -8,6 +8,17 @@ thread_local! {
     pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
     pub(super) static FLOAT_SUBTREE_WALKS: Cell<usize> = const { Cell::new(0) };
     pub(super) static FLOAT_PREFILTER_VISITS: Cell<usize> = const { Cell::new(0) };
+    /// Moves recorded, queries for the pending move of a child, and moves
+    /// read to answer them.
+    pub(super) static SIBLING_SHIFT_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+}
+
+pub(super) fn record_sibling_shift_work(kind: usize, amount: usize) {
+    SIBLING_SHIFT_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += amount;
+        work.set(counts);
+    });
 }
 
 pub(super) fn record_sibling_adjacency_work(work: [usize; 3]) {
@@ -36,6 +47,7 @@ mod page_start_tests;
 mod paged_spanning_tests;
 mod sibling_adjacency_tests;
 mod sibling_scan_tests;
+mod sibling_shift_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod top_edge_tests;
@@ -17449,6 +17461,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     margins.record_bottom(body, first, true, 90.0);
     let at = MarginBreak {
         node_id: second,
+        clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
         natural_page: 1,
@@ -17542,6 +17555,7 @@ fn a_page_edge_cuts_the_margins_around_an_empty_box_where_the_next_box_starts() 
     };
     let at = MarginBreak {
         node_id: empty,
+        clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
         natural_page: 1,

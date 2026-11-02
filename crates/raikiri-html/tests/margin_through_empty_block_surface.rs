@@ -213,3 +213,147 @@ fn an_empty_block_that_ends_the_flow_is_cut_by_its_own_margin() {
     let body = format!("{}<div style='height:0'></div>", lead_in(30));
     assert!(pages(&body).1.is_empty());
 }
+
+#[test]
+fn a_float_between_the_empty_block_and_the_next_block_does_not_end_the_run() {
+    let body = format!(
+        "{}<div style='height:0'></div>\
+         <div style='float:left;width:10px;height:5px'></div>{}",
+        lead_in(30),
+        block(-10)
+    );
+    assert_eq!(pages(&body), (2, vec![(1, 10.0, 5.0)]));
+}
+
+#[test]
+fn clearing_without_clearance_keeps_the_negative_margin_at_the_page_top() {
+    for before in ["", "<div style='float:left;width:10px;height:5px'></div>"] {
+        for clear in ["left", "right", "both"] {
+            let body = format!(
+                "{before}{}<div style='height:0'></div>\
+             <div style='height:30px;margin-top:-10px;clear:{clear}'>X</div>",
+                lead_in(30)
+            );
+            assert_eq!(pages(&body), at_top_of_second_page(), "{before} / {clear}");
+        }
+    }
+}
+
+#[test]
+fn actual_clearance_after_the_empty_block_keeps_the_float_gap() {
+    let body = format!(
+        "{}<div style='height:0'></div>\
+         <div style='float:left;width:10px;height:5px'></div>\
+         <div style='height:30px;margin-top:-10px;clear:both'>X</div>",
+        lead_in(30)
+    );
+    assert_eq!(pages(&body), (2, vec![(1, 0.0, 10.0)]));
+}
+
+#[test]
+fn float_and_out_of_flow_descendants_do_not_interrupt_the_margin_run() {
+    for (between, x) in [
+        (
+            "<div style='float:left;width:10px;height:5px;font:1px/1px Ahem'><div>a</div></div>",
+            10.0,
+        ),
+        (
+            "<section style='display:contents'><div style='float:left;width:10px;height:5px'></div></section>",
+            10.0,
+        ),
+        (
+            "<div style='position:absolute;font:1px/1px Ahem'>a</div>",
+            0.0,
+        ),
+    ] {
+        let body = format!(
+            "{}<div style='height:0'></div>{between}{}",
+            lead_in(30),
+            block(-10)
+        );
+        assert_eq!(pages(&body), (2, vec![(1, x, 5.0)]), "{between}");
+    }
+}
+
+#[test]
+fn a_float_on_the_other_side_does_not_give_clearance() {
+    let body = format!(
+        "{}<div style='height:0'></div>\
+         <div style='float:left;width:10px;height:5px'></div>\
+         <div style='height:30px;margin-top:-10px;clear:right'>X</div>",
+        lead_in(30)
+    );
+    assert_eq!(pages(&body), (2, vec![(1, 10.0, 5.0)]));
+}
+
+#[test]
+fn floats_in_an_independent_context_do_not_give_clearance_outside_it() {
+    let body = format!(
+        "<div style='height:0;display:flow-root'>\
+         <div style='float:left;width:10px;height:5px'></div></div>\
+         {}<div style='height:0'></div>\
+         <div style='height:30px;margin-top:-10px;clear:both'>X</div>",
+        lead_in(30)
+    );
+    assert_eq!(pages(&body), at_top_of_second_page());
+}
+
+#[test]
+fn multiple_nested_and_positioned_floats_keep_actual_clearance() {
+    for floats in [
+        "<div style='float:left;width:10px;height:5px'></div><div style='float:left;width:10px;height:5px'></div>",
+        "<div style='height:0'><div style='float:left;width:10px;height:5px'></div></div>",
+        "<div style='float:left;width:10px;height:5px'></div><div style='height:0'><div style='float:left;width:10px;height:5px'></div></div>",
+        "<div style='float:left;width:10px;height:5px;position:relative;top:-100px'></div>",
+    ] {
+        let body = format!(
+            "{}<div style='height:0'></div>{floats}<div style='height:30px;margin-top:-10px;clear:both'>X</div>",
+            lead_in(30)
+        );
+        assert_eq!(pages(&body), (2, vec![(1, 0.0, 10.0)]), "{floats}");
+    }
+}
+
+#[test]
+fn a_float_after_a_forced_break_does_not_turn_it_into_a_margin_break() {
+    let body = format!(
+        "{}<div style='height:0;break-after:page'></div>\
+         <div style='float:left;width:10px;height:5px'></div>{}",
+        lead_in(30),
+        block(-10)
+    );
+    assert_eq!(pages(&body), (3, vec![(2, 10.0, -5.0)]));
+}
+
+#[test]
+fn positioned_contents_wrappers_keep_their_float_in_the_parent_context() {
+    for position in ["absolute", "fixed"] {
+        let body = format!(
+            "{}<div style='height:0'></div>\
+             <section style='display:contents;position:{position}'>\
+             <div style='float:left;width:10px;height:5px'></div></section>\
+             <div style='height:30px;margin-top:-10px;clear:both'>X</div>",
+            lead_in(30)
+        );
+        assert_eq!(pages(&body), (2, vec![(1, 0.0, 10.0)]), "{position}");
+    }
+}
+
+#[test]
+fn a_footnote_does_not_give_clearance_to_the_next_block() {
+    // This is a native footnote contract, not a Chromium comparison.
+    // Footnotes reserve page space, but are not left/right floats in the
+    // block's formatting context, so clear must not add a separate gap.
+    let with_clear = |clear| {
+        pages(&format!(
+            "{}<div style='height:0'></div>\
+             <aside style='float:footnote;width:10px;height:5px'></aside>\
+             <div style='height:30px;margin-top:-10px;clear:{clear}'>X</div>",
+            lead_in(30)
+        ))
+    };
+    let ordinary = with_clear("none");
+    assert_eq!(ordinary.0, 2);
+    assert_eq!(ordinary.1.len(), 1);
+    assert_eq!(with_clear("both"), ordinary);
+}
