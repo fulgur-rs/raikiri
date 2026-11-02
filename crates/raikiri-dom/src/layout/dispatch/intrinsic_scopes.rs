@@ -274,6 +274,41 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             let Some(basis) = crate::layout::resolve_dimension(style.flex_basis(), None)
                 .filter(|basis| basis.is_finite())
             else {
+                let keyword = style.flex_basis().is_auto()
+                    && matches!(style.size().width.expand(), ExpandedDimension::MaxContent);
+                if keyword {
+                    let edges = if style.box_sizing() == BoxSizing::ContentBox {
+                        let padding = style.padding().resolve_or_zero(None);
+                        let border = style.border().resolve_or_zero(None);
+                        padding.left + padding.right + border.left + border.right
+                    } else {
+                        0.0
+                    };
+                    let height =
+                        height_before_width(&style, cross_room, single_line, container_align);
+                    // Taffy measures an item whose `width` is a keyword at its
+                    // min-content size for the min-content width of the
+                    // container, and so leaves the keyword out of what the item
+                    // contributes. An item that states the width the keyword
+                    // stands for, within its `min-width` and `max-width`,
+                    // contributes that width.
+                    let width = tree
+                        .compute_child_layout(
+                            child,
+                            min_content_probe(SizingMode::InherentSize, height),
+                        )
+                        .size
+                        .width;
+                    let entry = O::length(P::Width, L::Px((width - edges).max(0.0)), true)
+                        .expect("physical keyword width");
+                    let key = tree
+                        .nodes
+                        .box_key(child_idx)
+                        .expect("flex child has a box key");
+                    let cache = tree.take_layout_cache(child_idx);
+                    saved.push((child_idx, cache));
+                    tree.push_local_overrides(vec![(key, entry)]);
+                }
                 continue;
             };
             let (width, min, max) = (
