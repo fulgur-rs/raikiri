@@ -4985,7 +4985,7 @@ impl AvoidedBreaks {
         let unbreakable = unbreakable_end.is_some_and(|end| {
             unbreakable_box_moves(flow_y, margin_top, end, page_start, page_end)
         });
-        // A paragraph of one line of generated text is kept whole by its
+        // A paragraph of one generated or glyphless line is kept whole by its
         // line alone: the margin and padding after the line break across
         // the edge like those of a paragraph of text. A box shorter than the
         // line ends where the box does.
@@ -4995,7 +4995,12 @@ impl AvoidedBreaks {
             Some(page_box_end)
         } else {
             unplaced_line
-                .filter(|line| !line.atomic)
+                .filter(|line| {
+                    !line.atomic
+                        && line.glyphless_height.is_none_or(|line_height| {
+                            block_fits_page_step(line_height.min(height), next_page_step)
+                        })
+                })
                 .map(|line| flow_y + line.end.min(height))
         };
         let moves_for_avoided_end = avoided_end
@@ -6891,11 +6896,15 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
+    /// The glyphless line's block size, to avoid automatically moving a
+    /// line taller than the next page. Generated and atomic lines keep their
+    /// existing placement rules.
+    glyphless_height: Option<f32>,
 }
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
-/// that no text node places: generated text, or atomic inlines alone (see
-/// [`single_unplaced_line`]).
+/// that no text node places: generated text, a glyphless line, or atomic
+/// inlines alone (see [`single_unplaced_line`]).
 ///
 /// No text candidate moves such a line, so its block moves whole when the
 /// line would cross a page edge, as a line of text does. Only a horizontal
@@ -6922,6 +6931,9 @@ fn unplaced_line(
     Some(UnplacedBlockLine {
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
+        glyphless_height: unplaced
+            .glyphless
+            .then_some(unplaced.line.bottom - unplaced.line.top),
     })
 }
 
