@@ -563,3 +563,42 @@ fn the_box_around_text_after_a_forced_break_continues_on_the_next_page() {
         [(0, 0.0, 0.0, 100.0), (1, 0.0, 0.0, 60.0)]
     );
 }
+
+#[test]
+fn text_beside_two_left_floats_is_narrowed_by_the_taller_second_float() {
+    // The first float is 40px wide and 30px tall, and the second one sits
+    // beside it (x 40 to 60) and is 50px tall. The second line starts below
+    // the first float's bottom edge but is still beside the second float, so
+    // it keeps starting at 60px until that float ends.
+    let floats = format!("{}{}", float("left", 40, 30), float("left", 20, 50));
+    let text = format!("<div style='margin-top:10px'>{TEXT}</div>");
+    assert_eq!(
+        lines(&format!("{BREAK}{floats}{text}")),
+        [(1, 60.0, 15.0), (1, 60.0, 45.0), (1, 0.0, 75.0)]
+    );
+    // The same without the break: the first page starts with the floats.
+    assert_eq!(
+        lines(&format!("{floats}{text}")),
+        [(0, 60.0, 15.0), (0, 60.0, 45.0), (0, 0.0, 75.0)]
+    );
+    // The same in the middle of a page, after a 20px block.
+    assert_eq!(
+        lines(&format!(
+            "<div style='height:20px'>a</div>{floats}<div>{TEXT}</div>"
+        )),
+        [(0, 60.0, 25.0), (0, 60.0, 55.0), (1, 0.0, 5.0)]
+    );
+}
+
+#[test]
+fn text_beside_a_left_and_a_taller_right_float_is_narrowed_by_both() {
+    // The floats sit on opposite sides. The first line is beside both and
+    // starts at 40px; the second one is below the left float but still beside
+    // the taller right float, so only its right edge is narrowed.
+    let floats = format!("{}{}", float("left", 40, 30), float("right", 20, 50));
+    let text = format!("<div style='margin-top:10px'>{TEXT}</div>");
+    assert_eq!(
+        lines(&format!("{BREAK}{floats}{text}")),
+        [(1, 40.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)]
+    );
+}
