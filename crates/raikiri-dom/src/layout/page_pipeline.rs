@@ -7104,6 +7104,12 @@ fn lineless_piece_end(
         return None;
     }
     let node = &document.nodes[node_id];
+    // A forced break before a box inside takes the page break there: moving
+    // the block would only push that break on to one more page.
+    if depth > 0 && page_break_is_forced(document, node_id, cascade.computed[node_id].break_before)
+    {
+        return None;
+    }
     // The box the walk starts at is judged by the rules of its own.
     if depth > 0
         && (avoids_page_break_inside(cascade.computed[node_id].break_inside)

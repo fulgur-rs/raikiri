@@ -952,3 +952,26 @@ fn a_padded_block_is_left_to_the_rules_for_lines_when_a_line_decides() {
         [100.0, 106.0]
     );
 }
+
+#[test]
+fn a_padded_block_is_not_moved_for_a_box_that_starts_a_page_itself() {
+    // The forced break before the box is taken where it is, after the
+    // padding: moving the block as well would put the box on a third page.
+    for (lead, item) in [
+        (94, "height:20px;break-before:page"),
+        (90, "height:20px;break-inside:avoid;break-before:page"),
+        (94, "height:20px;break-before:always"),
+    ] {
+        let (mut wrapper, mut item_id) = (0, 0);
+        let (doc, pages) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{lead}px"));
+            wrapper = block(doc, body, &format!("display:block;{PADDED}"));
+            item_id = block(doc, wrapper, &format!("display:block;{item}"));
+        });
+        assert_eq!(
+            ([wrapper, item_id].map(|id| page_flow_y(&doc, id)), pages),
+            ([lead as f32, 100.0], 2),
+            "{lead} {item}"
+        );
+    }
+}
