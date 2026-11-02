@@ -2810,6 +2810,20 @@ fn flex_column_of(doc: &mut Document, parent: usize, items: usize, css: &str) ->
     ids
 }
 
+/// A table with one row of 10px per group in `groups`, styled by the CSS of
+/// that group. Returns the table, then each row.
+fn table_of_row_groups(doc: &mut Document, parent: usize, groups: &[&str]) -> Vec<usize> {
+    let table = block(doc, parent, "display:table;border-spacing:0");
+    let mut ids = vec![table];
+    for css in groups {
+        let group = block(doc, table, &format!("display:table-row-group;{css}"));
+        let row = block(doc, group, "display:table-row");
+        block(doc, row, "display:table-cell;padding:0;height:10px");
+        ids.push(row);
+    }
+    ids
+}
+
 #[test]
 fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
     // The items end at 90 and the padding below them does not fit. The page
@@ -2817,7 +2831,7 @@ fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
     // the padding: Chromium sends the last item to the next page with it, and
     // the container stays where it is.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 9] = [
+    let shapes: [(&str, Shape); 12] = [
         ("flex column of two items", |doc, card| {
             let ids = flex_column_of(doc, card, 2, "");
             vec![ids[0], ids[1], ids[2]]
@@ -2871,6 +2885,33 @@ fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
             // The caption stays; the row goes with the padding.
             vec![table, caption, row]
         }),
+        ("table of two row groups of one row", |doc, card| {
+            let ids = table_of_row_groups(doc, card, &["", ""]);
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        (
+            "table whose one row group avoids breaks around it, not between its rows",
+            |doc, card| {
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(
+                    doc,
+                    table,
+                    "display:table-row-group;break-before:avoid;break-after:avoid",
+                );
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let row = block(doc, group, "display:table-row");
+                block(doc, row, "display:table-cell;padding:0;height:10px");
+                vec![table, first, row]
+            },
+        ),
+        (
+            "table whose last row group avoids breaks but holds one row",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["", "break-inside:avoid"]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
     ];
     for (label, build) in shapes {
         let (ys, height) = card_with_edges(30, build);
@@ -2943,7 +2984,7 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
     // the edges when nothing keeps the items together or makes the last one
     // something else than a box to move.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 14] = [
+    let shapes: [(&str, Shape); 19] = [
         ("avoided break before the last item", |doc, card| {
             let ids = flex_column_of(doc, card, 1, "");
             vec![
@@ -3053,6 +3094,50 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
             let first = block(doc, table, "display:table-row");
             block(doc, first, "display:table-cell;padding:0;height:10px");
             let row = block(doc, table, "display:table-row;break-before:avoid");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, first, row]
+        }),
+        (
+            "table whose last row group avoids breaks inside its two rows",
+            |doc, card| {
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let row = block(doc, group, "display:table-row");
+                block(doc, row, "display:table-cell;padding:0;height:10px");
+                vec![table, first, row]
+            },
+        ),
+        (
+            "table whose last row group has an avoided break before it",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["", "break-before:avoid"]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+        (
+            "table whose row group before the last has an avoided break after it",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["break-after:avoid", ""]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+        // Browsers send the whole container on with the edges; it is left
+        // where the flow puts it.
+        ("flex column that avoids breaks inside", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table that avoids breaks inside", |doc, card| {
+            let table = block(
+                doc,
+                card,
+                "display:table;border-spacing:0;break-inside:avoid",
+            );
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
             block(doc, row, "display:table-cell;padding:0;height:10px");
             vec![table, first, row]
         }),

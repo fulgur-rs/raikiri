@@ -7238,6 +7238,7 @@ fn container_item_tail(
     // A grid moves whole, so only flex containers and tables are left.
     if !matches!(node.display(), DisplayValue::Flex | DisplayValue::Table)
         || !container_can_be_judged(document, cascade, node_id)
+        || avoids_page_break_inside(cascade.computed[node_id].break_inside)
         || container_moves_whole(document, cascade, node_id, has_named_pages)
     {
         return None;
@@ -7262,7 +7263,12 @@ fn container_item_tail(
                 && matches!(item.position(), PositionValue::Static)
                 && !item.used_writing_mode.is_vertical()
                 && breaks_only_around(document, cascade, last, has_named_pages)
-                && !break_between_is_avoided(document, cascade, before.last().copied(), last))
+                && !break_between_is_avoided(
+                    document,
+                    cascade,
+                    &before[before.len().saturating_sub(1)..],
+                    &[last],
+                ))
             .then_some(last)
         }
         _ => {
@@ -7282,10 +7288,11 @@ fn container_item_tail(
             if document.anonymous_table_cells(node_id).next().is_some() {
                 return None;
             }
-            let mut rows = Vec::new();
+            // Each row with the group that holds it, if any.
+            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
             for child in elements(node_id) {
                 match document.nodes[child].display() {
-                    DisplayValue::TableRow => rows.push(child),
+                    DisplayValue::TableRow => rows.push((child, None)),
                     DisplayValue::TableRowGroup => {
                         if document.anonymous_table_cells(child).next().is_some() {
                             return None;
@@ -7293,7 +7300,7 @@ fn container_item_tail(
                         // A box in the group that is no row is not a candidate
                         // for the edges, so a table that ends with one has no
                         // last row to move.
-                        rows.extend(elements(child));
+                        rows.extend(elements(child).map(|row| (row, Some(child))));
                     }
                     DisplayValue::TableCaption
                         if cascade.computed[child].caption_side
@@ -7301,24 +7308,46 @@ fn container_item_tail(
                     _ => return None,
                 }
             }
-            let (&last, before) = rows.split_last()?;
-            (!break_between_is_avoided(document, cascade, before.last().copied(), last))
-                .then_some(last)
+            let (&(last, group), before) = rows.split_last()?;
+            // The boxes that start the last row's side of the break and end
+            // the other side of it: a group is one of them where the break is
+            // the group's own edge.
+            let mut next = vec![last];
+            let mut previous = Vec::new();
+            if let Some(group) = group {
+                // Browsers move a group that avoids breaks inside it whole
+                // with the edges, which is not done here.
+                if avoids_page_break_inside(cascade.computed[group].break_inside)
+                    && before.iter().any(|&(_, held)| held == Some(group))
+                {
+                    return None;
+                }
+                if before.last().is_none_or(|&(_, held)| held != Some(group)) {
+                    next.push(group);
+                }
+            }
+            if let Some(&(row, held)) = before.last() {
+                previous.push(row);
+                previous.extend(held.filter(|&held| group != Some(held)));
+            }
+            (!break_between_is_avoided(document, cascade, &previous, &next)).then_some(last)
         }
     }
 }
 
-/// Whether a `break-after` of the box `previous` or a `break-before` of the
-/// box `next` avoids the page break between the two.
+/// Whether a `break-after` of one of the boxes `previous` or a `break-before`
+/// of one of the boxes `next` avoids the page break between the two sides.
 fn break_between_is_avoided(
     document: &Document,
     cascade: &CascadeResult,
-    previous: Option<usize>,
-    next: usize,
+    previous: &[usize],
+    next: &[usize],
 ) -> bool {
-    page_edge_constraint(document, cascade, next, true).1
+    next.iter()
+        .any(|&next| page_edge_constraint(document, cascade, next, true).1)
         || previous
-            .is_some_and(|previous| page_edge_constraint(document, cascade, previous, false).1)
+            .iter()
+            .any(|&previous| page_edge_constraint(document, cascade, previous, false).1)
 }
 
 /// Whether `line_count` lines are too few for any break between them to leave
