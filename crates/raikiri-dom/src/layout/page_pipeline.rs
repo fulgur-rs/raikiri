@@ -5903,6 +5903,136 @@ fn adjoining_margin_extremes(
     }
 }
 
+/// The outer block extents `(top, bottom)` of the floats that come before `id`
+/// among its siblings, in the coordinates of their parent, the ones `id`'s
+/// lines were broken against. The floats before a `display: contents` box
+/// that holds `id` are not among its siblings, and so are not listed.
+fn preceding_float_extents(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> Vec<(f32, f32)> {
+    let parent = document.layout_parent_of(id);
+    let siblings = parent.map_or(&[][..], |parent| &document.nodes[parent].children[..]);
+    let position = siblings
+        .iter()
+        .position(|&sibling| sibling == id)
+        .unwrap_or(0);
+    siblings[..position]
+        .iter()
+        // A footnote is placed on a page of its own and takes no room from
+        // the lines.
+        .filter(|&&sibling| {
+            is_floating_box_for_pagination(document, cascade, sibling)
+                && float_side_index(cascade.computed[sibling].float).is_some()
+                && document.layout_parent_of(sibling) == parent
+        })
+        .map(|&float| float_outer_extent(document, float))
+        .collect()
+}
+
+/// The block-axis extent `(top, bottom)` of the margin box of the float `id`,
+/// in the coordinates of its parent.
+fn float_outer_extent(document: &Document, id: usize) -> (f32, f32) {
+    let layout = &document.nodes[id].layout;
+    (
+        layout.location.y - layout.margin.top,
+        layout.location.y + layout.size.height + layout.margin.bottom,
+    )
+}
+
+/// Whether moving the box `id`, whose border box starts at `top`, down by
+/// `delta` leaves every line below it where it belongs.
+///
+/// Each line was broken against the floats `floats` (their outer block
+/// extents, in the coordinates `top` is in), so a line may only move when no
+/// float's lower edge falls between its old and its new place: the line would
+/// keep the room it was broken for, or the one it had been given, beside a
+/// float that is no longer there. A paragraph whose lines leave a gap, since a
+/// float put one below itself, stays too, as does one whose lines sit beside
+/// floats that are not among `floats`. A paragraph that mixes in block
+/// children or generated blocks is not looked into, since the blocks leave
+/// gaps of their own. Neither is a box, `id` or one below it, that is not a
+/// plain block, or clears a float.
+fn lines_stay_put_when_moved(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    top: f32,
+    delta: f32,
+    floats: &[(f32, f32)],
+) -> bool {
+    // A box of a formatting context of its own is placed beside the floats as
+    // a whole, not line by line, and one in vertical writing breaks its lines
+    // along the other axis.
+    if !margins_may_collapse_through(document, cascade, id)
+        || document.nodes[id].used_writing_mode.is_vertical()
+    {
+        return false;
+    }
+    if let Some(ifc) = document
+        .ifc_layout_node(id)
+        .and_then(|node| node.ifc.as_ref())
+    {
+        let layout = &document.nodes[id].layout;
+        let content_top = top + layout.border.top + layout.padding.top;
+        return ifc.generated_blocks.is_empty()
+            && ifc.lines.as_ref().is_none_or(|lines| {
+                lines.placed_blocks.is_empty()
+                    && lines.block_line_starts.is_empty()
+                    && lines_keep_their_room(lines, content_top, delta, floats)
+            });
+    }
+    let mut boxes = Vec::new();
+    for &child in document.nodes[id].children.iter().rev() {
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+    }
+    // A box that clears a float or sits beside it in a formatting context of
+    // its own may have been put below the float as well.
+    boxes.into_iter().all(|child| {
+        cascade.computed[child].clear == ClearValue::None
+            && document.layout_parent_of(child) == Some(id)
+            && lines_stay_put_when_moved(
+                document,
+                cascade,
+                child,
+                top + document.nodes[child].layout.location.y,
+                delta,
+                floats,
+            )
+    })
+}
+
+/// Whether each of `lines`, whose content box starts at `content_top`, follows
+/// the line before it and sits beside the same floats of `floats` when moved
+/// down by `delta` as where it is. Lines that sit beside floats that `floats`
+/// does not hold fail it.
+fn lines_keep_their_room(
+    lines: &crate::layout::ifc::root::IfcLines,
+    content_top: f32,
+    delta: f32,
+    floats: &[(f32, f32)],
+) -> bool {
+    let beside = |top: f32, bottom: f32, float: (f32, f32)| {
+        top < float.1 - 0.001 && float.0 < bottom - 0.001
+    };
+    let mut end = 0.0;
+    let mut beside_a_float = false;
+    let steady = lines.lines.iter().all(|line| {
+        let follows = line.block_offset() <= end + 0.001;
+        end = line.block_offset() + line.block_size();
+        let top = content_top + line.block_offset();
+        let bottom = top + line.block_size();
+        follows
+            && floats.iter().all(|&float| {
+                let was = beside(top, bottom, float);
+                beside_a_float |= was;
+                was == beside(top + delta, bottom + delta, float)
+            })
+    });
+    steady && (beside_a_float || !lines.beside_floats)
+}
+
 /// How much the margins of the first in-flow children of `id` that adjoin its
 /// block-start margin change the margin it keeps at a forced break: the one
 /// margin they collapse into, less the margin of `id` itself.
@@ -8844,20 +8974,39 @@ impl SiblingMargins {
             return None;
         }
         let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
-        let forced_before = at.forced_before
-            || self
-                .break_taken_by_float
-                .is_some_and(|source| is_descendant_or_self(document, source, previous));
+        let taken_by_float = self
+            .break_taken_by_float
+            .is_some_and(|source| is_descendant_or_self(document, source, previous));
+        let forced_before = at.forced_before || taken_by_float;
         let page_top = page_origins.origin(at.natural_page);
         let previous_bottom = at.effective_y - gap;
         let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
-        if !page_edge_falls_in_margin(
-            at.natural_page,
-            page_top,
-            previous_bottom,
-            at.effective_y,
-            follows_forced_break,
-        )
+        // The float landed where the margin it was placed after collapsed
+        // to, so the box after it may already sit at the top of the page,
+        // above the margin that the break keeps. Moving the box down moves
+        // its lines with it, but they were broken against the floats where
+        // the box was, so the box moves only when every line keeps the room
+        // the floats leave it.
+        let lands_at_page_top = taken_by_float
+            && at.natural_page > 0
+            && at.margin_top > 0.0
+            && (at.effective_y - page_top).abs() <= 0.001
+            && lines_stay_put_when_moved(
+                document,
+                cascade,
+                node_id,
+                document.nodes[node_id].layout.location.y,
+                at.margin_top,
+                &preceding_float_extents(document, cascade, node_id),
+            );
+        if !(lands_at_page_top
+            || page_edge_falls_in_margin(
+                at.natural_page,
+                page_top,
+                previous_bottom,
+                at.effective_y,
+                follows_forced_break,
+            ))
             // Only a margin between adjoining siblings is truncated; a box
             // that is not a candidate may lie between two nested candidates.
             || !self.adjacency.adjoins(document, cascade, node_id, previous)
