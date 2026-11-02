@@ -83,6 +83,27 @@ pub(super) fn with_flex_intrinsic_probe<R>(
     }
 }
 
+/// Run `probe`, which measures the content height of the flex container
+/// `node_id` to raise the height its aspect ratio gives it, while the items the
+/// container stretches add only their `min-height` to that measure (see
+/// `with_ratio_probe_stretch_floor` in [`crate::layout::dispatch`]).
+pub(super) fn with_ratio_height_probe<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let outer = tree
+        .context
+        .ratio_height_probe
+        .replace(usize::from(node_id));
+    let result = catch_unwind(AssertUnwindSafe(|| probe(tree)));
+    tree.context.ratio_height_probe = outer;
+    match result {
+        Ok(value) => value,
+        Err(payload) => resume_unwind(payload),
+    }
+}
+
 /// What the automatic minimum size of a flex item with a horizontal main axis
 /// depends on.
 struct AutomaticMinimumInputs {

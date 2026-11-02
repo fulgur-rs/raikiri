@@ -3,6 +3,8 @@ use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_sty
 use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 
+use super::super::intrinsic_scopes::with_ratio_height_probe;
+
 #[test]
 fn flex_intrinsic_probe_records_and_restores_its_temporary_limit() {
     let (mut doc, cascade, child, _) =
@@ -26,6 +28,30 @@ fn flex_intrinsic_probe_records_and_restores_its_temporary_limit() {
     assert!(panic.is_err());
     assert_eq!(tree.style_view(parent).max_size(), original);
     assert!(tree.context.flex_intrinsic_probe.is_none());
+}
+
+#[test]
+fn ratio_height_probe_records_its_container_and_restores_the_outer_one_on_return_and_unwind() {
+    let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", "width:10px");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    assert!(tree.context.ratio_height_probe.is_none());
+    let seen = with_ratio_height_probe(&mut tree, NodeId::from(parent), |tree| {
+        let outer = tree.context.ratio_height_probe;
+        with_ratio_height_probe(tree, NodeId::from(child), |tree| {
+            assert_eq!(tree.context.ratio_height_probe, Some(child));
+        });
+        (outer, tree.context.ratio_height_probe)
+    });
+    assert_eq!(seen, (Some(parent), Some(parent)));
+    assert!(tree.context.ratio_height_probe.is_none());
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_ratio_height_probe(&mut tree, NodeId::from(parent), |_| {
+            panic!("ratio height probe unwind")
+        });
+    }));
+    assert!(panic.is_err());
+    assert!(tree.context.ratio_height_probe.is_none());
 }
 
 #[test]

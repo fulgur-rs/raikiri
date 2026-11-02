@@ -54,6 +54,11 @@ pub(crate) struct LayoutContext {
     /// A container asked for its min-content or max-content width in any other
     /// way bounds its items the same, whatever this holds.
     pub(crate) flex_intrinsic_probe: Option<usize>,
+    /// The flex container whose content height is being measured to raise the
+    /// height its aspect ratio gives it (see `ratio_height` in
+    /// [`crate::layout::dispatch`]). The items it stretches add only their
+    /// `min-height` to that measure meanwhile.
+    pub(crate) ratio_height_probe: Option<usize>,
     /// Definite block sizes retained as percentage bases for the direct
     /// children of boxes being measured for intrinsic height limits.
     pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,

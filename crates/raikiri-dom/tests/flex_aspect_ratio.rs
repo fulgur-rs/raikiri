@@ -380,3 +380,243 @@ fn a_flex_container_with_a_ratio_is_raised_by_its_content_as_an_item() {
     ];
     check_boxes(cases);
 }
+
+/// The items a single-line flex row stretches fill the line, so neither their content nor their own aspect ratio raises the container past the height its ratio gives it, whichever kind of box the item is and wherever the container is laid out; the line is as high as the ratio height says.
+#[test]
+fn a_row_container_ratio_height_is_not_raised_by_the_items_it_stretches() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a stretched item with a ratio",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a stretched item without a ratio and with taller content",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%'><div style='height:80px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a stretched item with a ratio and much taller content",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:200px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a stretched item with a ratio next to a short item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50px;aspect-ratio:1/1'><div style='height:80px'></div></div><div id=e style='width:50px;height:30px'></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 50.0),
+                ("d", 8.0, 8.0, 50.0, 50.0),
+                ("e", 58.0, 8.0, 50.0, 30.0),
+            ],
+        ),
+        (
+            "a stretched item with a tall ratio",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/2'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "the padding of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;padding:5px 0'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "the border of a stretched item that sizes its content box",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;border:3px solid;box-sizing:content-box'><div style='height:80px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "the margins of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;margin:5px 0'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 13.0, 100.0, 40.0)],
+        ),
+        (
+            "align-self: stretch over another align-items",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1;align-items:flex-end'><div id=d style='width:100%;aspect-ratio:1/1;align-self:stretch'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a flex basis of 100%",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;height:auto;flex-basis:100%'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an item that grows",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='flex:1 1 0;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a paragraph item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'>AAAA</div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a flex container item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='display:flex;width:100%;aspect-ratio:1/1'><div style='height:30px;width:10px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a grid container item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='display:grid;width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an inline-flex container",
+            "<div id=c style='display:inline-flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a width the parent imposes",
+            "<div style='width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an item of a flex row",
+            "<div style='display:flex;width:100px'><div id=c style='display:flex;aspect-ratio:2/1;flex:1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an item of a grid",
+            "<div style='display:grid;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a float",
+            "<div style='float:left'><div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an inline-flex container that takes its width from its content",
+            "<div id=c style='display:inline-flex;aspect-ratio:2/1'><div id=d style='width:100px;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a maximum height on the stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;max-height:20px'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
+/// What raises a flex row with a ratio is what its line does not stretch: an item that states a height, or aligns to something else than the line, or has auto margins, and the `min-height`, padding and margins of a stretched one; a container that wraps its items or lays them out in a grid has no line of the height of its ratio.
+#[test]
+fn a_row_container_ratio_height_is_raised_by_what_the_line_does_not_stretch() {
+    let cases: &[Case<'_>] = &[
+        (
+            "the min-height of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;min-height:60px'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
+            "the min-height of a stretched item that sizes its content box",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:40px;padding:10px 0;box-sizing:content-box'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
+            "the min-height and margins of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:20px;margin:30px 0'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 38.0, 100.0, 20.0)],
+        ),
+        (
+            "padding taller than the ratio height",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;padding:40px 0;box-sizing:border-box'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 8.0, 100.0, 80.0)],
+        ),
+        (
+            "a centered item taller than the ratio height",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50px'><div style='height:80px'></div></div><div id=e style='width:50px;align-self:center;height:150px'></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 150.0),
+                ("d", 8.0, 8.0, 50.0, 150.0),
+                ("e", 58.0, 8.0, 50.0, 150.0),
+            ],
+        ),
+        (
+            "an item at the end with a margin",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50px'><div style='height:30px'></div></div><div id=e style='width:50px;align-self:flex-end;height:80px;margin-top:10px'></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 90.0),
+                ("d", 8.0, 8.0, 50.0, 90.0),
+                ("e", 58.0, 18.0, 50.0, 80.0),
+            ],
+        ),
+        (
+            "an item aligned to the baseline",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1;align-items:baseline'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "an item with an auto margin",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;margin-top:auto'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "items aligned to the start",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1;align-items:flex-start'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a tall item next to a stretched one",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50%;align-self:flex-start'><div style='height:80px'></div></div><div id=e style='width:50%;aspect-ratio:1/1;'><div style='height:10px'></div></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 80.0),
+                ("d", 8.0, 8.0, 50.0, 80.0),
+                ("e", 58.0, 8.0, 50.0, 80.0),
+            ],
+        ),
+        (
+            "a container that wraps its items",
+            "<div id=c style='display:flex;flex-wrap:wrap;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a grid container",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
+/// A container that is the item of a flex column finds its height from its content first, so the items it stretches count at their own heights there, whether the container states its width or is stretched.
+#[test]
+fn a_ratio_container_in_a_flex_column_keeps_the_heights_of_its_items() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a stretched container",
+            "<div style='display:flex;flex-direction:column;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a container that states its width",
+            "<div style='display:flex;flex-direction:column;align-items:flex-start'><div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a container that states its width in a wider column",
+            "<div style='display:flex;flex-direction:column;align-items:flex-start;width:200px'><div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a container with a plain item",
+            "<div style='display:flex;flex-direction:column;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%'><div style='height:80px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 8.0, 100.0, 80.0)],
+        ),
+        (
+            "a container whose ratio height is the larger",
+            "<div style='display:flex;flex-direction:column;width:300px'><div id=c style='display:flex;aspect-ratio:2/1;flex:none'><div id=d style='width:100px;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 300.0, 150.0), ("d", 8.0, 8.0, 100.0, 150.0)],
+        ),
+        (
+            "a container that grows",
+            "<div style='display:flex;flex-direction:column;width:300px;height:400px'><div id=c style='display:flex;aspect-ratio:2/1;flex:1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 300.0, 400.0), ("d", 8.0, 8.0, 300.0, 400.0)],
+        ),
+        (
+            "a reversed column",
+            "<div style='display:flex;flex-direction:column-reverse;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
