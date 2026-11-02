@@ -45,6 +45,33 @@ pub(crate) fn columns_have_no_content_minimum(style: &LayoutStyleView<'_>) -> bo
     }) && !style.grid_auto_columns().any(sized_by_content)
 }
 
+/// Whether the width of some column of the grid laid out with `style` follows
+/// the items in it: a track whose minimum or maximum size is `auto`,
+/// `min-content`, `max-content` or `fit-content()`.
+///
+/// The columns are the ones the template declares, or the implicit ones that
+/// `grid-auto-columns` sizes when it declares none. A column that is a length,
+/// a percentage or a flexible track with such a minimum is as wide as it is
+/// whatever the items are.
+pub(crate) fn columns_follow_their_items(style: &LayoutStyleView<'_>) -> bool {
+    let style = TaffyStyle::new(*style);
+    let follows = |track: TrackSizingFunction| track.min.is_intrinsic() || track.max.is_intrinsic();
+    let mut template = style
+        .grid_template_columns()
+        .into_iter()
+        .flatten()
+        .peekable();
+    if template.peek().is_none() {
+        // Without `grid-auto-columns`, implicit columns are `auto`.
+        let mut implicit = style.grid_auto_columns().peekable();
+        return implicit.peek().is_none() || implicit.any(follows);
+    }
+    template.any(|component| match component {
+        GenericGridTemplateComponent::Single(track) => follows(track),
+        GenericGridTemplateComponent::Repeat(repetition) => repetition.tracks().any(follows),
+    })
+}
+
 /// The sizing function of every row of a grid, from the first implicit row
 /// before the explicit grid to the last after it.
 #[derive(Debug)]

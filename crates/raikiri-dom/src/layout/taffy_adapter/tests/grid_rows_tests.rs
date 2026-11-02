@@ -2,7 +2,9 @@
 //! all follow their content, and which of the rows a grid reports are sized by
 //! content or free space.
 
-use crate::layout::taffy_adapter::{GridRowCounts, RowSizing, rows_size_to_content};
+use crate::layout::taffy_adapter::{
+    GridRowCounts, RowSizing, columns_follow_their_items, rows_size_to_content,
+};
 use raikiri_layout_style::{LayoutStyleView, PreparedStyle, StyleMetadata, ViewContext};
 use raikiri_style::property::GridRepeatCount;
 use raikiri_style::{
@@ -38,6 +40,25 @@ fn with_view<R>(
     let mut values = ComputedValues::initial();
     values.grid_template_rows = rows;
     values.grid_auto_rows = Arc::new(auto_rows);
+    let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
+    check(&LayoutStyleView::new(
+        &prepared,
+        ViewContext::default(),
+        &[],
+        &[],
+    ))
+}
+
+/// Run `check` on the view of a grid whose `grid-template-columns` is `columns`
+/// and whose `grid-auto-columns` is `auto_columns`.
+fn with_column_view<R>(
+    columns: Template,
+    auto_columns: Vec<S>,
+    check: impl FnOnce(&LayoutStyleView<'_>) -> R,
+) -> R {
+    let mut values = ComputedValues::initial();
+    values.grid_template_columns = columns;
+    values.grid_auto_columns = Arc::new(auto_columns);
     let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
     check(&LayoutStyleView::new(
         &prepared,
@@ -208,4 +229,63 @@ fn rows_size_to_content_when_every_row_track_is_intrinsic_and_uncapped() {
         vec![]
     ));
     assert!(!check(Template::None, vec![AUTO, FIXED]));
+}
+
+#[test]
+fn columns_follow_their_items_when_some_track_is_sized_by_content() {
+    let check = |columns: Template, auto_columns: Vec<S>| {
+        with_column_view(columns, auto_columns, columns_follow_their_items)
+    };
+    // No template: the implicit columns are `auto` unless `grid-auto-columns`
+    // sizes them.
+    assert!(check(Template::None, vec![]));
+    assert!(check(Template::None, vec![AUTO]));
+    assert!(check(Template::None, vec![FIXED, AUTO]));
+    assert!(!check(Template::None, vec![FIXED]));
+    assert!(!check(
+        Template::None,
+        vec![S::MinMax(B::Px(0.0), B::Px(10.0))]
+    ));
+    // A template: its tracks decide, not the implicit columns after it.
+    assert!(!check(template(vec![C::Size(FIXED)]), vec![AUTO]));
+    assert!(!check(
+        template(vec![C::Size(FIXED), C::Size(S::Breadth(B::Percent(50.0)))]),
+        vec![]
+    ));
+    assert!(check(template(vec![C::Size(FIXED), C::Size(AUTO)]), vec![]));
+    assert!(check(
+        template(vec![C::Size(S::Breadth(B::Flex(1.0)))]),
+        vec![]
+    ));
+    assert!(check(
+        template(vec![C::Size(S::Breadth(B::MinContent))]),
+        vec![]
+    ));
+    assert!(check(
+        template(vec![C::Size(S::FitContent(LP::Px(30.0)))]),
+        vec![]
+    ));
+    // The minimum and the maximum of a `minmax()` both count; a flexible
+    // maximum over a length does not.
+    assert!(check(
+        template(vec![C::Size(S::MinMax(B::Px(10.0), B::MaxContent))]),
+        vec![]
+    ));
+    assert!(check(
+        template(vec![C::Size(S::MinMax(B::Auto, B::Px(10.0)))]),
+        vec![]
+    ));
+    assert!(!check(
+        template(vec![C::Size(S::MinMax(B::Px(0.0), B::Flex(1.0)))]),
+        vec![]
+    ));
+    // The tracks inside a repeat count as well.
+    assert!(!check(
+        template(vec![repeat(GridRepeatCount::Count(2), vec![FIXED])]),
+        vec![]
+    ));
+    assert!(check(
+        template(vec![repeat(GridRepeatCount::AutoFill, vec![FIXED, AUTO])]),
+        vec![]
+    ));
 }

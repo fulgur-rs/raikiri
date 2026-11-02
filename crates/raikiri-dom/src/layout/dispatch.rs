@@ -3499,6 +3499,15 @@ pub(crate) fn flex_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    // Only a container that runs on the axes of its vertical writing mode fits
+    // its lines in the room; one in a multicol container or a table runs on
+    // horizontal axes.
+    let inputs = if block_right_to_left(tree, usize::from(node_id)).is_some() {
+        let inputs = orthogonal_flow::with_page_room(tree, usize::from(node_id), inputs);
+        with_orthogonal_fit_content_height(tree, node_id, inputs)
+    } else {
+        inputs
+    };
     content_limits::with_vertical_ratio_stated_size_clamp(
         tree,
         node_id,
@@ -4031,6 +4040,60 @@ fn with_fit_content_width(
     inputs
 }
 
+/// Give a flex container that runs on the axes of a vertical writing mode, with
+/// lines along its inline axis, the height of its inline size when it fits the
+/// height it is offered (see [`orthogonal_flow::fits_lines_in_offered_height`]).
+///
+/// Its `height` is `auto`, so CSS Sizing 3 §3.1.1 gives it the room offered, but
+/// at least its min-content and at most its max-content height, and a grid row
+/// stretches an item to the room it has. Taffy sizes the container by the flex
+/// base sizes of its items however much room it is offered, so the lines of
+/// its items would stay on one column. `room` is the border-box height offered.
+fn with_orthogonal_fit_content_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let AvailableSpace::Definite(room) = inputs.available_space.height else {
+        return inputs;
+    };
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.height.is_some()
+        || !tree.physical_style(idx).flex_direction_is_row()
+        || !tree.physical_style(idx).size().height.is_auto()
+        || !orthogonal_flow::fits_lines_in_offered_height(tree, idx)
+    {
+        return inputs;
+    }
+    let height = if orthogonal_flow::stretches_to_grid_row(tree, idx) {
+        room
+    } else {
+        let mut measure = |space: AvailableSpace| {
+            let mut probe = inputs;
+            probe.run_mode = RunMode::ComputeSize;
+            probe.axis = RequestedAxis::Vertical;
+            probe.available_space.height = space;
+            flex_layout_sized(tree, node_id, probe).size.height
+        };
+        // A container whose items fit the room is as tall as they are, whatever
+        // they need at their least.
+        let max_content = measure(AvailableSpace::MaxContent);
+        if max_content <= room {
+            max_content
+        } else {
+            max_content.min(measure(AvailableSpace::MinContent).max(room))
+        }
+    };
+    inputs.known_dimensions.height = Some(orthogonal_flow::clamp_to_height_limits(
+        tree,
+        idx,
+        inputs.parent_size.width,
+        height,
+    ));
+    inputs.known_dimensions_are_definite.height = true;
+    inputs
+}
+
 /// Settle the width of a flex or grid container whose `width` is `min-content`
 /// or `max-content` and that a `min-width` or `max-width` clamps, before its
 /// lines or tracks are sized.
@@ -4095,6 +4158,7 @@ fn with_clamped_keyword_width(
 /// A container with a preferred aspect ratio and an `auto` height is given the
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    let inputs = orthogonal_flow::with_grid_item_room(tree, usize::from(node_id), inputs);
     content_limits::with_vertical_ratio_stated_size_clamp(
         tree,
         node_id,
@@ -4451,15 +4515,37 @@ fn grid_layout_sized(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let (size, inset, _) = tree.block_definite_size(idx, &inputs);
+    let (size, inset, style_height) = tree.block_definite_size(idx, &inputs);
     let parent_size = Size {
         width: size.width.map(|width| (width - inset.width).max(0.0)),
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     let right_to_left = grid_oof::right_to_left(tree, idx);
-    tree.context
-        .grid_inner_heights
-        .push((idx, parent_size.height));
+    let item_room = orthogonal_flow::grid_item_content_height(
+        tree,
+        idx,
+        &inputs,
+        size,
+        style_height,
+        inset.height,
+    );
+    tree.context.grid_inner_heights.push((idx, item_room));
+    // A grid whose `max-height` limits it grows the rows of its vertical items up
+    // to that limit, and no further, when it is laid out at a width: the limit is
+    // the space the tracks share, as a definite height would be (CSS Grid 2
+    // section 11.7.1). The limit is no part of how a row of horizontal items is
+    // sized, which a minimum of zero lets shrink below its content.
+    let mut inputs = inputs;
+    if right_to_left.is_none()
+        && size.width.is_some()
+        && inputs.known_dimensions.height.is_none()
+        && style_height.is_none()
+        && inputs.available_space.height == AvailableSpace::MaxContent
+        && let Some(room) = item_room
+        && orthogonal_flow::has_vertical_item(tree, node_id)
+    {
+        inputs.available_space.height = AvailableSpace::Definite(room + inset.height);
+    }
     let mut output = content_limits::with_grid_item_content_limits(
         tree,
         node_id,
