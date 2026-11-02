@@ -42,6 +42,7 @@ fn sibling_adjacency_work_does_not_multiply_prefix_width_by_break_count() {
                             forced_before: false,
                             margin_top: 30.0,
                             collapses_with_previous_block: true,
+                            run_end: None,
                         },
                     )
                     .expect("the page edge crosses the adjoining margin");

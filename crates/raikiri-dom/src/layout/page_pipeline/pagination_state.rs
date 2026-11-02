@@ -1204,6 +1204,7 @@ impl PaginationState {
             body_id,
             control,
             page_origins,
+            avoided_breaks,
             ..
         } = *env;
         let BoxBreak {
@@ -1232,20 +1233,27 @@ impl PaginationState {
         // margin (CSS Fragmentation 3 §5.2): the box starts at the
         // top of the page instead of keeping the part of the margin
         // that crossed the page edge.
-        let truncation = self.sibling_margins.truncation_at_break(
-            document,
-            cascade,
-            page_origins,
-            &MarginBreak {
-                node_id,
-                raw_y: candidate.raw_y,
-                effective_y: flow_y,
-                natural_page,
-                forced_before,
-                margin_top,
-                collapses_with_previous_block,
-            },
-        );
+        let at = MarginBreak {
+            node_id,
+            raw_y: candidate.raw_y,
+            effective_y: flow_y,
+            natural_page,
+            forced_before,
+            margin_top,
+            collapses_with_previous_block,
+            run_end: avoided_breaks.margin_run_end(node_id),
+        };
+        // An empty box stands where the box after it starts when a negative
+        // margin there pulls that box above it, also while no margin is cut:
+        // it must not take the flow on to a page that box is not on.
+        let pull = self.sibling_margins.pulled_run_end(document, cascade, &at);
+        let pulled = pull.map_or(0.0, |(_, pulled)| pulled);
+        if let Some((end, pulled)) = pull {
+            natural_page = page_origins.start_page(flow_y - pulled, end.height);
+        }
+        let truncation =
+            self.sibling_margins
+                .truncation_at_break(document, cascade, page_origins, &at);
         if let Some(MarginTruncation { delta, underflow }) = truncation {
             self.sibling_margins.moved_boxes |= delta != 0.0;
             move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
@@ -1256,7 +1264,9 @@ impl PaginationState {
                 // siblings still follow the forced break boundary.
                 self.deferred_shifts.underflow = Some((node_id, underflow));
             } else {
-                natural_page = page_origins.page_index_for_y(flow_y + delta);
+                // A pulled empty box stands where the box after it lands,
+                // which is the page the flow reaches.
+                natural_page = page_origins.page_index_for_y(flow_y + delta - pulled);
             }
         }
         reach_page(control, natural_page)?;
