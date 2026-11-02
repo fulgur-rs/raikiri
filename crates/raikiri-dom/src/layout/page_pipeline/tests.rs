@@ -17228,6 +17228,8 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
         trailing_margin: 0.0,
         holder_lead: 0.0,
         holder_margin_top: 0.0,
+        avoided_lead: 0.0,
+        avoided_margin_top: 0.0,
         page_start: 0.0,
         page_end: 100.0,
         next_page_step: 100.0,
@@ -20463,12 +20465,13 @@ fn a_wrapper_moves_with_the_image_that_begins_it_below_a_padding_or_border() {
 }
 
 #[test]
-fn a_wrapper_with_a_top_edge_stays_where_the_image_below_it_does_not_fit_the_next_page() {
-    // The image would not fit below the edge of the wrapper on the next page
-    // either, so the wrapper is not worth moving: the image alone does.
+fn a_wrapper_with_a_top_edge_moves_even_where_the_image_below_it_does_not_fit_the_next_page() {
+    // The image is taller than the room below the edge of the wrapper on the
+    // next page too. The break still goes before the wrapper, so the image is
+    // alone on the page after it.
     assert_eq!(
         clipped_wrapper_with_image("padding-top:30px", 80),
-        [60.0, 100.0, 180.0]
+        [100.0, 200.0, 280.0]
     );
     // One that fits moves with the wrapper.
     assert_eq!(

@@ -4952,6 +4952,13 @@ struct BoxFit {
     /// margin. Zero and `margin_top` when the box moves alone.
     holder_lead: f32,
     holder_margin_top: f32,
+    /// The same for a box that avoids a break inside it and begins the plain
+    /// blocks with padding or border above it: how far below the top of the
+    /// outermost of them the box starts, and the block-start margin of that
+    /// block (see `avoided_holder` in `begin_box`). Zero and `margin_top` when
+    /// the box is judged alone.
+    avoided_lead: f32,
+    avoided_margin_top: f32,
     /// The flow positions at which the current page starts and ends.
     page_start: f32,
     page_end: f32,
@@ -5065,6 +5072,8 @@ impl AvoidedBreaks {
             trailing_margin,
             holder_lead,
             holder_margin_top,
+            avoided_lead,
+            avoided_margin_top,
             page_start,
             page_end,
             next_page_step,
@@ -5120,8 +5129,17 @@ impl AvoidedBreaks {
                 })
                 .map(|line| flow_y + line.end.min(height))
         };
-        let moves_for_avoided_end = avoided_end
-            .is_some_and(|end| avoided_box_moves(flow_y, margin_top, end, page_start, page_end));
+        // The blocks that a box which avoids a break inside it begins, with
+        // the padding and border they keep above it, are what starts a page.
+        let moves_for_avoided_end = avoided_end.is_some_and(|end| {
+            avoided_box_moves(
+                flow_y - avoided_lead,
+                avoided_margin_top,
+                end,
+                page_start,
+                page_end,
+            )
+        });
         let page = unbreakable || moves_for_avoided_end;
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
@@ -5403,6 +5421,45 @@ fn leading_holder(
         0.0
     };
     (holder, lead)
+}
+
+/// The block size of what a box that begins the blocks from its parent up to
+/// `holder` lies below inside them: the border and padding of those blocks and
+/// the margins between their edges, as the layout resolved them. A margin
+/// collapses with the ones next to it until a border or padding separates it,
+/// or a block that establishes an independent formatting context (which
+/// keeps the margin of its first child inside it), so the largest of each such
+/// run counts, as in the normal flow. The margin above `holder` itself, and
+/// any that collapses through its top, lie outside it.
+///
+/// This is what the box's distance from `holder` (see [`leading_holder`]) is
+/// when nothing else comes before it. The walk of `leading_holder` cannot see
+/// what an anonymous block holds, so a larger distance means something is
+/// there that a break may fall after.
+fn leading_space_between(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    holder: usize,
+) -> f32 {
+    let mut total = 0.0;
+    let mut margin = document.nodes[node_id].layout.margin.top.max(0.0);
+    for ancestor in document.layout_ancestors(node_id) {
+        if document.nodes[ancestor].display() == DisplayValue::Contents {
+            continue;
+        }
+        let layout = &document.nodes[ancestor].layout;
+        let edges = layout.border.top + layout.padding.top;
+        if edges > 0.0 || !margins_may_collapse_through(document, cascade, ancestor) {
+            total += margin + edges;
+            margin = 0.0;
+        }
+        if ancestor == holder {
+            break;
+        }
+        margin = margin.max(layout.margin.top);
+    }
+    total
 }
 
 /// Whether the position of `node_id` does not follow its layout parent's in
@@ -7375,12 +7432,17 @@ fn lineless_piece_end(
 /// Whether a box with padding or border above its content moves to the next
 /// page, so that those edges do not stay behind alone: the box starts on the
 /// page, but the first piece of its content (see [`first_piece_end`], which
-/// `leading_piece_end` is the end of, from the top of the box) runs past the
-/// page end. A break between the edges and the content is a worse one (class C)
-/// than the break before the box (class A, CSS Break 3 §4.1), as browsers
-/// choose. The next page must hold that piece, or moving the box gains
-/// nothing; a box that its page starts with would break from the edges on any
-/// page.
+/// `leading_piece_end` and `leading_block_piece_end` are the end of, from the
+/// top of the box) runs past the page end. A break between the edges and the
+/// content is a worse one (class C) than the break before the box (class A,
+/// CSS Break 3 §4.1), as browsers choose; a box that its page starts with would
+/// break from the edges on any page.
+///
+/// A flex container or grid moves only when the next page can hold that piece,
+/// or moving it gains nothing. A plain block moves even when the piece is
+/// taller than the next page: browsers start the block on the next page then
+/// too, and the piece goes on below its edges, splitting there if it can be
+/// split, or going on to the page after if it is monolithic.
 fn leading_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let BoxFit {
         flow_y,
@@ -7390,10 +7452,16 @@ fn leading_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
         next_page_step,
         ..
     } = *fit;
-    candidate.context.leading_piece_end().is_some_and(|end| {
-        end <= next_page_step + 0.001
-            && avoided_box_moves(flow_y, margin_top, flow_y + end, page_start, page_end)
-    })
+    let moves =
+        |end: f32| avoided_box_moves(flow_y, margin_top, flow_y + end, page_start, page_end);
+    candidate
+        .context
+        .leading_piece_end()
+        .is_some_and(|end| end <= next_page_step + 0.001 && moves(end))
+        || candidate
+            .context
+            .leading_block_piece_end()
+            .is_some_and(moves)
 }
 
 /// Whether `break_inside` avoids page breaks inside its box.

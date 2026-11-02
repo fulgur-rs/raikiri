@@ -10,24 +10,25 @@ use super::{
     PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
     begins_page_below_leading_edges, block_effective_y, block_fits_page_step,
-    box_changes_page_name, box_occupies_column, box_sets_page_name, break_margins,
-    closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain, collapses_through,
-    collapses_with_previous_block, content_overflow_end, current_abs_y,
+    box_avoids_page_break_inside, box_changes_page_name, box_occupies_column, box_sets_page_name,
+    break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
+    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
     forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
-    lead_below_ancestor, leading_edges_move, leading_holder, line_block_parent,
-    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
-    lines_can_shift_inside, lines_move_grows_box, make_room_for_table_header,
-    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
-    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
-    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
-    positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    lead_below_ancestor, leading_edges_move, leading_holder, leading_space_between,
+    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
+    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
+    make_room_for_table_header, margin_box_starts_page, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
+    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
+    place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
+    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, run_tail_move,
+    shift_paragraph_lines, shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line,
+    text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -922,10 +923,11 @@ impl PaginationState {
         // above it go with them, so it has to fit the next page below those.
         // Only a box that starts on the page and runs past its end moves, so
         // the walk over its ancestors is left to those.
+        let crosses_page_end = effective_y - relative_offset + height + trailing_margin
+            > fit_page_start + page_origins.step_at(fit_page);
         let holder = if candidate.context.is_unbreakable()
             && !keeps_margin_at_break
-            && effective_y - relative_offset + height + trailing_margin
-                > fit_page_start + page_origins.step_at(fit_page)
+            && crosses_page_end
             && is_block_flow_box(document, cascade, candidate)
             && !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant()
@@ -938,6 +940,41 @@ impl PaginationState {
         } else {
             None
         };
+        // A box that avoids a break inside it, below the padding or border
+        // that the plain blocks around it keep above it, goes with them: the
+        // page does not break between their start and the box (CSS Break 3
+        // §4.1), so it is their margin box that tells whether the box starts
+        // its page. Where they start the page, the box stays below that edge
+        // and breaks inside, as browsers do, rather than leave it alone at the
+        // top of the page. Only a box that runs past the page end moves, so
+        // the walk over its ancestors is left to those.
+        let avoided_holder = if crosses_page_end
+            && !candidate.context.is_unbreakable()
+            && !keeps_margin_at_break
+            && !document.context.pagination_on_transposed_axes
+            && box_avoids_page_break_inside(
+                document,
+                node_id,
+                cascade.computed[node_id].break_inside,
+            )
+            && is_block_flow_box(document, cascade, candidate)
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant()
+        {
+            let (ancestor, lead) = leading_holder(document, cascade, body_id, node_id, true);
+            // Only the padding and border of those blocks and the margins
+            // between them lie above the box: anything else before it is a
+            // place to break at. And they begin on the page the box does;
+            // blocks that began on an earlier one have left it.
+            (ancestor != node_id
+                && lead > 0.0
+                && lead <= leading_space_between(document, cascade, node_id, ancestor) + 0.01
+                && effective_y - relative_offset - lead >= fit_page_start - 0.001)
+                .then(|| (lead, document.nodes[ancestor].layout.margin.top))
+        } else {
+            None
+        };
+        let (avoided_lead, avoided_margin_top) = avoided_holder.unwrap_or((0.0, margin_top));
         // Where the holder has no room above the box of its own, its margin
         // collapses with the margin of the box, and the larger of the two is
         // what a break cuts.
@@ -957,6 +994,8 @@ impl PaginationState {
             trailing_margin,
             holder_lead,
             holder_margin_top,
+            avoided_lead,
+            avoided_margin_top,
             page_start: fit_page_start,
             page_end: fit_page_start + page_origins.step_at(fit_page),
             next_page_step,
