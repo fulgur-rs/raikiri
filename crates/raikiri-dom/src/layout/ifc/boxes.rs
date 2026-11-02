@@ -2150,9 +2150,15 @@ pub(crate) fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
 /// The most height that the content box of the horizontal container
 /// `container` gives a vertical box in it, when its `max-height` is a length:
 /// that length raised to its `min-height`, less the padding and border of the
-/// container where the limits are measured to the border box. A percentage
-/// limit is no limit while the height of the container is open, and the
-/// percentages of the padding count as nothing.
+/// container where the limits are measured to the border box.
+///
+/// A percentage limit is no limit while the height of the container is open.
+/// A border-box limit is dropped whole when the padding above or below the
+/// container is or holds a percentage (`10%`, `calc(10% + 5px)`, also `0%`),
+/// whatever it comes to: a browser cannot take such a padding off the limit
+/// and the vertical box fits the page area. Only the padding above and below
+/// counts; the padding on the left and right, and any padding of a
+/// content-box limit, leave the limit as it is.
 pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Option<f32> {
     let style = tree.physical_style(container);
     let max = style.max_size().height.maybe_resolve(None::<f32>)?;
@@ -2164,9 +2170,12 @@ pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Opti
     let edges = if style.box_sizing() == BoxSizing::ContentBox {
         0.0
     } else {
-        let padding = style.padding().resolve_or_zero(None::<f32>);
+        let padding = style.padding();
         let border = style.border().resolve_or_zero(None::<f32>);
-        padding.top + padding.bottom + border.top + border.bottom
+        padding.top.maybe_resolve(None::<f32>)?
+            + padding.bottom.maybe_resolve(None::<f32>)?
+            + border.top
+            + border.bottom
     };
     Some((max.max(min) - edges).max(0.0))
 }
