@@ -451,3 +451,172 @@ fn inline_svg_defaults_clip_the_viewport_and_author_styles_can_open_it() {
         );
     }
 }
+
+/// Thirty lines of 12px in an absolutely positioned box placed by `style`.
+fn absolute_lines(style: &str) -> String {
+    format!(
+        "<div style='position:absolute;left:0;{style}'>{}</div>",
+        "x<br>".repeat(30)
+    )
+}
+
+#[test]
+fn lines_of_an_absolute_box_past_the_clip_that_contains_it_add_no_page() {
+    // The clip is its containing block, so it hides what the box paints past
+    // the edge. Chromium prints these on one page.
+    for overflow in ["hidden", "auto", "scroll", "clip"] {
+        let result = laid_out(
+            &format!("<div id='clip'>{}</div>", absolute_lines("top:0")),
+            &format!("#clip{{position:relative;overflow:{overflow};height:50px;width:100px}}"),
+        );
+        assert_eq!(result.page_count(), 1, "{overflow}");
+    }
+    // Placed by its bottom edge, or under a transform, which contains it too.
+    for (style, css) in [
+        (
+            "bottom:-250px",
+            "#clip{position:relative;overflow:hidden;height:50px;width:100px}",
+        ),
+        (
+            "top:0",
+            "#clip{transform:translateX(0);overflow:hidden;height:50px;width:100px}",
+        ),
+    ] {
+        let result = laid_out(
+            &format!("<div id='clip'>{}</div>", absolute_lines(style)),
+            css,
+        );
+        assert_eq!(result.page_count(), 1, "{style} {css}");
+    }
+}
+
+#[test]
+fn lines_of_an_absolute_box_are_clipped_by_the_clips_above_its_containing_block() {
+    // The containing block does not clip, but the box around it does.
+    let result = laid_out(
+        &format!(
+            "<div id='clip'><div style='position:relative;height:20px'>{}</div></div>",
+            absolute_lines("top:0")
+        ),
+        "#clip{overflow:hidden;height:50px;width:100px}",
+    );
+    assert_eq!(result.page_count(), 1);
+    // A box inside an absolute box is held by that box, and so by its clips.
+    let result = laid_out(
+        &format!(
+            "<div id='clip'><div style='position:absolute;top:0;left:0;width:60px;height:30px'>{}</div></div>",
+            absolute_lines("top:0")
+        ),
+        "#clip{position:relative;overflow:hidden;height:50px;width:100px}",
+    );
+    assert_eq!(result.page_count(), 1);
+}
+
+#[test]
+fn lines_of_an_absolute_box_are_not_clipped_by_boxes_that_do_not_contain_it() {
+    // Its containing block is the page, or lies outside the clip, so the clip
+    // hides nothing of it and the lines take their pages: 30 lines of 12px on
+    // pages 100px tall.
+    for body in [
+        format!(
+            "<div style='overflow:hidden;height:50px;width:100px'>{}</div>",
+            absolute_lines("top:0")
+        ),
+        format!(
+            "<div style='position:relative;height:50px;width:100px'>\
+             <div style='overflow:hidden;height:50px'>{}</div></div>",
+            absolute_lines("top:0")
+        ),
+        format!(
+            "<div style='position:relative;height:50px;width:100px'>{}</div>",
+            absolute_lines("top:0")
+        ),
+    ] {
+        assert_eq!(laid_out(&body, "").page_count(), 4, "{body}");
+    }
+}
+
+#[test]
+fn an_absolute_box_clipped_past_the_page_keeps_the_pages_it_takes() {
+    // A clip taller than a page still breaks across pages.
+    let result = laid_out(
+        &format!("<div id='clip'>{}</div>", absolute_lines("top:0")),
+        "#clip{position:relative;overflow:hidden;height:150px;width:100px}",
+    );
+    assert_eq!(result.page_count(), 2);
+}
+
+#[test]
+fn an_absolute_box_that_starts_past_the_clip_takes_only_the_page_it_starts_on() {
+    // The clip is 50px tall and hides all of the box from its edge on, yet
+    // Chromium gives the page that the top of the box falls on, and no page
+    // after it, wherever the clip ends.
+    for (top, pages) in [
+        (0, 1),
+        (40, 1),
+        (49, 1),
+        (50, 1),
+        (60, 1),
+        (120, 2),
+        (300, 4),
+    ] {
+        let result = laid_out(
+            &format!(
+                "<div id='clip'>{}</div>",
+                absolute_lines(&format!("top:{top}px"))
+            ),
+            "#clip{position:relative;overflow:hidden;height:50px;width:100px}",
+        );
+        assert_eq!(result.page_count(), pages, "top:{top}px");
+    }
+}
+
+#[test]
+fn what_is_inside_or_around_a_box_past_the_clip_does_not_add_pages() {
+    let clip = "#clip{position:relative;overflow:hidden;height:50px;width:100px}";
+    // A box inside it is held by it, and so by the clip above.
+    for (top, pages) in [(120, 2), (300, 4)] {
+        let result = laid_out(
+            &format!(
+                "<div id='clip'><div style='position:absolute;left:0;top:{top}px'>{}</div></div>",
+                absolute_lines("top:0")
+            ),
+            clip,
+        );
+        assert_eq!(result.page_count(), pages, "inside top:{top}px");
+    }
+    // Padding above the lines keeps them on the page of the box.
+    for (top, pages) in [(120, 2), (300, 4)] {
+        let result = laid_out(
+            &format!(
+                "<div id='clip'>{}</div>",
+                absolute_lines(&format!("top:{top}px;padding-top:20px"))
+            ),
+            clip,
+        );
+        assert_eq!(result.page_count(), pages, "padded top:{top}px");
+    }
+    // Two boxes past the edge take the pages that the later one starts on.
+    let result = laid_out(
+        &format!(
+            "<div id='clip'>{}{}</div>",
+            absolute_lines("top:120px"),
+            absolute_lines("top:300px")
+        ),
+        clip,
+    );
+    assert_eq!(result.page_count(), 4);
+}
+
+#[test]
+fn the_clip_of_a_box_does_not_reach_the_absolute_boxes_of_the_next_one() {
+    let result = laid_out(
+        &format!(
+            "<div id='clip'>{}</div><div style='position:relative;height:20px'>{}</div>",
+            absolute_lines("top:0"),
+            absolute_lines("top:0")
+        ),
+        "#clip{position:relative;overflow:hidden;height:50px;width:100px}",
+    );
+    assert_eq!(result.page_count(), 5);
+}

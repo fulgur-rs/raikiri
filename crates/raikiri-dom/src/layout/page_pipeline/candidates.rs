@@ -6,20 +6,25 @@ use super::super::context::LayoutSession;
 use super::{
     AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, UnplacedBlockLine, avoid_chain_before_last_box, avoided_run_head,
-    box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
-    candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
-    first_owned_text_line_top, height_follows_content, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination,
+    PositionValue, TextLineIndex, UnplacedBlockLine, accumulated_relative_offset_y,
+    avoid_chain_before_last_box, avoided_run_head, box_forces_break_after, box_is_unbreakable,
+    boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
+    closing_edges_of, container_item_tail, first_owned_text_line_top, height_follows_content,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_holder, leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    leading_holder, leading_piece_end, lone_box_with_floats, moves_later_siblings,
+    nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
 use std::collections::HashMap;
+
+/// How much of the content of an absolutely positioned box that starts past
+/// the edge of the clip that contains it is kept, in px: the box is hidden
+/// whole, but the page it starts on stays.
+const HIDDEN_BOX_SLIVER: f32 = 1.0;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct CandidateFlowContext {
@@ -96,6 +101,11 @@ pub(super) struct ElementContext {
     /// page, only when that first box starts its page (see
     /// [`super::closing_edges_move`]).
     pub(super) lone_run_head_offset: Option<f32>,
+    /// How far below the end of the box that the closing edges follow the
+    /// floats of the blocks they close reach: a float that crosses a page edge
+    /// has a break to take of its own, and the box stays; one that does not
+    /// moves along with the box (see [`super::closing_edges_move`]).
+    pub(super) closing_edges_float_reach: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -215,6 +225,11 @@ impl BoxContext {
     pub(super) fn lone_run_head_offset(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.lone_run_head_offset)
+    }
+
+    pub(super) fn closing_edges_float_reach(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.closing_edges_float_reach)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -439,6 +454,11 @@ struct CandidateFrame<'name> {
     /// ancestor does. A text or box starting at or past it is never visible,
     /// so it takes no part in pagination.
     clip_end: f32,
+    /// What `clip_end` is for an absolutely positioned child: the edge past
+    /// which the clips of its containing block and of the ancestors above
+    /// that hide it, or infinity when none does. The clips of the boxes
+    /// between the child and its containing block do not reach it.
+    absolute_clip_end: f32,
     /// The block size of the bottom padding and border of the ancestors that
     /// end with the node: it is the last box in the flow of each of them, and
     /// their heights follow their content.
@@ -480,6 +500,10 @@ struct CandidateFrame<'name> {
     /// box before it: the run runs from this box on, with a break that is not
     /// avoided before it. It is tracked only where the document avoids breaks.
     tie_head: Option<usize>,
+    /// The lowest margin-box bottom, in source coordinates, of the floats of
+    /// the blocks that `closing_edges` counts, or negative infinity when they
+    /// have none. They are read only where `closing_edges` follows the node.
+    float_bottom: f32,
 }
 
 /// The last item of a flex container that stacks its items, or the last row of
@@ -527,6 +551,7 @@ impl CandidateFrame<'_> {
             inside_float: false,
             inside_out_of_flow: false,
             clip_end: f32::INFINITY,
+            absolute_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
             lone_in_edges: true,
@@ -537,6 +562,7 @@ impl CandidateFrame<'_> {
             run_tail: false,
             item_tail: None,
             tie_head: None,
+            float_bottom: f32::NEG_INFINITY,
         }
     }
 }
@@ -595,6 +621,9 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     page_step: f32,
     out: &'a mut Vec<PageCandidate>,
     text_lines: &'a mut TextLineIndex,
+    /// For the paragraphs whose text a clip cuts, by paragraph root: the edge
+    /// of the clip, in the coordinates of the candidates.
+    clip_edges: HashMap<usize, f32>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
     has_named_pages: bool,
@@ -625,6 +654,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             page_step,
             out,
             text_lines,
+            clip_edges: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
             has_named_pages,
@@ -655,6 +685,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// starts in the page flow.
     pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
         self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))
+    }
+
+    /// The edges of the clips that cut the text of the paragraphs collected,
+    /// by paragraph root, in the coordinates of the candidates.
+    pub(super) fn into_clip_edges(self) -> HashMap<usize, f32> {
+        self.clip_edges
     }
 
     #[inline(never)]
@@ -761,6 +797,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             None,
                         ),
                     };
+                    if let Some((root, _)) = ifc_root
+                        && frame.clip_end.is_finite()
+                    {
+                        let edge = self.clip_edges.entry(root).or_insert(frame.clip_end);
+                        *edge = edge.min(frame.clip_end);
+                    }
                     // Past a clipping ancestor's edge the text paints nowhere
                     // and gives the flow no page; a text running over the edge
                     // occupies only the part above it.
@@ -809,6 +851,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.run_tail = false;
                         child_frame.item_tail = None;
                         child_frame.tie_head = None;
+                        child_frame.float_bottom = f32::NEG_INFINITY;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -1106,17 +1149,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && frame.previous_box.is_some()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
                 .then(|| {
-                    lone_box_tail(
+                    lone_box_with_floats(
                         document,
                         cascade,
                         body_id,
                         node_id,
                         frame.closing_edges > 0.0,
+                        true,
                     )
                 })
                 .flatten()
-                .filter(|&tail| {
-                    tail + frame.closing_edges > 0.001
+                .filter(|lone| {
+                    lone.tail + frame.closing_edges > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
                         && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
@@ -1214,7 +1258,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
-                    .map(|tail| tail.max(0.0));
+                    .map(|lone| lone.tail.max(0.0));
+                // How far the floats beside the box of such a block, and those
+                // of the blocks it ends, reach below the box. Both ends are
+                // measured at their normal-flow positions, as the page fit is.
+                let closing_edges_float_reach =
+                    if let Some(lone) = lone_tail.filter(|_| can_move_nested) {
+                        let box_end = candidate_raw_y + node.layout.size.height
+                            - lone.tail.max(0.0)
+                            - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                        lone.float_reach
+                            .max((frame.float_bottom - box_end).max(0.0))
+                    } else if closing_edges_candidate || run_tail_candidate {
+                        let span = match frame.tie {
+                            AvoidTie::RunStart { span } => span,
+                            _ => 0.0,
+                        };
+                        let box_end = candidate_raw_y + candidate_height + span
+                            - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                        (frame.float_bottom - box_end).max(0.0)
+                    } else {
+                        0.0
+                    };
                 // The edges also follow the lines of a paragraph that breaks
                 // between them. With no box before it in the block that the
                 // edges close, the page cannot break before the paragraph at
@@ -1315,6 +1380,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     }),
                                 lone_run_head_offset: tie_offset
                                     .filter(|_| !break_before_available()),
+                                closing_edges_float_reach,
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1333,27 +1399,40 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         node_id,
                         document.context.pagination_on_transposed_axes,
                     );
-                // An absolutely positioned box is clipped by an ancestor only
-                // when that ancestor is its containing block. The walk does not
-                // track containing blocks, so such a box starts afresh. A
+                // An absolutely positioned box is clipped by its containing
+                // block and the ancestors above it, not by the boxes between
+                // them. One that starts past the edge of such a clip is hidden
+                // whole, but still starts the page it is on: it keeps the first
+                // sliver of its content. A fixed box is not clipped here. A
                 // document paginated on transposed axes is not measured at
                 // all: the overflow that clips its flow is not the one on y.
                 let clip_end = if document.context.pagination_on_transposed_axes {
                     f32::INFINITY
                 } else {
-                    let inherited = if matches!(
-                        document.nodes[node_id].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    ) {
-                        f32::INFINITY
-                    } else {
-                        frame.clip_end
+                    let inherited = match document.nodes[node_id].position() {
+                        PositionValue::Absolute if raw_y < frame.absolute_clip_end => {
+                            frame.absolute_clip_end
+                        }
+                        PositionValue::Absolute if frame.absolute_clip_end.is_finite() => {
+                            let layout = &document.nodes[node_id].layout;
+                            raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER
+                        }
+                        PositionValue::Absolute | PositionValue::Fixed => f32::INFINITY,
+                        _ => frame.clip_end,
                     };
                     if !is_body && super::element_clips_overflow(document, cascade, node_id) {
                         inherited.min(super::clip_block_end(document, cascade, node_id, raw_y))
                     } else {
                         inherited
                     }
+                };
+                let absolute_clip_end = if clip_end != frame.absolute_clip_end
+                    && crate::layout::fixed::establishes_absolute_containing_block(
+                        document, node_id, computed,
+                    ) {
+                    clip_end
+                } else {
+                    frame.absolute_clip_end
                 };
                 let child_order = pagination_child_order(document, cascade, node_id);
                 // The closing edges of this block, and of the blocks that it
@@ -1426,7 +1505,31 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 let last_in_flow = flow_flags
                     .iter()
-                    .rposition(|&(in_flow, floated)| in_flow.is_some() || floated);
+                    .rposition(|&(in_flow, _)| in_flow.is_some());
+                // The lowest margin-box bottom of the floats of this block and
+                // of the blocks it ends, which reaches below the last box when
+                // the edges that follow it would break away from it: a float
+                // that crosses a page edge keeps the box where it is.
+                let floats_bottom = flow_flags
+                    .iter()
+                    .zip(child_order.iter().copied())
+                    .filter(|&(&(_, floated), _)| floated)
+                    .map(|(_, child_id)| {
+                        let layout = &document.nodes[child_id].layout;
+                        pagination_child_parent_y(document, node_id, child_id, raw_y)
+                            + layout.location.y
+                            + layout.size.height
+                            + layout.margin.bottom
+                            - accumulated_relative_offset_y(document, cascade, body_id, child_id)
+                    })
+                    .fold(
+                        if inherited_edges > 0.0 {
+                            frame.float_bottom
+                        } else {
+                            f32::NEG_INFINITY
+                        },
+                        f32::max,
+                    );
                 // The margin below the last box sits between it and the padding
                 // and border of this block, unless it collapses through that
                 // block (when it has neither) or through the box itself (when
@@ -1626,6 +1729,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
                             clip_end,
+                            absolute_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
                             lone_in_edges: (!child_box_before || child_tied_to_start)
@@ -1637,6 +1741,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             run_tail,
                             item_tail: child_item_tail,
                             tie_head: child_tied.then_some(run_head).flatten(),
+                            float_bottom: if child_closing_edges > 0.0 {
+                                floats_bottom
+                            } else {
+                                f32::NEG_INFINITY
+                            },
                         },
                     )?;
                 }

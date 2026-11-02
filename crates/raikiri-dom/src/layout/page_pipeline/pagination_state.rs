@@ -68,6 +68,16 @@ impl From<LayoutError> for Halt {
     }
 }
 
+/// The text of an absolutely positioned box whose lines are kept whole on a
+/// page: see [`PaginationState::keep_positioned_lines`].
+struct PositionedParagraph {
+    /// The first text of the paragraph that was placed.
+    text: usize,
+    /// Where the first line of that text starts, in the coordinates of the
+    /// page candidates.
+    first_raw_y: f32,
+}
+
 impl Halt {
     /// What pagination returns once it stopped here: nothing for the page
     /// limit, which only truncates it, and the error otherwise.
@@ -274,9 +284,9 @@ pub(super) struct PaginationState {
     pub(super) saw_child: bool,
     pub(super) checked_paragraphs: CheckedParagraphs,
     /// The absolutely positioned boxes that hold text, by paragraph root, with
-    /// the first text of the paragraph when its lines are kept whole on a page
-    /// once the flow is placed.
-    positioned_paragraphs: HashMap<usize, Option<usize>>,
+    /// what is needed to keep the lines of the paragraph whole on a page once
+    /// the flow is placed, when they are.
+    positioned_paragraphs: HashMap<usize, Option<PositionedParagraph>>,
     /// Footnotes are collected in source order and stacked upward from the
     /// bottom edge of their anchor page. The normal-flow height is removed
     /// from `flow_shift`, leaving the box only in this page-local area.
@@ -1730,7 +1740,10 @@ impl PaginationState {
                 (horizontal
                     && !document.context.pagination_on_transposed_axes
                     && is_unfixed_absolute_box(document, root))
-                .then_some(candidate.node_id),
+                .then_some(PositionedParagraph {
+                    text: candidate.node_id,
+                    first_raw_y: candidate.raw_y,
+                }),
             );
         }
     }
@@ -1748,6 +1761,7 @@ impl PaginationState {
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
+        clip_edges: &HashMap<usize, f32>,
     ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
@@ -1756,22 +1770,30 @@ impl PaginationState {
             text_lines,
             ..
         } = *env;
-        let mut paragraphs: Vec<(usize, usize)> = std::mem::take(&mut self.positioned_paragraphs)
-            .into_iter()
-            .filter_map(|(root, text)| Some((root, text?)))
-            .collect();
+        let mut paragraphs: Vec<(usize, PositionedParagraph)> =
+            std::mem::take(&mut self.positioned_paragraphs)
+                .into_iter()
+                .filter_map(|(root, paragraph)| Some((root, paragraph?)))
+                .collect();
         // A box inside another sits where the lines of the outer one leave it,
         // so the outer boxes come first.
         paragraphs
             .sort_by_cached_key(|&(root, _)| (document.inclusive_ancestors(root).count(), root));
-        for (root, text) in paragraphs {
+        for (root, paragraph) in paragraphs {
+            let text = paragraph.text;
             // Blocks among the lines would stay behind when the lines move.
-            let Some(line_metrics) = lines_can_shift_inside(document, cascade, root)
+            let Some(mut line_metrics) = lines_can_shift_inside(document, cascade, root)
                 .then(|| paragraph_line_bounds(document, text, text_lines))
                 .flatten()
             else {
                 continue;
             };
+            // A clip hides the lines past its edge, and they do not count.
+            if let Some(&edge) = clip_edges.get(&root) {
+                let visible = edge - paragraph.first_raw_y;
+                line_metrics
+                    .truncate(line_metrics.partition_point(|&(top, _)| top < visible - 0.001));
+            }
             let start = positioned_text_start_y(document, text_lines, text, Some(root));
             let nothing_above_first_line = document
                 .ifc_layout_node(root)
