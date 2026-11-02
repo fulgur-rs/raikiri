@@ -1769,6 +1769,59 @@ fn a_gradient_with_a_modern_color_is_drawn_in_oklab_without_a_given_space() {
     }
 }
 
+/// A linear, a radial and a conic gradient from `currentcolor` to `#1e88e5`
+/// over an element whose `color` is `color`, each with the interpolation
+/// `clause` (empty for none).
+fn current_color_gradients(color: &str, clause: &str) -> [String; 3] {
+    gradient_values("currentcolor, #1e88e5", clause).map(|value| format!("color: {color}; {value}"))
+}
+
+#[test]
+fn a_currentcolor_stop_is_drawn_in_the_space_its_color_syntax_gives() {
+    // A `color` in a legacy syntax keeps sRGB, one in a modern syntax makes the
+    // default Oklab, as in Chromium.
+    for (color, space, other) in [
+        ("#e53935", " in srgb", " in oklab"),
+        ("rgb(229 57 53)", " in srgb", " in oklab"),
+        ("oklch(0.6 0.2 25)", " in oklab", " in srgb"),
+        (
+            "color-mix(in srgb, #e53935, #e53935)",
+            " in oklab",
+            " in srgb",
+        ),
+    ] {
+        let default = current_color_gradients(color, "");
+        let given = current_color_gradients(color, space);
+        let other = current_color_gradients(color, other);
+        for ((default, given), other) in default.iter().zip(&given).zip(&other) {
+            let drawn = raster_gradient(default);
+            assert_eq!(drawn, raster_gradient(given), "{default}");
+            assert_ne!(drawn, raster_gradient(other), "{default}");
+        }
+    }
+}
+
+#[test]
+fn a_currentcolor_gradient_matches_the_colors_chromium_draws() {
+    // The middle of `linear-gradient(to right, currentcolor, #1e88e5)` over
+    // 100px, as Chromium draws it for each `color`.
+    for (color, expected) in [
+        ("#e53935", [126u8, 98, 144]),
+        ("rgb(229 57 53)", [126, 98, 144]),
+        ("oklch(0.6 0.2 25)", [154, 116, 155]),
+        ("color(srgb 0.9 0.22 0.2)", [157, 117, 152]),
+    ] {
+        let [linear, ..] = current_color_gradients(color, "");
+        let drawn = pixel(&raster_gradient(&linear), 100, 50, 10);
+        for (channel, (got, want)) in drawn.iter().zip(expected).enumerate() {
+            assert!(
+                got.abs_diff(want) <= 3,
+                "{color}: channel {channel} is {got}, expected {want} +- 3"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_transition_hint_gets_the_middle_color_in_the_default_interpolation_space() {
     // sRGB, as red and blue are legacy colors: the hint position holds the same

@@ -38,6 +38,7 @@ use crate::resolve::{ComputedGridTemplateTracks, ComputedGridTrackListComponent}
 pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -> u64 {
     let ComputedValues {
         color: _,
+        color_modern: _,
         background_color: _,
         background_color_expression,
         font_family,

@@ -273,7 +273,7 @@ fn color_parse_rgb() {
 fn color_parse_color_srgb_and_linear_srgb() {
     assert_eq!(
         parse("color(srgb 1 0 0 / 50%)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 0,
             b: 0,
@@ -282,7 +282,7 @@ fn color_parse_color_srgb_and_linear_srgb() {
     );
     assert_eq!(
         parse("color(srgb-linear 1 0 0)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 0,
             b: 0,
@@ -367,12 +367,12 @@ fn color_mix_effective_boundary_does_not_cross_srgb_conversion() {
         let source = format!("color-mix(in srgb, lab(50% 50 0 / 0%), {endpoint})");
         assert_eq!(
             parse(&source, "color"),
-            Some(PropertyValue::Color(expected))
+            Some(PropertyValue::ModernColor(expected))
         );
         let source = format!("color-mix(in srgb, {endpoint}, lab(50% 50 0 / 0%))");
         assert_eq!(
             parse(&source, "color"),
-            Some(PropertyValue::Color(expected))
+            Some(PropertyValue::ModernColor(expected))
         );
     }
 }
@@ -402,12 +402,12 @@ fn color_mix_effective_boundary_maps_in_native_space() {
         let source = format!("color-mix(in lab, lab(50% 50 0 / 0%), {endpoint})");
         assert_eq!(
             parse(&source, "color"),
-            Some(PropertyValue::Color(expected))
+            Some(PropertyValue::ModernColor(expected))
         );
         let source = format!("color-mix(in lab, {endpoint}, lab(50% 50 0 / 0%))");
         assert_eq!(
             parse(&source, "color"),
-            Some(PropertyValue::Color(expected))
+            Some(PropertyValue::ModernColor(expected))
         );
     }
 }
@@ -441,12 +441,12 @@ fn color_mix_exact_native_lab_family_boundaries_map_to_black_or_white() {
             };
             assert_eq!(
                 parse(&source, "color"),
-                Some(PropertyValue::Color(expected))
+                Some(PropertyValue::ModernColor(expected))
             );
             let source = format!("color-mix(in {target}, black 0%, {endpoint} 100%)");
             assert_eq!(
                 parse(&source, "color"),
-                Some(PropertyValue::Color(expected))
+                Some(PropertyValue::ModernColor(expected))
             );
         }
     }
@@ -899,7 +899,7 @@ fn color_mix_nested_identical_lab_boundaries_are_raw_after_srgb_conversion() {
             format!("color-mix(in srgb, color-mix(in lab, {endpoint}, {endpoint}), white 0%)");
         assert_eq!(
             parse(&source, "color"),
-            Some(PropertyValue::Color(expected))
+            Some(PropertyValue::ModernColor(expected))
         );
     }
 }
@@ -916,7 +916,7 @@ fn color_parse_lab_family_extremes() {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             parse(source, "color"),
-            Some(PropertyValue::Color(CssColor::BLACK)),
+            Some(PropertyValue::ModernColor(CssColor::BLACK)),
             "{source}"
         );
     }
@@ -930,7 +930,7 @@ fn color_parse_lab_family_extremes() {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             parse(source, "color"),
-            Some(PropertyValue::Color(CssColor {
+            Some(PropertyValue::ModernColor(CssColor {
                 r: 255,
                 g: 255,
                 b: 255,
@@ -945,7 +945,7 @@ fn color_parse_lab_family_extremes() {
 fn color_parse_lab_family_converts_neutral_lightness() {
     assert_eq!(
         parse("lab(50% 0 0)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 119,
             g: 119,
             b: 119,
@@ -954,7 +954,7 @@ fn color_parse_lab_family_converts_neutral_lightness() {
     );
     assert_eq!(
         parse("lch(50% 0 120deg)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 119,
             g: 119,
             b: 119,
@@ -963,7 +963,7 @@ fn color_parse_lab_family_converts_neutral_lightness() {
     );
     assert_eq!(
         parse("oklab(50% 0 0)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 99,
             g: 99,
             b: 99,
@@ -972,7 +972,7 @@ fn color_parse_lab_family_converts_neutral_lightness() {
     );
     assert_eq!(
         parse("oklch(50% 0 120deg)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 99,
             g: 99,
             b: 99,
@@ -985,7 +985,7 @@ fn color_parse_lab_family_converts_neutral_lightness() {
 fn color_parse_lab_family_clamps_lightness_and_chroma() {
     assert_eq!(
         parse("lab(120% 0 0)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 255,
             b: 255,
@@ -994,7 +994,7 @@ fn color_parse_lab_family_clamps_lightness_and_chroma() {
     );
     assert_eq!(
         parse("oklab(-1 0 0)", "color"),
-        Some(PropertyValue::Color(CssColor::BLACK))
+        Some(PropertyValue::ModernColor(CssColor::BLACK))
     );
     assert_eq!(
         parse("lch(50% -10 120deg)", "color"),
@@ -1111,7 +1111,7 @@ fn color_parse_color_mix_rejects_adversarially_deep_nesting() {
 fn color_parse_color_mix_in_srgb_normalizes_percentages() {
     assert_eq!(
         parse("color-mix(in srgb, red 25%, blue 75%)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 64,
             g: 0,
             b: 191,
@@ -1120,7 +1120,7 @@ fn color_parse_color_mix_in_srgb_normalizes_percentages() {
     );
     assert_eq!(
         parse("color-mix(in srgb, red 80%, blue 80%)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 128,
             g: 0,
             b: 128,
@@ -1149,7 +1149,7 @@ fn color_parse_color_mix_premultiplies_alpha() {
             "color-mix(in srgb, rgb(255, 0, 0, 0.5) 50%, blue 50%)",
             "color"
         ),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 85,
             g: 0,
             b: 170,
@@ -1162,7 +1162,7 @@ fn color_parse_color_mix_premultiplies_alpha() {
 fn color_parse_color_mix_omitted_percentage_gets_leftover() {
     assert_eq!(
         parse("color-mix(in srgb, red 25%, blue)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 64,
             g: 0,
             b: 191,
@@ -1175,7 +1175,7 @@ fn color_parse_color_mix_omitted_percentage_gets_leftover() {
 fn color_parse_color_mix_second_percentage_gets_leftover_for_first() {
     assert_eq!(
         parse("color-mix(in srgb, red, blue 25%)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 191,
             g: 0,
             b: 64,
@@ -1269,7 +1269,7 @@ fn color_parse_color_mix_rejects_percentage_above_100() {
 fn color_parse_color_mix_supports_linear_srgb() {
     assert_eq!(
         parse("color-mix(in srgb-linear, black, white)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 188,
             g: 188,
             b: 188,
@@ -1285,7 +1285,7 @@ fn color_parse_color_mix_supports_lab_family_spaces() {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             parse(&format!("color-mix(in {space}, black, white)"), "color"),
-            Some(PropertyValue::Color(CssColor {
+            Some(PropertyValue::ModernColor(CssColor {
                 r: 119,
                 g: 119,
                 b: 119,
@@ -1299,7 +1299,7 @@ fn color_parse_color_mix_supports_lab_family_spaces() {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             parse(&format!("color-mix(in {space}, black, white)"), "color"),
-            Some(PropertyValue::Color(CssColor {
+            Some(PropertyValue::ModernColor(CssColor {
                 r: 99,
                 g: 99,
                 b: 99,
@@ -1364,7 +1364,7 @@ fn color_parse_hue_rejects_unknown_units_and_tokens() {
 fn color_parse_color_modern_alpha_rejects_none_and_accepts_number() {
     assert_eq!(
         parse("color(srgb 1 0 0 / none)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 0,
             b: 0,
@@ -1373,7 +1373,7 @@ fn color_parse_color_modern_alpha_rejects_none_and_accepts_number() {
     );
     assert_eq!(
         parse("color(srgb 1 0 0 / 0.25)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 0,
             b: 0,
@@ -1391,11 +1391,11 @@ fn color_parse_color_mix_zero_percentages_is_invalid() {
 fn color_parse_color_mix_nonzero_weights_with_zero_alpha_is_transparent() {
     assert_eq!(
         parse("color-mix(in srgb, transparent, transparent)", "color"),
-        Some(PropertyValue::Color(CssColor::TRANSPARENT))
+        Some(PropertyValue::ModernColor(CssColor::TRANSPARENT))
     );
     assert_eq!(
         parse("color-mix(in lch, transparent, transparent)", "color"),
-        Some(PropertyValue::Color(CssColor::TRANSPARENT))
+        Some(PropertyValue::ModernColor(CssColor::TRANSPARENT))
     );
 }
 
@@ -1403,11 +1403,11 @@ fn color_parse_color_mix_nonzero_weights_with_zero_alpha_is_transparent() {
 fn color_parse_color_mix_lch_handles_one_achromatic_color() {
     assert!(matches!(
         parse("color-mix(in lch, black, red)", "color"),
-        Some(PropertyValue::Color(_))
+        Some(PropertyValue::ModernColor(_))
     ));
     assert!(matches!(
         parse("color-mix(in lch, red, black)", "color"),
-        Some(PropertyValue::Color(_))
+        Some(PropertyValue::ModernColor(_))
     ));
 }
 
@@ -1415,7 +1415,7 @@ fn color_parse_color_mix_lch_handles_one_achromatic_color() {
 fn color_parse_color_mix_lch_interpolates_two_hues() {
     assert!(matches!(
         parse("color-mix(in lch, red, blue)", "color"),
-        Some(PropertyValue::Color(_))
+        Some(PropertyValue::ModernColor(_))
     ));
 }
 
@@ -1426,7 +1426,7 @@ fn color_parse_color_mix_preserves_float_color_endpoints() {
             "color-mix(in srgb, color(srgb 0.002 0 0) 50%, black 50%)",
             "color"
         ),
-        Some(PropertyValue::Color(CssColor::BLACK))
+        Some(PropertyValue::ModernColor(CssColor::BLACK))
     );
 }
 
@@ -1507,7 +1507,7 @@ fn color_parse_color_mix_lch_handles_different_alpha_endpoints() {
             "color-mix(in lch, red 25%, rgb(0, 0, 255, 0.25) 75%)",
             "color"
         ),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 206,
             g: 0,
             b: 215,
@@ -1720,13 +1720,13 @@ fn color_parse_lab_family_maps_lightness_boundaries() {
     for source in ["lab(0% 125 125)", "lch(0% 150 45deg)"] {
         assert_eq!(
             parse(source, "color"),
-            Some(PropertyValue::Color(CssColor::BLACK))
+            Some(PropertyValue::ModernColor(CssColor::BLACK))
         );
     }
     for source in ["lab(100% -125 -125)", "lch(100% 150 45deg)"] {
         assert_eq!(
             parse(source, "color"),
-            Some(PropertyValue::Color(CssColor {
+            Some(PropertyValue::ModernColor(CssColor {
                 r: 255,
                 g: 255,
                 b: 255,
@@ -1736,11 +1736,11 @@ fn color_parse_lab_family_maps_lightness_boundaries() {
     }
     assert_eq!(
         parse("oklab(0 0.4 0.4)", "color"),
-        Some(PropertyValue::Color(CssColor::BLACK))
+        Some(PropertyValue::ModernColor(CssColor::BLACK))
     );
     assert_eq!(
         parse("oklab(1 -0.4 -0.4)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 255,
             b: 255,
@@ -1749,11 +1749,11 @@ fn color_parse_lab_family_maps_lightness_boundaries() {
     );
     assert_eq!(
         parse("oklch(0 0.4 45deg)", "color"),
-        Some(PropertyValue::Color(CssColor::BLACK))
+        Some(PropertyValue::ModernColor(CssColor::BLACK))
     );
     assert_eq!(
         parse("oklch(1 0.4 45deg)", "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 255,
             b: 255,
@@ -2225,7 +2225,7 @@ fn color_mix_ignores_huge_zero_weight_lab_endpoint() {
     let source = "color-mix(in srgb, lab(50% 3e38 3e38) 0%, red 100%)";
     assert_eq!(
         parse(source, "color"),
-        Some(PropertyValue::Color(CssColor {
+        Some(PropertyValue::ModernColor(CssColor {
             r: 255,
             g: 0,
             b: 0,
@@ -2601,4 +2601,80 @@ fn color_mix_in_gamut_lab_family_results_stay_compatible() {
     for (source, expected) in cases {
         assert_eq!(parse_color_entire(source), Some(expected), "{source}");
     }
+}
+
+#[test]
+fn the_color_property_keeps_whether_its_color_is_written_in_a_modern_syntax() {
+    // Chromium draws a gradient from `currentcolor` in Oklab for these and in
+    // sRGB for the others: the first group is the legacy syntaxes.
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    for source in [
+        "red",
+        "RED",
+        "#f00",
+        "#ff0000ff",
+        "rgb(255 0 0)",
+        "rgb(255, 0, 0)",
+        "rgba(255, 0, 0, 1)",
+        "hsl(0 100% 50%)",
+        "hwb(0 0% 0%)",
+        "light-dark(red, blue)",
+    ] {
+        assert_eq!(
+            parse(source, "color"),
+            Some(PropertyValue::Color(red)),
+            "{source}"
+        );
+    }
+    for source in [
+        "color(srgb 1 0 0)",
+        "oklab(0.628 0.2249 0.1258)",
+        "oklch(0.628 0.2577 29.23)",
+        "lab(54.29 80.8 69.89)",
+        "lch(54.29 106.84 40.85)",
+        "color-mix(in srgb, red, red)",
+        "rgb(from red r g b)",
+        "rgb(255 none 0)",
+        "light-dark(color(srgb 1 0 0), blue)",
+    ] {
+        let value = parse(source, "color").unwrap_or_else(|| panic!("{source} parses"));
+        assert!(
+            matches!(value, PropertyValue::ModernColor(_)),
+            "{source}: {value:?}"
+        );
+        assert_eq!(value.key(), PropertyKey::Color, "{source}");
+        assert!(value.element_color().is_some(), "{source}");
+    }
+    // Only the `color` property keeps it.
+    assert!(matches!(
+        parse("oklch(0.628 0.2577 29.23)", "background-color"),
+        Some(PropertyValue::BackgroundColor(_))
+    ));
+}
+
+#[test]
+fn a_contextual_color_resolves_to_the_variant_of_its_own_syntax() {
+    let resolve = |source: &str| {
+        ContextualColor {
+            source: source.into(),
+            key: PropertyKey::Color,
+        }
+        .resolved_value(CssColor::BLACK)
+        .expect("resolves")
+    };
+    // `color-mix()` is a modern syntax whatever it mixes, `light-dark()` has
+    // the syntax of its light branch.
+    assert!(matches!(
+        resolve("color-mix(in srgb, currentcolor, red)"),
+        PropertyValue::ModernColor(_)
+    ));
+    assert!(matches!(
+        resolve("light-dark(currentcolor, red)"),
+        PropertyValue::Color(_)
+    ));
 }

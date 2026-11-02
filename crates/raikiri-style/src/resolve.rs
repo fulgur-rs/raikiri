@@ -176,14 +176,14 @@ use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ComparedPercentage,
     ConicGradient, ContainIntrinsicLength, ContainIntrinsicSize, CssPosition, CssPositionOffset,
-    FlexBasisValue, Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
-    LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor,
-    OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit,
-    TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
-    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, VerticalAlign,
-    WordSpacingValue,
+    FlexBasisValue, Gradient, GradientColorInterpolation, GradientColorStop, GridInflexibleBreadth,
+    GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
+    GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
+    LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient, MixColorSpace, Outline,
+    OutlineColor, OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage,
+    RelativeCalcUnit, TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength,
+    TextShadowColor, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
+    VerticalAlign, WordSpacingValue,
 };
 
 // ---------------------------------------------------------------------------
@@ -1656,6 +1656,15 @@ pub struct ResolveContext {
     /// which may become zero. Invalid scales are
     /// ignored by [`Self::with_border_width_device_scale`].
     pub border_width_device_scale: Option<f32>,
+    /// Whether this element's computed `color` is written in a modern color
+    /// syntax (anything but hex, a named color, `rgb()`, `hsl()` and `hwb()`;
+    /// see [`ComputedValues::color_modern`](crate::ComputedValues::color_modern)).
+    ///
+    /// A gradient with no `in <color-space>` clause and a `currentcolor` stop
+    /// among legacy colors interpolates in Oklab if this is set and in sRGB
+    /// otherwise, because that stop has the syntax of `color` (see
+    /// [`GradientColorInterpolation::follows_current_color`]).
+    pub current_color_modern: bool,
 }
 
 /// The viewport size [`ResolveContext`]'s constructors start from: the
@@ -1699,6 +1708,13 @@ impl ResolveContext {
     ) -> Self {
         self.border_width_device_scale =
             device_pixels_per_css_pixel.filter(|scale| scale.is_finite() && *scale > 0.0);
+        self
+    }
+
+    /// This context with the syntax of the element's computed `color` set:
+    /// whether it is a modern one (see [`Self::current_color_modern`]).
+    pub fn with_current_color_modern(mut self, modern: bool) -> Self {
+        self.current_color_modern = modern;
         self
     }
 
@@ -1752,6 +1768,7 @@ impl ResolveContext {
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
             border_width_device_scale: None,
+            current_color_modern: false,
         }
     }
 
@@ -1773,6 +1790,7 @@ impl ResolveContext {
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
             border_width_device_scale: None,
+            current_color_modern: false,
         }
     }
 
@@ -1819,6 +1837,7 @@ impl ResolveContext {
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
             border_width_device_scale: None,
+            current_color_modern: false,
         }
     }
 }
@@ -3308,6 +3327,29 @@ fn resolve_radial_size(
     }
 }
 
+/// The interpolation of a gradient resolved against an element whose `color`
+/// has the syntax `ctx` tells. A gradient that left its default space to the
+/// `currentcolor` stops takes Oklab if the color is written in a modern
+/// syntax, and keeps sRGB if not (see
+/// [`GradientColorInterpolation::follows_current_color`]).
+fn settled_interpolation(
+    specified: GradientColorInterpolation,
+    ctx: &ResolveContext,
+) -> GradientColorInterpolation {
+    if !specified.follows_current_color {
+        return specified;
+    }
+    GradientColorInterpolation {
+        color_space: if ctx.current_color_modern {
+            MixColorSpace::Oklab
+        } else {
+            specified.color_space
+        },
+        follows_current_color: false,
+        ..specified
+    }
+}
+
 fn resolve_linear_gradient(
     specified: LinearGradient,
     font_size: ComputedLength,
@@ -3317,7 +3359,7 @@ fn resolve_linear_gradient(
     LinearGradient {
         repeating: specified.repeating,
         direction: specified.direction,
-        interpolation: specified.interpolation,
+        interpolation: settled_interpolation(specified.interpolation, ctx),
         stops: resolve_gradient_color_stops(&specified.stops, font_size, own_line_height, ctx),
     }
 }
@@ -3333,7 +3375,7 @@ fn resolve_radial_gradient(
         shape: specified.shape,
         size: resolve_radial_size(specified.size, font_size, own_line_height, ctx),
         position: absolutized_css_position(specified.position, font_size, own_line_height, ctx),
-        interpolation: specified.interpolation,
+        interpolation: settled_interpolation(specified.interpolation, ctx),
         stops: resolve_gradient_color_stops(&specified.stops, font_size, own_line_height, ctx),
     }
 }
@@ -3348,7 +3390,7 @@ fn resolve_conic_gradient(
         repeating: specified.repeating,
         angle: specified.angle,
         position: absolutized_css_position(specified.position, font_size, own_line_height, ctx),
-        interpolation: specified.interpolation,
+        interpolation: settled_interpolation(specified.interpolation, ctx),
         stops: Arc::new(
             specified
                 .stops

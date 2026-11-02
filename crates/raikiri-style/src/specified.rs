@@ -181,6 +181,8 @@ pub enum SpecifiedTextShadow {
 pub struct SpecifiedValues {
     /// Staging value for [`ComputedValues::color`]; computed-equivalent.
     pub color: CssColor,
+    /// Staging value for [`ComputedValues::color_modern`]; computed-equivalent.
+    pub color_modern: bool,
     /// Staging value for [`ComputedValues::background_color`]; computed-equivalent.
     pub background_color: CssColor,
     /// Symbolic background color retained for explicit inheritance.
@@ -926,6 +928,7 @@ impl SpecifiedValues {
     pub fn initial() -> Self {
         Self {
             color: CssColor::BLACK,
+            color_modern: false,
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,
             contextual_colors: Vec::new(),
@@ -1285,6 +1288,7 @@ impl SpecifiedValues {
         Self {
             // ── inherited: seed from the parent's computed values ───────────────
             color: parent.color,
+            color_modern: parent.color_modern,
             font_family: parent.font_family.clone(),
             // Losslessly lift a computed `<length>` to specified `Px`, a fixed point.
             font_size: lift_font_size(parent.font_size),
@@ -1697,7 +1701,9 @@ impl SpecifiedValues {
                 optical_sizing: self.font_optical_sizing,
             })
         });
-        let element_ctx = ctx.with_ch_advance(ch_advance);
+        let element_ctx = ctx
+            .with_ch_advance(ch_advance)
+            .with_current_color_modern(self.color_modern);
         let line_height = resolve_line_height(
             self.line_height,
             font_size,
@@ -2020,7 +2026,8 @@ impl SpecifiedValues {
             .with_ch_advance(ch_advance)
             .with_viewport(width, height)
             .with_vertical_root(self.writing_mode.is_vertical())
-            .with_border_width_device_scale(border_width_device_scale);
+            .with_border_width_device_scale(border_width_device_scale)
+            .with_current_color_modern(self.color_modern);
         self.absolutize_with(font_size, line_height, normal, text_align, &ctx)
     }
 
@@ -2372,6 +2379,7 @@ impl SpecifiedValues {
         );
         ComputedValues {
             color: self.color,
+            color_modern: self.color_modern,
             background_color: self
                 .background_color_expression
                 .as_ref()

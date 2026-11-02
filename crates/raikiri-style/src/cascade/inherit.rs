@@ -3132,6 +3132,7 @@ pub(crate) fn resolve_defaulting_value(
     resolve_css_wide_color_font(
         value,
         inherited.color,
+        inherited.color_modern,
         inherited.background_color,
         inherited.background_color_expression.as_ref(),
         inherited.font_size,
@@ -3142,6 +3143,7 @@ pub(crate) fn resolve_defaulting_value(
 pub(crate) fn resolve_css_wide_color_font(
     value: PropertyValue,
     inherited_color: crate::property::CssColor,
+    inherited_color_modern: bool,
     inherited_background: crate::property::CssColor,
     inherited_background_expression: Option<&smol_str::SmolStr>,
     inherited_font_size: ComputedLength,
@@ -3173,11 +3175,11 @@ pub(crate) fn resolve_css_wide_color_font(
         || (keyword != CssWideKeyword::Initial
             && marker.key != crate::property::PropertyKey::BackgroundColor);
     if marker.key == crate::property::PropertyKey::Color {
-        PropertyValue::Color(if inherit {
-            inherited_color
-        } else {
-            crate::property::CssColor::BLACK
-        })
+        match (inherit, inherited_color_modern) {
+            (true, true) => PropertyValue::ModernColor(inherited_color),
+            (true, false) => PropertyValue::Color(inherited_color),
+            (false, _) => PropertyValue::Color(crate::property::CssColor::BLACK),
+        }
     } else if marker.key == crate::property::PropertyKey::BackgroundColor {
         PropertyValue::BackgroundColor(if inherit {
             inherited_background
@@ -3380,6 +3382,7 @@ pub(crate) fn resolve_against_inherited(
         // relative resolution; see `crate::property::Direction` docs), just
         // like `Color` / `FontFamily`.
         v @ (PropertyValue::Color(_)
+        | PropertyValue::ModernColor(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::LineHeight(_)
@@ -3957,7 +3960,14 @@ impl ResolvedAgainstInherited {
 /// `pub(crate)` permits intra-doc links from other modules.
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
-        PropertyValue::Color(c) => target.color = c,
+        PropertyValue::Color(c) => {
+            target.color = c;
+            target.color_modern = false;
+        }
+        PropertyValue::ModernColor(c) => {
+            target.color = c;
+            target.color_modern = true;
+        }
         PropertyValue::BackgroundColor(c) => {
             target.background_color = c;
             target.background_color_expression = None;
@@ -3969,6 +3979,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                     crate::property::resolve_contextual_color(&value.source, target.color)
                 {
                     target.color = color;
+                    // A color that is only `currentcolor` is the inherited
+                    // color again, in the syntax it already has.
+                    match crate::property::source_color_syntax(&value.source) {
+                        crate::property::ColorSyntax::Modern => target.color_modern = true,
+                        crate::property::ColorSyntax::Legacy => target.color_modern = false,
+                        crate::property::ColorSyntax::CurrentColor => {}
+                    }
                 }
             } else if value.key == crate::property::PropertyKey::BackgroundColor {
                 target.background_color_expression = Some(value.source);

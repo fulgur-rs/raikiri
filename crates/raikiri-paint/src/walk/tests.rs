@@ -1041,6 +1041,26 @@ fn canvas_background_with_page_margins_keeps_canvas_layer() {
 }
 
 #[test]
+fn a_page_outline_takes_the_color_of_a_modern_syntax_page_color() {
+    // `color()` is a modern syntax, so the page `color` is kept as a modern
+    // color declaration, and the outline still paints it for `currentcolor`.
+    let (mut document, cascade) = canvas_fixture(
+        Some("@page { margin: 20px; color: color(srgb 1 0 0); outline: 4px solid currentcolor; }"),
+        None,
+    );
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
+    let red = Color::from_rgba8(255, 0, 0, 255);
+    let red_fills = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(fill) if fill.brush == red.into()))
+        .count();
+    assert_eq!(red_fills, 4, "one fill for each side of the outline");
+}
+
+#[test]
 fn a_root_with_display_none_paints_blank_paper() {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Some("display:none"));

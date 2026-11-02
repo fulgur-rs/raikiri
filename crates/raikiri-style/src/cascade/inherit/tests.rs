@@ -12261,6 +12261,7 @@ fn color_font_defaulting_leaves_corner_radius_markers_for_the_radius_resolver() 
         resolve_css_wide_color_font(
             value.clone(),
             CssColor::BLACK,
+            false,
             CssColor::TRANSPARENT,
             None,
             ComputedLength(20.0)
@@ -12353,6 +12354,7 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
         resolve_css_wide_color_font(
             marker.clone(),
             crate::property::CssColor::BLACK,
+            false,
             crate::property::CssColor::TRANSPARENT,
             None,
             ComputedLength(20.0)
@@ -12485,6 +12487,7 @@ fn svg_export_css_wide_values_resolve_inherit_initial_and_unset() {
 
 mod aspect_ratio_tests;
 mod border_image_tests;
+mod color_syntax_tests;
 mod column_rule_tests;
 mod column_span_tests;
 mod limit_tests;
