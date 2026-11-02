@@ -6,9 +6,60 @@ use super::{
     CascadeResult, DisplayValue, Document, NodeKind, current_abs_y, has_unusual_coordinates,
     is_floating_box_for_pagination, is_plain_block_box,
 };
+use std::collections::HashMap;
 
 /// How far apart two positions may be and still be the same edge.
 const EDGE_TOLERANCE: f32 = 0.001;
+
+/// Layout child positions reused within one pagination pass. The pass moves
+/// boxes without changing child lists; every query still reads their current
+/// positions, sizes and box classifications.
+#[derive(Default)]
+pub(super) struct ChildPositions {
+    positions: HashMap<usize, HashMap<usize, usize>>,
+    #[cfg(test)]
+    pub(super) indexed_children: usize,
+}
+
+impl ChildPositions {
+    pub(super) fn begins_page_below_leading_edges(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+        page_start: f32,
+    ) -> bool {
+        let positions = &mut self.positions;
+        #[cfg(test)]
+        let indexed_children = &mut self.indexed_children;
+        begins_page_with_positions(
+            document,
+            cascade,
+            body_id,
+            node_id,
+            page_start,
+            |parent, child| {
+                positions
+                    .entry(parent)
+                    .or_insert_with(|| {
+                        let children = document.nodes[parent].layout_children();
+                        #[cfg(test)]
+                        {
+                            *indexed_children += children.len();
+                        }
+                        children
+                            .iter()
+                            .enumerate()
+                            .map(|(index, &id)| (id, index))
+                            .collect()
+                    })
+                    .get(&child)
+                    .copied()
+            },
+        )
+    }
+}
 
 /// What an element has before one of its children.
 enum Before {
@@ -28,13 +79,13 @@ fn before_child(
     document: &Document,
     cascade: &CascadeResult,
     parent: usize,
-    child: usize,
     page_start: f32,
+    child_index: Option<usize>,
 ) -> Before {
     let siblings = document.nodes[parent].layout_children();
     // A child that its parent does not list is held by a box the parent does
     // not show, such as the anonymous box around inline content.
-    let Some(index) = siblings.iter().position(|&sibling| sibling == child) else {
+    let Some(index) = child_index else {
         return Before::Other;
     };
     for &sibling in siblings[..index].iter().rev() {
@@ -100,12 +151,41 @@ pub(super) fn begins_page_below_leading_edges(
     node_id: usize,
     page_start: f32,
 ) -> bool {
+    begins_page_with_positions(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        page_start,
+        |parent, child| {
+            document.nodes[parent]
+                .layout_children()
+                .iter()
+                .position(|&id| id == child)
+        },
+    )
+}
+
+fn begins_page_with_positions(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_start: f32,
+    mut child_position: impl FnMut(usize, usize) -> Option<usize>,
+) -> bool {
     let mut child = node_id;
     !has_unusual_coordinates(document, node_id)
         && document
             .layout_ancestors(node_id)
             .find_map(|parent| {
-                let verdict = match before_child(document, cascade, parent, child, page_start) {
+                let verdict = match before_child(
+                    document,
+                    cascade,
+                    parent,
+                    page_start,
+                    child_position(parent, child),
+                ) {
                     // The box lies on an earlier page. An empty one at the
                     // page start is on this page, so the break comes after it.
                     // A box with a sibling of its own before it is left to

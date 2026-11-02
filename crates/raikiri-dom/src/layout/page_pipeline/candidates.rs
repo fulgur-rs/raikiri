@@ -4,19 +4,19 @@
 use super::super::box_tree::BoxTree;
 use super::super::context::LayoutSession;
 use super::{
-    AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
-    FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, UnplacedBlockLine, accumulated_relative_offset_y,
-    avoid_chain_before_last_box, avoided_run_head, box_forces_break_after, box_is_unbreakable,
-    boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
-    closing_edges_of, container_item_tail, first_owned_text_line_top, has_mandatory_break_inside,
-    height_follows_content, in_inset_out_of_flow_subtree, is_block_level_flow_box,
-    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
-    is_plain_block_box, is_plain_container_box, leading_holder, leading_piece_end,
-    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    AvoidChain, BoxParentScope, BreakBetween, CascadeResult, DisplayValue, Document,
+    FlexDirectionValue, FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind,
+    PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
+    accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
+    box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
+    candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
+    first_owned_text_line_top, has_mandatory_break_inside, height_follows_content,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
+    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -42,6 +42,21 @@ pub(super) struct CandidateFlowContext {
     /// would break away from it if the lines stayed on a page they do not fit
     /// (see [`super::closing_edges_line_move`]).
     pub(super) lines_closing_edges: f32,
+}
+
+/// Whether this source child takes up a place in its parent's in-flow box
+/// sequence. This separate probe does not change the older adjacency state
+/// when that state was not needed for a contents box.
+fn column_child_has_flow_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    use super::sibling_adjacency::{FlowBox, flow_box};
+    match flow_box(document, cascade, id) {
+        FlowBox::Skip => false,
+        FlowBox::Box => true,
+        FlowBox::Contents => document.nodes[id]
+            .children
+            .iter()
+            .any(|&child| column_child_has_flow_box(document, cascade, child)),
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -90,6 +105,10 @@ pub(super) struct ElementContext {
     /// or not the next page can hold the piece (see
     /// [`super::leading_edges_move`]).
     pub(super) leading_block_piece_end: Option<f32>,
+    /// A replaced piece touching the leading edge of a nowrap column flex
+    /// container. It can move the column without making the whole column
+    /// monolithic or opening a page before the first box of the flow.
+    pub(super) leading_column_replaced_piece_end: Option<f32>,
     /// For the last box of a run of boxes tied by avoided breaks that ends its
     /// block: the block size of the bottom padding and border that follow it.
     /// The box moves to the next page with them when the run is as far on as
@@ -228,6 +247,11 @@ impl BoxContext {
     pub(super) fn leading_block_piece_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.leading_block_piece_end)
+    }
+
+    pub(super) fn leading_column_replaced_piece_end(self) -> Option<f32> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.leading_column_replaced_piece_end)
     }
 
     pub(super) fn run_tail_edges(self) -> f32 {
@@ -484,6 +508,9 @@ struct CandidateFrame<'name> {
     /// The box before the node in the flow of its parent, which a break can
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
+    /// A free boundary before the leading plain blocks of this node. Only
+    /// the column's leading-replaced-piece rule inherits this boundary.
+    column_break_before: bool,
     /// Whether no box comes before the node in its parent or in any block the
     /// node starts, up to the outermost block whose bottom padding or border
     /// follows the node: no page break before the node falls inside that
@@ -572,6 +599,7 @@ impl CandidateFrame<'_> {
             absolute_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
+            column_break_before: false,
             lone_in_edges: true,
             tied_to_start: false,
             lines_closing_edges: 0.0,
@@ -864,6 +892,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             candidate_parent(document, child_id) == Some(roots.contents_box);
                         child_frame.closing_edges = 0.0;
                         child_frame.previous_box = None;
+                        child_frame.column_break_before = false;
                         child_frame.tie = AvoidTie::None;
                         child_frame.run_unit = None;
                         child_frame.run_tail = false;
@@ -1202,6 +1231,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     frame.previous_box.map_or(direct_body_child, |previous| {
                         !boxes_are_tied(document, cascade, previous, node_id)
                     });
+                let column_break_before = (node.display() == DisplayValue::Contents
+                    || !matches!(
+                        computed.break_before,
+                        BreakBetween::Avoid | BreakBetween::AvoidPage
+                    ))
+                    && (free_to_break_before
+                        || frame.previous_box.is_none() && frame.column_break_before);
                 let leading_unit =
                     (self.finds_nested_runs && in_flow_block && !is_body && free_to_break_before)
                         .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
@@ -1237,6 +1273,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| lineless_leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
+                let column_replaced_piece = (in_flow_container
+                    && !is_body
+                    && column_break_before
+                    && !document.context.pagination_on_transposed_axes)
+                    .then(|| {
+                        super::column_replaced::first_piece(document, cascade, body_id, node_id)
+                    })
+                    .flatten();
                 // The last box of such a run goes to the next page with the
                 // edges that follow it when the run has moved as far on as it
                 // goes (the first box starts its page) and they still do not
@@ -1253,6 +1297,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || run_tail_base
                     || (avoided_unit.is_some() && !direct_body_child)
                     || (leading_piece.is_some() && !direct_body_child)
+                    || (column_replaced_piece.is_some() && !direct_body_child)
                     || (first_grid_row.is_some() && !direct_body_child);
                 // A forced break and a page name change the pages wherever the
                 // box sits, even past the edge of a clipping ancestor.
@@ -1296,6 +1341,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let first_grid_row =
                     first_grid_row.filter(|_| direct_body_child || can_move_nested);
                 let leading_piece = leading_piece.filter(|_| direct_body_child || can_move_nested);
+                let column_replaced_piece =
+                    column_replaced_piece.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
@@ -1361,6 +1408,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || run_tail_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
+                        || column_replaced_piece.is_some()
                         || first_grid_row.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
@@ -1415,6 +1463,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 leading_piece_end: leading_piece,
                                 first_grid_row,
                                 leading_block_piece_end: leading_block_piece,
+                                leading_column_replaced_piece_end: column_replaced_piece,
                                 run_tail_edges: if run_tail_candidate {
                                     frame.closing_edges
                                 } else {
@@ -1672,6 +1721,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     Vec::new()
                 };
                 let mut previous_box = None;
+                let can_inherit_column_break = column_break_before
+                    && !node.has_before_or_after_content
+                    && (node.display() == DisplayValue::Contents
+                        || is_plain_block_box(document, node_id) && !node.is_ifc_root());
+                let mut column_box_before = false;
                 // Whether any in-flow box comes before the child, text
                 // included: `previous_box` forgets a text box, which is no box
                 // to break from for some rules but is one for this.
@@ -1720,6 +1774,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && last_in_flow == Some(index);
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
+                    let child_column_break = can_inherit_column_break && !column_box_before;
+                    if can_inherit_column_break && !column_box_before {
+                        column_box_before = flow_flags.get(index).map_or_else(
+                            || column_child_has_flow_box(document, cascade, child_id),
+                            |(in_flow, _)| in_flow.is_some(),
+                        );
+                    }
                     let child_tied = self.finds_nested_runs
                         && child_previous_box.is_some_and(|previous| {
                             boxes_are_tied(document, cascade, previous, child_id)
@@ -1783,6 +1844,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             absolute_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
+                            column_break_before: child_column_break,
                             lone_in_edges: (!child_box_before || child_tied_to_start)
                                 && child_scope_is_lone,
                             tied_to_start: child_tied_to_start,
