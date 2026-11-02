@@ -31,6 +31,12 @@ const IMAGE: &str = "<img id=i src='portrait.png'";
 /// The vertical extent `(top, bottom)` of the fragments of the element with
 /// the id `i` on each page, `None` for a page without any.
 fn image_extents(body: &str) -> Vec<Option<(i32, i32)>> {
+    extents_of("i", body)
+}
+
+/// The vertical extent `(top, bottom)` of the first fragment of the element
+/// with the id `id` on each page, `None` for a page without any.
+fn extents_of(id: &str, body: &str) -> Vec<Option<(i32, i32)>> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -61,7 +67,7 @@ fn image_extents(body: &str) -> Vec<Option<(i32, i32)>> {
         .map(|page| {
             let dom = page.dom();
             page.fragments()
-                .filter(|fragment| dom.attr(fragment.node(), "id") == Some("i"))
+                .filter(|fragment| dom.attr(fragment.node(), "id") == Some(id))
                 .map(|fragment| {
                     let rect = fragment.rect();
                     (rect.y.round() as i32, (rect.y + rect.height).round() as i32)
@@ -209,4 +215,88 @@ fn a_forced_break_before_an_image_moves_it_on_the_same_way() {
         )),
         [None, None, Some((0, 575))]
     );
+}
+
+#[test]
+fn a_wrapper_with_a_height_moves_to_the_next_page_with_the_image_that_starts_it() {
+    // The wrapper begins with the image, so the page breaks before both: it
+    // keeps its own height on the next page rather than leaving a stub of
+    // itself at the foot of the first.
+    let spacer = "<div style='height:300px'></div>";
+    for (wrapper_style, expected_wrapper) in [
+        ("height:400px", (0, 400)),
+        ("height:500px", (0, 500)),
+        ("", (0, 400)),
+    ] {
+        let body = format!(
+            "{spacer}<div id=o style='width:300px;{wrapper_style}'>{}</div>",
+            block_image(400)
+        );
+        assert_eq!(
+            extents_of("o", &body),
+            [None, Some(expected_wrapper)],
+            "{body}"
+        );
+        assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+    }
+}
+
+#[test]
+fn the_flow_after_a_wrapper_that_moves_with_its_image_follows_the_wrapper() {
+    let spacer = "<div style='height:300px'></div>";
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    let cases = [
+        // The next box starts below the wrapper at its place on the new page.
+        (
+            format!(
+                "<div style='width:300px;height:400px'>{}</div>",
+                block_image(400)
+            ),
+            (400, 450),
+        ),
+        // The margin below the wrapper is kept, the one above it is cut.
+        (
+            format!(
+                "<div style='width:300px;height:400px;margin:20px 0'>{}</div>",
+                block_image(400)
+            ),
+            (420, 470),
+        ),
+        // Both wrappers begin with the image, and the outer one goes on past it.
+        (
+            format!(
+                "<div style='width:300px'><div style='height:400px'>{}</div>\
+                 <div style='height:30px'></div></div>",
+                block_image(400)
+            ),
+            (430, 480),
+        ),
+    ];
+    for (wrapper, trailer_extent) in cases {
+        let body = format!("{spacer}{wrapper}{trailer}");
+        assert_eq!(
+            extents_of("t", &body),
+            [None, Some(trailer_extent)],
+            "{body}"
+        );
+        assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+    }
+}
+
+#[test]
+fn a_wrapper_with_something_before_the_image_stays_on_the_page_and_continues_after_it() {
+    // The ten pixels before the image render on the first page, so the wrapper
+    // starts there and runs on to the next with the height it has left.
+    let spacer = "<div style='height:300px'></div>";
+    let body = format!(
+        "{spacer}<div id=o style='width:300px;height:500px'>\
+         <div style='height:10px'></div>{}</div>",
+        block_image(400)
+    );
+    assert_eq!(
+        extents_of("o", &body),
+        [Some((308, 600)), Some((0, 208))],
+        "{body}"
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
 }

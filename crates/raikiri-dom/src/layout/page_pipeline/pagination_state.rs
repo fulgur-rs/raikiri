@@ -17,7 +17,7 @@ use super::{
     forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, lead_below_ancestor, leading_edges_move,
-    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
+    leading_holder, line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_table_header, margin_box_starts_page, materialize_y,
     move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
@@ -1008,9 +1008,7 @@ impl PaginationState {
         let margin_pushes_box_on = forced_transition
             && margin_top > 0.0
             && candidate.context.is_unbreakable()
-            && !candidate.context.is_flex_item()
-            && !candidate.context.is_grid_item()
-            && !is_floating_box_for_pagination(document, cascade, node_id)
+            && is_block_flow_box(document, cascade, candidate)
             && starts_on_page_and_runs_past_it(
                 landing_top,
                 landing_top + candidate.height,
@@ -1038,6 +1036,25 @@ impl PaginationState {
         let row_flex_break_before =
             forced_before && in_row_flex_container(document, cascade, node_id);
         if landing.is_finite() {
+            // A box that no page break goes through and that begins the plain
+            // blocks around it takes them to the next page, rather than
+            // leaving their start on this one.
+            let holder = if overflow.unbreakable
+                && !forced_transition
+                && is_block_flow_box(document, cascade, candidate)
+                && !candidate.context.is_float_descendant()
+                && !candidate.context.is_out_of_flow_descendant()
+            {
+                leading_holder(
+                    document,
+                    cascade,
+                    body_id,
+                    node_id,
+                    page_origins.origin(fit_page),
+                )
+            } else {
+                node_id
+            };
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -1048,6 +1065,7 @@ impl PaginationState {
                     shift_delta: landing.shift_delta,
                     page_overflow: overflow.page || margin_pushes_box_on,
                     forced_transition: lands_after_forced_break,
+                    holder,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
@@ -1974,4 +1992,16 @@ impl PaginationState {
                 .max(page_origins.page_index_for_y(candidate.raw_y + self.flow_shift));
         }
     }
+}
+
+/// Whether `candidate` is a box of ordinary block flow: not a flex or grid
+/// item, which their container places, and not a float.
+fn is_block_flow_box(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    candidate: &PageCandidate,
+) -> bool {
+    !candidate.context.is_flex_item()
+        && !candidate.context.is_grid_item()
+        && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
 }

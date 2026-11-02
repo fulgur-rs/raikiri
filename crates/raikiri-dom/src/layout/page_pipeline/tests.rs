@@ -16621,11 +16621,12 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         named_flex_context: None,
         ifc_root: None,
     };
-    let mv = |page_overflow, forced_transition| TransitionMove {
+    let mv = |page_overflow, forced_transition, holder| TransitionMove {
         node_delta: 30.0,
         shift_delta: 40.0,
         page_overflow,
         forced_transition,
+        holder,
     };
 
     // A forced break moves the box by its own delta and the boxes after it
@@ -16638,7 +16639,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &cascade,
         body,
         &candidate(first),
-        &mv(false, true),
+        &mv(false, true, first),
         &mut shifts,
         0,
     );
@@ -16659,7 +16660,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &cascade,
         body,
         &candidate(first),
-        &mv(true, false),
+        &mv(true, false, first),
         &mut shifts,
         0,
     );
@@ -16678,7 +16679,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &cascade,
         body,
         &candidate(first),
-        &mv(false, false),
+        &mv(false, false, first),
         &mut shifts,
         0,
     );
@@ -16696,13 +16697,133 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &cascade,
         body,
         &candidate(first),
-        &mv(true, false),
+        &mv(true, false, first),
         &mut shifts,
         0,
     );
     drop(session);
     assert!(bounded);
     assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
+}
+
+/// `body > outer > middle > first, second` where `outer` and `middle` carry
+/// the given styles and `first` and `second` are 10px blocks, laid out on a
+/// single page. Returns the document, its cascade and the nodes.
+fn nested_holder_document(
+    outer_css: &str,
+    middle_css: &str,
+    before_css: Option<&str>,
+) -> (Document, CascadeResult, [usize; 5]) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let outer = doc.append_element(Some(body), "div", Some(outer_css));
+    if let Some(before_css) = before_css {
+        doc.append_element(Some(outer), "div", Some(before_css));
+    }
+    let middle = doc.append_element(Some(outer), "div", Some(middle_css));
+    let first = doc.append_element(Some(middle), "div", Some("display:block;height:10px"));
+    let second = doc.append_element(Some(middle), "div", Some("display:block;height:10px"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    (doc, cascade, [body, outer, middle, first, second])
+}
+
+#[test]
+fn a_box_that_begins_plain_blocks_takes_them_to_the_next_page() {
+    // Nothing renders before `first` in either wrapper and neither has a top
+    // edge, so both start the page with it.
+    let (doc, cascade, [body, outer, middle, first, _]) =
+        nested_holder_document("display:block", "display:block;height:50px", None);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, middle, 0.0), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, outer, 0.0), outer);
+}
+
+#[test]
+fn a_wrapper_without_a_box_of_its_own_is_passed_on_the_way_to_the_holder() {
+    // `display: contents` leaves no box to move: the wrapper around it holds
+    // the box.
+    let (doc, cascade, [body, outer, middle, first, _]) =
+        nested_holder_document("display:block", "display:contents", None);
+    assert!(doc.layout_ancestors(first).any(|id| id == middle));
+    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), outer);
+}
+
+#[test]
+fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
+    // A sibling before the wrapper stays on this page with the outer wrapper.
+    let (doc, cascade, [body, _, middle, first, _]) = nested_holder_document(
+        "display:block",
+        "display:block",
+        Some("display:block;height:5px"),
+    );
+    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), middle);
+    // Padding above the box is the place of the padded wrapper: the walk
+    // stops below it.
+    let (doc, cascade, [body, _, middle, first, _]) =
+        nested_holder_document("display:block;padding-top:4px", "display:block", None);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), middle);
+    // So does a wrapper that is not a plain block, or that floats.
+    for outer_css in [
+        "display:flex;flex-direction:column",
+        "display:block;float:left;width:100px",
+        "display:grid",
+    ] {
+        let (doc, cascade, [body, _, middle, first, _]) =
+            nested_holder_document(outer_css, "display:block", None);
+        assert_eq!(
+            leading_holder(&doc, &cascade, body, first, 0.0),
+            middle,
+            "{outer_css}"
+        );
+    }
+}
+
+#[test]
+fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height() {
+    // The wrapper has a fixed height that cannot hold the moved box, so it
+    // moves with it rather than staying behind with a stub of its own.
+    let (mut doc, cascade, [body, outer, middle, first, second]) =
+        nested_holder_document("display:block", "display:block;height:50px", None);
+    let candidate = PageCandidate {
+        node_id: first,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let holder = leading_holder(&doc, &cascade, body, first, 0.0);
+    assert_eq!(holder, outer);
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate,
+        &TransitionMove {
+            node_delta: 30.0,
+            shift_delta: 30.0,
+            page_overflow: true,
+            forced_transition: false,
+            holder,
+        },
+        &mut shifts,
+        0,
+    );
+    drop(session);
+    assert!(!bounded);
+    assert_eq!(current_abs_y(&doc, outer), 30.0);
+    assert_eq!(current_abs_y(&doc, middle), 30.0);
+    assert_eq!(current_abs_y(&doc, first), 30.0);
+    assert_eq!(current_abs_y(&doc, second), 40.0);
+    assert_eq!(doc.nodes[middle].layout.size.height, 50.0);
+    assert!(shifts.bounded.is_empty());
 }
 
 #[test]
