@@ -16,19 +16,20 @@ use super::{
     first_owned_line_height, fits_decorated_paper, flex_line_paragraph, follows_flow_content,
     forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    in_row_flex_container, is_floating_box_for_pagination, lead_below_ancestor, leading_edges_move,
-    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
-    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
-    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_table_footer, place_text_candidate, positioned_text_start_y, reaches_line,
-    record_candidate_pages, reset_inline_x_for_page_transition, run_tail_move,
-    shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name,
-    text_sets_page_name,
+    in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
+    lead_below_ancestor, leading_edges_move, leading_holder, line_block_parent,
+    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, lines_move_grows_box, make_room_for_table_header,
+    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
+    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
+    positioned_text_start_y, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, run_tail_move, shift_paragraph_lines, shift_text_candidate,
+    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
+use std::collections::HashMap;
 
 /// How far, in px, the margin that an earlier layout kept above a box may
 /// differ from the one a relayout computes for it. A page start closer to the
@@ -272,6 +273,10 @@ pub(super) struct PaginationState {
     /// Whether any box was placed yet.
     pub(super) saw_child: bool,
     pub(super) checked_paragraphs: CheckedParagraphs,
+    /// The absolutely positioned boxes that hold text, by paragraph root, with
+    /// the first text of the paragraph when its lines are kept whole on a page
+    /// once the flow is placed.
+    positioned_paragraphs: HashMap<usize, Option<usize>>,
     /// Footnotes are collected in source order and stacked upward from the
     /// bottom edge of their anchor page. The normal-flow height is removed
     /// from `flow_shift`, leaving the box only in this page-local area.
@@ -306,6 +311,7 @@ impl PaginationState {
             last_named: LastNamedBox::default(),
             saw_child: false,
             checked_paragraphs: CheckedParagraphs::default(),
+            positioned_paragraphs: HashMap::new(),
             footnote_areas: FootnoteAreas::default(),
             column_contexts,
             preceding_flex_items: PrecedingFlexItems::default(),
@@ -463,6 +469,7 @@ impl PaginationState {
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
         let ifc_root = ifc_root.map(|(root, offset)| (root, offset + first_line_shift));
+        self.note_positioned_paragraph(document, candidate);
         place_text_candidate(
             document,
             text_lines,
@@ -1008,9 +1015,7 @@ impl PaginationState {
         let margin_pushes_box_on = forced_transition
             && margin_top > 0.0
             && candidate.context.is_unbreakable()
-            && !candidate.context.is_flex_item()
-            && !candidate.context.is_grid_item()
-            && !is_floating_box_for_pagination(document, cascade, node_id)
+            && is_block_flow_box(document, cascade, candidate)
             && starts_on_page_and_runs_past_it(
                 landing_top,
                 landing_top + candidate.height,
@@ -1038,6 +1043,25 @@ impl PaginationState {
         let row_flex_break_before =
             forced_before && in_row_flex_container(document, cascade, node_id);
         if landing.is_finite() {
+            // A box that no page break goes through and that begins the plain
+            // blocks around it takes them to the next page, rather than
+            // leaving their start on this one.
+            let holder = if overflow.unbreakable
+                && !forced_transition
+                && is_block_flow_box(document, cascade, candidate)
+                && !candidate.context.is_float_descendant()
+                && !candidate.context.is_out_of_flow_descendant()
+            {
+                leading_holder(
+                    document,
+                    cascade,
+                    body_id,
+                    node_id,
+                    page_origins.origin(fit_page),
+                )
+            } else {
+                node_id
+            };
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -1048,6 +1072,7 @@ impl PaginationState {
                     shift_delta: landing.shift_delta,
                     page_overflow: overflow.page || margin_pushes_box_on,
                     forced_transition: lands_after_forced_break,
+                    holder,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
@@ -1682,6 +1707,104 @@ impl PaginationState {
         Ok(first_line_shift)
     }
 
+    /// Remembers the paragraph that holds the text `candidate` when it is the
+    /// absolutely positioned box itself, so that [`Self::keep_positioned_lines`]
+    /// can judge its lines once the flow around the box has settled. A box
+    /// that holds blocks of its own is left alone, as are the boxes in a fixed
+    /// box and the boxes of vertical or transposed pagination.
+    fn note_positioned_paragraph(
+        &mut self,
+        document: &LayoutSession<'_>,
+        candidate: &PageCandidate,
+    ) {
+        if !candidate.context.is_out_of_flow_descendant() {
+            return;
+        }
+        // The paragraph of the text is the box's own, even when a paragraph
+        // around the box was entered before.
+        let Some((root, _)) = candidate.ifc_root else {
+            return;
+        };
+        if let std::collections::hash_map::Entry::Vacant(vacant) =
+            self.positioned_paragraphs.entry(root)
+        {
+            let horizontal = document
+                .ifc_layout_node(root)
+                .and_then(|node| node.ifc.as_ref())
+                .is_some_and(|ifc| ifc.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
+            vacant.insert(
+                (horizontal
+                    && !document.context.pagination_on_transposed_axes
+                    && is_unfixed_absolute_box(document, root))
+                .then_some(candidate.node_id),
+            );
+        }
+    }
+
+    /// Keeps each line of the absolutely positioned boxes whole on one page:
+    /// the line that crosses a page end starts the next page, and the lines
+    /// after it move down with it. Such a box breaks only between its lines,
+    /// without regard to `orphans` and `widows`, and the padding above its
+    /// first line stays where the box is. A box with nothing above its first
+    /// line moves whole when that line moves. This waits for the whole flow to
+    /// be placed, as the containing block of a box moves the box when its own
+    /// lines move. Nothing else moves: a box outside the flow takes no room in
+    /// it.
+    pub(super) fn keep_positioned_lines(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            control,
+            page_origins,
+            text_lines,
+            ..
+        } = *env;
+        let mut paragraphs: Vec<(usize, usize)> = std::mem::take(&mut self.positioned_paragraphs)
+            .into_iter()
+            .filter_map(|(root, text)| Some((root, text?)))
+            .collect();
+        // A box inside another sits where the lines of the outer one leave it,
+        // so the outer boxes come first.
+        paragraphs
+            .sort_by_cached_key(|&(root, _)| (document.inclusive_ancestors(root).count(), root));
+        for (root, text) in paragraphs {
+            // Blocks among the lines would stay behind when the lines move.
+            let Some(line_metrics) = lines_can_shift_inside(document, cascade, root)
+                .then(|| paragraph_line_bounds(document, text, text_lines))
+                .flatten()
+            else {
+                continue;
+            };
+            let start = positioned_text_start_y(document, text_lines, text, Some(root));
+            let nothing_above_first_line = document
+                .ifc_layout_node(root)
+                .is_some_and(|node| node.layout.border.top + node.layout.padding.top <= 0.001);
+            for (line, shift, page) in positioned_line_moves(&line_metrics, start, page_origins) {
+                reach_page(control, page)?;
+                self.reach.include_checked(control, page, false)?;
+                if line == 0 && nothing_above_first_line {
+                    let y = current_abs_y(document, root) + shift;
+                    materialize_y(document, root, y);
+                } else {
+                    shift_paragraph_lines(
+                        document,
+                        cascade,
+                        &LineMove {
+                            block_id: root,
+                            flex_line: None,
+                            line,
+                            shift,
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Moves lines of the paragraph `block_id`, which holds the text
     /// `candidate`, down to the pages `moves` name: see [`LineBreakMove`].
     /// Each shift is also taken by the flow after the paragraph, and by the
@@ -1974,4 +2097,16 @@ impl PaginationState {
                 .max(page_origins.page_index_for_y(candidate.raw_y + self.flow_shift));
         }
     }
+}
+
+/// Whether `candidate` is a box of ordinary block flow: not a flex or grid
+/// item, which their container places, and not a float.
+fn is_block_flow_box(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    candidate: &PageCandidate,
+) -> bool {
+    !candidate.context.is_flex_item()
+        && !candidate.context.is_grid_item()
+        && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
 }
