@@ -13346,8 +13346,10 @@ fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
         },
         &[],
     );
-    // The nested box keeps its margin, 31px into the wrapper.
-    assert_eq!(ys, [0.0, 80.0, 31.0]);
+    // The margin pushes the nested box past the page end, and the page breaks
+    // before the wrapper rather than between its padding and the box. The
+    // nested box keeps its margin, 31px into the wrapper.
+    assert_eq!(ys, [0.0, 100.0, 31.0]);
 }
 
 #[test]
