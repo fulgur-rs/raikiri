@@ -8,6 +8,7 @@ mod fragment_sources;
 mod leading_margins;
 mod line_ranges;
 mod link_events;
+mod page_start;
 mod pagination_state;
 mod sibling_adjacency;
 mod sibling_shifts;
@@ -21,6 +22,7 @@ use fragment_sources::{
     place_sources, restore_crossing_tops,
 };
 pub(crate) use link_events::page_fragment_events_from_pages;
+use page_start::begins_page_below_leading_edges;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
