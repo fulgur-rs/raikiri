@@ -437,6 +437,29 @@ fn a_cell_that_spans_the_collapsed_row_counts_in_its_rows() {
 }
 
 #[test]
+fn collapsed_border_rows_keep_the_same_share_before_and_after_collapsing() {
+    for (collapsed, table_height, second_top, third_top) in
+        [(false, 100.0, 63.16, 91.52), (true, 45.84, 9.0, 37.36)]
+    {
+        check(
+            &format!("collapsed borders; hidden={collapsed}"),
+            &format!(
+                "<style>td {{ border:2px solid }}</style>{}",
+                table(
+                    "height:100px;border-collapse:collapse",
+                    &[row(1, 40, collapsed), row(2, 20, false), row(3, 10, false)]
+                )
+            ),
+            &[
+                ("t", 8.0, table_height),
+                ("r2", second_top, 28.36),
+                ("r3", third_top, 15.48),
+            ],
+        );
+    }
+}
+
+#[test]
 fn a_flex_item_keeps_the_height_its_container_gives_it() {
     // A column flex container grows the table to 100px, and the rows share
     // that with the collapsed one as they do in a table that states it.
@@ -838,6 +861,192 @@ fn scroll_padding_and_relative_offsets_survive_stretch_correction() {
                 )
             ),
             &[("f", 8.0, 100.0), ("t", top, 33.34), ("s", 74.66, 0.0)],
+        );
+    }
+}
+
+#[test]
+fn half_border_tracks_are_stable_for_padding_line_width_and_collapsed_position() {
+    // Chromium's three allocated tracks before collapse, in 1/64px units.
+    for (padding, border, tracks) in [
+        (0, 0, [57.140625, 28.5625, 14.296875]),
+        (0, 1, [55.59375, 28.46875, 14.9375]),
+        (0, 2, [54.15625, 28.359375, 15.484375]),
+        (0, 3, [52.796875, 28.234375, 15.96875]),
+        (0, 4, [51.5, 28.09375, 16.40625]),
+        (0, 7, [48.03125, 27.578125, 17.390625]),
+        (0, 8, [48.0, 28.0, 18.0]),
+        (1, 0, [55.25, 28.9375, 15.8125]),
+        (1, 2, [52.578125, 28.671875, 16.75]),
+        (1, 4, [50.171875, 28.359375, 17.46875]),
+        (1, 8, [50.0, 30.0, 20.0]),
+    ] {
+        for hidden in [None, Some(0), Some(1), Some(2)] {
+            let rows: Vec<_> = [40, 20, 10]
+                .into_iter()
+                .enumerate()
+                .map(|(index, height)| row(index as u32 + 1, height, hidden == Some(index)))
+                .collect();
+            let markup = format!(
+                "<style>td {{ padding:{padding}px;border:{border}px solid }}</style>{}",
+                table("height:100px;border-collapse:collapse", &rows)
+            );
+            let mut top = 8.0 + border as f32 / 2.0;
+            let mut expected = Vec::new();
+            let ids = ["r1", "r2", "r3"];
+            for (index, track) in tracks.into_iter().enumerate() {
+                let height = if hidden == Some(index) { 0.0 } else { track };
+                expected.push((ids[index], top, height));
+                top += height;
+            }
+            expected.push(("t", 8.0, top - 8.0 + border as f32 / 2.0));
+            check(
+                &format!("padding{padding},border{border},hidden{hidden:?}"),
+                &markup,
+                &expected,
+            );
+        }
+    }
+}
+
+#[test]
+fn a_hidden_rows_winning_border_still_sizes_the_remaining_tracks() {
+    for (height, side, collapsed, total, first_top, first_height, last_top, last_height) in [
+        ("auto", "top", 1, 40.0, 13.0, 22.0, 35.0, 12.0),
+        (
+            "100px", "top", 1, 45.953125, 13.0, 25.84375, 38.84375, 14.109375,
+        ),
+        ("auto", "bottom", 1, 40.0, 9.0, 26.0, 35.0, 12.0),
+        (
+            "100px", "bottom", 1, 46.34375, 9.0, 30.328125, 39.328125, 14.015625,
+        ),
+        ("auto", "top", 2, 60.0, 9.0, 46.0, 55.0, 12.0),
+        (
+            "100px", "top", 2, 69.671875, 9.0, 53.65625, 62.65625, 14.015625,
+        ),
+        ("auto", "bottom", 2, 60.0, 9.0, 42.0, 51.0, 16.0),
+        ("100px", "bottom", 2, 69.671875, 9.0, 49.0, 58.0, 18.671875),
+    ] {
+        let markup = format!(
+            "<style>td {{border:2px solid}} #c{collapsed} {{border-{side}:10px solid}}</style>{}",
+            table(
+                &format!("height:{height};border-collapse:collapse"),
+                &[
+                    row(1, 40, collapsed == 1),
+                    row(2, 20, collapsed == 2),
+                    row(3, 10, false)
+                ]
+            )
+        );
+        let first = if collapsed == 1 { "r2" } else { "r1" };
+        let cell = if collapsed == 1 { "c2" } else { "c1" };
+        check(
+            &format!("{height}; {side}; hidden{collapsed}"),
+            &markup,
+            &[
+                ("t", 8.0, total),
+                (first, first_top, first_height),
+                (cell, first_top, first_height),
+                ("r3", last_top, last_height),
+                ("c3", last_top, last_height),
+            ],
+        );
+    }
+}
+
+#[test]
+fn all_collapsed_rows_retain_the_outer_half_lines() {
+    for height in ["auto", "100px"] {
+        for (table_border, expected) in [(0, 2.0), (4, 4.0)] {
+            check(
+                height,
+                &format!(
+                    "<style>td {{border:2px solid}}</style>{}",
+                    table(
+                        &format!(
+                            "height:{height};border:{table_border}px solid;border-collapse:collapse"
+                        ),
+                        &[row(1, 40, true), row(2, 20, true)]
+                    )
+                ),
+                &[
+                    ("t", 8.0, expected),
+                    ("r1", 8.0 + expected / 2.0, 0.0),
+                    ("r2", 8.0 + expected / 2.0, 0.0),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn resolved_outer_half_lines_follow_a_vertical_parents_native_axes() {
+    for mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+        for (all_collapsed, total, last_height) in [(false, 37.46875, 33.46875), (true, 4.0, 0.0)] {
+            check(
+                mode,
+                &format!(
+                    "<style>td {{border:2px solid}}</style><div style='display:grid;writing-mode:{mode};width:100px;height:100px'>{}</div>",
+                    table(
+                        "writing-mode:horizontal-tb;border-collapse:collapse;border:4px solid",
+                        &[row(1, 40, true), row(2, 20, all_collapsed)]
+                    )
+                ),
+                &[
+                    ("t", 8.0, total),
+                    ("r1", 10.0, 0.0),
+                    ("r2", 10.0, last_height),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn each_cells_half_borders_are_applied_before_choosing_the_row_maximum() {
+    check(
+        "different maximum cell",
+        "<table id=t style='border-collapse:collapse'><tr id=r1><td id=c1 style='height:10px;border:0;border-top:20px solid;border-bottom:20px solid'></td><td id=c2 style='height:40px;border:0'></td></tr></table>",
+        &[
+            ("t", 8.0, 60.0),
+            ("r1", 18.0, 40.0),
+            ("c1", 18.0, 40.0),
+            ("c2", 18.0, 40.0),
+        ],
+    );
+}
+
+#[test]
+fn percentage_rows_share_the_inner_height_between_border_centers() {
+    check(
+        "percentage track",
+        "<style>td {border:2px solid}</style><table id=t style='border-collapse:collapse;height:100px'><tr id=r1 style='visibility:collapse'><td style='height:40px'></td></tr><tr id=r2 style='height:50%'><td style='height:20px'></td></tr><tr id=r3><td style='height:10px'></td></tr></table>",
+        &[
+            ("t", 8.0, 58.0),
+            ("r1", 9.0, 0.0),
+            ("r2", 9.0, 44.0),
+            ("r3", 53.0, 12.0),
+        ],
+    );
+}
+
+#[test]
+fn a_rowspan_includes_its_outer_half_lines_once() {
+    for (middle, table_height, span_height, last_top, last_height) in [
+        ("", 108.0, 104.0, 79.3125, 34.6875),
+        ("visibility:collapse", 73.34375, 69.34375, 44.65625, 34.6875),
+    ] {
+        check(
+            middle,
+            &format!(
+                "<style>td {{border:2px solid}}</style><table id=t style='border-collapse:collapse;height:100px'><tr id=r1><td style='height:20px'></td><td id=s rowspan=3 style='height:100px;border:4px solid'></td></tr><tr id=r2 style='{middle}'><td style='height:20px'></td></tr><tr id=r3><td style='height:20px'></td></tr></table>"
+            ),
+            &[
+                ("t", 8.0, table_height),
+                ("r1", 10.0, 34.65625),
+                ("s", 10.0, span_height),
+                ("r3", last_top, last_height),
+            ],
         );
     }
 }

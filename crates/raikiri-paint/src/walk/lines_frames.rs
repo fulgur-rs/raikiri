@@ -1,6 +1,7 @@
 //! The frames that paint the lines of a paragraph: an anonymous table cell's
 //! and a block's own.
 
+use super::box_paint::collapsed_block_border_paint_rect;
 use super::frames::{
     AnonymousParagraphFrame, LinesFrame, finish_lines_leaving_groups, leave_groups, leaves_groups,
 };
@@ -50,10 +51,15 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let (document, cascade) = (self.document, self.cascade);
         let layout = cell.layout();
         let probe = page_name_probe(document, cell, key);
+        let logical = raikiri_traits::PaintRect::new(0.0, y, layout.size.width, layout.size.height);
+        let border_reach = cell.collapsed_border().map_or(logical, |border| {
+            collapsed_block_border_paint_rect(cell, logical, border)
+        });
+        let extent = (y + ifc_paint_extent(cell, layout) - border_reach.y).max(border_reach.height);
         paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
             && (box_intersects_page(
-                y,
-                ifc_paint_extent(cell, layout),
+                border_reach.y,
+                extent,
                 self.geometry.page_top,
                 self.geometry.page_bottom,
             ) || inside_fixed)
@@ -76,28 +82,33 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let (document, cascade) = (self.document, self.cascade);
         let layout = cell.layout();
         let owner = document.ifc_source_owner(key);
+        let border = cell.collapsed_border();
+        let logical = raikiri_traits::PaintRect::new(x, y, layout.size.width, layout.size.height);
+        let painted = border.map_or(logical, |border| {
+            collapsed_block_border_paint_rect(cell, logical, border)
+        });
         let cell_on_band = inside_fixed
             || self.geometry.flow_band.is_none_or(|band| {
                 band.holds_box(
                     self.scene.transform,
                     (
-                        x + self.geometry.page_offset_x + transform_x,
-                        y + self.geometry.page_offset_y + transform_y,
-                        layout.size.width,
-                        layout.size.height,
+                        painted.x + self.geometry.page_offset_x + transform_x,
+                        painted.y + self.geometry.page_offset_y + transform_y,
+                        painted.width,
+                        painted.height,
                     ),
                 )
             });
         if !paint_rules::hides_own_box(&cascade.computed[owner])
             && cell_on_band
-            && let Some(border) = cell.collapsed_border()
+            && let Some(border) = border
         {
             paint_element_border(
                 self.scene,
-                layout.size.width,
-                layout.size.height,
-                x + self.geometry.page_offset_x + transform_x,
-                y + self.geometry.page_offset_y + transform_y,
+                painted.width,
+                painted.height,
+                painted.x + self.geometry.page_offset_x + transform_x,
+                painted.y + self.geometry.page_offset_y + transform_y,
                 border,
                 cascade.computed[owner].color,
             );

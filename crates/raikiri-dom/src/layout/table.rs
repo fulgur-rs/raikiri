@@ -16,16 +16,16 @@
 //!      (`resolve_fixed_column_widths`, CSS 2.1 §17.5.2.1).
 //! 3. Batch-layout each row's cells with resolved column widths to determine row heights.
 //! 4. Position each cell at (col-origin, row-origin) and write final layouts —
-//!    `border-collapse: collapse` overlaps adjoining cell boxes by the
-//!    collapsed line width, and the border of a cell at the edge is the
-//!    table's edge (`compute_collapsed_lines`, CSS 2.1 §17.6.2).
+//!    Horizontal collapsed-border rows meet at the centers of their borders;
+//!    cells use half-width block insets and paint the full line around the
+//!    edge. The inline axis retains overlapping cell boxes.
 //!
 //! Scope limits (documented, not silent):
 //! - Fixed layout reads cell widths/minimums from the first row and authored
 //!   column constraints. An indefinite table width falls back to auto.
 //! - Collapse resolves border conflicts between adjacent cells using style,
-//!   width, and top/left tie-breaking before intrinsic track sizing. Row,
-//!   row-group, column, and column-group candidates and half-border centering
+//!   width, and top/left tie-breaking before intrinsic track sizing. Row-group,
+//!   column, and column-group candidates and inline-axis half-border centering
 //!   remain out of scope.
 //! - The separate model applies horizontal and vertical `border-spacing`
 //!   between cells and at the table edges; collapse ignores those gaps.
@@ -5505,10 +5505,13 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, overlap: f32) -> Ve
 ///
 /// - `col_overlaps[i]` — width absorbed between column `i` and `i + 1`
 ///   (length `n_cols - 1`; empty for ≤1 column).
-/// - `row_overlaps[j]` — same between row `j` and `j + 1`.
+/// - `row_overlaps[j]` — same between row `j` and `j + 1`; zero for prepared
+///   horizontal tables, whose block tracks meet without overlap.
 /// - `outer_*` — the space the table keeps outside the cells on each side:
 ///   the width its own border has beyond the narrowest border of the edge
 ///   cells, which the box of each of those cells already contains.
+///   Prepared horizontal tables replace top/bottom with the outer halves of
+///   the resolved lines before visibility collapse.
 ///
 /// Separate model: all overlaps zero and outers equal the table's own
 /// border widths ([`CollapsedLines::separate`]).
@@ -5945,6 +5948,23 @@ fn resolve_collapsed_borders(
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
 }
 
+fn resolve_centered_block_borders(
+    doc: &LayoutSession<'_>,
+    state: &mut BorderState,
+    grid: &TableGrid,
+    index: &CellIndex,
+    table_idx: usize,
+    basis: Option<f32>,
+) {
+    #[cfg(test)]
+    BORDER_RESOLUTIONS.with(|count| count.set(count.get() + 1));
+    resolve_collapsed_row_borders(doc, state, grid);
+    resolve_collapsed_cell_borders(doc, state, grid, index);
+    let metrics = state.block_metrics_before_table_edges(doc, grid, table_idx, basis);
+    resolve_collapsed_table_edges(doc, state, grid, table_idx);
+    state.install_block_metrics(metrics);
+}
+
 /// The two border states of a table with collapsed columns in the collapsed
 /// borders model. The columns that collapse still set the widths the rows are
 /// measured at, so the rows are measured with the borders every column in
@@ -6055,9 +6075,8 @@ impl ColumnsInPlace {
         column_widths: &[f32],
         spacing: (f32, f32),
     ) -> Result<(), raikiri_traits::LayoutError> {
-        let states = self.in_place.cells.iter().zip(&self.remaining.cells);
-        for (cell, (in_place, remaining)) in grid.cells.iter_mut().zip(states) {
-            if in_place.widths != remaining.widths {
+        for cell in &mut grid.cells {
+            if self.in_place.used_widths(cell.node_id) != self.remaining.used_widths(cell.node_id) {
                 let columns = cell_column_range(cell, column_widths.len())?;
                 measure_cell(doc, cell, spanned_size(&column_widths[columns], spacing.0));
             }

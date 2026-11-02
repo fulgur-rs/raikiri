@@ -277,6 +277,9 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;
+        doc.nodes[idx]
+            .flags
+            .remove(NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS);
         doc.nodes[idx].border_spacing = cv.border_spacing;
         doc.nodes[idx].break_before = cv.break_before;
         doc.nodes[idx].break_after = cv.break_after;

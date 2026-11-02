@@ -1,5 +1,6 @@
 //! Where the box of an element is painted on the page.
 
+use super::box_paint::collapsed_block_border_paint_rect;
 use super::frames::{PaintFrame, VisitFrame};
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
@@ -187,7 +188,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let mut extent = self.page_extent(&inputs, node, layout, &placement, &cut);
         self.grow_for_generated_flow(node_id, layout, &placement, &mut extent);
         let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
-        let generated_y = extent.paint_y + cv.border.top.width().px() + paint_padding.top;
+        let top_border = if node.centered_collapsed_block_borders() {
+            layout.border.top
+        } else {
+            cv.border.top.width().px()
+        };
+        let generated_y = extent.paint_y + top_border + paint_padding.top;
         Some(ElementBox {
             node,
             node_id,
@@ -683,14 +689,20 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         } = self.geometry;
         // A hidden table must not paint its own collapsed border.
         let visibility_hidden_table = raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
+        let border = node.collapsed_border().unwrap_or(&cv.border);
+        let border_reach = collapsed_block_border_paint_rect(
+            node,
+            raikiri_traits::PaintRect::new(paint_x, abs_y, layout.size.width, layout.size.height),
+            border,
+        );
         !visibility_hidden_table
             && (node_id == self.root_id
                 || ((fixed_in_viewport || self.named_page_matches(node_id))
                     && (fixed_in_viewport
                         || inside_fixed
                         || (box_intersects_page(
-                            abs_y,
-                            layout.size.height,
+                            border_reach.y,
+                            border_reach.height,
                             page_top,
                             page_bottom,
                         ) && flow_band.is_none_or(|band| {
@@ -702,7 +714,22 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                                     (paint_x + grid.x, paint_y + grid.y, grid.width, grid.height)
                                 },
                             );
-                            band.holds_box(scene_transform, own_box)
+                            let border_box = collapsed_block_border_paint_rect(
+                                node,
+                                raikiri_traits::PaintRect::new(
+                                    own_box.0, own_box.1, own_box.2, own_box.3,
+                                ),
+                                border,
+                            );
+                            band.holds_box(
+                                scene_transform,
+                                (
+                                    border_box.x,
+                                    border_box.y,
+                                    border_box.width,
+                                    border_box.height,
+                                ),
+                            )
                         })))))
     }
 

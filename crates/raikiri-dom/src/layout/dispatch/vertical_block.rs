@@ -157,7 +157,7 @@ impl TransposedBlock {
         self.placed
     }
 
-    fn has_child(&self, idx: usize) -> bool {
+    pub(in crate::layout) fn has_child(&self, idx: usize) -> bool {
         self.child_views.contains_key(&idx)
     }
 }

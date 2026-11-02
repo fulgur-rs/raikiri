@@ -32,6 +32,20 @@ struct OwnBox {
     background_height: f32,
 }
 
+/// The full winning lines paint around the cell's logical border centers.
+pub(super) fn collapsed_block_border_paint_rect(
+    node: &raikiri_dom::Node,
+    rect: PaintRect,
+    border: &Sides<ComputedBorder>,
+) -> PaintRect {
+    if !node.centered_collapsed_block_borders() || rect.height <= 0.0 {
+        return rect;
+    }
+    let top = border.top.width().px() / 2.0;
+    let bottom = border.bottom.width().px() / 2.0;
+    PaintRect::new(rect.x, rect.y - top, rect.width, rect.height + top + bottom)
+}
+
 /// The clip that the content of the replaced element `element` paints inside.
 fn replaced_content_clip(element: &ElementBox<'_>) -> Option<raikiri_traits::PaintClip> {
     let ElementBox {
@@ -426,6 +440,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         BackgroundEnv {
             border_hides_edge: matches!(cv.border_image.source, BackgroundImage::None)
                 && border_hides_background_edge(painted_border, cv.color),
+            border_insets: element
+                .node
+                .centered_collapsed_block_borders()
+                .then_some(element.layout.border),
             device_grid: self.image_cache.device_grid(self.scene.transform),
             fixed_viewport: fixed_background_viewport(
                 self.geometry.page_area,
@@ -452,13 +470,20 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             height: own_paint_height,
             ..
         } = *own;
+        let border_box = collapsed_block_border_paint_rect(
+            element.node,
+            PaintRect::new(own_paint_x, own_paint_y, own_paint_width, own_paint_height),
+            painted_border,
+        );
+        let (own_paint_y, own_paint_height) = (border_box.y, border_box.height);
         // A border image replaces the border styles (CSS
         // Backgrounds 3 §6).
         let border_image_drawn = paints_own_box
             && !collapsed_internal_table_box(cv)
             && self.paint_border_image(element, own);
-        let border_covered_by_background =
-            border_covered_by_solid_background(cv, painted_border) || border_image_drawn;
+        let border_covered_by_background = (!element.node.centered_collapsed_block_borders()
+            && border_covered_by_solid_background(cv, painted_border))
+            || border_image_drawn;
         let scene = &mut *self.scene;
         // Paint border on top of background (CSS Backgrounds 3 §5).
         let paints_continuation_border = paints_own_box && paints_as_absolute_continuation;

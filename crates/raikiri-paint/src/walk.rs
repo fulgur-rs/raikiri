@@ -2575,6 +2575,8 @@ pub(crate) struct BackgroundEnv {
     /// Whether the borders cover the outer edge of the background (see
     /// [`border_hides_background_edge`]).
     pub border_hides_edge: bool,
+    /// Used geometry insets when the painted line widths differ from layout.
+    pub border_insets: Option<Edges<f32>>,
     /// The raster output's device pixel grid, absent for a vector output.
     pub device_grid: Option<DeviceGrid>,
     /// The page area in the box's own coordinates, which a `fixed` layer is

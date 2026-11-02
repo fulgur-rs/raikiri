@@ -85,6 +85,8 @@ bitflags::bitflags! {
         /// The table is laying this cell out at its final physical size on
         /// vertical axes. Measurement passes retain the horizontal table path.
         const FINAL_VERTICAL_TABLE_CELL = 1 << 10;
+        /// Physical top/bottom borders are centered on horizontal row tracks.
+        const CENTERED_COLLAPSED_BLOCK_BORDERS = 1 << 11;
     }
 }
 
@@ -973,6 +975,13 @@ impl Node {
     #[doc(hidden)]
     pub fn collapsed_border(&self) -> Option<&Sides<ComputedBorder>> {
         self.collapsed_border.as_ref()
+    }
+
+    /// Whether this cell's top/bottom borders paint around horizontal row tracks.
+    #[doc(hidden)]
+    pub fn centered_collapsed_block_borders(&self) -> bool {
+        self.flags
+            .contains(NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS)
     }
 
     /// Lines of the last performed layout of an ifc root, if any.
