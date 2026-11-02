@@ -25,7 +25,8 @@ use super::{
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_text_start_y, reaches_line,
     record_candidate_pages, reset_inline_x_for_page_transition, run_tail_move,
-    shift_text_candidate, straddling_line, text_changes_page_name, text_sets_page_name,
+    shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name,
+    text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -999,6 +1000,28 @@ impl PaginationState {
             target_page = target_page.max(fit_page.saturating_add(1));
         }
         reach_page(control, target_page)?;
+        // The margin a forced break keeps above a box that no page break
+        // goes through puts the box below the top of its page, so it moves on
+        // to the next page when it would cross the edge of this one. That
+        // break is not forced, and cuts the margin.
+        let landing_top = page_origins.origin(target_page) + margin_top;
+        let margin_pushes_box_on = forced_transition
+            && margin_top > 0.0
+            && candidate.context.is_unbreakable()
+            && !candidate.context.is_flex_item()
+            && !candidate.context.is_grid_item()
+            && !is_floating_box_for_pagination(document, cascade, node_id)
+            && starts_on_page_and_runs_past_it(
+                landing_top,
+                landing_top + candidate.height,
+                page_origins.origin(target_page),
+                page_origins.page_end(target_page),
+            );
+        if margin_pushes_box_on {
+            target_page = target_page.saturating_add(1);
+            reach_page(control, target_page)?;
+        }
+        let lands_after_forced_break = forced_transition && !margin_pushes_box_on;
         // A negative block-start margin can pull a forced-break box
         // back into the preceding page.  Keep the break boundary for
         // following siblings (and for page count), but materialize
@@ -1009,7 +1032,7 @@ impl PaginationState {
             position.effective_y,
             margin_top,
             relative_offset,
-            forced_transition,
+            lands_after_forced_break,
             overflow,
         );
         let row_flex_break_before =
@@ -1023,8 +1046,8 @@ impl PaginationState {
                 &TransitionMove {
                     node_delta: landing.node_delta,
                     shift_delta: landing.shift_delta,
-                    page_overflow: overflow.page,
-                    forced_transition,
+                    page_overflow: overflow.page || margin_pushes_box_on,
+                    forced_transition: lands_after_forced_break,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
@@ -1053,8 +1076,8 @@ impl PaginationState {
                 body_id,
                 candidate,
                 &FloatTransition {
-                    page_overflow: overflow.page,
-                    forced_transition,
+                    page_overflow: overflow.page || margin_pushes_box_on,
+                    forced_transition: lands_after_forced_break,
                     delta: landing.node_delta,
                     target_y: landing.target_y,
                     relative_offset,

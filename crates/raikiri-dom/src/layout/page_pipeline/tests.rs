@@ -19864,6 +19864,44 @@ fn a_replaced_block_that_fits_the_page_exactly_stays() {
 }
 
 #[test]
+fn a_margin_kept_after_a_forced_break_moves_a_replaced_block_on_when_it_crosses_the_page_edge() {
+    // `div(40px)` with a forced break after it, a block 80px tall with a 30px
+    // margin on each side, `div(10px)`, on 100px pages. The forced break
+    // keeps the margin above the block, so the block starts below the top of
+    // the second page and ends past its edge: it moves on to the third page,
+    // where the margin is cut, and the flow follows.
+    let ys = |image_height: u32| {
+        paginated_ys(
+            |doc, body| {
+                let before = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:40px;break-after:page"),
+                );
+                let image = doc.append_element(
+                    Some(body),
+                    "img",
+                    Some(&format!(
+                        "display:block;width:100px;height:{image_height}px;margin:30px 0"
+                    )),
+                );
+                let after = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:10px"),
+                );
+                vec![before, image, after]
+            },
+            &[],
+        )
+    };
+    assert_eq!(ys(80), [0.0, 200.0, 300.0]);
+    // One that fits below the margin stays there; the margin after it is cut
+    // by the page edge.
+    assert_eq!(ys(60), [0.0, 130.0, 200.0]);
+}
+
+#[test]
 fn a_positioned_replaced_block_keeps_its_place_and_does_not_push_the_flow() {
     // Taken out of the flow, a replaced box sits where its offsets say
     // whatever its size; it does not move to the next page or shift the boxes
