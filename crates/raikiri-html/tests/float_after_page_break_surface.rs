@@ -337,6 +337,95 @@ fn the_margin_is_kept_whichever_box_carries_it() {
 }
 
 #[test]
+fn a_larger_margin_below_the_block_before_the_break_does_not_stay_with_the_box() {
+    // The 30px margin below the block before the break collapses with the 10px
+    // above the box into 30px. The break truncates it, and the box keeps the
+    // 10px of its own, as it does when no float sits between them.
+    let before = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
+    let left = lines(&format!(
+        "{before}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(left, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let right = lines(&format!(
+        "{before}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("right", 40, 50)
+    ));
+    assert_eq!(right, [(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)]);
+    // A box with no margin of its own starts at the top of the page.
+    let none = lines(&format!(
+        "{before}{}<div>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(none, [(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)]);
+    // The block before the break sits in a wrapper, or the box has a child
+    // that holds the text and the margin.
+    let wrapped = lines(&format!(
+        "<div>{before}</div>{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(wrapped, left);
+    let child = lines(&format!(
+        "{before}{}<div><div style='margin-top:10px'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(child, left);
+}
+
+#[test]
+fn a_line_the_floats_put_below_themselves_stays_there_when_the_margin_is_kept() {
+    // The two floats leave no room for a word beside them, so the first line
+    // goes below them, 50px down, whatever margin sits above the box.
+    let before = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
+    let lines = lines(&format!(
+        "{before}{}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50),
+        float("left", 40, 50)
+    ));
+    assert_eq!(lines, [(1, 0.0, 55.0), (2, 0.0, 5.0)]);
+}
+
+#[test]
+fn a_child_the_float_puts_below_itself_stays_below_it_when_the_margin_is_kept() {
+    // A child that clears the float, or a formatting context box too wide to
+    // sit beside it, goes below the float's lower edge at 50px whatever the
+    // 10px above the box holding it is.
+    let before = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
+    for child in [
+        "<div style='clear:left'>XX XX</div>",
+        "<div style='display:flow-root;width:90px'>XX</div>",
+    ] {
+        let lines = lines(&format!(
+            "{before}{}<div style='margin-top:10px'>{child}</div>",
+            float("left", 40, 50)
+        ));
+        assert_eq!(lines, [(1, 0.0, 55.0)], "{child}");
+    }
+}
+
+#[test]
+fn the_margin_is_kept_above_a_box_holding_several_paragraphs() {
+    let lines = lines(&format!(
+        "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>{}\
+         <div style='margin-top:10px'><div>XX</div><div>XX XX</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(lines, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+}
+
+#[test]
+fn an_empty_box_after_the_float_does_not_move_the_text_to_another_page() {
+    // The 10px-tall box keeps its margin, and the text below it breaks after
+    // its first line instead of moving to the next page whole.
+    let lines = lines(&format!(
+        "{BREAK}{}<div style='margin-top:10px;height:10px'></div>\
+         <div style='margin-top:15px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(lines, [(1, 40.0, 40.0), (1, 0.0, 70.0), (2, 0.0, 5.0)]);
+}
+
+#[test]
 fn the_break_after_a_float_is_ignored() {
     // The float and the text beside it stay on the page of the block before
     // them, and the third line starts the next page.

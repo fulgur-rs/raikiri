@@ -5785,6 +5785,43 @@ fn adjoining_margin_extremes(
     }
 }
 
+/// Whether every line below `id` follows the one before it, and the first sits
+/// at the top of its content box. A float beside a paragraph that leaves a
+/// line no room puts the line below itself and leaves a gap above it, and
+/// moving the box would move that line off the float's lower edge. A paragraph
+/// that mixes in block children or generated blocks is not looked into, since
+/// the blocks leave gaps of their own, and neither is a box below `id` that
+/// clears a float or is not a plain block.
+fn lines_follow_each_other(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    if let Some(ifc) = document
+        .ifc_layout_node(id)
+        .and_then(|node| node.ifc.as_ref())
+    {
+        let mut bottom = 0.0;
+        return ifc.generated_blocks.is_empty()
+            && ifc.lines.as_ref().is_none_or(|lines| {
+                lines.placed_blocks.is_empty()
+                    && lines.block_line_starts.is_empty()
+                    && lines.lines.iter().all(|line| {
+                        let follows = line.block_offset() <= bottom + 0.001;
+                        bottom = line.block_offset() + line.block_size();
+                        follows
+                    })
+            });
+    }
+    let mut boxes = Vec::new();
+    for &child in document.nodes[id].children.iter().rev() {
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+    }
+    // A box that clears a float or sits beside it in a formatting context of
+    // its own may have been put below the float as well.
+    boxes.into_iter().all(|child| {
+        cascade.computed[child].clear == ClearValue::None
+            && margins_may_collapse_through(document, cascade, child)
+            && lines_follow_each_other(document, cascade, child)
+    })
+}
+
 /// How much the margins of the first in-flow children of `id` that adjoin its
 /// block-start margin change the margin it keeps at a forced break: the one
 /// margin they collapse into, less the margin of `id` itself.
@@ -8648,20 +8685,31 @@ impl SiblingMargins {
             return None;
         }
         let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
-        let forced_before = at.forced_before
-            || self
-                .break_taken_by_float
-                .is_some_and(|source| is_descendant_or_self(document, source, previous));
+        let taken_by_float = self
+            .break_taken_by_float
+            .is_some_and(|source| is_descendant_or_self(document, source, previous));
+        let forced_before = at.forced_before || taken_by_float;
         let page_top = page_origins.origin(at.natural_page);
         let previous_bottom = at.effective_y - gap;
         let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
-        if !page_edge_falls_in_margin(
-            at.natural_page,
-            page_top,
-            previous_bottom,
-            at.effective_y,
-            follows_forced_break,
-        )
+        // The float landed where the margin it was placed after collapsed
+        // to, so the box after it may already sit at the top of the page,
+        // above the margin that the break keeps. Moving the box down moves
+        // its lines with it, which would take a line that the floats put
+        // below themselves lower than they do, so a box with such a line stays.
+        let lands_at_page_top = taken_by_float
+            && at.natural_page > 0
+            && at.margin_top > 0.0
+            && (at.effective_y - page_top).abs() <= 0.001
+            && lines_follow_each_other(document, cascade, node_id);
+        if !(lands_at_page_top
+            || page_edge_falls_in_margin(
+                at.natural_page,
+                page_top,
+                previous_bottom,
+                at.effective_y,
+                follows_forced_break,
+            ))
             // Only a margin between adjoining siblings is truncated; a box
             // that is not a candidate may lie between two nested candidates.
             || !self.adjacency.adjoins(document, cascade, node_id, previous)
