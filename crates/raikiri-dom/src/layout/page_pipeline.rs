@@ -24,14 +24,14 @@ pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
-use super::ifc::boxes::IfcBoxKind;
+use super::ifc::boxes::{IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
-use raikiri_layout_style::values::{BoxSizing, Position};
+use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -2274,13 +2274,76 @@ fn forced_line_moves(
 }
 
 /// Moves line `line` of the paragraph `root` and every line after it down by
-/// `shift`, and grows the root's box to hold them.
-fn shift_ifc_lines_from(document: &mut Document, root: usize, line: usize, shift: f32) {
+/// `shift`, and grows the root's box by `growth` to hold them.
+fn shift_ifc_lines_from(
+    document: &mut Document,
+    root: usize,
+    line: usize,
+    shift: f32,
+    growth: f32,
+) {
     let node = document.table_layout_node_mut(root);
     if let Some(lines) = node.ifc.as_mut().and_then(|ifc| ifc.lines.as_mut()) {
         lines.shifts.push(line, shift);
-        node.layout.size.height += shift;
+        node.layout.size.height += growth;
     }
+}
+
+/// How far the border box of the paragraph `root` grows when its lines from
+/// `shift` on move down by `shift`. A box whose height follows its content
+/// grows by the whole shift. A box with a definite height keeps it, and the
+/// moved lines overflow it. A `min-height` or `max-height` box grows only
+/// as far as its content end passes the bounds (CSS 2.1 §10.7).
+fn lines_shift_growth(
+    document: &super::context::LayoutSession<'_>,
+    root: usize,
+    shift: f32,
+) -> f32 {
+    if height_follows_content(document, root) {
+        return shift;
+    }
+    if !lines_move_grows_box(document, root) {
+        return 0.0;
+    }
+    content_growth(document, root, shift).unwrap_or(0.0)
+}
+
+/// How far the border box of the paragraph `root`, whose height can grow with
+/// its content, grows when the content from its lines on moves down by
+/// `shift`: `None` for a paragraph without lines.
+fn content_growth(
+    document: &super::context::LayoutSession<'_>,
+    root: usize,
+    shift: f32,
+) -> Option<f32> {
+    let node = document.ifc_layout_node(root)?;
+    let ifc = node.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
+    let last = lines.lines.len().checked_sub(1)?;
+    let layout = &node.layout;
+    // The block children that follow the last line end the content too, and
+    // follow the moved lines by the whole shift.
+    let blocks_end = ifc
+        .boxes
+        .iter()
+        .filter(|b| b.kind == IfcBoxKind::Block)
+        .map(|b| {
+            let child = &document.nodes[b.node].layout;
+            pagination_child_parent_y(document, root, b.node, child.location.y) + child.size.height
+        })
+        .fold(f32::NEG_INFINITY, f32::max);
+    let bottom = (layout.padding.top
+        + layout.border.top
+        + lines.line_top(last)
+        + lines.lines[last].block_size())
+    .max(blocks_end);
+    let (height, _) = grown_height(
+        layout.size.height,
+        border_box_height_bounds(document, root),
+        layout.padding.bottom + layout.border.bottom,
+        (bottom, bottom + shift),
+    );
+    Some(height - layout.size.height)
 }
 
 /// Block edges of a text node's lines after the paragraph's column ranges
@@ -4584,7 +4647,7 @@ fn held_lines_end(
     // naturally fall, or moves whole when that break leaves too few of them on
     // a side: the box before it cannot tell which, so it stays with the whole
     // paragraph.
-    if breaks_between && !lines_can_shift_inside(document, current) {
+    if breaks_between && !lines_can_shift_inside(document, cascade, current) {
         return None;
     }
     let held = if breaks_between {
@@ -4882,15 +4945,19 @@ impl AvoidedBreaks {
         let repeated_header_height = table_headers.repeated_height_before(node_id);
         let repeated_footer_height = table_headers.repeated_height_after(node_id);
         let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
+        // The last row of a table moves to the next page with the edges that
+        // close the table when they do not fit after it.
+        let item_tail = item_tail_move(candidate, fit);
         let table_row = candidate.context.is_table_row()
-            && table_row_moves(
-                flow_y,
-                height + repeated_footer_height,
-                table_row_lead + height + repeated_header_height + repeated_footer_height,
-                page_start,
-                page_end,
-                next_page_step,
-            );
+            && (item_tail
+                || table_row_moves(
+                    flow_y,
+                    height + repeated_footer_height,
+                    table_row_lead + height + repeated_header_height + repeated_footer_height,
+                    page_start,
+                    page_end,
+                    next_page_step,
+                ));
         let row_group_lead = self
             .row_groups
             .get(&node_id)
@@ -4913,7 +4980,8 @@ impl AvoidedBreaks {
                 next_page_step,
             )
         };
-        let flex_item = candidate.context.is_flex_item() && !flex_item_is_last && item_overflow();
+        let flex_item = candidate.context.is_flex_item()
+            && (item_tail || (!flex_item_is_last && item_overflow()));
         let grid_item = candidate.context.is_grid_item() && item_overflow();
         BoxOverflow {
             page,
@@ -5087,6 +5155,96 @@ fn has_explicit_block_axis_inset(
         document.nodes[node_id].position(),
         PositionValue::Absolute | PositionValue::Fixed
     ) && (!inset_is_auto(&computed.top) || !inset_is_auto(&computed.bottom))
+}
+
+/// Whether `node_id` is out of flow and placed by a block-start inset of a
+/// fixed length alone: its place follows the top of its containing block, not
+/// the lines of the paragraph it sits in nor the height of the box that holds
+/// it.
+fn is_top_anchored_out_of_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    has_explicit_block_axis_inset(document, cascade, node_id) && {
+        let computed = &cascade.computed[node_id];
+        // A percentage resolves against the height of the containing block,
+        // which the moved lines can grow, and so can a `calc()` that has one.
+        let top_is_a_length = matches!(&computed.top, ComputedLengthPercentageOrAuto::Px(_));
+        top_is_a_length && inset_is_auto(&computed.bottom)
+    }
+}
+
+/// How an out-of-flow box of a paragraph is placed when the lines of the
+/// paragraph move down inside it, and what moves the box along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutOfFlowFollow {
+    /// A block-start inset of a fixed length places it: the lines do not
+    /// matter.
+    TopAnchored,
+    /// Without insets along the block axis it keeps the place of its anchor
+    /// on a line, and moves with that line.
+    OnLine,
+    /// A `bottom`, or a `top` that is a percentage, places it against the
+    /// padding box of the paragraph, whose height the moved lines grow.
+    WithHeight,
+}
+
+/// Whether a size follows the height of the containing block: it is a
+/// percentage, a `calc()` that holds one, or `stretch`, which fills it.
+fn follows_height(length: impl Into<Dimension>) -> bool {
+    match length.into().expand() {
+        ExpandedDimension::Percent(_) | ExpandedDimension::Stretch => true,
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
+        _ => false,
+    }
+}
+
+/// How the out-of-flow box `node`, one of the boxes of the paragraph `root`,
+/// follows lines that move down, or `None` when it would need more than that
+/// to stay where its insets put it: another box is its containing block and a
+/// `bottom` or a percentage places it against that box, its size depends on
+/// the height of the containing block, both insets place it, or it does not
+/// follow the static position of a line.
+fn out_of_flow_follow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    node: usize,
+) -> Option<OutOfFlowFollow> {
+    if is_top_anchored_out_of_flow(document, cascade, node) {
+        return Some(OutOfFlowFollow::TopAnchored);
+    }
+    let ifc = document.ifc_layout_node(root)?.ifc.as_ref()?;
+    if ifc.writing_mode != shodo::geometry::WritingMode::HorizontalTb
+        || document.context.pagination_on_transposed_axes
+        || document.nodes[node].position() != &PositionValue::Absolute
+    {
+        return None;
+    }
+    let style = document.physical_style(node);
+    // A size that follows the height of the containing block moves its end
+    // when the paragraph grows.
+    if follows_height(style.size().height)
+        || follows_height(style.min_size().height)
+        || follows_height(style.max_size().height)
+    {
+        return None;
+    }
+    let inset = style.inset();
+    match (inset.top.is_auto(), inset.bottom.is_auto()) {
+        (true, true) => document
+            .oof_coordinates
+            .get(&node)
+            .is_some_and(|coordinate| coordinate.follow_static_y)
+            .then_some(OutOfFlowFollow::OnLine),
+        (false, false) => None,
+        _ => document
+            .oof_coordinates
+            .get(&node)
+            .is_some_and(|coordinate| coordinate.owner == root)
+            .then_some(OutOfFlowFollow::WithHeight),
+    }
 }
 
 fn in_inset_out_of_flow_subtree(
@@ -5661,6 +5819,75 @@ struct GrownHeight {
     capped: bool,
 }
 
+/// Whether the height of `block` can grow with its content: it is `auto`, or a
+/// percentage against an indefinite containing block, which behaves as `auto`
+/// (CSS 2.1 §10.5).
+fn height_can_grow(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+    document.block_axis(block).height().is_auto()
+        || definite_content_height(document, block).is_none()
+}
+
+/// Whether the box of the paragraph `block` can grow when its lines move
+/// down: its height can grow with its content (see [`height_can_grow`]) and
+/// no size containment ignores that content.
+fn lines_move_grows_box(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+    height_can_grow(document, block) && !document.nodes[block].size_containment.height
+}
+
+/// The `min-height` and `max-height` of `block` as border-box heights (CSS 2.1
+/// §10.7); `max` is infinite when nothing caps the height.
+fn border_box_height_bounds(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (f32, f32) {
+    let layout = &document.nodes[block].layout;
+    let block_axis = document.block_axis(block);
+    let vertical_edges =
+        layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
+    let box_sizing_edges = if document.pagination_style(block).box_sizing() == BoxSizing::ContentBox
+    {
+        vertical_edges
+    } else {
+        0.0
+    };
+    // A percentage bound resolves against a containing block of definite
+    // height (CSS 2.1 §10.7).
+    let containing_height = BoxTree::for_layout(document)
+        .parent(block, BoxParentScope::Document)
+        .and_then(|containing| definite_content_height(document, containing));
+    // One that does not resolve behaves as `0` for `min-height` and as
+    // `none` for `max-height`.
+    let bound = |value: LengthPercentageAuto, auto: f32| {
+        resolve_length_percentage_auto(value, containing_height)
+            .map_or(auto, |value| value + box_sizing_edges)
+    };
+    let min = bound(block_axis.min_height(), 0.0);
+    let max = bound(block_axis.max_height(), f32::INFINITY).max(min);
+    (min, max)
+}
+
+/// The border-box height of a box that was `old` tall, with `min` and `max`
+/// as its height bounds and `edges_below` of bottom padding and border, once
+/// its content end moves from `before` to `after`, and whether `max-height`
+/// cut the grown height short.
+fn grown_height(
+    old: f32,
+    (min, max): (f32, f32),
+    edges_below: f32,
+    (before, after): (f32, f32),
+) -> (f32, bool) {
+    let bounded = old <= min + 0.001 || old >= max - 0.001;
+    let unconstrained = if bounded { before + edges_below } else { old };
+    let delta = after - before;
+    let grown = unconstrained + delta;
+    let height = if delta < 0.0 {
+        grown.clamp(min, max).min(old)
+    } else {
+        grown.clamp(min, max).max(old)
+    };
+    (height, grown > max + 0.001)
+}
+
 /// The used border-box height of `parent` after its child `moved` (already
 /// moved by `flow_delta`, or grown by `size_delta` while the in-flow content
 /// inside it moved by `flow_delta`) and the in-flow children after it shift
@@ -5690,33 +5917,9 @@ fn grown_auto_height(
     ifc_boxes: &IfcBoxShifts,
 ) -> Option<GrownHeight> {
     let node = &document.nodes[parent];
-    let style = document.pagination_style(parent);
-    let block_axis = document.block_axis(parent);
-    // A percentage height against an indefinite containing block behaves
-    // as `auto` (CSS 2.1 §10.5).
-    let can_grow =
-        block_axis.height().is_auto() || definite_content_height(document, parent).is_none();
+    let can_grow = height_can_grow(document, parent);
     let layout = &node.layout;
-    let vertical_edges =
-        layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
-    let box_sizing_edges = if style.box_sizing() == BoxSizing::ContentBox {
-        vertical_edges
-    } else {
-        0.0
-    };
-    // A percentage bound resolves against a containing block of definite
-    // height (CSS 2.1 §10.7).
-    let containing_height = BoxTree::for_layout(document)
-        .parent(parent, BoxParentScope::Document)
-        .and_then(|block| definite_content_height(document, block));
-    // One that does not resolve behaves as `0` for `min-height` and as
-    // `none` for `max-height`.
-    let bound = |value: LengthPercentageAuto, auto: f32| {
-        resolve_length_percentage_auto(value, containing_height)
-            .map_or(auto, |value| value + box_sizing_edges)
-    };
-    let min = bound(block_axis.min_height(), 0.0);
-    let max = bound(block_axis.max_height(), f32::INFINITY).max(min);
+    let (min, max) = border_box_height_bounds(document, parent);
     let old = layout.size.height;
     // The content extent before and after the shift, from the in-flow
     // children's margin boxes when bottom padding or border, or a formatting
@@ -5894,18 +6097,7 @@ fn grown_auto_height(
     // The in-flow content also ends the box.
     extend(&mut size, flow);
     // The grown height, and whether `max-height` cut it short.
-    let grow = |old: f32, (before, after): (f32, f32)| {
-        let bounded = old <= min + 0.001 || old >= max - 0.001;
-        let unconstrained = if bounded { before + edges_below } else { old };
-        let delta = after - before;
-        let grown = unconstrained + delta;
-        let height = if delta < 0.0 {
-            grown.clamp(min, max).min(old)
-        } else {
-            grown.clamp(min, max).max(old)
-        };
-        (height, grown > max + 0.001)
-    };
+    let grow = |old: f32, ends: (f32, f32)| grown_height(old, (min, max), edges_below, ends);
     let (in_flow_height, capped) = if can_grow {
         grow(old, flow)
     } else {
@@ -6688,7 +6880,21 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
 /// even when it is avoided. The box must end within its own page, and the next
 /// page must hold it.
 fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
-    let edges = candidate.context.run_tail_edges();
+    tail_edges_move(candidate.context.run_tail_edges(), candidate, fit)
+}
+
+/// Whether the last item of a flex container that stacks its items, or the
+/// last row of a table, moves to the next page with the `item_tail_edges` that
+/// close the container, so that those edges do not break away from it: the
+/// break between items or rows is the better one (see [`tail_edges_move`]).
+fn item_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+    tail_edges_move(candidate.context.item_tail_edges(), candidate, fit)
+}
+
+/// Whether a box that ends within its page moves to the next page because the
+/// `edges` that follow it do not fit there, when the next page can hold it and
+/// it does not start its own page.
+fn tail_edges_move(edges: f32, candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let BoxFit {
         flow_y,
         margin_top,
@@ -7179,6 +7385,23 @@ fn has_mandatory_break_inside(
     false
 }
 
+/// Whether the flex container, grid or table `node_id` can be judged by its
+/// children: generated boxes are not among them, and a box inside that forces
+/// a page break or starts a named page breaks the page there whichever page
+/// the container starts.
+fn container_can_be_judged(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let node = &document.nodes[node_id];
+    is_plain_container_box(document, node_id)
+        && node.multicol.is_none()
+        && !node.has_before_or_after_content
+        && !is_floating_box_for_pagination(document, cascade, node_id)
+        && !has_mandatory_break_inside(document, cascade, node_id)
+}
+
 /// Whether the flex container, grid or table `node_id` moves whole to the next
 /// page when the closing edges of the blocks around it do not fit after it, as
 /// browsers do: the break before it is the one that keeps those edges from
@@ -7201,14 +7424,7 @@ fn container_moves_whole(
     has_named_pages: bool,
 ) -> bool {
     let node = &document.nodes[node_id];
-    // Generated boxes are not among the children, so the container cannot be
-    // judged.
-    if !is_plain_container_box(document, node_id)
-        || node.multicol.is_some()
-        || node.has_before_or_after_content
-        || is_floating_box_for_pagination(document, cascade, node_id)
-        || has_mandatory_break_inside(document, cascade, node_id)
-    {
+    if !container_can_be_judged(document, cascade, node_id) {
         return false;
     }
     match node.display() {
@@ -7262,6 +7478,140 @@ fn container_moves_whole(
         }
         _ => true,
     }
+}
+
+/// The last item of the flex container `node_id` that stacks its items in a
+/// column, or the last row of the table `node_id`, when the page breaks
+/// between its items or rows rather than moving the container whole (see
+/// [`container_moves_whole`]) and that item or row is a box the page cannot
+/// break inside.
+///
+/// The closing edges of the container, and of the blocks it ends, follow that
+/// box. Browsers send it to the next page with them when they do not fit after
+/// it, and the container stays where it is with the items before it. A table
+/// with a header or footer group, a caption below its rows or boxes that are
+/// no rows, and a flex container that wraps its items, are left to the rules
+/// for those.
+fn container_item_tail(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    has_named_pages: bool,
+) -> Option<usize> {
+    let node = &document.nodes[node_id];
+    // A grid moves whole, so only flex containers and tables are left.
+    if !matches!(node.display(), DisplayValue::Flex | DisplayValue::Table)
+        || !container_can_be_judged(document, cascade, node_id)
+        || avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        || container_moves_whole(document, cascade, node_id, has_named_pages)
+    {
+        return None;
+    }
+    match node.display() {
+        DisplayValue::Flex => {
+            let computed = &cascade.computed[node_id];
+            if !matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+            ) || computed.flex_wrap != FlexWrapValue::NoWrap
+            {
+                return None;
+            }
+            let items: Vec<usize> = pagination_child_order(document, cascade, node_id)
+                .into_iter()
+                .filter(|&child| is_in_flow_flex_child_for_pagination(document, node_id, child))
+                .collect();
+            let (&last, before) = items.split_last()?;
+            let item = &document.nodes[last];
+            (item.kind() == NodeKind::Element
+                && matches!(item.position(), PositionValue::Static)
+                && !item.used_writing_mode.is_vertical()
+                && breaks_only_around(document, cascade, last, has_named_pages)
+                && !break_between_is_avoided(
+                    document,
+                    cascade,
+                    &before[before.len().saturating_sub(1)..],
+                    &[last],
+                ))
+            .then_some(last)
+        }
+        _ => {
+            // A cell that spans rows ties the rows it spans together, and the
+            // table keeps its layout geometry when rows move (see
+            // `follow_moved_rows`).
+            if super::table::row_moves::has_row_spanning_cell(document, node_id) {
+                return None;
+            }
+            let elements = |parent: usize| {
+                document
+                    .children_through_contents(parent)
+                    .into_iter()
+                    .filter(|&child| document.nodes[child].kind() == NodeKind::Element)
+                    .filter(|&child| document.nodes[child].display() != DisplayValue::None)
+            };
+            if document.anonymous_table_cells(node_id).next().is_some() {
+                return None;
+            }
+            // Each row with the group that holds it, if any.
+            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+            for child in elements(node_id) {
+                match document.nodes[child].display() {
+                    DisplayValue::TableRow => rows.push((child, None)),
+                    DisplayValue::TableRowGroup => {
+                        if document.anonymous_table_cells(child).next().is_some() {
+                            return None;
+                        }
+                        // A box in the group that is no row is not a candidate
+                        // for the edges, so a table that ends with one has no
+                        // last row to move.
+                        rows.extend(elements(child).map(|row| (row, Some(child))));
+                    }
+                    DisplayValue::TableCaption
+                        if cascade.computed[child].caption_side
+                            == raikiri_style::property::CaptionSideValue::Top => {}
+                    _ => return None,
+                }
+            }
+            let (&(last, group), before) = rows.split_last()?;
+            // The boxes that start the last row's side of the break and end
+            // the other side of it: a group is one of them where the break is
+            // the group's own edge.
+            let mut next = vec![last];
+            let mut previous = Vec::new();
+            if let Some(group) = group {
+                // Browsers move a group that avoids breaks inside it whole
+                // with the edges, which is not done here.
+                if avoids_page_break_inside(cascade.computed[group].break_inside)
+                    && before.iter().any(|&(_, held)| held == Some(group))
+                {
+                    return None;
+                }
+                if before.last().is_none_or(|&(_, held)| held != Some(group)) {
+                    next.push(group);
+                }
+            }
+            if let Some(&(row, held)) = before.last() {
+                previous.push(row);
+                previous.extend(held.filter(|&held| group != Some(held)));
+            }
+            (!break_between_is_avoided(document, cascade, &previous, &next)).then_some(last)
+        }
+    }
+}
+
+/// Whether a `break-after` of one of the boxes `previous` or a `break-before`
+/// of one of the boxes `next` avoids the page break between the two sides.
+fn break_between_is_avoided(
+    document: &Document,
+    cascade: &CascadeResult,
+    previous: &[usize],
+    next: &[usize],
+) -> bool {
+    next.iter()
+        .any(|&next| page_edge_constraint(document, cascade, next, true).1)
+        || previous
+            .iter()
+            .any(|&previous| page_edge_constraint(document, cascade, previous, false).1)
 }
 
 /// Whether `line_count` lines are too few for any break between them to leave
@@ -7461,30 +7811,75 @@ struct DeferredShifts {
     /// boundary: `(box, correction)`.
     underflow: Option<(usize, f32)>,
     /// Lines of a paragraph that were moved down to a later page, because
-    /// they cross a page end or to keep enough widows there: `(root, first
-    /// moved line, shift, page)`. The flow after the paragraph, and its texts
-    /// that start on a moved line, take each shift once they are reached, and
-    /// are on its page or after it; its texts before that line stay where
-    /// they are.
-    line_splits: Vec<(usize, usize, f32, u32)>,
+    /// they cross a page end or to keep enough widows there. The flow after
+    /// the paragraph, and its texts that start on a moved line, take each
+    /// shift once they are reached, and are on its page or after it; its texts
+    /// before that line stay where they are.
+    line_splits: Vec<LineSplit>,
+    /// What the flow after a paragraph gives back once pagination leaves it,
+    /// when a text inside it took a whole line shift but its box grew by less:
+    /// `(paragraph, correction, page the flow was on before that text)`.
+    excess_shifts: Vec<(usize, f32, u32)>,
+    /// The page the flow goes back to, at the earliest, at the next candidate
+    /// in the flow after such a paragraph: the box ends before its moved lines.
+    page_floor: Option<u32>,
+}
+
+/// Lines of a paragraph moved down inside it: see [`DeferredShifts`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LineSplit {
+    /// The paragraph that holds the lines.
+    root: usize,
+    /// The first line that moved.
+    first_moved: usize,
+    /// How far the moved lines went down. The paragraph's own later texts and
+    /// block children take all of it.
+    shift: f32,
+    /// How far the paragraph's box grew. The flow after the paragraph takes
+    /// this much of the shift: a box that keeps its height holds the moved
+    /// lines as overflow.
+    growth: f32,
+    /// The page the lines moved to.
+    page: u32,
 }
 
 impl DeferredShifts {
     /// Adds to `flow_shift` every pending shift that `node_id` has reached,
-    /// line splits first, and drops them. Returns the last page that a line
-    /// split it reached moved lines to.
+    /// and drops them: the corrections of the paragraphs it left, then the
+    /// line splits. Returns the last page that a line split it reached moved
+    /// lines to. `current_page` is the page the flow is on before `node_id`.
     fn apply_reached(
         &mut self,
         document: &Document,
         text_lines: &TextLineIndex,
         node_id: usize,
         ifc_root: Option<(usize, f32)>,
+        current_page: u32,
         flow_shift: &mut f32,
     ) -> Option<u32> {
         let mut reached_page: Option<u32> = None;
-        self.line_splits
-            .retain(|&(root, first_moved, shift, page)| {
-                let reached = !is_descendant_or_self(document, node_id, root)
+        let page_floor = &mut self.page_floor;
+        self.excess_shifts
+            .retain(|&(root, correction, page_before)| {
+                let left = !is_descendant_or_self(document, node_id, root);
+                if left {
+                    *flow_shift += correction;
+                    *page_floor =
+                        Some(page_floor.map_or(page_before, |floor| floor.min(page_before)));
+                }
+                !left
+            });
+        let excess_shifts = &mut self.excess_shifts;
+        self.line_splits.retain(
+            |&LineSplit {
+                 root,
+                 first_moved,
+                 shift,
+                 growth,
+                 page,
+             }| {
+                let after_paragraph = !is_descendant_or_self(document, node_id, root);
+                let reached = after_paragraph
                     || ifc_root.is_some_and(|(text_root, _)| text_root == root)
                         && text_lines
                             .get(node_id)
@@ -7492,11 +7887,20 @@ impl DeferredShifts {
                             .is_some_and(|line| line.line >= first_moved)
                     || follows_line_of_paragraph(document, node_id, root, first_moved);
                 if reached {
-                    *flow_shift += shift;
-                    reached_page = reached_page.max(Some(page));
+                    *flow_shift += if after_paragraph { growth } else { shift };
+                    // The flow after the paragraph takes the growth alone.
+                    if !after_paragraph && growth != shift {
+                        excess_shifts.push((root, growth - shift, current_page));
+                    }
+                    // A box that kept its height leaves what follows it where
+                    // it is, on an earlier page than the moved lines.
+                    if !after_paragraph || growth > 0.0 {
+                        reached_page = reached_page.max(Some(page));
+                    }
                 }
                 !reached
-            });
+            },
+        );
         if let Some((ancestor_id, correction)) = self.underflow
             && !is_descendant_or_self(document, node_id, ancestor_id)
         {
@@ -7806,22 +8210,48 @@ fn first_line_judged_height(
     }
 }
 
-/// Whether later lines of the paragraph `block_id` can move down inside it:
-/// its height grows with them (a box with a definite height keeps it), and it
-/// holds nothing but text in one column.
-fn lines_can_shift_inside(document: &super::context::LayoutSession<'_>, block_id: usize) -> bool {
+/// Whether the box of the paragraph `block_id` leaves the lines that pass its
+/// end to pagination: its height follows its lines, or it does not clip them.
+/// A box with a set height that clips its block-axis overflow hides the lines
+/// past its end, so they stay where they are and add no page.
+fn box_leaves_lines_to_pagination(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block_id: usize,
+) -> bool {
     height_follows_content(document, block_id)
+        || !element_clips_overflow(document, cascade, block_id)
+}
+
+/// Whether later lines of the paragraph `block_id` can move down inside it: it
+/// is in one column and holds nothing but text, and out-of-flow boxes that
+/// stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
+/// height allows (see [`lines_shift_growth`]).
+fn lines_can_shift_inside(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block_id: usize,
+) -> bool {
+    box_leaves_lines_to_pagination(document, cascade, block_id)
         && document
             .ifc_layout_node(block_id)
             .and_then(|node| node.ifc.as_ref())
-            .is_some_and(|ifc| ifc.boxes.is_empty() && ifc.multicol_fragments.is_none())
+            .is_some_and(|ifc| {
+                ifc.multicol_fragments.is_none()
+                    && ifc.boxes.iter().all(|b| {
+                        b.kind == IfcBoxKind::OutOfFlow
+                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                    })
+            })
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
 /// children can move down inside it: its height grows with them, it is in one
 /// column, and the only boxes it lays out are those block children, which
 /// follow the moved lines when pagination reaches them, and out-of-flow boxes
-/// that a block-axis inset places away from the lines.
+/// that a block-axis inset places away from the lines or that follow them (see
+/// [`out_of_flow_follow`]).
 fn lines_can_shift_between_blocks(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7836,7 +8266,42 @@ fn lines_can_shift_between_blocks(
                     && ifc.boxes.iter().all(|b| {
                         b.kind == IfcBoxKind::Block
                             || (b.kind == IfcBoxKind::OutOfFlow
-                                && has_explicit_block_axis_inset(document, cascade, b.node))
+                                && (has_explicit_block_axis_inset(document, cascade, b.node)
+                                    || out_of_flow_follow(document, cascade, block_id, b.node)
+                                        .is_some()))
+                    })
+            })
+}
+
+/// Whether all the lines of the paragraph `block_id` can move down inside it
+/// although it has block children, because every block child comes after the
+/// last line: the block children follow the moved lines when pagination reaches
+/// them, and the paragraph's own checks judge all the lines as one run. It is
+/// in one column, and apart from those blocks lays out only out-of-flow boxes
+/// that stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
+/// height allows (see [`lines_shift_growth`]).
+fn lines_can_shift_above_blocks(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block_id: usize,
+) -> bool {
+    box_leaves_lines_to_pagination(document, cascade, block_id)
+        && document
+            .ifc_layout_node(block_id)
+            .and_then(|node| node.ifc.as_ref())
+            .is_some_and(|ifc| {
+                ifc.multicol_fragments.is_none()
+                    && ifc.boxes.iter().all(|b| {
+                        b.kind == IfcBoxKind::Block
+                            || b.kind == IfcBoxKind::OutOfFlow
+                                && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                    })
+                    && ifc.lines.as_ref().is_some_and(|lines| {
+                        lines
+                            .block_line_starts
+                            .iter()
+                            .all(|&(_, after)| after >= lines.lines.len())
                     })
             })
 }
@@ -7907,6 +8372,16 @@ fn follows_line_of_paragraph(
                 .block_line_starts
                 .iter()
                 .any(|&(child, after)| child == block && after > line)
+                // A box out of the flow with no insets along the block axis
+                // keeps the static position of its anchor, on a line. Lines
+                // only move when every such box is one that
+                // `out_of_flow_follow` puts on its line, so its text goes
+                // with that line.
+                || document
+                    .oof_coordinates
+                    .get(&block)
+                    .is_some_and(|coordinate| coordinate.follow_static_y)
+                    && find_oof_anchor(lines, block).is_some_and(|(anchor, _)| anchor >= line)
         })
 }
 
@@ -8571,10 +9046,82 @@ struct LineMove {
     shift: f32,
 }
 
+/// How far each out-of-flow box of the paragraph `moved.block_id` moves down
+/// when its lines from `moved.line` on move by `moved.shift` and its box grows
+/// by `growth`. A box that a fixed `top` places stays; one at the static
+/// position of a line that moved goes with the line; one placed by a `bottom`
+/// or a percentage `top` follows the end of the paragraph's padding box, which
+/// is its containing block.
+fn out_of_flow_moves(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: &LineMove,
+    growth: f32,
+) -> Vec<(usize, f32)> {
+    let root = moved.block_id;
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| Some((node, node.ifc.as_ref()?)))
+        .into_iter()
+        .flat_map(|(node, ifc)| {
+            let height =
+                node.layout.size.height - node.layout.border.top - node.layout.border.bottom;
+            // The anchors are looked up once for all the boxes at a static
+            // position, and a box listed twice moves once.
+            let anchors = std::cell::OnceCell::new();
+            let mut seen = HashSet::new();
+            ifc.boxes
+                .iter()
+                .filter(|b| b.kind == IfcBoxKind::OutOfFlow)
+                .filter_map(move |b| {
+                    if !seen.insert(b.node) {
+                        return None;
+                    }
+                    let delta = match out_of_flow_follow(document, cascade, root, b.node)? {
+                        OutOfFlowFollow::TopAnchored => return None,
+                        OutOfFlowFollow::OnLine => {
+                            let anchors = anchors.get_or_init(|| {
+                                ifc.lines.as_ref().map(first_anchors).unwrap_or_default()
+                            });
+                            let (line, _) = anchors.get(&b.node)?;
+                            (*line >= moved.line).then_some(moved.shift)?
+                        }
+                        OutOfFlowFollow::WithHeight => {
+                            let inset = document.physical_style(b.node).inset();
+                            with_height_delta(inset.top, inset.bottom, height, growth)
+                        }
+                    };
+                    Some((b.node, delta))
+                })
+        })
+        .collect()
+}
+
+/// How far an out-of-flow box placed by `top` or `bottom` (the other `auto`)
+/// against a padding box `height` tall moves down when that box grows by
+/// `growth`: a `top` moves by what its percentage of the taller box adds, and
+/// a `bottom` keeps its distance to the new bottom edge, so the box moves by
+/// the growth less what its percentage of the taller box adds.
+fn with_height_delta(
+    top: LengthPercentageAuto,
+    bottom: LengthPercentageAuto,
+    height: f32,
+    growth: f32,
+) -> f32 {
+    let at = |length: LengthPercentageAuto, height: f32| {
+        length.maybe_resolve(Some(height)).unwrap_or(0.0)
+    };
+    if top.is_auto() {
+        growth - (at(bottom, height + growth) - at(bottom, height))
+    } else {
+        at(top, height + growth) - at(top, height)
+    }
+}
+
 /// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`
 /// and brings along what has to follow them: the flex lines after a flex
 /// item paragraph, and the ancestors that hold the paragraph, which grow to
-/// keep it.
+/// keep it. Returns how far the paragraph's box grew.
 fn move_paragraph_lines(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -8582,21 +9129,31 @@ fn move_paragraph_lines(
     moved: &LineMove,
     shifts: &mut SubtreeShifts,
     flow_page: u32,
-) {
-    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift);
-    if let Some((item, container)) = moved.flex_line {
-        shift_later_flex_lines(document, container, item, moved.shift);
+) -> f32 {
+    let growth = lines_shift_growth(document, moved.block_id, moved.shift);
+    let follows = out_of_flow_moves(document, cascade, moved, growth);
+    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
+    for (node, delta) in follows {
+        document.nodes[node].layout.location.y += delta;
     }
-    grow_ancestors_for_shift(
-        document,
-        cascade,
-        moved.block_id,
-        moved.shift,
-        body_id,
-        shifts,
-        flow_page,
-        &IfcBoxShifts::default(),
-    );
+    if let Some((item, container)) = moved.flex_line {
+        shift_later_flex_lines(document, container, item, growth);
+    }
+    // A box that keeps its height holds the moved lines as overflow: nothing
+    // around it moves.
+    if growth > 0.0 {
+        grow_ancestors_for_shift(
+            document,
+            cascade,
+            moved.block_id,
+            growth,
+            body_id,
+            shifts,
+            flow_page,
+            &IfcBoxShifts::default(),
+        );
+    }
+    growth
 }
 
 /// How far below the top of `moved` the block `block` starts in the normal

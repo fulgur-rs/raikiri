@@ -660,3 +660,859 @@ fn a_block_laid_out_after_the_lines_keeps_the_padding_from_the_last_line() {
         [vec![5.0, 35.0, 65.0]]
     );
 }
+
+/// The tops of the lines of a 20px-wide paragraph of `lines` words that
+/// follows a block `height` tall and is followed by a one-line marker, on each
+/// page from the first to the last one with a line.
+fn paragraph_and_marker_tops(height: u32, style: &str, lines: usize) -> Vec<Vec<f32>> {
+    let mut tops = tops_per_page(&format!(
+        "{}{}<div style='width:20px'>Y</div>",
+        spacer(height),
+        paragraph(lines, style)
+    ));
+    for page in &mut tops {
+        page.sort_by(f32::total_cmp);
+    }
+    tops
+}
+
+#[test]
+fn a_paragraph_with_a_set_height_keeps_the_height_and_breaks_between_its_lines() {
+    // The box is 100px tall and starts at 30px, so it crosses the page end,
+    // and the lines it holds there break like those of a box that grows.
+    for style in ["height:100px", "min-height:100px", "max-height:100px"] {
+        assert_eq!(
+            paragraph_tops(30, style, 4),
+            [vec![35.0, 65.0], vec![5.0, 35.0]],
+            "{style}"
+        );
+    }
+    // The lines that overflow a box too short for them go on at the top of
+    // the next page.
+    assert_eq!(
+        paragraph_tops(0, "height:45px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    // With the orphans and widows of two, the fourth line takes the third
+    // with it, and a box that starts on the second page does the same.
+    assert_eq!(
+        paragraph_tops(30, "height:45px", 4),
+        [vec![35.0, 65.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(
+        paragraph_tops(60, "height:45px", 4),
+        [vec![], vec![5.0, 35.0], vec![5.0, 35.0]]
+    );
+    // A box that holds its lines is not touched.
+    assert_eq!(
+        paragraph_tops(0, "height:100px;orphans:1;widows:1", 6),
+        [vec![5.0, 35.0, 65.0], vec![5.0, 35.0, 65.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "min-height:60px", 3),
+        [vec![5.0, 35.0, 65.0]]
+    );
+}
+
+#[test]
+fn the_padding_below_a_paragraph_with_a_set_height_does_not_pull_its_lines_along() {
+    // The padding sits at the end of the 150px box, far below the lines, so
+    // it does not make the third line move to the next page with it, as it
+    // would for a box that ends with its lines.
+    assert_eq!(
+        paragraph_tops(0, "height:150px;padding-bottom:15px", 4),
+        [vec![5.0, 35.0], vec![5.0, 35.0]]
+    );
+    assert_eq!(
+        paragraph_tops(0, "height:150px;padding-bottom:15px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_tops(
+            30,
+            "box-sizing:border-box;height:100px;padding-bottom:15px;orphans:1;widows:1",
+            4
+        ),
+        [vec![35.0, 65.0], vec![5.0, 35.0]]
+    );
+    // A box exactly as tall as its lines ends with them, but its padding does
+    // not make the third line follow the fourth: the lines cross the end of
+    // the first page and the box keeps its height.
+    assert_eq!(
+        paragraph_tops(0, "height:120px;padding-bottom:15px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+}
+
+#[test]
+fn a_block_after_the_lines_of_a_paragraph_follows_the_lines_that_move() {
+    let block = "<div style='height:20px'></div>";
+    // The lines break as those of a paragraph that is all text, and the block
+    // after them goes along.
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div style='width:20px'>z z z{block}</div>",
+            spacer(30)
+        )),
+        [vec![35.0, 65.0], vec![5.0]]
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div style='width:20px;orphans:1;widows:1'>z z z{block}</div>",
+            spacer(60)
+        )),
+        [vec![65.0], vec![5.0, 35.0]]
+    );
+}
+
+#[test]
+fn an_out_of_flow_child_at_the_top_of_a_paragraph_does_not_stop_its_lines_moving() {
+    // The child sits at a fixed distance from the top of the paragraph, so the
+    // lines can move down without it.
+    let child = "<span style='position:absolute;left:0;top:0'></span>";
+    for orphans_widows in ["", "orphans:1;widows:1"] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}<div style='width:20px;position:relative;{orphans_widows}'>z z z z{child}</div>",
+                spacer(30)
+            )),
+            [vec![35.0, 65.0], vec![5.0, 35.0]],
+            "{orphans_widows}"
+        );
+    }
+}
+
+#[test]
+fn the_box_after_a_paragraph_with_a_set_height_stays_where_the_box_ends() {
+    // The lines that overflow the 45px box do not push the marker after it
+    // away: it sits at the end of the box, before the overflowing line that
+    // starts the next page.
+    assert_eq!(
+        paragraph_and_marker_tops(0, "height:45px;orphans:1;widows:1", 4),
+        [vec![5.0, 35.0, 50.0, 65.0], vec![5.0]]
+    );
+    // A box that grows with the lines it moves pushes the marker down with
+    // it.
+    assert_eq!(
+        paragraph_and_marker_tops(30, "min-height:150px;orphans:1;widows:1", 4),
+        [vec![35.0, 65.0], vec![5.0, 35.0], vec![5.0]]
+    );
+    assert_eq!(
+        paragraph_and_marker_tops(30, "max-height:90px;orphans:1;widows:1", 4),
+        [vec![35.0, 65.0], vec![5.0, 25.0, 35.0]]
+    );
+}
+
+#[test]
+fn a_set_height_paragraph_with_a_block_after_its_lines_breaks_between_the_lines() {
+    let block = "<div style='height:20px'></div>";
+    // The block after the lines is an overflow of a box that keeps its
+    // height, or one that has grown to its `min-height` or stopped at its
+    // `max-height`, and the lines break as in a paragraph that is all text.
+    for style in [
+        "height:100px",
+        "height:45px",
+        "min-height:150px",
+        "max-height:90px",
+    ] {
+        assert_eq!(
+            tops_per_page(&format!(
+                "{}<div style='width:20px;{style}'>z z z z{block}</div>",
+                spacer(30)
+            )),
+            [vec![35.0, 65.0], vec![5.0, 35.0]],
+            "{style}"
+        );
+    }
+    assert_eq!(
+        tops_per_page(&format!(
+            "<div style='width:20px;height:100px;orphans:1;widows:1'>z z z z{block}</div>"
+        )),
+        [vec![5.0, 35.0, 65.0], vec![5.0]]
+    );
+    assert_eq!(
+        tops_per_page(&format!(
+            "{}<div style='width:20px;min-height:150px;orphans:1;widows:1'>z z z{block}</div>",
+            spacer(60)
+        )),
+        [vec![65.0], vec![5.0, 35.0]]
+    );
+    // The block after the lines ends the content that the moved lines push
+    // past the `min-height`, so the box grows to hold it and the next block
+    // starts on the page after.
+    assert_eq!(
+        tops_per_page(&format!(
+            "<div style='width:20px;min-height:150px'>z z z z{block}</div>\
+             <div style='width:20px'>Y</div>"
+        )),
+        [vec![5.0, 35.0], vec![5.0, 35.0], vec![5.0]]
+    );
+}
+
+#[test]
+fn the_box_after_a_set_height_paragraph_with_inline_elements_stays_at_the_box_end() {
+    // A later text of the paragraph, in an inline element or after a `<br>`,
+    // takes the whole shift of the lines that moved, but the block after the
+    // paragraph still follows the end of its box.
+    for inner in ["z z z <u>z</u>", "z z z<br>z", "z <u>z z</u> z"] {
+        for (style, expected) in [
+            (
+                "height:45px;orphans:1;widows:1",
+                vec![vec![35.0, 65.0], vec![5.0, 35.0]],
+            ),
+            (
+                "max-height:90px;orphans:1;widows:1",
+                vec![vec![35.0, 65.0], vec![5.0, 25.0, 35.0]],
+            ),
+        ] {
+            let mut tops = tops_per_page(&format!(
+                "{}<div style='width:20px;{style}'>{inner}</div><div style='width:20px'>Y</div>",
+                spacer(30)
+            ));
+            for page in &mut tops {
+                page.sort_by(f32::total_cmp);
+            }
+            assert_eq!(tops, expected, "{inner} {style}");
+        }
+    }
+}
+
+#[test]
+fn a_box_taken_out_of_the_flow_after_a_set_height_paragraph_leaves_the_box_end_alone() {
+    // An out-of-flow box between the paragraph and the block after it does
+    // not stop the flow from going back to the page the box ends on: the
+    // block still sits at the end of the box, as it does without the
+    // out-of-flow one.
+    let positioned = "<div style='position:absolute;left:60px;top:0;width:20px'>F</div>";
+    for inner in ["z z z z", "z z z <u>z</u>", "z z z<br>z"] {
+        for (style, expected) in [
+            (
+                "height:45px;orphans:1;widows:1",
+                vec![vec![5.0, 35.0, 65.0], vec![5.0, 35.0]],
+            ),
+            (
+                "max-height:90px;orphans:1;widows:1",
+                vec![vec![5.0, 35.0, 65.0], vec![5.0, 25.0, 35.0]],
+            ),
+            (
+                "min-height:150px;orphans:1;widows:1",
+                vec![vec![5.0, 35.0, 65.0], vec![5.0, 35.0], vec![5.0]],
+            ),
+        ] {
+            let mut tops = tops_per_page(&format!(
+                "{}<div style='width:20px;{style}'>{inner}</div>{positioned}\
+                 <div style='width:20px'>Y</div>",
+                spacer(30)
+            ));
+            for page in &mut tops {
+                page.sort_by(f32::total_cmp);
+                page.dedup();
+            }
+            assert_eq!(tops, expected, "{inner} {style}");
+        }
+    }
+}
+
+#[test]
+fn a_set_height_paragraph_that_breaks_more_than_once_keeps_the_block_after_at_its_box_end() {
+    // Each page the lines of the paragraph go on to is one more the flow has
+    // to come back from to the end of the box.
+    let inner = "z z z <u>z z z z z z z z z</u> z";
+    for (spacer_height, style, expected) in [
+        (
+            30,
+            "height:45px",
+            vec![
+                vec![35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0],
+            ],
+        ),
+        (
+            0,
+            "max-height:90px",
+            vec![
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0, 35.0, 65.0],
+                vec![5.0],
+            ],
+        ),
+    ] {
+        let mut tops = tops_per_page(&format!(
+            "{}<div style='width:20px;orphans:1;widows:1;{style}'>{inner}</div>\
+             <div style='width:20px'>Y</div>",
+            spacer(spacer_height)
+        ));
+        for page in &mut tops {
+            page.sort_by(f32::total_cmp);
+            page.dedup();
+        }
+        assert_eq!(tops, expected, "{style}");
+    }
+}
+
+/// Where the out-of-flow child of a paragraph stands among its lines.
+#[derive(Clone, Copy)]
+enum Place {
+    Start,
+    Middle,
+    End,
+}
+
+/// The page and top of the `z` lines of a 20px-wide paragraph that follows a
+/// block `height` tall, of the `Y` that an out-of-flow child of the paragraph
+/// at `place` prints, and of the `Z` of the block after the paragraph.
+fn lines_child_and_block_after(
+    height: u32,
+    style: &str,
+    child: &str,
+    place: Place,
+) -> [Vec<(u32, f32)>; 3] {
+    let child = format!("<span style='position:absolute;left:40px;{child}'>Y</span>");
+    let inner = match place {
+        Place::Start => format!("{child}z z z z"),
+        Place::Middle => format!("z z{child} z z"),
+        Place::End => format!("z z z z{child}"),
+    };
+    let body = format!(
+        "{}<div style='width:20px;position:relative;{style}'>{inner}</div>\
+         <div style='width:20px'>Z</div>",
+        spacer(height)
+    );
+    tops_of_words(&body, ["z", "Y", "Z"])
+}
+
+/// The page and top of each line whose first run is one of `words`.
+fn tops_of_words<const N: usize>(body: &str, words: [&str; N]) -> [Vec<(u32, f32)>; N] {
+    words.map(|word| {
+        let mut found: Vec<(u32, f32)> = lines_of(body, |text| text == word)
+            .into_iter()
+            .map(|(page, _, top)| (page, top))
+            .collect();
+        found.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        found
+    })
+}
+
+/// The spacer height, the style of the paragraph, where the child stands, and
+/// the page and top of the lines, of the child and of the block after.
+type ChildCase = (
+    u32,
+    &'static str,
+    Place,
+    Vec<(u32, f32)>,
+    Vec<(u32, f32)>,
+    Vec<(u32, f32)>,
+);
+
+fn assert_child_cases(child: &str, cases: Vec<ChildCase>) {
+    for (height, style, place, lines, marker, after) in cases {
+        assert_eq!(
+            lines_child_and_block_after(height, style, child, place),
+            [lines, marker, after],
+            "{child} after a {height}px block, in {style}"
+        );
+    }
+}
+
+#[test]
+fn a_child_at_its_static_position_stays_on_its_line_when_the_lines_move() {
+    // Without insets the child sits where its place among the lines puts it,
+    // so it goes down with the line it belongs to, onto the next page, and a
+    // box that keeps its height or grows does not change that.
+    assert_child_cases(
+        "",
+        vec![
+            (
+                30,
+                "orphans:2;widows:2",
+                Place::End,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(1, 35.0)],
+                vec![(1, 65.0)],
+            ),
+            (
+                60,
+                "orphans:1;widows:1",
+                Place::Middle,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 5.0)],
+                vec![(2, 5.0)],
+            ),
+            (
+                60,
+                "height:45px;orphans:1;widows:1",
+                Place::Middle,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 5.0)],
+                vec![(1, 10.0)],
+            ),
+            (
+                60,
+                "height:45px;orphans:2;widows:2",
+                Place::End,
+                vec![(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+                vec![(2, 35.0)],
+                vec![(1, 50.0)],
+            ),
+            (
+                30,
+                "max-height:90px;orphans:1;widows:1",
+                Place::Start,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(0, 35.0)],
+                vec![(1, 25.0)],
+            ),
+            (
+                60,
+                "min-height:150px;orphans:1;widows:1",
+                Place::End,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 65.0)],
+                vec![(2, 15.0)],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_child_at_the_bottom_of_a_paragraph_follows_the_end_of_its_last_fragment() {
+    // The bottom of the paragraph is where the lines that moved end, so the
+    // child, which the `bottom` places against it, moves along with them.
+    assert_child_cases(
+        "bottom:0",
+        vec![
+            (
+                30,
+                "orphans:2;widows:2",
+                Place::Start,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(1, 35.0)],
+                vec![(1, 65.0)],
+            ),
+            (
+                60,
+                "orphans:1;widows:1",
+                Place::Middle,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 65.0)],
+                vec![(2, 5.0)],
+            ),
+            (
+                30,
+                "height:45px;orphans:1;widows:1",
+                Place::Start,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(0, 50.0)],
+                vec![(1, 5.0)],
+            ),
+            (
+                60,
+                "max-height:90px;orphans:1;widows:1",
+                Place::End,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 25.0)],
+                vec![(1, 55.0)],
+            ),
+            (
+                30,
+                "min-height:150px;orphans:2;widows:2",
+                Place::Start,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(1, 55.0)],
+                vec![(2, 5.0)],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_child_placed_by_a_percentage_of_the_paragraph_follows_the_height_it_grows_to() {
+    // A `top` that is a percentage, or a `calc()` with one, resolves against
+    // the height of the paragraph with the lines that moved, so it moves with
+    // the growth of the box rather than with the lines.
+    assert_child_cases(
+        "top:50%",
+        vec![
+            (
+                60,
+                "orphans:1;widows:1",
+                Place::Start,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 30.0)],
+                vec![(2, 5.0)],
+            ),
+            (
+                60,
+                "max-height:90px;orphans:1;widows:1",
+                Place::Middle,
+                vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+                vec![(1, 10.0)],
+                vec![(1, 55.0)],
+            ),
+            (
+                30,
+                "min-height:150px;orphans:1;widows:1",
+                Place::Start,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(1, 10.0)],
+                vec![(2, 5.0)],
+            ),
+        ],
+    );
+    assert_child_cases(
+        "top:calc(10px + 10%)",
+        vec![
+            (
+                30,
+                "orphans:1;widows:1",
+                Place::Middle,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(0, 58.0)],
+                vec![(1, 65.0)],
+            ),
+            (
+                30,
+                "max-height:90px;orphans:1;widows:1",
+                Place::Start,
+                vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                vec![(0, 54.0)],
+                vec![(1, 25.0)],
+            ),
+        ],
+    );
+}
+
+/// A 20px-wide paragraph that follows a block `height` tall and holds `inner`,
+/// with the `Z` block after it.
+fn paragraph_html(height: u32, style: &str, inner: &str) -> String {
+    format!(
+        "{}<div style='width:20px;position:relative;{style}'>{inner}</div>\
+         <div style='width:20px'>Z</div>",
+        spacer(height)
+    )
+}
+
+#[test]
+fn a_block_level_child_at_its_static_position_stays_at_the_bottom_of_its_line() {
+    // A child that was block-level sits below the line it follows text on,
+    // so the lines that move away from that line leave it behind, and the
+    // lines that include it take it along.
+    let child = "<div style='position:absolute;left:40px;line-height:6px'>Y</div>";
+    for (height, style, inner, lines, marker, after) in [
+        (
+            30,
+            "orphans:1;widows:1",
+            format!("z z{child} z z"),
+            vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            vec![(0, 83.0)],
+            vec![(1, 65.0)],
+        ),
+        (
+            60,
+            "orphans:1;widows:1",
+            format!("z z{child} z z"),
+            vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+            vec![(1, 23.0)],
+            vec![(2, 5.0)],
+        ),
+        (
+            60,
+            "orphans:2;widows:2",
+            format!("z z z z{child}"),
+            vec![(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            vec![(2, 53.0)],
+            vec![(2, 65.0)],
+        ),
+        (
+            30,
+            "orphans:2;widows:2",
+            format!("{child}z z z z"),
+            vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            vec![(0, 23.0)],
+            vec![(1, 65.0)],
+        ),
+    ] {
+        assert_eq!(
+            tops_of_words(&paragraph_html(height, style, &inner), ["z", "Y", "Z"]),
+            [lines, marker, after],
+            "{inner} after a {height}px block, in {style}"
+        );
+    }
+}
+
+#[test]
+fn several_out_of_flow_children_of_a_paragraph_each_follow_their_own_place() {
+    let top = "<span style='position:absolute;left:40px;top:5px'>R</span>";
+    let line = "<span style='position:absolute;left:40px'>P</span>";
+    let bottom = "<span style='position:absolute;left:40px;bottom:0'>Q</span>";
+    let inner = format!("{top}z z{line} z z{bottom}");
+    // The child with a `top` stays, the one at its static position goes with
+    // its line, and the one at the `bottom` with the end of the paragraph.
+    assert_eq!(
+        tops_of_words(
+            &paragraph_html(30, "orphans:1;widows:1", &inner),
+            ["z", "P", "Q", "R", "Z"]
+        ),
+        [
+            vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            vec![(0, 65.0)],
+            vec![(1, 35.0)],
+            vec![(0, 40.0)],
+            vec![(1, 65.0)],
+        ]
+    );
+    assert_eq!(
+        tops_of_words(
+            &paragraph_html(60, "orphans:2;widows:2", &inner),
+            ["z", "P", "Q", "R", "Z"]
+        ),
+        [
+            vec![(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            vec![(1, 35.0)],
+            vec![(2, 35.0)],
+            vec![(1, 10.0)],
+            vec![(2, 65.0)],
+        ]
+    );
+}
+
+#[test]
+fn out_of_flow_children_follow_a_paragraph_that_breaks_more_than_once() {
+    // Each break moves the lines after it again, so the child at the bottom
+    // ends up with the last lines, and the one on a line with that line.
+    let bottom = "<span style='position:absolute;left:40px;bottom:0'>Q</span>";
+    let line = "<span style='position:absolute;left:40px'>P</span>";
+    assert_eq!(
+        tops_of_words(
+            &paragraph_html(
+                60,
+                "orphans:1;widows:1",
+                &format!("{bottom}z z z z z z z z z")
+            ),
+            ["z", "Q", "Z"]
+        ),
+        [
+            vec![
+                (0, 65.0),
+                (1, 5.0),
+                (1, 35.0),
+                (1, 65.0),
+                (2, 5.0),
+                (2, 35.0),
+                (2, 65.0),
+                (3, 5.0),
+                (3, 35.0)
+            ],
+            vec![(3, 35.0)],
+            vec![(3, 65.0)],
+        ]
+    );
+    assert_eq!(
+        tops_of_words(
+            &paragraph_html(
+                60,
+                "orphans:1;widows:1",
+                &format!("z z z z{line} z z z z z")
+            ),
+            ["P", "Z"]
+        ),
+        [vec![(1, 65.0)], vec![(3, 65.0)]]
+    );
+    assert_eq!(
+        tops_of_words(
+            &paragraph_html(
+                30,
+                "orphans:2;widows:2",
+                &format!("z z{line} z z z z z z z{bottom}")
+            ),
+            ["P", "Q", "Z"]
+        ),
+        [vec![(0, 65.0)], vec![(3, 35.0)], vec![(3, 65.0)]]
+    );
+}
+
+#[test]
+fn out_of_flow_children_follow_the_lines_that_move_after_a_block_child() {
+    // The lines after the block child move down inside the paragraph, and the
+    // children placed by a line, the `bottom` or a percentage follow them as
+    // in a paragraph that is all text.
+    let block = |height: u32| format!("<div style='height:{height}px'></div>");
+    let child = |style: &str| format!("<span style='position:absolute;left:40px;{style}'>Y</span>");
+    for (height, style, inner, lines, marker, after) in [
+        (
+            30,
+            "orphans:1;widows:1",
+            format!("{}z z{} z z", block(30), child("")),
+            vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+            vec![(1, 5.0)],
+            vec![(2, 5.0)],
+        ),
+        (
+            30,
+            "orphans:1;widows:1",
+            format!("{}z z z z{}", block(30), child("bottom:0")),
+            vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+            vec![(1, 65.0)],
+            vec![(2, 5.0)],
+        ),
+        (
+            30,
+            "orphans:1;widows:1",
+            format!("{}{}z z z z", block(30), child("top:50%")),
+            vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+            vec![(1, 15.0)],
+            vec![(2, 5.0)],
+        ),
+        (
+            60,
+            "orphans:2;widows:2",
+            format!("{}z z z z{}", block(50), child("")),
+            vec![(1, 15.0), (1, 45.0), (2, 5.0), (2, 35.0)],
+            vec![(2, 35.0)],
+            vec![(2, 65.0)],
+        ),
+        (
+            60,
+            "orphans:2;widows:2",
+            format!("{}{}z z z z", block(50), child("bottom:0")),
+            vec![(1, 15.0), (1, 45.0), (2, 5.0), (2, 35.0)],
+            vec![(2, 35.0)],
+            vec![(2, 65.0)],
+        ),
+        (
+            0,
+            "orphans:2;widows:2",
+            format!("{}z z z z{}", block(50), child("top:50%")),
+            vec![(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            vec![(1, 35.0)],
+            vec![(2, 65.0)],
+        ),
+        (
+            30,
+            "orphans:1;widows:1",
+            format!("{}{}z z z z", block(20), child("")),
+            vec![(0, 55.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+            vec![(0, 55.0)],
+            vec![(2, 5.0)],
+        ),
+    ] {
+        assert_eq!(
+            tops_of_words(&paragraph_html(height, style, &inner), ["z", "Y", "Z"]),
+            [lines, marker, after],
+            "{inner} after a {height}px block, in {style}"
+        );
+    }
+}
+
+#[test]
+fn text_of_a_box_far_down_outside_the_flow_does_not_move_the_flow_to_its_page() {
+    // The box falls on the third page by its `top`, which says nothing about
+    // the page the flow is on: the text of the flow stays on the first page
+    // and a forced break goes to the second.
+    let far = "<div style='position:absolute;left:40px;top:250px'>Y</div>";
+    let near = "<div style='position:absolute;left:40px;top:120px'>Y</div>";
+    let flow = "<div style='width:20px'>z</div>";
+    let broken = |name: &str| format!("<div style='break-before:page;width:20px'>{name}</div>");
+    for (body, lines, marker, after_breaks) in [
+        (
+            format!("{far}<div style='width:20px'>z z z</div>"),
+            vec![(0, 5.0), (0, 35.0), (0, 65.0)],
+            vec![(2, 55.0)],
+            vec![],
+        ),
+        (
+            format!("{far}{flow}{}", broken("Q")),
+            vec![(0, 5.0)],
+            vec![(2, 55.0)],
+            vec![(1, 5.0)],
+        ),
+        (
+            format!("{flow}{far}{}", broken("Q")),
+            vec![(0, 5.0)],
+            vec![(2, 55.0)],
+            vec![(1, 5.0)],
+        ),
+        (
+            format!("{near}{flow}{}", broken("Q")),
+            vec![(0, 5.0)],
+            vec![(1, 25.0)],
+            vec![(1, 5.0)],
+        ),
+        (
+            format!("{far}{flow}{}{}", broken("Q"), broken("R")),
+            vec![(0, 5.0)],
+            vec![(2, 55.0)],
+            vec![(1, 5.0), (2, 5.0)],
+        ),
+    ] {
+        let [z, y, q, r] = tops_of_words(&body, ["z", "Y", "Q", "R"]);
+        let mut breaks = q;
+        breaks.extend(r);
+        assert_eq!([z, y, breaks], [lines, marker, after_breaks], "{body}");
+    }
+}
+
+#[test]
+fn out_of_flow_children_inside_an_inline_element_follow_the_lines_too() {
+    // The child sits in an inline element that is not its containing block,
+    // so the lines of the paragraph still decide where it goes.
+    let nested = |style: &str| {
+        format!("z z<u><span style='position:absolute;left:40px;{style}'>Y</span></u> z z")
+    };
+    for (height, style, child, lines, marker, after) in [
+        (
+            30,
+            "orphans:1;widows:1",
+            "",
+            vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            vec![(0, 65.0)],
+            vec![(1, 65.0)],
+        ),
+        (
+            60,
+            "orphans:1;widows:1",
+            "",
+            vec![(0, 65.0), (1, 5.0), (1, 35.0), (1, 65.0)],
+            vec![(1, 5.0)],
+            vec![(2, 5.0)],
+        ),
+        (
+            60,
+            "orphans:2;widows:2",
+            "",
+            vec![(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            vec![(1, 35.0)],
+            vec![(2, 65.0)],
+        ),
+        (
+            30,
+            "orphans:1;widows:1",
+            "bottom:0",
+            vec![(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            vec![(1, 35.0)],
+            vec![(1, 65.0)],
+        ),
+        (
+            60,
+            "orphans:2;widows:2",
+            "bottom:0",
+            vec![(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            vec![(2, 35.0)],
+            vec![(2, 65.0)],
+        ),
+    ] {
+        assert_eq!(
+            tops_of_words(
+                &paragraph_html(height, style, &nested(child)),
+                ["z", "Y", "Z"]
+            ),
+            [lines, marker, after],
+            "{child} after a {height}px block, in {style}"
+        );
+    }
+}

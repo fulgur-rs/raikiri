@@ -839,25 +839,39 @@ fn pages_of_a_fixed_height_paragraph(
 
 #[test]
 fn a_paragraph_whose_first_line_overflows_the_page_moves() {
-    // The 20px paragraph at y 10 ends at 30 > 25: it moves to page 1 as a unit.
+    // The first line of the 20px paragraph at y 20 ends at 30 > 25: it moves
+    // to page 1 as a unit.
     let results = pages_of_a_fixed_height_paragraph(
         "aaaa bbbb",
         "width:40px;height:20px;orphans:1;widows:1",
-        10.0,
+        20.0,
         25.0,
     );
     assert_eq!(results[0], (2, vec![1]), "pinned");
 }
 
 #[test]
+fn a_paragraph_whose_second_line_overflows_the_page_breaks_before_it() {
+    // The paragraph keeps its 20px, which ends at 30 > 25 for the one at y 10,
+    // but only its second line crosses the page end: it starts page 1.
+    let results = pages_of_a_fixed_height_paragraph(
+        "aaaa bbbb",
+        "width:40px;height:20px;orphans:1;widows:1",
+        10.0,
+        25.0,
+    );
+    assert_eq!(results[0], (2, vec![0, 1]), "pinned");
+}
+
+#[test]
 fn a_padded_paragraph_whose_first_line_overflows_moves() {
-    // The root's border box (22px tall, it fits a 26px page) starts at 5 and
-    // its content box at 7: the lines end at 27 > 26 and the paragraph moves.
-    // Measured from the border box they would end at 25 and stay.
+    // The root's border box (22px tall, it fits a 26px page) starts at 15 and
+    // its content box at 17: the first line ends at 27 > 26 and the paragraph
+    // moves. Measured from the border box it would end at 25 and stay.
     let results = pages_of_a_fixed_height_paragraph(
         "aaaa bbbb",
         "width:40px;height:20px;padding-top:2px;box-sizing:content-box;orphans:1;widows:1",
-        5.0,
+        15.0,
         26.0,
     );
     assert_eq!(results[0], (2, vec![1]), "pinned");
@@ -1529,9 +1543,9 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
 #[test]
 fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it() {
     use crate::layout::test_support::ifc_ahem_fonts;
-    // body: "aa " + a 20px block of two lines + " dd". The block's first line
-    // ends at 30 > 25, so the block moves to page 1 as a unit; the text after
-    // it comes later in the same paragraph.
+    // body: "aa " + a 20px block of two lines + " dd". The block's second
+    // line ends at 30 > 25, so it starts page 1; the text after the block
+    // comes later in the same paragraph.
     let mut results = Vec::new();
     {
         let mut doc = Document::new();
@@ -1566,7 +1580,7 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
             .collect();
         results.push(rects);
     }
-    assert_eq!(results[0], [(1, 0.0)], "pinned");
+    assert_eq!(results[0], [(0, 10.0), (1, 0.0)], "pinned");
 }
 
 #[test]
@@ -1860,10 +1874,10 @@ fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
 }
 
 #[test]
-fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
+fn the_lines_after_a_fixed_height_block_that_breaks_follow_its_end() {
     // "aa", a 20px block holding "bb" that would straddle the 25px page,
-    // then " dd": the block moves to the second page as a unit and " dd"
-    // follows it (on both paths).
+    // then " dd": the block breaks between its lines and " dd" follows the
+    // end of its box, 5px into the second page (on both paths).
     let run = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -1902,11 +1916,11 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
                 .expect("fragment")
         })
     };
-    // Hand-computed: the block's two lines start the second page; " dd"
-    // would follow the 20px block at 20px, where its 10px line does not fit
-    // the 25px page, so it starts the third page.
-    assert_eq!(run(), [(1, 0.0), (2, 0.0)]);
-    assert_eq!(run(), [(1, 0.0), (2, 0.0)]);
+    // Hand-computed: the first line of the block ends the first page at 20;
+    // the second starts the next one, which the block's 20px box reaches 5px
+    // into, where " dd" goes on.
+    assert_eq!(run(), [(0, 10.0), (1, 5.0)]);
+    assert_eq!(run(), [(0, 10.0), (1, 5.0)]);
 }
 
 #[test]
@@ -3420,20 +3434,23 @@ fn a_nested_paragraph_split_within_its_line_constraints_stays() {
 }
 
 #[test]
-fn a_fixed_height_paragraph_whose_first_line_overflows_moves_only_as_a_direct_child() {
-    // The 30px paragraph at y 10 ends at 40 on a 35px page. As a direct
-    // child of the body it moves to page 1 as a unit; nested in a section it
-    // fragments at the break, as the same box does as a flex item.
-    let direct = paragraph_after_a_spacer(None, 10.0, "height:30px;orphans:1;widows:1", 35.0);
-    assert_eq!(direct.fragments, whole_on_page_1());
-    let nested = paragraph_after_a_spacer(Some(""), 10.0, "height:30px;orphans:1;widows:1", 35.0);
-    assert_eq!(
-        nested.fragments,
-        vec![
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
-        ]
-    );
+fn a_fixed_height_paragraph_breaks_between_its_lines_as_a_direct_child_and_nested() {
+    // The 30px paragraph at y 10 ends at 40 on a 35px page: its third line
+    // crosses the page end and starts page 1, whether the paragraph is a
+    // direct child of the body or nested in a section, as the same box is as
+    // a flex item.
+    for section in [None, Some("")] {
+        let laid_out =
+            paragraph_after_a_spacer(section, 10.0, "height:30px;orphans:1;widows:1", 35.0);
+        assert_eq!(
+            laid_out.fragments,
+            vec![
+                (0, Some(PageFragmentLineRange::new(0, 2))),
+                (1, Some(PageFragmentLineRange::new(2, 3))),
+            ],
+            "{section:?}"
+        );
+    }
 }
 
 #[test]
@@ -3969,11 +3986,12 @@ fn a_flex_item_sharing_its_line_through_a_negative_margin_keeps_its_natural_brea
 }
 
 #[test]
-fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
+fn a_paragraph_with_a_definite_height_moves_a_line_down_inside_it_for_its_widows() {
     use crate::layout::test_support::ifc_ahem_fonts;
     // Three 10px lines in a 30px tall paragraph 15px down a 40px page would
-    // leave one widow. The paragraph's height is its own, so its lines do
-    // not move down inside it; it moves to page 1 whole and stays 30px tall.
+    // leave one widow. The paragraph's height is its own, so its second line
+    // moves to page 1 with the third and the box stays 30px tall; the block
+    // after it follows the box.
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
@@ -3998,10 +4016,13 @@ fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
     let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert_eq!(
         text_fragments(&doc, &cascade, page, &slices, text),
-        [(1, Some(PageFragmentLineRange::new(0, 3)))]
+        [
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
+        ]
     );
     assert_eq!(doc.nodes[paragraph].layout.size.height, 30.0);
-    assert_eq!(absolute_rect(&doc, after).1, 70.0);
+    assert_eq!(absolute_rect(&doc, after).1, 45.0);
 }
 
 #[test]

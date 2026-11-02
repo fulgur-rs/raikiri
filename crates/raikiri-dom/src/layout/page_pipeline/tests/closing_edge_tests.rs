@@ -1527,15 +1527,16 @@ fn a_paragraph_with_a_block_between_its_lines_breaks_at_the_block_and_stays() {
 
 #[test]
 fn boxes_that_are_not_in_the_block_flow_of_the_parent_stay() {
-    for css in ["display:flex;flex-direction:column", "display:grid"] {
-        let mut last = 0;
-        let (doc, _) = paged_body(|doc, body| {
-            let parent = block(doc, body, &format!("padding-bottom:30px;{css}"));
-            block(doc, parent, "display:block;height:70px");
-            last = block(doc, parent, "display:block;height:20px");
-        });
-        assert_eq!(page_flow_y(&doc, last), 70.0, "{css}");
-    }
+    // The rows of a grid are no boxes to break between for the edges of the
+    // grid; the items of a flex column are (see
+    // `the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges`).
+    let mut last = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "padding-bottom:30px;display:grid");
+        block(doc, parent, "display:block;height:70px");
+        last = block(doc, parent, "display:block;height:20px");
+    });
+    assert_eq!(page_flow_y(&doc, last), 70.0);
     // A float and a sticky box are not boxes of the flow that end the parent
     // or are moved with its edges, nor is a sticky flex container or grid.
     for css in [
@@ -2771,5 +2772,443 @@ fn an_empty_block_tied_to_the_paragraph_by_an_avoided_break_leaves_its_lines_to_
             (50.0, 50.0),
             "{lead_css} {paragraph_css}"
         );
+    }
+}
+
+/// `body > div(padding-bottom:{pad}px) > [div(40px), div(30px), ...]` on 100px
+/// pages, where `build` adds a container to the div and returns the boxes to
+/// look at. Returns their page-flow y and the height of the div.
+fn card_with_edges(
+    pad: u32,
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+) -> (Vec<f32>, f32) {
+    let (mut ids, mut card) = (Vec::new(), 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, &format!("display:block;padding-bottom:{pad}px"));
+        block(doc, card, "display:block;height:40px");
+        block(doc, card, "display:block;height:30px");
+        ids = build(doc, card);
+    });
+    (
+        ids.iter().map(|&id| page_flow_y(&doc, id)).collect(),
+        doc.nodes[card].layout.size.height,
+    )
+}
+
+/// A flex column of `items` blocks of 10px, styled with `css`. Returns the
+/// column, then each item.
+fn flex_column_of(doc: &mut Document, parent: usize, items: usize, css: &str) -> Vec<usize> {
+    let column = block(
+        doc,
+        parent,
+        &format!("display:flex;flex-direction:column;{css}"),
+    );
+    let mut ids = vec![column];
+    for _ in 0..items {
+        ids.push(block(doc, column, "display:block;height:10px"));
+    }
+    ids
+}
+
+/// A table with one row of 10px per group in `groups`, styled by the CSS of
+/// that group. Returns the table, then each row.
+fn table_of_row_groups(doc: &mut Document, parent: usize, groups: &[&str]) -> Vec<usize> {
+    let table = block(doc, parent, "display:table;border-spacing:0");
+    let mut ids = vec![table];
+    for css in groups {
+        let group = block(doc, table, &format!("display:table-row-group;{css}"));
+        let row = block(doc, group, "display:table-row");
+        block(doc, row, "display:table-cell;padding:0;height:10px");
+        ids.push(row);
+    }
+    ids
+}
+
+#[test]
+fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
+    // The items end at 90 and the padding below them does not fit. The page
+    // breaks between the items, which beats a break between the last item and
+    // the padding: Chromium sends the last item to the next page with it, and
+    // the container stays where it is.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 12] = [
+        ("flex column of two items", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table of two rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            vec![ids[0], ids[1], ids[3]]
+        }),
+        ("table of two rows in a row group", |doc, card| {
+            let ids = table_of_rows(doc, card, true, 2, 10);
+            vec![ids[0], ids[2], ids[4]]
+        }),
+        ("flex column in a wrapper", |doc, card| {
+            let wrapper = block(doc, card, "display:block");
+            let ids = flex_column_of(doc, wrapper, 2, "");
+            vec![wrapper, ids[1], ids[2]]
+        }),
+        ("flex column of items in a contents box", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let contents = block(doc, column, "display:contents");
+            vec![
+                column,
+                block(doc, contents, "display:block;height:10px"),
+                block(doc, contents, "display:block;height:10px"),
+            ]
+        }),
+        ("flex column with a gap", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "row-gap:5px");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        (
+            "flex column reversed, whose last item comes first in the source",
+            |doc, card| {
+                let ids = flex_column_of(doc, card, 2, "flex-direction:column-reverse");
+                vec![ids[0], ids[2], ids[1]]
+            },
+        ),
+        (
+            "table whose last row is followed by a hidden one",
+            |doc, card| {
+                let ids = table_of_rows(doc, card, false, 2, 10);
+                block(doc, ids[0], "display:none");
+                vec![ids[0], ids[1], ids[3]]
+            },
+        ),
+        ("table with a caption above its one row", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let caption = block(doc, table, "display:table-caption;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            // The caption stays; the row goes with the padding.
+            vec![table, caption, row]
+        }),
+        ("table of two row groups of one row", |doc, card| {
+            let ids = table_of_row_groups(doc, card, &["", ""]);
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        (
+            "table whose one row group avoids breaks around it, not between its rows",
+            |doc, card| {
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(
+                    doc,
+                    table,
+                    "display:table-row-group;break-before:avoid;break-after:avoid",
+                );
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let row = block(doc, group, "display:table-row");
+                block(doc, row, "display:table-cell;padding:0;height:10px");
+                vec![table, first, row]
+            },
+        ),
+        (
+            "table whose last row group avoids breaks but holds one row",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["", "break-inside:avoid"]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+    ];
+    for (label, build) in shapes {
+        let (ys, height) = card_with_edges(30, build);
+        assert_eq!(ys[0], 70.0, "{label}: the container stays: {ys:?}");
+        assert_eq!(ys[1], 70.0, "{label}: the box before it stays: {ys:?}");
+        assert_eq!(ys[2], 100.0, "{label}: the last goes: {ys:?}");
+        assert_eq!(height, 140.0, "{label}");
+    }
+}
+
+#[test]
+fn the_last_item_of_a_container_stays_when_the_edges_fit_the_page() {
+    // The items end at 90: 10px of padding fit below them, 11px do not.
+    for (shape, build) in [
+        (
+            "flex column",
+            (|doc: &mut Document, card: usize| flex_column_of(doc, card, 2, "")[1..].to_vec())
+                as fn(&mut Document, usize) -> Vec<usize>,
+        ),
+        ("table", |doc: &mut Document, card: usize| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            vec![ids[1], ids[3]]
+        }),
+    ] {
+        let (fits, _) = card_with_edges(10, build);
+        assert_eq!(fits, vec![70.0, 80.0], "{shape}");
+        let (does_not_fit, _) = card_with_edges(11, build);
+        assert_eq!(does_not_fit, vec![70.0, 100.0], "{shape}");
+    }
+}
+
+#[test]
+fn the_padding_of_the_container_itself_counts_with_that_of_the_blocks_it_ends() {
+    // The container's own padding and border follow its last item whatever
+    // follows the container: Chromium sends the item to the next page with
+    // them. With the padding of the block around it they add up.
+    let body_child = |css: &str| {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            let column = flex_column_of(doc, body, 0, css)[0];
+            block(doc, column, "display:block;height:70px");
+            let last = block(doc, column, "display:block;height:20px");
+            block(doc, body, "display:block;height:5px");
+            ids = vec![column, last];
+        });
+        ids.iter()
+            .map(|&id| page_flow_y(&doc, id))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(body_child("padding-bottom:30px"), vec![0.0, 100.0]);
+    assert_eq!(body_child("border-bottom:30px solid"), vec![0.0, 100.0]);
+    // 10px fit after the item.
+    assert_eq!(body_child("padding-bottom:10px"), vec![0.0, 70.0]);
+    assert_eq!(body_child("padding-bottom:11px"), vec![0.0, 100.0]);
+    // Five of the container's own, and five of the card's.
+    let sum = |own: u32, card: u32| {
+        let (ys, _) = card_with_edges(card, |doc, parent| {
+            flex_column_of(doc, parent, 2, &format!("padding-bottom:{own}px"))[1..].to_vec()
+        });
+        ys
+    };
+    assert_eq!(sum(5, 5), vec![70.0, 80.0]);
+    assert_eq!(sum(5, 6), vec![70.0, 100.0]);
+    assert_eq!(sum(6, 5), vec![70.0, 100.0]);
+}
+
+#[test]
+fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place() {
+    // The page breaks between the items only at a better place than before
+    // the edges when nothing keeps the items together or makes the last one
+    // something else than a box to move.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 19] = [
+        ("avoided break before the last item", |doc, card| {
+            let ids = flex_column_of(doc, card, 1, "");
+            vec![
+                ids[0],
+                ids[1],
+                block(doc, ids[0], "display:block;height:10px;break-before:avoid"),
+            ]
+        }),
+        ("avoided break after the item before", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px;break-after:avoid");
+            vec![
+                column,
+                first,
+                block(doc, column, "display:block;height:10px"),
+            ]
+        }),
+        ("column that wraps", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "flex-wrap:wrap");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("last item with boxes to break between", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px");
+            let last = block(doc, column, "display:block");
+            block(doc, last, "display:block;height:5px");
+            block(doc, last, "display:block;height:5px");
+            vec![column, first, last]
+        }),
+        ("last item moved by a relative offset", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px");
+            vec![
+                column,
+                first,
+                block(
+                    doc,
+                    column,
+                    "display:block;height:10px;position:relative;top:1px",
+                ),
+            ]
+        }),
+        ("last item in a vertical writing mode", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px");
+            vec![
+                column,
+                first,
+                block(
+                    doc,
+                    column,
+                    "display:block;height:10px;writing-mode:vertical-rl",
+                ),
+            ]
+        }),
+        ("table with a cell that spans rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            doc.set_element_attribute(ids[2], "rowspan", "2").unwrap();
+            vec![ids[0], ids[1], ids[3]]
+        }),
+        ("table with text outside its rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            doc.append_text(ids[0], "x");
+            vec![ids[0], ids[1], ids[3]]
+        }),
+        ("table row group with a row group inside it", |doc, card| {
+            let ids = table_of_rows(doc, card, true, 2, 10);
+            block(doc, ids[0] + 1, "display:table-row-group");
+            vec![ids[0], ids[2], ids[4]]
+        }),
+        (
+            "table with text outside the rows of its group",
+            |doc, card| {
+                let ids = table_of_rows(doc, card, true, 2, 10);
+                doc.append_text(ids[0] + 1, "x");
+                vec![ids[0], ids[2], ids[4]]
+            },
+        ),
+        ("column of a set height", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "height:20px");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table with a footer group", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let group = block(doc, table, "display:table-footer-group");
+            let foot = block(doc, group, "display:table-row");
+            block(doc, foot, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, row, foot]
+        }),
+        ("table with a caption below its rows", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            block(
+                doc,
+                table,
+                "display:table-caption;caption-side:bottom;height:10px",
+            );
+            vec![table, first, row]
+        }),
+        ("table row with an avoided break before it", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row;break-before:avoid");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, first, row]
+        }),
+        (
+            "table whose last row group avoids breaks inside its two rows",
+            |doc, card| {
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let row = block(doc, group, "display:table-row");
+                block(doc, row, "display:table-cell;padding:0;height:10px");
+                vec![table, first, row]
+            },
+        ),
+        (
+            "table whose last row group has an avoided break before it",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["", "break-before:avoid"]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+        (
+            "table whose row group before the last has an avoided break after it",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["break-after:avoid", ""]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+        // Browsers send the whole container on with the edges; it is left
+        // where the flow puts it.
+        ("flex column that avoids breaks inside", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table that avoids breaks inside", |doc, card| {
+            let table = block(
+                doc,
+                card,
+                "display:table;border-spacing:0;break-inside:avoid",
+            );
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, first, row]
+        }),
+    ];
+    for (label, build) in shapes {
+        let (ys, _) = card_with_edges(30, build);
+        assert!(ys[2] < 100.0, "{label}: {ys:?}");
+    }
+}
+
+#[test]
+fn the_last_item_of_a_container_stays_where_a_box_cannot_move_on_its_own() {
+    // The same card as above: a clipped parent of a set height, a flex
+    // container and a multicol container keep the page positions the flow gave
+    // them.
+    for wrapper in [
+        "display:block;overflow:hidden;height:300px",
+        "display:flex",
+        "display:block;columns:1",
+    ] {
+        let mut last = 0;
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let outer = block(doc, body, wrapper);
+            let card = block(doc, outer, "display:block;padding-bottom:30px");
+            block(doc, card, "display:block;height:40px");
+            block(doc, card, "display:block;height:30px");
+            last = flex_column_of(doc, card, 2, "")[2];
+        });
+        assert_eq!(page_flow_y(&doc, last), 80.0, "{wrapper}");
+    }
+}
+
+#[test]
+fn the_margin_below_the_last_item_is_no_edge_without_padding_or_border() {
+    // Nothing closes the container but a margin below its last item, which is
+    // no edge that breaks away from it: the item keeps its place.
+    let (ys, _) = card_with_edges(0, |doc, card| {
+        let column = block(doc, card, "display:flex;flex-direction:column");
+        let first = block(doc, column, "display:block;height:10px");
+        vec![
+            column,
+            first,
+            block(doc, column, "display:block;height:10px;margin-bottom:30px"),
+        ]
+    });
+    assert_eq!(ys[1..], [70.0, 80.0]);
+}
+
+#[test]
+fn a_container_alone_in_its_card_moves_whole_with_the_edges() {
+    // No box in the card is there to break from before the container: the
+    // page breaks before the card, not between the container and the padding
+    // nor between the card's items.
+    for (label, build) in [
+        (
+            "flex column of one item",
+            (|doc: &mut Document, card: usize| flex_column_of(doc, card, 1, "")[1..].to_vec())
+                as fn(&mut Document, usize) -> Vec<usize>,
+        ),
+        ("table of one row", |doc: &mut Document, card: usize| {
+            let ids = table_of_rows(doc, card, false, 1, 10);
+            vec![ids[1]]
+        }),
+    ] {
+        let (mut card, mut item) = (0, Vec::new());
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:70px");
+            card = block(doc, body, "display:block;padding-bottom:30px");
+            item = build(doc, card);
+        });
+        assert_eq!(page_flow_y(&doc, card), 100.0, "{label}");
+        assert_eq!(page_flow_y(&doc, item[0]), 100.0, "{label}");
     }
 }
