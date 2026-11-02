@@ -4466,6 +4466,83 @@ fn relayout_keeps_the_lines_of_a_paragraph_beside_a_float() {
 }
 
 #[test]
+fn a_box_moves_down_only_while_its_lines_keep_their_room_beside_the_floats() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    // The float is 20px tall and the three 10px lines sit at 0, 10 and 20, the
+    // first two beside it and the last below it.
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert_eq!(floats, [(0.0, 20.0)]);
+    let top = doc.nodes[root].layout.location.y;
+    let stays = |delta: f32, floats: &[(f32, f32)]| {
+        lines_stay_put_when_moved(&doc, &cascade, root, top, delta, floats)
+    };
+    // The second line moves to 15..25 and is still beside the float.
+    assert!(stays(5.0, &floats));
+    // At 20..30 it would be below the float, and the narrow room it was broken
+    // for would be left empty.
+    assert!(!stays(10.0, &floats));
+    // The lines sit beside a float that is not among those given.
+    assert!(!stays(5.0, &[]));
+    // Nor does a float elsewhere account for the lines beside the one given.
+    assert!(!stays(5.0, &[(100.0, 120.0)]));
+}
+
+#[test]
+fn a_line_a_float_puts_below_itself_stays_where_it_is() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa", "float:left;width:100px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    // The float leaves no room, so the only line starts below it and a gap
+    // opens above that line.
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert_eq!(floats, [(0.0, 20.0)]);
+    let top = doc.nodes[root].layout.location.y;
+    assert!(!lines_stay_put_when_moved(
+        &doc, &cascade, root, top, 5.0, &floats
+    ));
+}
+
+#[test]
+fn a_box_holding_a_paragraph_is_judged_by_the_paragraph() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    let wrapper = doc.parent_of(root).expect("the paragraph has a parent");
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert!(lines_stay_put_when_moved(
+        &doc, &cascade, wrapper, 0.0, 5.0, &floats
+    ));
+    assert!(!lines_stay_put_when_moved(
+        &doc, &cascade, wrapper, 0.0, 10.0, &floats
+    ));
+}
+
+#[test]
+fn a_paragraph_with_a_block_child_is_not_looked_into() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    let block = doc.append_element(Some(root), "div", Some("display:block;height:5px"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_with_block = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    drop(cascade);
+    lay_out(&mut doc, &cascade_with_block);
+    assert_eq!(doc.nodes[block].layout.size.height, 5.0);
+    let floats = preceding_float_extents(&doc, &cascade_with_block, root);
+    let top = doc.nodes[root].layout.location.y;
+    assert!(!lines_stay_put_when_moved(
+        &doc,
+        &cascade_with_block,
+        root,
+        top,
+        5.0,
+        &floats
+    ));
+}
+
+#[test]
 fn a_paragraph_with_padding_beside_a_float_is_offset_inside_its_content_box() {
     let (mut doc, cascade, _float, root) = ahem_paragraph_beside_float(
         "aaaa bbbb",
