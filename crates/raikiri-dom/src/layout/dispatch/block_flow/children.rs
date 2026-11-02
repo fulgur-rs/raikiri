@@ -549,9 +549,18 @@ pub(super) fn layout(
                         ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
                         _ => AvailableSpace::Definite(stretch.max(0.0)),
                     };
-                    tree.compute_child_layout_with_block_ctx(child, measure, None)
+                    let natural = tree
+                        .compute_child_layout_with_block_ctx(child, measure, None)
                         .size
-                        .width
+                        .width;
+                    // A table takes the width its columns give it, but the
+                    // limits on its width still apply; the table then grows
+                    // back to what its columns cannot do without.
+                    if style.item_is_table {
+                        child_metrics.clamp_width(natural)
+                    } else {
+                        natural
+                    }
                 };
                 if stretch_widths.any() {
                     stretch_widths.clamp(
