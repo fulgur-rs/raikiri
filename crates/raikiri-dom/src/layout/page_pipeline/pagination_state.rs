@@ -1324,6 +1324,7 @@ impl PaginationState {
         // that crossed the page edge.
         let at = MarginBreak {
             node_id,
+            clearance_free: avoided_breaks.clearance_free.contains(node_id),
             raw_y: candidate.raw_y,
             effective_y: flow_y,
             natural_page,
