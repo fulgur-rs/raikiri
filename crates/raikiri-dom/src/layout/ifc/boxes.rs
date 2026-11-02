@@ -2717,7 +2717,9 @@ fn layout_vertical_block_child(
                         own_inline_size.map_or(stretch, |own| own.at(stretch)),
                     )
                 }
-                BoxProbe::Height { width: inline_size } => {
+                BoxProbe::Height {
+                    width: inline_size, ..
+                } => {
                     let inputs = LayoutInput {
                         run_mode: RunMode::ComputeSize,
                         sizing_mode: SizingMode::InherentSize,
@@ -3094,7 +3096,7 @@ fn layout_formatting_context_child(
                             own.map_or(stretch, |own| own.at(stretch)),
                         )
                     }
-                    BoxProbe::Height { width } => {
+                    BoxProbe::Height { width, .. } => {
                         let inputs = formatting_context_inputs(
                             &geometry,
                             RunMode::ComputeSize,

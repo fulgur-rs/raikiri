@@ -531,6 +531,20 @@ pub(super) fn layout(
         let stretch_widths = content_limits::stretch_widths(tree, usize::from(child));
         // `Width`: the border-box width the child gets where an `auto` width
         // resolves to `stretch`. `Height`: its border-box height at `width`.
+        // A table of `auto` width is handed the room it was measured in and
+        // sizes itself from its columns there. Its columns are set in that
+        // room even where one of them is then removed by
+        // `visibility: collapse`, so the width left after the removal must not
+        // stand in for it, whether the table is measured or laid out.
+        let table_takes_the_room =
+            style.item_is_table && matches!(style.size.width.expand(), ExpandedDimension::Auto);
+        let laid_out_width = |width: f32, room: f32| {
+            if table_takes_the_room {
+                child_metrics.clamp_width(room.max(0.0))
+            } else {
+                width
+            }
+        };
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
                 let width = 'width: {
@@ -572,7 +586,8 @@ pub(super) fn layout(
                     width
                 }
             }
-            BoxProbe::Height { width } => {
+            BoxProbe::Height { width, stretch } => {
+                let width = laid_out_width(width, stretch);
                 let mut measure = child_input;
                 measure.run_mode = RunMode::ComputeSize;
                 measure.known_dimensions.width = Some(width);
@@ -654,13 +669,8 @@ pub(super) fn layout(
         );
         child_input.known_dimensions.width = Some(child_width);
         child_input.available_space.width = AvailableSpace::Definite(child_width);
-        if style.item_is_table && matches!(style.size.width.expand(), ExpandedDimension::Auto) {
-            // A table of `auto` width is handed the room it was measured in and
-            // sizes itself from its columns there. Its columns are set in that
-            // room even where one of them is then removed by
-            // `visibility: collapse`, so the width left after the removal must
-            // not stand in for it.
-            let room = child_metrics.clamp_width(area_width.max(0.0));
+        if table_takes_the_room {
+            let room = laid_out_width(child_width, area_width);
             child_input.known_dimensions.width = Some(room);
             child_input.available_space.width = AvailableSpace::Definite(room);
         }

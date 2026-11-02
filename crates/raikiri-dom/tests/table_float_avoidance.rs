@@ -741,3 +741,26 @@ fn a_table_with_no_float_around_keeps_the_width_its_columns_give_it() {
         compare(&body, &[("k", k), ("o", o), ("after", after)]);
     }
 }
+
+/// A column removed by `visibility: collapse` still takes part in sizing the
+/// rows, which are set in the room the table was given. The table is placed
+/// by the height it has there, so it fits beside the first float at the top
+/// instead of dropping below it.
+#[test]
+fn a_collapsed_column_does_not_make_the_table_taller_than_its_room_does() {
+    compare(
+        "<div id=o style=\"width:300px\">\
+         <div id=a style=\"float:left;width:250px;height:20px\"></div>\
+         <div id=b style=\"float:right;width:100px;height:100px\"></div>\
+         <table id=k style=\"border-spacing:0\"><col><col style=\"visibility:collapse\">\
+         <tr><td style=\"padding:0\">X</td><td style=\"padding:0\">X X X</td></tr></table>\
+         <div id=after style=\"height:5px\"></div></div>",
+        &[
+            ("a", (0.0, 0.0, 250.0, 20.0)),
+            ("b", (200.0, 20.0, 100.0, 100.0)),
+            ("k", (250.0, 0.0, 10.0, 20.0)),
+            ("o", (0.0, 0.0, 300.0, 25.0)),
+            ("after", (0.0, 20.0, 300.0, 5.0)),
+        ],
+    );
+}

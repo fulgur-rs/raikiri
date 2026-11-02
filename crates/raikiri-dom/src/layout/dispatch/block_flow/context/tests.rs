@@ -286,7 +286,7 @@ fn a_box_whose_height_follows_its_width_settles_in_the_widest_room_it_fits() {
     // starts.
     let square = |probe: BoxProbe| match probe {
         BoxProbe::Width { stretch } => stretch,
-        BoxProbe::Height { width } => width,
+        BoxProbe::Height { width, .. } => width,
     };
     let placed = flow.find_box_slot(0.0, [0.0; 2], Direction::Ltr, Clear::None, square);
     assert_eq!(
@@ -305,7 +305,7 @@ fn a_box_whose_width_and_height_chase_each_other_still_settles_clear_of_the_floa
     // the taller of the two heights decides.
     let chasing = |probe: BoxProbe| match probe {
         BoxProbe::Width { stretch } => stretch,
-        BoxProbe::Height { width } if width > 100.0 => 100.0,
+        BoxProbe::Height { width, .. } if width > 100.0 => 100.0,
         BoxProbe::Height { .. } => 1.0,
     };
     let placed = flow.find_box_slot(0.0, [0.0; 2], Direction::Ltr, Clear::None, chasing);
