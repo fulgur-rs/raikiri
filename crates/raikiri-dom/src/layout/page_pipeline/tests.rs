@@ -18379,6 +18379,17 @@ fn unpaginated_paragraph_after_a_spacer(
     root_css: &str,
     spacer_height: f32,
 ) -> (Document, CascadeResult, usize, usize, usize) {
+    unpaginated_paragraph_with_boxes_after_a_spacer(text, root_css, spacer_height, |_, _| {})
+}
+
+/// [`unpaginated_paragraph_after_a_spacer`] with `add_boxes` run on the
+/// document and the root once the text is in it.
+fn unpaginated_paragraph_with_boxes_after_a_spacer(
+    text: &str,
+    root_css: &str,
+    spacer_height: f32,
+    add_boxes: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize, usize, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
@@ -18389,6 +18400,7 @@ fn unpaginated_paragraph_after_a_spacer(
     );
     let root = doc.append_element(Some(body), "div", Some(&root_css));
     let text = doc.append_text(root, text);
+    add_boxes(&mut doc, root);
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     doc.set_font_collection_with_limits(
@@ -18555,8 +18567,20 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
 #[test]
 fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once() {
     // The 20px root starts 95px down a 100px page: its first line ends at 105.
-    let (mut doc, cascade, body, root, text) =
-        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "height:20px", 95.0);
+    // A box among its lines keeps them from moving down inside it, so the
+    // block moves as a unit.
+    let (mut doc, cascade, body, root, text) = unpaginated_paragraph_with_boxes_after_a_spacer(
+        "aaaa bbbb",
+        "height:20px",
+        95.0,
+        |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("display:inline-block;width:10px;height:10px"),
+            );
+        },
+    );
     let pages = PageOrigins::new(&[], 100.0);
     let lines = TextLineIndex::default();
     let node_count = doc.nodes.len();
@@ -18730,7 +18754,16 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     // break moves up a line, which the text grows by.
     let (_, (moved, text), state, root, _) = keep("aaaa bbbb cccc dddd", 70.0, 100.0);
     moved.unwrap();
-    assert_eq!(state.deferred_shifts.line_splits, [(root, 2, 10.0, 1)]);
+    assert_eq!(
+        state.deferred_shifts.line_splits,
+        [LineSplit {
+            root,
+            first_moved: 2,
+            shift: 10.0,
+            growth: 10.0,
+            page: 1,
+        }]
+    );
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 70.0));
     assert_eq!(text.height, 50.0);
 
@@ -18739,6 +18772,33 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     moved.unwrap();
     assert!(state.deferred_shifts.line_splits.is_empty());
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 10.0));
+}
+
+#[test]
+fn the_excess_of_a_paragraph_is_given_back_once_the_flow_leaves_it_to_the_earliest_page() {
+    let (doc, _, body, root, text) = unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);
+    let after = doc.nodes[body].children[0];
+    let lines = TextLineIndex::default();
+    let mut shifts = DeferredShifts {
+        // Two texts of the paragraph took a shift that its box did not grow
+        // by, the second one when the flow was already on a later page.
+        excess_shifts: vec![(root, -20.0, 1), (root, -5.0, 3)],
+        ..Default::default()
+    };
+    let mut flow_shift = 40.0;
+    // Inside the paragraph nothing is given back.
+    let reached = shifts.apply_reached(&doc, &lines, text, None, 3, &mut flow_shift);
+    assert_eq!((reached, flow_shift, shifts.page_floor), (None, 40.0, None));
+    assert_eq!(shifts.excess_shifts.len(), 2);
+    // Past the paragraph both are, and the flow goes back no further than the
+    // page it was on before the first one.
+    let reached = shifts.apply_reached(&doc, &lines, after, None, 3, &mut flow_shift);
+    assert_eq!((reached, flow_shift), (None, 15.0));
+    assert_eq!(shifts.page_floor, Some(1));
+    assert!(shifts.excess_shifts.is_empty());
+    // Once given back they are not given back again.
+    shifts.apply_reached(&doc, &lines, after, None, 3, &mut flow_shift);
+    assert_eq!(flow_shift, 15.0);
 }
 
 #[test]
