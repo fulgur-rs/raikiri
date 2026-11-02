@@ -322,6 +322,20 @@ impl Document {
         }
     }
 
+    /// Record in the next layout that the box `at.0` starts a page `at.1`
+    /// below its top edge, or clear it with `None`.
+    ///
+    /// A relayout at another inline size uses this so that a box that an
+    /// earlier layout started a page after a forced break keeps the margin it
+    /// kept there: the relayout breaks before the box without a forced break
+    /// of its own, and an unforced break cuts the margin above a box.
+    pub fn set_continuation_margin(&mut self, at: Option<(usize, f32)>) {
+        if self.continuation_margin != at {
+            self.continuation_margin = at;
+            self.layout_dirty = true;
+        }
+    }
+
     /// Lay the elements `roots` and their subtrees out as if they had
     /// `display: none`, in `cascade`, while counters keep seeing them with
     /// their own display.

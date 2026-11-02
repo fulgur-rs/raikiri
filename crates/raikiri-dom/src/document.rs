@@ -325,6 +325,11 @@ pub struct Document {
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
     pub(crate) continuation_break: Option<(usize, u32)>,
+    /// A box that starts a page in a relayout, and the offset below the top
+    /// of the page that an earlier layout had it at. The box keeps the margin
+    /// above it when that offset is its block-start margin, as after a
+    /// forced break, though the relayout breaks before it without one.
+    pub(crate) continuation_margin: Option<(usize, f32)>,
     /// The display of the elements a relayout lays out as `display: none`
     /// (see [`Document::skip_layout`]), by node id. Counters still see the
     /// elements with these displays.
@@ -562,6 +567,7 @@ impl Document {
             fixed_page_area: None,
             oof_coordinates: Default::default(),
             continuation_break: None,
+            continuation_margin: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
             later_fragments: Default::default(),
@@ -2049,6 +2055,7 @@ impl Document {
             fixed_page_area: _,
             oof_coordinates: _,
             continuation_break: _,
+            continuation_margin: _,
             skipped_displays: _,
             earlier_fragments: _,
             later_fragments: _,
