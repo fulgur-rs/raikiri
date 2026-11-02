@@ -1,7 +1,8 @@
 //! Positioned glyph runs of the paragraphs on a page, for a painter that
 //! draws text itself.
 
-use super::records::{PageFragment, ProjectedTextRoot};
+use super::flow_pages::FlowPages;
+use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::dispatch::grid_baseline;
@@ -29,17 +30,19 @@ pub(super) struct MarkerText {
     offset_y: f32,
     color: CssColor,
     shadows: Vec<TextShadow>,
-    first_page: Option<u32>,
-    /// The flow origin of [`Self::first_page`].
-    first_page_origin: Option<f32>,
+    /// The one page that draws the marker: the page holding the middle of
+    /// the line it aligns with, else the item's first page.
+    page: Option<u32>,
+    /// The flow origin of [`Self::page`].
+    page_origin: Option<f32>,
     /// The middle of the item's first line from its border edge, when the
     /// marker is aligned with one.
     line_center: Option<f32>,
 }
 
 impl MarkerText {
-    pub(super) fn first_page(&self) -> Option<u32> {
-        self.first_page
+    pub(super) fn page(&self) -> Option<u32> {
+        self.page
     }
 
     /// Number of stable line identities in the prepared standalone marker.
@@ -47,20 +50,21 @@ impl MarkerText {
         self.shaped.lines().len()
     }
 
-    /// Whether the page whose flow starts at `content_origin_y` is the
-    /// item's first page, the one page that draws the marker. Unknown when
-    /// the item has no fragment on any page.
+    /// Whether the page whose flow starts at `content_origin_y` is the one
+    /// page that draws the marker. Unknown when the item has no fragment on
+    /// any page.
     pub(super) fn is_on_page(&self, content_origin_y: f32) -> bool {
-        self.first_page_origin
+        self.page_origin
             .is_none_or(|origin| (origin - content_origin_y).abs() < 0.001)
     }
 
     /// The top of the marker's line for an item whose border edge is at
     /// `top` on a page whose content ends at `page_bottom`.
     ///
-    /// The marker is drawn only on its item's first page. When the line it
-    /// aligns with starts on a later page, the marker stays at the bottom of
-    /// this one rather than past its edge.
+    /// The marker is drawn only on [`Self::page`], which holds the line it
+    /// aligns with. When that line still starts on a later page, as when no
+    /// page could be found for it, the marker stays at the bottom of this one
+    /// rather than past its edge.
     pub(super) fn line_top(&self, top: f32, page_bottom: f32) -> f32 {
         let height = self
             .shaped
@@ -129,6 +133,22 @@ pub(super) fn prepare_markers(
             }
         }
     }
+    // The flow position of the marker of each owner whose marker is placed
+    // once; `None` when it is placed more than once, as in columns.
+    let mut marker_root_y: HashMap<usize, Option<f32>> = HashMap::new();
+    for root in roots {
+        if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
+            marker_root_y
+                .entry(owner)
+                .and_modify(|y| *y = None)
+                .or_insert(Some(root.y));
+        }
+    }
+    // A flow that runs across the page keeps the marker on its first page.
+    let flow = pages
+        .iter()
+        .all(|page| page.flow_axis == FlowAxis::Y)
+        .then(|| FlowPages::new(pages));
     for owner in owners {
         let node = &document.nodes[owner];
         let layout = node.layout;
@@ -160,6 +180,13 @@ pub(super) fn prepare_markers(
                 line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
             });
             let item_line = first_line(document, cascade, owner);
+            let page = marker_page(
+                item_line
+                    .zip(marker_root_y.get(&owner).copied().flatten())
+                    .map(|(line, root_y)| root_y + line.center),
+                flow.as_ref(),
+                first_pages.get(&owner).copied(),
+            );
             let offset_y = match (item_line.map(|line| line.baseline), marker_baseline) {
                 (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
                 // Otherwise the marker is shaped with `line-height: normal`.
@@ -182,14 +209,44 @@ pub(super) fn prepare_markers(
                     offset_y,
                     color: style.color,
                     shadows: text_shadows(style),
-                    first_page: first_pages.get(&owner).map(|&(index, _)| index),
-                    first_page_origin: first_pages.get(&owner).map(|&(_, origin)| origin),
+                    page: page.map(|(index, _)| index),
+                    page_origin: page.map(|(_, origin)| origin),
                     line_center: item_line.map(|line| line.center),
                 },
             );
         }
     }
     Ok(markers)
+}
+
+/// The page (its index and flow origin) that draws the marker of a list item,
+/// given the flow position of the middle of the line the marker aligns with
+/// and the page of the item's first fragment.
+///
+/// The marker belongs to the line it aligns with (CSS Lists 3 §3.1), so it goes
+/// to the page holding that line's middle, which is a later page than the
+/// item's first when pagination pushed the line down, as it does after a block
+/// that fills the first page. An item without such a line, one placed more than
+/// once, as in columns, and a flow that runs across the page (`flow` is `None`)
+/// keep the marker on the item's first page.
+fn marker_page(
+    flow_center: Option<f32>,
+    flow: Option<&FlowPages<'_>>,
+    first: Option<(u32, f32)>,
+) -> Option<(u32, f32)> {
+    let (Some(center), Some(flow), Some((first_page, _))) = (flow_center, flow, first) else {
+        return first;
+    };
+    flow.around(center, center)
+        .filter(|page| {
+            page.page_index >= first_page
+                && page.flow_range.is_some_and(|(start, end)| {
+                    crate::layout::line_center_on_page(center, center, start, end)
+                })
+        })
+        .min_by_key(|page| page.page_index)
+        .map(|page| (page.page_index, page.content_origin_y))
+        .or(first)
 }
 
 /// Identifies one line of a paragraph, independent of its paint coordinates.
@@ -1008,8 +1065,9 @@ struct FirstLine {
 /// Finds `owner`'s first formatted line.
 ///
 /// The first line may belong to the first in-flow block child, and so on
-/// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
-/// item. Floats, absolutely positioned boxes and the marker itself are
+/// down (CSS Pseudo 4 §2.1.1); a block child with no line of its own is passed
+/// over for the content after it, and an item with no line anywhere has none.
+/// Floats, absolutely positioned boxes and the marker itself are
 /// passed over, and a relative offset moves only the box it applies to. A
 /// flex container orders its items itself, so its first line is the first
 /// baseline its layout recorded; a grid container takes the line of an item
@@ -1032,81 +1090,83 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 .finished_style(cascade, id)
                 .is_some_and(|style| style.view().float() == Float::None)
     };
-    let (mut id, mut y) = (owner, 0.0);
-    loop {
-        let node = document.nodes.get(id)?;
-        if matches!(
-            node.display(),
-            raikiri_style::property::DisplayValue::Table
-                | raikiri_style::property::DisplayValue::InlineTable
-        ) && !node.is_ifc_root()
-        {
-            return node.table_first_baseline.map(|baseline| FirstLine {
-                baseline: y + baseline,
-                center: y + baseline,
-            });
-        }
-        if node.formatting_context == FormattingContext::Grid {
-            let line = grid_first_line(document, cascade, id)?;
+    let node = document.nodes.get(owner)?;
+    if matches!(
+        node.display(),
+        raikiri_style::property::DisplayValue::Table
+            | raikiri_style::property::DisplayValue::InlineTable
+    ) && !node.is_ifc_root()
+    {
+        return node.table_first_baseline.map(|baseline| FirstLine {
+            baseline,
+            center: baseline,
+        });
+    }
+    if node.formatting_context == FormattingContext::Grid {
+        return grid_first_line(document, cascade, owner);
+    }
+    if node.formatting_context == FormattingContext::Flex {
+        // A flex container orders its items itself, and its layout
+        // records the first baseline they give it. The middle of that
+        // line comes from the first item, in layout order, whose first
+        // line has the baseline; when none matches, the baseline stands
+        // in.
+        let baseline = node.flex_first_baseline?;
+        let center = node
+            .layout_children()
+            .iter()
+            .filter(|&&child| laid_out(child))
+            .find_map(|&child| {
+                let line = first_line(document, cascade, child)?;
+                let top = document.nodes[child].layout.location.y
+                    - layout_applied_relative_offset_y(document, cascade, child);
+                ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
+            })
+            .unwrap_or(baseline);
+        return Some(FirstLine { baseline, center });
+    }
+    let own_lines = node
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .filter(|lines| !lines.lines.is_empty());
+    // The blocks that come before the first line of the item: the ones placed
+    // before line zero when the item lays out lines of its own, else all its
+    // block children.
+    let blocks: Vec<usize> = match own_lines {
+        Some(lines) => lines
+            .block_line_starts
+            .iter()
+            .filter(|&&(child, line)| line == 0 && in_flow(child))
+            .map(|&(child, _)| child)
+            .collect(),
+        None => block_children(document, owner, &in_flow),
+    };
+    // A block with no line of its own is passed over for the next content, as
+    // it is when the first line box is looked for in the tree.
+    for child in blocks {
+        if let Some(line) = first_line(document, cascade, child) {
+            // A relative offset moves the child, not the item's marker, so the
+            // offset that layout already applied is taken back out.
+            let y = document.nodes[child].layout.location.y
+                - layout_applied_relative_offset_y(document, cascade, child);
             return Some(FirstLine {
                 baseline: y + line.baseline,
                 center: y + line.center,
             });
         }
-        if node.formatting_context == FormattingContext::Flex {
-            // A flex container orders its items itself, and its layout
-            // records the first baseline they give it. The middle of that
-            // line comes from the first item, in layout order, whose first
-            // line has the baseline; when none matches, the baseline stands
-            // in.
-            let baseline = node.flex_first_baseline?;
-            let center = node
-                .layout_children()
-                .iter()
-                .filter(|&&child| laid_out(child))
-                .find_map(|&child| {
-                    let line = first_line(document, cascade, child)?;
-                    let top = document.nodes[child].layout.location.y
-                        - layout_applied_relative_offset_y(document, cascade, child);
-                    ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
-                })
-                .unwrap_or(baseline);
-            return Some(FirstLine {
-                baseline: y + baseline,
-                center: y + center,
-            });
-        }
-        let child = match node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {
-            Some(lines) if !lines.lines.is_empty() => {
-                // A block placed before line zero holds the first line.
-                let before = lines
-                    .block_line_starts
-                    .iter()
-                    .find(|&&(child, line)| line == 0 && in_flow(child));
-                match before {
-                    Some(&(child, _)) => child,
-                    None => {
-                        // The lines start inside the border and padding,
-                        // moved down by any pagination shift.
-                        let layout = node.layout;
-                        let top = y + layout.border.top + layout.padding.top + lines.shift_of(0);
-                        return lines.lines.first().map(|line| FirstLine {
-                            baseline: top
-                                + line.block_offset()
-                                + line.baseline(shodo::geometry::BaselineKind::Alphabetic),
-                            center: top + line.block_offset() + line.block_size() / 2.0,
-                        });
-                    }
-                }
-            }
-            _ => first_block_child(document, id, &in_flow)?,
-        };
-        // A relative offset moves the child, not the item's marker, so the
-        // offset that layout already applied is taken back out.
-        y += document.nodes[child].layout.location.y
-            - layout_applied_relative_offset_y(document, cascade, child);
-        id = child;
     }
+    // The lines start inside the border and padding, moved down by any
+    // pagination shift.
+    let lines = own_lines?;
+    let layout = node.layout;
+    let top = layout.border.top + layout.padding.top + lines.shift_of(0);
+    lines.lines.first().map(|line| FirstLine {
+        baseline: top
+            + line.block_offset()
+            + line.baseline(shodo::geometry::BaselineKind::Alphabetic),
+        center: top + line.block_offset() + line.block_size() / 2.0,
+    })
 }
 
 /// A grid container's first line, from its border edge (CSS Grid 1 §11.5).
@@ -1191,27 +1251,25 @@ fn layout_applied_relative_offset_y(
     }
 }
 
-/// The first in-flow block-level child of `id`, which has no line of its
-/// own. Inline-level children generated no line there, so they are passed
+/// The in-flow block-level children of `id`, in order, when it has no line of
+/// its own. Inline-level children generated no line there, so they are passed
 /// over, and the children of a `display: contents` element count as its
 /// parent's.
-fn first_block_child(
-    document: &Document,
-    id: usize,
-    in_flow: &impl Fn(usize) -> bool,
-) -> Option<usize> {
-    document.nodes.get(id)?.children.iter().find_map(|&child| {
+fn block_children(document: &Document, id: usize, in_flow: &impl Fn(usize) -> bool) -> Vec<usize> {
+    let mut blocks = Vec::new();
+    for &child in &document.nodes[id].children {
         if !in_flow(child) {
-            return None;
+            continue;
         }
         match document.nodes[child].display() {
             raikiri_style::property::DisplayValue::Contents => {
-                first_block_child(document, child, in_flow)
+                blocks.extend(block_children(document, child, in_flow));
             }
-            display if display.is_inline_level() => None,
-            _ => Some(child),
+            display if display.is_inline_level() => {}
+            _ => blocks.push(child),
         }
-    })
+    }
+    blocks
 }
 
 fn marker_runs<'a>(
@@ -1225,9 +1283,10 @@ fn marker_runs<'a>(
     let Some(marker) = document.page_projection.markers.get(&owner) else {
         return;
     };
-    // A marker belongs to the first principal fragment, including when the
-    // item is empty; it is never duplicated on the item's continuation pages.
-    if !root.is_repeat && marker.first_page != Some(page.page_index) {
+    // A marker is drawn once, on the page holding the line it aligns with, or
+    // on the item's first page when it aligns with none; it is never
+    // duplicated on the item's other pages.
+    if !root.is_repeat && marker.page != Some(page.page_index) {
         return;
     }
     let (dx, dy) = page.flow_shift(root.is_repeat);

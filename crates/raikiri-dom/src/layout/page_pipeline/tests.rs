@@ -16447,6 +16447,44 @@ fn paragraph_line_moves_start_each_page_with_the_line_that_does_not_fit() {
 }
 
 #[test]
+fn positioned_line_moves_start_the_next_page_with_the_line_that_crosses() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines: Vec<(f32, f32)> = (0..7)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    // Lines that fit need no move.
+    assert_eq!(positioned_line_moves(&lines[..3], 0.0, &pages), Vec::new());
+    // The line that crosses each page end starts the next page, whatever the
+    // orphans and widows say, and the lines after it follow.
+    assert_eq!(
+        positioned_line_moves(&lines, 0.0, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // The first line moves too: the page breaks before the box that holds it.
+    assert_eq!(
+        positioned_line_moves(&lines, 80.0, &pages),
+        vec![(0, 20.0, 1), (3, 10.0, 2), (6, 10.0, 3)]
+    );
+    // A box that starts on a later page breaks at the end of that page.
+    assert_eq!(
+        positioned_line_moves(&lines[..3], 150.0, &pages),
+        vec![(1, 20.0, 2)]
+    );
+    // A line that starts a page stays, though it is taller than the page, and
+    // so does a line that crosses a page end but fits no page.
+    assert_eq!(
+        positioned_line_moves(&[(0.0, 150.0)], 100.0, &pages),
+        Vec::new()
+    );
+    assert_eq!(
+        positioned_line_moves(&[(0.0, 120.0)], 50.0, &pages),
+        Vec::new()
+    );
+    // A box without lines has nothing to move.
+    assert_eq!(positioned_line_moves(&[], 50.0, &pages), Vec::new());
+}
+
+#[test]
 fn paragraph_line_moves_keep_the_edges_below_the_last_line_with_it() {
     let pages = PageOrigins::new(&[], 100.0);
     let lines: Vec<(f32, f32)> = (0..7)
@@ -19938,6 +19976,44 @@ fn a_replaced_block_that_fits_the_page_exactly_stays() {
         &[],
     );
     assert_eq!(ys, [0.0]);
+}
+
+#[test]
+fn a_margin_kept_after_a_forced_break_moves_a_replaced_block_on_when_it_crosses_the_page_edge() {
+    // `div(40px)` with a forced break after it, a block 80px tall with a 30px
+    // margin on each side, `div(10px)`, on 100px pages. The forced break
+    // keeps the margin above the block, so the block starts below the top of
+    // the second page and ends past its edge: it moves on to the third page,
+    // where the margin is cut, and the flow follows.
+    let ys = |image_height: u32| {
+        paginated_ys(
+            |doc, body| {
+                let before = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:40px;break-after:page"),
+                );
+                let image = doc.append_element(
+                    Some(body),
+                    "img",
+                    Some(&format!(
+                        "display:block;width:100px;height:{image_height}px;margin:30px 0"
+                    )),
+                );
+                let after = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:10px"),
+                );
+                vec![before, image, after]
+            },
+            &[],
+        )
+    };
+    assert_eq!(ys(80), [0.0, 200.0, 300.0]);
+    // One that fits below the margin stays there; the margin after it is cut
+    // by the page edge.
+    assert_eq!(ys(60), [0.0, 130.0, 200.0]);
 }
 
 #[test]

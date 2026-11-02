@@ -64,6 +64,29 @@ impl Metrics {
         content_box_ratio: bool,
         inputs: LayoutInput,
     ) -> Self {
+        Self::resolve_flexed(
+            style,
+            width_stands_in,
+            content_box_ratio,
+            inputs,
+            Size {
+                width: false,
+                height: false,
+            },
+        )
+    }
+
+    /// As [`Self::resolve`], for a flex item whose size on the axes `flexed`
+    /// names is the main size the flex algorithm settled. That size is held to
+    /// the maximum the box states, not to one carried over from the other
+    /// axis, whatever the minimum of the axis is.
+    pub(crate) fn resolve_flexed(
+        style: &Style,
+        width_stands_in: bool,
+        content_box_ratio: bool,
+        inputs: LayoutInput,
+        flexed: Size<bool>,
+    ) -> Self {
         let padding = style.padding.resolve_or_zero(inputs.parent_size.width);
         let border = style.border.resolve_or_zero(inputs.parent_size.width);
         let padding_border = padding + border;
@@ -192,14 +215,17 @@ impl Metrics {
         );
         // A size the parent imposed on such an axis was settled with that
         // minimum in mind, so only the maximum the box states caps it, not
-        // one carried over from the other axis.
+        // one carried over from the other axis. So is the main size of a flex
+        // item, which the flex algorithm settled with its own bounds.
         let limit = Size {
-            width: if inputs.known_dimensions.width.is_some() && width_eligible {
+            width: if inputs.known_dimensions.width.is_some() && (width_eligible || flexed.width) {
                 own_max.width
             } else {
                 max.width
             },
-            height: if inputs.known_dimensions.height.is_some() && height_eligible {
+            height: if inputs.known_dimensions.height.is_some()
+                && (height_eligible || flexed.height)
+            {
                 own_max.height
             } else {
                 max.height

@@ -146,17 +146,20 @@ impl Document {
         ))
     }
 
-    /// Where an outside text marker is drawn on the page whose flow starts
-    /// at `page.0`, as in [`crate::PositionedGlyphRun`]s of the page, where
-    /// `page.1` tells that the painter is drawing content repeated on every
-    /// page, such as a fixed box: `Some(None)` on any page but the item's
-    /// first, unless the item is repeated there, else the top of
-    /// the marker's line for a list item whose border edge is painted at
-    /// `top` on a page whose content ends at `page_bottom`. Its baseline
-    /// meets the item's first line, and it stays on the page when that line
-    /// starts on a later one. The line's page is decided where layout put
-    /// it, before the translations that paint adds. `None` when layout
-    /// prepared no text marker for `owner`.
+    /// Where an outside text marker is drawn, for the painter.
+    ///
+    /// `page` is the flow start of the page being painted and whether the
+    /// painter is drawing content repeated on every page, such as a fixed box.
+    /// `top` is where the list item's border edge is painted and `page_bottom`
+    /// the end of the page's content.
+    ///
+    /// The marker is drawn once, on the page holding the middle of the item's
+    /// first line, which is a later page than the item's first when pagination
+    /// pushed that line down. That page is decided where layout put the line,
+    /// before the translations that paint adds. Returns `Some(None)` on any
+    /// other page, unless the item is repeated there, and otherwise the top of
+    /// the marker's line, whose baseline meets the item's first line. Returns
+    /// `None` when layout prepared no text marker for `owner`.
     #[doc(hidden)]
     pub fn list_marker_text_top(
         &self,

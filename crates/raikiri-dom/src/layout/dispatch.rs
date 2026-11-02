@@ -697,6 +697,15 @@ impl LayoutSession<'_> {
     /// its item `node`, with the box style `style`, to while the item's main
     /// size is measured.
     ///
+    /// Whether the main axis of the flex container that `node` is an item of
+    /// is the horizontal one, or `None` if `node` is no flex item.
+    pub(crate) fn flex_main_axis_is_width(&self, node: usize) -> Option<bool> {
+        let container = self
+            .taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)?;
+        Some(self.physical_style(container).flex_direction_is_row())
+    }
+
     /// A container that wraps its items onto more than one line does not take
     /// the cross size it stretches an item with an `auto` cross size to as
     /// definite then, so that size gives the item no main size through a ratio.
@@ -1521,6 +1530,19 @@ pub(crate) use vertical_block::{
 };
 pub(crate) use vertical_oof::used_writing_mode;
 
+/// Whether `inputs` lay out the flex item `idx` at the main size it has
+/// flexed to, with a cross size that is left to the item: a ratio that is
+/// hidden from the flex algorithm gives that cross size from the main size
+/// (see [`raikiri_layout_style::FlexItemRatio::CrossFollowsMain`]).
+fn flex_item_follows_main_size(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> bool {
+    inputs.sizing_mode == SizingMode::ContentSize
+        && inputs.known_dimensions.width.is_some() != inputs.known_dimensions.height.is_some()
+        && matches!(
+            tree.flex_item_ratio(idx),
+            raikiri_layout_style::FlexItemRatio::CrossFollowsMain
+        )
+}
+
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
 fn compute_ifc_root(
@@ -1547,7 +1569,8 @@ fn compute_ifc_root(
     // leaf is given the width the ratio settles and no ratio, and the height
     // follows once the content is measured.
     let ratio = layout_style.aspect_ratio.filter(|_| {
-        inputs.sizing_mode == SizingMode::InherentSize
+        (inputs.sizing_mode == SizingMode::InherentSize
+            || flex_item_follows_main_size(tree, idx, &inputs))
             && tree.nodes[idx].multicol.is_none()
             && tree.nodes[idx]
                 .ifc
@@ -4161,11 +4184,9 @@ fn with_ratio_width(
             .height
             .maybe_resolve(inputs.parent_size.height)
             .is_some();
-    let Some(width) = metrics
-        .preferred
-        .width
-        .filter(|_| metrics.ratio_width || stated_height)
-    else {
+    let Some(width) = metrics.preferred.width.filter(|_| {
+        metrics.ratio_width || stated_height || flex_item_follows_main_size(tree, idx, &inputs)
+    }) else {
         return inputs;
     };
     if !metrics.ratio_width {
