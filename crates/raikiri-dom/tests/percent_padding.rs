@@ -249,6 +249,59 @@ fn percent_padding_of_a_vertical_flex_item_refers_to_the_container_height() {
 }
 
 #[test]
+fn percent_padding_of_a_vertical_flex_item_has_a_content_rect_that_matches_its_border_box() {
+    // Every side of the item's padding refers to the 150px inline size of the
+    // container, so 10% is 15px on all four sides, whether the item keeps its
+    // own size or stretches across the container, and the content box is what
+    // the padding leaves inside the border box. Chromium resolves the same
+    // padding to 15px on each side.
+    let check = |style: &str,
+                 align: &str,
+                 border: (f32, f32),
+                 content: (f32, f32),
+                 inset: (f32, f32)| {
+        let html = format!(
+            "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+             .flex {{ display: flex; flex-direction: column; writing-mode: vertical-rl; height: 150px; {align} }}</style>\
+             <div class=flex><div id=i style=\"{style}\">XX</div></div>"
+        );
+        let ((x, y, width, height), (cx, cy, cw, ch)) = boxes(&html, "i");
+        assert_close(width, border.0, "border-box width", &html);
+        assert_close(height, border.1, "border-box height", &html);
+        assert_close(cw, content.0, "content width", &html);
+        assert_close(ch, content.1, "content height", &html);
+        assert_close(cx - x, inset.0, "content left inset", &html);
+        assert_close(cy - y, inset.1, "content top inset", &html);
+    };
+    // The bottom padding alone, as in the original report: the item keeps its
+    // 40px of text and adds 15px below it.
+    check(
+        "flex-basis: 0; padding-bottom: 10%",
+        "align-items: flex-start",
+        (20.0, 55.0),
+        (20.0, 40.0),
+        (0.0, 0.0),
+    );
+    // The same item stretched across the container: the padding stays 15px and
+    // the content box takes the rest.
+    check(
+        "flex-basis: 0; padding-bottom: 10%",
+        "",
+        (20.0, 150.0),
+        (20.0, 135.0),
+        (0.0, 0.0),
+    );
+    // All four sides.
+    check(
+        "padding: 10%",
+        "align-items: flex-start",
+        (50.0, 70.0),
+        (20.0, 40.0),
+        (15.0, 15.0),
+    );
+}
+
+#[test]
 fn percent_padding_of_a_vertical_grid_item_refers_to_its_grid_area() {
     // The percentage edges of a grid item refer to the inline size of its grid
     // area, here the 100px column: 10% adds 10px to the 40px text. The
