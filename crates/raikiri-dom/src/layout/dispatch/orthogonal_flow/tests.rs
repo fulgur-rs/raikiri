@@ -613,3 +613,89 @@ fn a_vertical_box_of_blocks_fits_the_page_height_as_a_flex_item_or_a_float() {
         assert_eq!(absolute_rect(&doc, paragraph).3, 600.0, "{parent} {css}");
     }
 }
+
+#[test]
+fn changing_a_grid_row_room_does_not_reuse_the_previous_column_measurement() {
+    use crate::layout::context::LayoutSession;
+    use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, RequestedAxis, RunMode};
+    let mut doc = Document::new();
+    let grid = doc.append_element(
+        Some(0),
+        "div",
+        Some("display:grid;height:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let item = doc.append_element(
+        Some(grid),
+        "div",
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    doc.append_text(item, "AAAA BBBB");
+    doc.mark_in_document_flags();
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(with_ahem(&mut doc), &cascade);
+    tree.context.grid_inner_heights.push((grid, Some(100.0)));
+    let input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Horizontal,
+        available_space: raikiri_layout_geometry::Size {
+            width: AvailableSpace::MinContent,
+            height: AvailableSpace::MaxContent,
+        },
+        ..LayoutInput::HIDDEN
+    };
+    assert_eq!(
+        tree.compute_child_layout(NodeId::from(item), input)
+            .size
+            .width,
+        10.0
+    );
+    tree.context.grid_row_rooms.push((grid, vec![(item, 50.0)]));
+    assert_eq!(
+        tree.compute_child_layout(NodeId::from(item), input)
+            .size
+            .width,
+        20.0
+    );
+    tree.context.grid_row_rooms.pop();
+    assert_eq!(
+        tree.compute_child_layout(NodeId::from(item), input)
+            .size
+            .width,
+        10.0
+    );
+}
+
+#[test]
+fn provisional_grid_row_rooms_restore_the_previous_scope_after_a_panic() {
+    use crate::layout::context::LayoutSession;
+    use crate::layout::protocol::{LayoutInput, RunMode};
+
+    let mut doc = Document::new();
+    let grid = doc.append_element(Some(0), "div", Some("display:grid;height:100px"));
+    doc.append_element(
+        Some(grid),
+        "div",
+        Some("display:block;writing-mode:vertical-rl;width:10px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.context.grid_row_rooms.push((0, Vec::new()));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::with_grid_row_rooms(
+            &mut tree,
+            grid.into(),
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                ..LayoutInput::HIDDEN
+            },
+            Some(100.0),
+            |tree| {
+                assert_eq!(tree.context.grid_row_rooms.len(), 2);
+                panic!("provisional row layout interrupted");
+            },
+        );
+    }));
+    assert!(result.is_err());
+    assert_eq!(tree.context.grid_row_rooms, [(0, Vec::new())]);
+}

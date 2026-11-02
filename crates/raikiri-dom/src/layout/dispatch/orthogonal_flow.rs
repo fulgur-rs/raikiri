@@ -17,7 +17,8 @@
 //! parent. A vertical box with a width of its own, a float, or an item of a row
 //! flex container is not stretched by the parent, yet fits the same height
 //! ([`with_page_room`]). A vertical item of a horizontal grid that is asked for
-//! the width it gives a column fits the content height of the grid, or no height
+//! the width it gives a column fits its provisional row area. Before that area
+//! is available, it uses the definite content height of the grid, or no height
 //! when the grid has none.
 
 use crate::layout::context::LayoutSession;
@@ -201,15 +202,14 @@ pub(super) fn with_page_room(
         inputs.available_space.height = offered_height(tree, idx, &inputs);
         inputs
     } else {
-        with_grid_item_room(tree, idx, inputs)
+        inputs
     }
 }
 
 /// `inputs` for the vertical item `idx` of a horizontal grid with the height it
 /// fits its lines in as the available height, when they ask for the width it
-/// gives a column ([`grid_item_room`]). A paragraph root takes it through
-/// [`with_page_room`]; a grid container that runs on the axes of its vertical
-/// writing mode takes it here.
+/// gives a column ([`grid_item_room`]). Dispatch applies this before looking
+/// in the layout cache, so each row room is part of the measured input.
 pub(super) fn with_grid_item_room(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -353,14 +353,54 @@ pub(super) fn grid_item_content_height(
     })
 }
 
+/// Measure the native grid rows before intrinsic column contributions need
+/// the inline room of vertical items. Keep only item area heights, and leave
+/// the container's own width to the ordinary layout that follows.
+pub(super) fn with_grid_row_rooms<R>(
+    tree: &mut LayoutSession<'_>,
+    grid: NodeId,
+    inputs: LayoutInput,
+    height: Option<f32>,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let owner = usize::from(grid);
+    if height.is_none()
+        || !has_vertical_item(tree, grid)
+        || tree
+            .context
+            .grid_row_rooms
+            .iter()
+            .any(|(held, _)| *held == owner)
+    {
+        return layout(tree);
+    }
+    let depth = tree.context.grid_row_rooms.len();
+    tree.context.grid_row_rooms.push((owner, Vec::new()));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let rooms =
+            crate::layout::taffy_adapter::algorithms::grid_item_row_rooms(tree, grid, inputs);
+        tree.context.grid_row_rooms[depth].1 = rooms
+            .into_iter()
+            .map(|(item, height)| (usize::from(item), height))
+            .collect();
+        layout(tree)
+    }));
+    tree.context.grid_row_rooms.truncate(depth);
+    match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 /// The height that the vertical item `idx` of a horizontal grid fits its lines
 /// in, when `inputs` ask for the width it contributes to a column.
 ///
 /// Taffy sizes the columns before the rows, and offers the item a `min-content`
 /// or `max-content` height meanwhile, which would break its lines at the
-/// smallest height. The room to fit them in is the content height of the grid
-/// when that is definite, as for an item of a row flex container, and no limit
-/// when it is not: the rows grow to the lines of the item. A request for the
+/// smallest height. Use the native settled area when supplied, otherwise the
+/// provisional row area measured for this item. During that measurement,
+/// fall back to the grid content height when definite, or no limit when it is
+/// not: the rows grow to the lines of the item. A request for the
 /// height is the very inline size that is measured, and keeps its intrinsic
 /// space, as does a layout in rows the grid has settled.
 fn grid_item_room(
@@ -375,6 +415,25 @@ fn grid_item_room(
         return None;
     }
     let grid = horizontal_grid_of_vertical_item(tree, idx)?;
+    // A definite containing-block height identifies an area the native rows
+    // already settled. A definite available space alone may just be the
+    // whole grid's max-height, not the room of this item.
+    if inputs.parent_size.height.is_some()
+        && let AvailableSpace::Definite(height) = inputs.available_space.height
+    {
+        return Some(AvailableSpace::Definite(height));
+    }
+    if let Some(height) = tree
+        .context
+        .grid_row_rooms
+        .iter()
+        .rev()
+        .find(|(owner, _)| *owner == grid)
+        .and_then(|(_, rooms)| rooms.iter().find(|(item, _)| *item == idx))
+        .map(|(_, height)| *height)
+    {
+        return Some(page_room(tree, idx, inputs, Some(height)));
+    }
     let &(_, height) = tree
         .context
         .grid_inner_heights

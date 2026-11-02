@@ -41,10 +41,14 @@ pub(crate) struct LayoutContext {
     /// out fit their lines in, innermost last: the height of its content box
     /// where it is definite, else the height its `max-height` leaves where a
     /// column follows its items, else none (see `grid_item_content_height` in
-    /// [`crate::layout::dispatch`]). A grid
-    /// does not hand its rows to its items while it sizes the columns, as they
-    /// are not yet known then.
+    /// [`crate::layout::dispatch`]). Provisional areas in `grid_row_rooms`
+    /// take precedence once measured.
     pub(crate) grid_inner_heights: Vec<(usize, Option<f32>)>,
+    /// Provisional row-area heights by grid owner and in-flow item. An empty
+    /// entry marks a grid whose row measurement is already running.
+    pub(crate) grid_row_rooms: Vec<(usize, Vec<(usize, f32)>)>,
+    /// Owners whose size-only layout must also provide a first baseline.
+    pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
@@ -287,6 +291,26 @@ impl<'doc> LayoutSession<'doc> {
             .box_key(idx)
             .expect("cache override has a box key");
         self.document.layout_cache_context.override_changed(key);
+    }
+
+    /// Request a horizontal box's first baseline during size-only layout,
+    /// restoring the request stack even if measuring a descendant panics.
+    pub(crate) fn with_baseline_measure<R>(
+        &mut self,
+        idx: usize,
+        measure: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if self.nodes[idx].used_writing_mode.is_vertical() {
+            return measure(self);
+        }
+        let depth = self.context.baseline_measure_owners.len();
+        self.context.baseline_measure_owners.push(idx);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| measure(self)));
+        self.context.baseline_measure_owners.truncate(depth);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// Enclose both Taffy's lookup and its eventual store in the same frame.

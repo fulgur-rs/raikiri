@@ -30,6 +30,27 @@ pub(super) struct Flow {
     pub oof_candidates: OofCandidates,
 }
 
+fn measure_in_flow_child(
+    tree: &mut LayoutSession<'_>,
+    parent: NodeId,
+    child: NodeId,
+    inputs: LayoutInput,
+    context: Option<&mut BlockContext>,
+) -> LayoutOutput {
+    let measure = |tree: &mut LayoutSession<'_>| {
+        tree.compute_child_layout_with_block_ctx(child, inputs, context)
+    };
+    if inputs.run_mode == RunMode::ComputeSize
+        && tree.context.baseline_measure_owners.last() == Some(&usize::from(parent))
+    {
+        // Block flow collects its baseline from an in-flow child's output,
+        // just as native flex/grid do through their placement callbacks.
+        tree.with_baseline_measure(usize::from(child), measure)
+    } else {
+        measure(tree)
+    }
+}
+
 fn place_inline_axis(
     style: &Style,
     direction: Direction,
@@ -674,8 +695,7 @@ pub(super) fn layout(
                     joins,
                 );
                 sub.set_origin_resolved(final_pass);
-                let output =
-                    tree.compute_child_layout_with_block_ctx(child, child_input, Some(&mut sub));
+                let output = measure_in_flow_child(tree, node, child, child_input, Some(&mut sub));
                 (
                     output,
                     sub.floated_content_height_contribution(),
@@ -683,7 +703,7 @@ pub(super) fn layout(
                 )
             } else {
                 (
-                    tree.compute_child_layout_with_block_ctx(child, child_input, None),
+                    measure_in_flow_child(tree, node, child, child_input, None),
                     f32::NEG_INFINITY,
                     [false; 2],
                 )

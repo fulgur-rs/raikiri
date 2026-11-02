@@ -15,10 +15,10 @@ use crate::layout::protocol::{
     AvailableSpace, Baselines, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId,
     OofCandidates, RequestedAxis, RunMode, SizingMode,
 };
+use crate::layout::taffy_adapter::GridInfo;
 use crate::layout::taffy_adapter::algorithms::{
     compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
-use crate::layout::taffy_adapter::{GridInfo, RowSizing};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
@@ -1009,6 +1009,7 @@ impl LayoutSession<'_> {
     ) -> LayoutOutput {
         self.sync_layout_cache_mutations();
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
+        let inputs = orthogonal_flow::with_grid_item_room(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
@@ -1034,6 +1035,7 @@ impl LayoutSession<'_> {
         // A shared block context owns float placements and unresolved margin struts.
         // A size-only cache cannot replay them after a speculative layout is restored.
         let uncached = block_ctx.is_some()
+            || self.context.baseline_measure_owners.last() == Some(&idx)
             || std::mem::take(&mut self.context.group_child_uncached)
             || (paragraph && ifc_basis.is_some() && has_percent_edge(&self.physical_style(idx)))
             || self.context.size_contained_measure.last() == Some(&idx)
@@ -1440,7 +1442,11 @@ impl LayoutSession<'_> {
         let mut output = if let Some(basis) = edge_basis {
             self.with_resolved_edges(idx, basis, true, |tree| {
                 tree.with_cache_frame(idx, view_context, |tree| {
-                    compute_cached_layout(tree, node_id, inputs, compute)
+                    if tree.context.baseline_measure_owners.last() == Some(&idx) {
+                        compute(tree, node_id, inputs)
+                    } else {
+                        compute_cached_layout(tree, node_id, inputs, compute)
+                    }
                 })
             })
         } else if uncached {
@@ -1469,7 +1475,10 @@ impl LayoutSession<'_> {
         // not move the baseline its parent aligns to.
         // spec: https://www.w3.org/TR/css-align-3/#baseline-export
         let scrolls = is_scroll_container(self.physical_style(idx).overflow());
-        if scrolls && inputs.run_mode == RunMode::PerformLayout {
+        if scrolls
+            && (inputs.run_mode == RunMode::PerformLayout
+                || self.context.baseline_measure_owners.last() == Some(&idx))
+        {
             let block_size = if vertical {
                 output.size.width
             } else {
@@ -1765,8 +1774,20 @@ fn compute_ifc_root(
             };
             height.min(max).max(min)
         });
+    let leaf_inputs = if inputs.run_mode == RunMode::ComputeSize
+        && tree.context.baseline_measure_owners.last() == Some(&idx)
+    {
+        // The leaf algorithm must call the measure closure even when both
+        // dimensions are known. The closure still measures without placement.
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            ..inputs
+        }
+    } else {
+        inputs
+    };
     let mut output = compute_leaf_layout(
-        inputs,
+        leaf_inputs,
         &LeafStyle::new(&layout_style),
         resolve_calc,
         |known, available| {
@@ -4218,7 +4239,6 @@ fn with_clamped_keyword_width(
 /// A container with a preferred aspect ratio and an `auto` height is given the
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
-    let inputs = orthogonal_flow::with_grid_item_room(tree, usize::from(node_id), inputs);
     content_limits::with_vertical_ratio_stated_size_clamp(
         tree,
         node_id,
@@ -4657,7 +4677,13 @@ fn grid_layout_sized(
                 // for this layout of the grid only: the limits above read
                 // the minimum widths as the author wrote them.
                 content_limits::with_grid_item_ratio_overrides(tree, node_id, |tree| {
-                    algorithm(tree, node_id, inputs)
+                    orthogonal_flow::with_grid_row_rooms(
+                        tree,
+                        node_id,
+                        inputs,
+                        size.height.and(item_room),
+                        |tree| algorithm(tree, node_id, inputs),
+                    )
                 })
             }
         },
@@ -5128,58 +5154,11 @@ impl LayoutSession<'_> {
     /// pagination and the out-of-flow positioning pass.
     pub(crate) fn set_detailed_grid_info(&mut self, node_id: NodeId, info: GridInfo) {
         let parent = usize::from(node_id);
-        let children = TaffyChildIter::new_for_session(self, parent)
-            .filter(|&child| {
-                self.nodes[child].layout_display() != Display::None
-                    && self.nodes[child].layout_position() != Position::Absolute
-            })
-            .collect::<Vec<_>>();
-
-        // The grid algorithm lists the items in flow in source order. Pair
-        // those resolved rows with the same child projection that it received,
-        // so pagination can order by actual placement rather than trying to
-        // reconstruct auto-placement or relative offsets.
-        debug_assert_eq!(children.len(), info.items().len());
-        self.nodes[parent].grid_item_row_starts = children
-            .iter()
-            .zip(info.items())
-            .map(|(&child, item)| (child, item.row_start))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        let rows = RowSizing::of(&self.physical_style(parent), info.row_counts());
-        // The rows run along the block axis: the physical height, or the
-        // physical width in a vertical writing mode.
-        let vertical = grid_oof::right_to_left(self, parent).is_some();
-        self.nodes[parent].grid_items_without_baseline = children
-            .iter()
-            .zip(info.items())
-            .filter(|&(&child, item)| {
-                let spanned = usize::from(item.row_start.saturating_sub(1))
-                    ..usize::from(item.row_end.saturating_sub(1));
-                let size = self.physical_style(child).size();
-                (if vertical { size.width } else { size.height }).uses_percentage()
-                    && rows.any_sized_by_content_or_free_space(spanned)
-            })
-            .map(|(&child, _)| child)
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        // The areas are on the layout axes of the grid, which are the physical
-        // ones swapped in a vertical writing mode.
-        self.nodes[parent].grid_item_areas = children
-            .iter()
-            .enumerate()
-            .filter_map(|(index, &child)| {
-                let area = info.item_area_size(index)?;
-                Some((child, if vertical { area.transpose() } else { area }))
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        self.nodes[parent].grid_item_column_starts = children
-            .into_iter()
-            .zip(info.items())
-            .map(|(child, item)| (child, item.column_start))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let items = grid_baseline::recorded_items(self, parent, &info);
+        self.nodes[parent].grid_item_row_starts = items.rows;
+        self.nodes[parent].grid_item_column_starts = items.columns;
+        self.nodes[parent].grid_items_without_baseline = items.excluded;
+        self.nodes[parent].grid_item_areas = items.areas;
         self.nodes[parent].grid_column_count = info.column_count();
         self.context.grid_layout_info.insert(parent, info);
     }

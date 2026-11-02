@@ -582,3 +582,360 @@ fn a_vertical_item_lets_a_horizontal_row_shrink_to_the_limit_of_a_grid_as_in_chr
         ],
     );
 }
+
+#[test]
+fn multiple_rows_give_vertical_flex_items_their_row_height_during_column_measurement() {
+    assert_boxes(
+        "<div style='display:flex;width:400px'><div id=g style='display:grid;width:min-content;height:100px'><div id=i style='writing-mode:vertical-rl;display:flex'>AAAA BBBB</div><div id=j style='writing-mode:vertical-rl;display:flex'>CCCC DDDD</div></div></div>",
+        &[
+            ("g", [0.0, 0.0, 20.0, 100.0]),
+            ("i", [0.0, 0.0, 20.0, 50.0]),
+            ("j", [0.0, 50.0, 20.0, 50.0]),
+        ],
+    );
+}
+
+#[test]
+fn multiple_rows_give_vertical_paragraphs_their_row_height_during_column_measurement() {
+    assert_boxes(
+        "<div style='display:flex;width:400px'><div id=g style='display:grid;width:min-content;height:100px'><div id=i style='writing-mode:vertical-rl'>AAAA BBBB</div><div id=j style='writing-mode:vertical-rl'>CCCC DDDD</div></div></div>",
+        &[
+            ("g", [0.0, 0.0, 20.0, 100.0]),
+            ("i", [0.0, 0.0, 20.0, 50.0]),
+            ("j", [0.0, 50.0, 20.0, 50.0]),
+        ],
+    );
+}
+
+macro_rules! grid_row_cases {
+    ($($name:ident: $body:expr => [$(($id:expr, $rect:expr)),+ $(,)?];)+) => {
+        $(#[test] fn $name() { assert_boxes($body, &[$(($id, $rect)),+]); })+
+    };
+}
+
+grid_row_cases! {
+    row_room_vertical_rl_flex_auto100:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_auto80:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:80px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 80.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 40.0])];
+    row_room_vertical_rl_flex_auto180:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:180px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 180.0]), ("i", [0.0, 0.0, 10.0, 90.0]), ("j", [0.0, 90.0, 10.0, 90.0])];
+    row_room_vertical_rl_flex_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50px 50px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_unequal_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:30px 70px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 30.0]), ("j", [0.0, 30.0, 20.0, 70.0])];
+    row_room_vertical_rl_flex_percent:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50% 50%"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_unequal_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 2fr"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 60.0])];
+    row_room_vertical_rl_flex_zero_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:minmax(0,1fr) minmax(0,3fr)"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 25.0]), ("j", [0.0, 25.0, 20.0, 75.0])];
+    row_room_vertical_rl_flex_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:120px;row-gap:20px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 120.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 70.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_overflow_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;row-gap:50px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 90.0, 20.0, 40.0])];
+    row_room_vertical_rl_flex_min_item:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:flex;min-height:50px">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 55.0]), ("j", [0.0, 55.0, 20.0, 45.0])];
+    row_room_vertical_rl_flex_margin:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:flex;margin:10px 0">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 10.0, 20.0, 40.0]), ("j", [0.0, 60.0, 20.0, 40.0])];
+    row_room_vertical_rl_flex_padding:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:flex;padding:5px">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 55.0]), ("j", [0.0, 55.0, 30.0, 45.0])];
+    row_room_vertical_rl_flex_align_start:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;align-items:start"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_span:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:140px;grid-template-rows:1fr 1fr 1fr"><div id=i style="writing-mode:vertical-rl;display:flex;grid-row:1 / span 2">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;grid-row:3">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 140.0]), ("i", [0.0, 0.0, 20.0, 93.328125]), ("j", [0.0, 93.328125, 20.0, 46.671875])];
+    row_room_vertical_rl_flex_negative_row:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-rl;display:flex;grid-row:-3">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;grid-row:-2">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_three_rows:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:150px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div><div id=k style="writing-mode:vertical-rl;display:flex">EEEE FFFF</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 150.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0]), ("k", [0.0, 100.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_max_height:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;max-height:100px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_flex_mixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex;writing-mode:horizontal-tb;width:30px;height:20px">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 80.0]), ("j", [0.0, 80.0, 30.0, 20.0])];
+    row_room_vertical_rl_block_auto100:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_auto80:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:80px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 80.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 40.0])];
+    row_room_vertical_rl_block_auto180:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:180px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 180.0]), ("i", [0.0, 0.0, 10.0, 90.0]), ("j", [0.0, 90.0, 10.0, 90.0])];
+    row_room_vertical_rl_block_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50px 50px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_unequal_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:30px 70px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 30.0]), ("j", [0.0, 30.0, 20.0, 70.0])];
+    row_room_vertical_rl_block_percent:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50% 50%"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_unequal_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 2fr"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 60.0])];
+    row_room_vertical_rl_block_zero_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:minmax(0,1fr) minmax(0,3fr)"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 25.0]), ("j", [0.0, 25.0, 20.0, 75.0])];
+    row_room_vertical_rl_block_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:120px;row-gap:20px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 120.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 70.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_overflow_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;row-gap:50px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 90.0, 20.0, 40.0])];
+    row_room_vertical_rl_block_min_item:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:block;min-height:50px">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 55.0]), ("j", [0.0, 55.0, 20.0, 45.0])];
+    row_room_vertical_rl_block_margin:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:block;margin:10px 0">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 10.0, 20.0, 40.0]), ("j", [0.0, 60.0, 20.0, 40.0])];
+    row_room_vertical_rl_block_padding:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:block;padding:5px">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 55.0]), ("j", [0.0, 55.0, 30.0, 45.0])];
+    row_room_vertical_rl_block_align_start:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;align-items:start"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_span:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:140px;grid-template-rows:1fr 1fr 1fr"><div id=i style="writing-mode:vertical-rl;display:block;grid-row:1 / span 2">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;grid-row:3">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 140.0]), ("i", [0.0, 0.0, 20.0, 93.328125]), ("j", [0.0, 93.328125, 20.0, 46.671875])];
+    row_room_vertical_rl_block_negative_row:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-rl;display:block;grid-row:-3">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;grid-row:-2">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_three_rows:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:150px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div><div id=k style="writing-mode:vertical-rl;display:block">EEEE FFFF</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 150.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0]), ("k", [0.0, 100.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_max_height:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;max-height:100px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_mixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-rl;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block;writing-mode:horizontal-tb;width:30px;height:20px">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 80.0]), ("j", [0.0, 80.0, 30.0, 20.0])];
+    row_room_vertical_lr_flex_auto100:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_auto80:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:80px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 80.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 40.0])];
+    row_room_vertical_lr_flex_auto180:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:180px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 180.0]), ("i", [0.0, 0.0, 10.0, 90.0]), ("j", [0.0, 90.0, 10.0, 90.0])];
+    row_room_vertical_lr_flex_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50px 50px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_unequal_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:30px 70px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 30.0]), ("j", [0.0, 30.0, 20.0, 70.0])];
+    row_room_vertical_lr_flex_percent:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50% 50%"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_unequal_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 2fr"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 60.0])];
+    row_room_vertical_lr_flex_zero_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:minmax(0,1fr) minmax(0,3fr)"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 25.0]), ("j", [0.0, 25.0, 20.0, 75.0])];
+    row_room_vertical_lr_flex_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:120px;row-gap:20px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 120.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 70.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_overflow_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;row-gap:50px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 90.0, 20.0, 40.0])];
+    row_room_vertical_lr_flex_min_item:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:flex;min-height:50px">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 55.0]), ("j", [0.0, 55.0, 20.0, 45.0])];
+    row_room_vertical_lr_flex_margin:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:flex;margin:10px 0">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 10.0, 20.0, 40.0]), ("j", [0.0, 60.0, 20.0, 40.0])];
+    row_room_vertical_lr_flex_padding:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:flex;padding:5px">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 55.0]), ("j", [0.0, 55.0, 30.0, 45.0])];
+    row_room_vertical_lr_flex_align_start:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;align-items:start"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_span:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:140px;grid-template-rows:1fr 1fr 1fr"><div id=i style="writing-mode:vertical-lr;display:flex;grid-row:1 / span 2">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;grid-row:3">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 140.0]), ("i", [0.0, 0.0, 20.0, 93.328125]), ("j", [0.0, 93.328125, 20.0, 46.671875])];
+    row_room_vertical_lr_flex_negative_row:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-lr;display:flex;grid-row:-3">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;grid-row:-2">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_three_rows:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:150px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div><div id=k style="writing-mode:vertical-lr;display:flex">EEEE FFFF</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 150.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0]), ("k", [0.0, 100.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_max_height:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;max-height:100px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_mixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:flex;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex;writing-mode:horizontal-tb;width:30px;height:20px">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 80.0]), ("j", [0.0, 80.0, 30.0, 20.0])];
+    row_room_vertical_lr_block_auto100:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_auto80:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:80px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 80.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 40.0])];
+    row_room_vertical_lr_block_auto180:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:180px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 180.0]), ("i", [0.0, 0.0, 10.0, 90.0]), ("j", [0.0, 90.0, 10.0, 90.0])];
+    row_room_vertical_lr_block_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50px 50px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_unequal_fixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:30px 70px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 30.0]), ("j", [0.0, 30.0, 20.0, 70.0])];
+    row_room_vertical_lr_block_percent:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50% 50%"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_unequal_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 2fr"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 40.0, 20.0, 60.0])];
+    row_room_vertical_lr_block_zero_fr:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:minmax(0,1fr) minmax(0,3fr)"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 25.0]), ("j", [0.0, 25.0, 20.0, 75.0])];
+    row_room_vertical_lr_block_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:120px;row-gap:20px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 120.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 70.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_overflow_gap:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;row-gap:50px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 40.0]), ("j", [0.0, 90.0, 20.0, 40.0])];
+    row_room_vertical_lr_block_min_item:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:block;min-height:50px">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 55.0]), ("j", [0.0, 55.0, 20.0, 45.0])];
+    row_room_vertical_lr_block_margin:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:block;margin:10px 0">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 10.0, 20.0, 40.0]), ("j", [0.0, 60.0, 20.0, 40.0])];
+    row_room_vertical_lr_block_padding:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:block;padding:5px">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 55.0]), ("j", [0.0, 55.0, 30.0, 45.0])];
+    row_room_vertical_lr_block_align_start:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;align-items:start"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_span:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:140px;grid-template-rows:1fr 1fr 1fr"><div id=i style="writing-mode:vertical-lr;display:block;grid-row:1 / span 2">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;grid-row:3">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 140.0]), ("i", [0.0, 0.0, 20.0, 93.328125]), ("j", [0.0, 93.328125, 20.0, 46.671875])];
+    row_room_vertical_lr_block_negative_row:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:1fr 1fr"><div id=i style="writing-mode:vertical-lr;display:block;grid-row:-3">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;grid-row:-2">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_three_rows:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:150px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div><div id=k style="writing-mode:vertical-lr;display:block">EEEE FFFF</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 150.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0]), ("k", [0.0, 100.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_max_height:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;max-height:100px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_mixed:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=i style="writing-mode:vertical-lr;display:block;">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block;writing-mode:horizontal-tb;width:30px;height:20px">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 30.0, 100.0]), ("i", [0.0, 0.0, 30.0, 80.0]), ("j", [0.0, 80.0, 30.0, 20.0])];
+}
+
+grid_row_cases! {
+    row_room_vertical_rl_flex_calc_tracks:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:calc(25px + 25%) calc(75px - 25%)"><div id=i style="writing-mode:vertical-rl;display:flex">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:flex">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_rl_block_calc_tracks:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:calc(25px + 25%) calc(75px - 25%)"><div id=i style="writing-mode:vertical-rl;display:block">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;display:block">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_flex_calc_tracks:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:calc(25px + 25%) calc(75px - 25%)"><div id=i style="writing-mode:vertical-lr;display:flex">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:flex">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+    row_room_vertical_lr_block_calc_tracks:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:calc(25px + 25%) calc(75px - 25%)"><div id=i style="writing-mode:vertical-lr;display:block">AAAA BBBB</div><div id=j style="writing-mode:vertical-lr;display:block">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+}
+
+grid_row_cases! {
+    row_room_baseline_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:flex;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline">A</div><div id=j style="display:flex;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline">B</div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline">A</div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline">B</div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_block:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:block;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline">A</div><div id=j style="display:block;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline">B</div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_negative_implicit:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-rows:50px"><div id=i style="writing-mode:vertical-rl;grid-row:-3">AAAA BBBB</div><div id=j style="writing-mode:vertical-rl;grid-row:1">CCCC DDDD</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 20.0, 50.0]), ("j", [0.0, 50.0, 20.0, 50.0])];
+}
+
+grid_row_cases! {
+    row_room_baseline_nested_flex_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:flex;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline"><div style="display:flex">A</div></div><div id=j style="display:flex;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:flex">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_nested_flex_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:flex;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">A</div></div><div id=j style="display:flex;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_contain_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="contain:layout;display:flex;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline">A</div><div id=j style="contain:layout;display:flex;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline">B</div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 100.0]), ("i", [0.0, 10.0, 0.0, 20.0]), ("j", [5.0, 0.0, 0.0, 30.0]), ("k", [0.0, 30.0, 10.0, 70.0])];
+    row_room_baseline_nested_grid_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline"><div style="display:flex">A</div></div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:flex">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_nested_grid_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">A</div></div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_contain_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="contain:layout;display:grid;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline">A</div><div id=j style="contain:layout;display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline">B</div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 10.0, 100.0]), ("i", [0.0, 10.0, 0.0, 20.0]), ("j", [5.0, 0.0, 0.0, 30.0]), ("k", [0.0, 30.0, 10.0, 70.0])];
+}
+
+grid_row_cases! {
+    row_room_baseline_flex_cross_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=f style="display:flex;align-items:baseline"><div id=i style="display:flex;width:0;font-size:20px;line-height:20px;white-space:nowrap">A</div><div id=j style="display:flex;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap">B</div></div><div id=k style="writing-mode:vertical-rl">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [0.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_flex_cross_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=f style="display:flex;align-items:baseline"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;white-space:nowrap">A</div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap">B</div></div><div id=k style="writing-mode:vertical-rl">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [0.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+}
+
+grid_row_cases! {
+    row_room_baseline_scroll_block:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:95px;grid-template-columns:auto auto"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;padding-bottom:20px;white-space:nowrap;align-self:baseline"><div style="display:block;height:10px;overflow:auto">A</div></div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AA AA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 95.0]), ("i", [0.0, 18.0, 0.0, 30.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 48.0, 20.0, 47.0])];
+    row_room_baseline_scroll_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:95px;grid-template-columns:auto auto"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;padding-bottom:20px;white-space:nowrap;align-self:baseline"><div style="display:flex;height:10px;overflow:auto">A</div></div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AA AA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 95.0]), ("i", [0.0, 18.0, 0.0, 30.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 48.0, 20.0, 47.0])];
+    row_room_baseline_scroll_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:95px;grid-template-columns:auto auto"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;padding-bottom:20px;white-space:nowrap;align-self:baseline"><div style="display:grid;height:10px;overflow:auto">A</div></div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AA AA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 95.0]), ("i", [0.0, 18.0, 0.0, 30.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 48.0, 20.0, 47.0])];
+    row_room_baseline_percent_edges:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px"><div id=f style="display:flex;align-items:baseline"><div id=i style="display:grid;width:0;font-size:20px;line-height:20px;white-space:nowrap">A</div><div id=j style="display:grid;width:0;font-size:10px;line-height:10px;padding-top:10%;padding-bottom:20px;white-space:nowrap">B</div></div><div id=k style="writing-mode:vertical-rl">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 0.0, 0.0, 20.0]), ("j", [0.0, 6.0, 0.0, 32.0]), ("k", [0.0, 38.0, 20.0, 62.0])];
+}
+
+grid_row_cases! {
+    row_room_baseline_block_nested_flex:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:block;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline"><div style="display:flex">A</div></div><div id=j style="display:block;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:flex">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+    row_room_baseline_block_nested_grid:
+        r#"<div style="display:flex;width:400px"><div id=g style="display:grid;width:min-content;height:100px;grid-template-columns:auto auto"><div id=i style="display:block;width:0;font-size:20px;line-height:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">A</div></div><div id=j style="display:block;width:0;font-size:10px;line-height:10px;padding-top:20px;white-space:nowrap;align-self:baseline"><div style="display:grid">B</div></div><div id=k style="writing-mode:vertical-rl;grid-row:2;grid-column:1 / span 2">AAA AAA</div></div></div>"# =>
+        [("g", [0.0, 0.0, 20.0, 100.0]), ("i", [0.0, 12.0, 0.0, 20.0]), ("j", [10.0, 0.0, 0.0, 30.0]), ("k", [0.0, 32.0, 20.0, 68.0])];
+}
