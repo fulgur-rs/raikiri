@@ -481,9 +481,15 @@ fn block_border_box_end(
         .and_then(|root| root.lines.as_ref())
         .map(|lines| top + edges_top + lines.shifted_height() + edges_bottom)
         .unwrap_or(f32::NEG_INFINITY);
+    // A box that lays out vertical lines on its own axes keeps its physical
+    // height in its vertical size mapping; its `height` is the horizontal
+    // mapping, the block size. A vertical box in a horizontal flow is read
+    // by the former. A transposed cascade has no such mapping left.
+    let physical_height = super::bridge::vertical_logical_size(cascade, flow_root)
+        .map_or(&computed.height, |size| &size.height);
     // A definite height, even zero, fixes the border box; content
     // overflowing it is measured on its own.
-    if let Some(height) = used(&computed.height) {
+    if let Some(height) = used(physical_height) {
         let height = used(&computed.max_height).map_or(height, |max| height.min(max));
         return border_box_end(height.max(min_height)).max(generated_end);
     }
@@ -5110,11 +5116,7 @@ fn first_box_ancestor_at_start(
 ) -> usize {
     let block_top = current_abs_y(document, block);
     let mut child_top = block_top;
-    let mut unusual_coordinates = document.oof_coordinates.contains_key(&block)
-        || document.ifc_source_owner(block) != block
-        || document.nodes[block]
-            .flags
-            .contains(NodeFlags::IN_IFC_SUBTREE);
+    let mut unusual_coordinates = has_unusual_coordinates(document, block);
     let mut moved = block;
     let mut child = block;
     for parent in document
@@ -5187,6 +5189,72 @@ fn first_box_ancestor_at_start(
         moved = parent;
     }
     moved
+}
+
+/// The outermost box that moves to the next page together with `node_id`, a
+/// box that no page break goes through, when it is the first thing in the
+/// plain blocks around it: the ancestors that render nothing before it and
+/// have no top border or padding.
+///
+/// A page does not break between such an ancestor's start and its first child
+/// (CSS Break 3 §4.1), so the ancestor starts the next page with the child
+/// rather than leaving its start, and a fixed height or a background, behind on
+/// this one. An ancestor that is not a plain block of the normal flow, that
+/// lays its children out in columns, or that is placed by an inline formatting
+/// context or out of flow, is left to the box alone; the walk stops below it.
+///
+/// This narrows the walk of [`first_box_ancestor_at_start`], which also lets
+/// the padding and border of a block that starts below the page start move
+/// with a paragraph: an ancestor with a top edge is the place of a padded
+/// wrapper that stops this walk instead.
+fn leading_holder(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_start: f32,
+) -> usize {
+    let outermost = first_box_ancestor_at_start(document, cascade, node_id, body_id, page_start);
+    if outermost == node_id || has_unusual_coordinates(document, node_id) {
+        return node_id;
+    }
+    let top = current_abs_y(document, node_id);
+    let mut holder = node_id;
+    for ancestor in document
+        .layout_ancestors(node_id)
+        .take_while(|&id| id != body_id)
+    {
+        if document.nodes[ancestor].display() == DisplayValue::Contents {
+            continue;
+        }
+        let layout = &document.nodes[ancestor].layout;
+        if !is_plain_block_box(document, ancestor)
+            || document.nodes[ancestor].is_multicol_container()
+            || is_floating_box_for_pagination(document, cascade, ancestor)
+            || has_unusual_coordinates(document, ancestor)
+            || layout.border.top != 0.0
+            || layout.padding.top != 0.0
+            || (current_abs_y(document, ancestor) - top).abs() > 0.01
+        {
+            break;
+        }
+        holder = ancestor;
+        if ancestor == outermost {
+            break;
+        }
+    }
+    holder
+}
+
+/// Whether the position of `node_id` does not follow its layout parent's in
+/// the block flow: it is placed out of flow, or by an inline formatting
+/// context.
+fn has_unusual_coordinates(document: &Document, node_id: usize) -> bool {
+    document.oof_coordinates.contains_key(&node_id)
+        || document.ifc_source_owner(node_id) != node_id
+        || document.nodes[node_id]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE)
 }
 
 /// Whether `node_id` is out of flow with a block-start or block-end inset.
@@ -9500,13 +9568,18 @@ struct TransitionMove {
     page_overflow: bool,
     /// Whether a forced or page-type break moves the box.
     forced_transition: bool,
+    /// The box that moves down, which is the candidate or the outermost
+    /// ancestor that starts with it (see [`leading_holder`]).
+    holder: usize,
 }
 
 /// Moves the box `candidate` down by `moved.node_delta` for a page
 /// transition and brings along what has to follow it: the lines of its
 /// paragraph, and the ancestors or later siblings that hold or trail it.
-/// Returns whether an ancestor's height kept it from holding the moved
-/// content.
+/// Where the candidate begins an ancestor that moves to the next page with it
+/// (`moved.holder`), the ancestor moves instead of the candidate, and takes
+/// the candidate along. Returns whether an ancestor's height kept it from
+/// holding the moved content.
 fn move_box_for_transition(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9522,9 +9595,18 @@ fn move_box_for_transition(
         shift_delta,
         page_overflow,
         forced_transition,
+        holder,
     } = *moved;
-    document.nodes[node_id].layout.location.y += node_delta;
-    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
+    debug_assert!(
+        is_descendant_or_self(document, node_id, holder),
+        "the box that moves holds the candidate"
+    );
+    debug_assert!(
+        holder == node_id || (page_overflow && !forced_transition),
+        "only a box that moves for the page edge takes its ancestors along"
+    );
+    document.nodes[holder].layout.location.y += node_delta;
+    let followed_ifc_boxes = follow_moved_ifc_block(document, holder, node_delta);
     // A nested avoiding block that moves to the next page lengthens the
     // ancestors whose content box holds it, so their continuation (and any
     // `overflow` clip) reaches the moved content. A float does not lengthen
@@ -9539,7 +9621,7 @@ fn move_box_for_transition(
         moved_in_bounded_ancestor = grow_ancestors_for_shift(
             document,
             cascade,
-            node_id,
+            holder,
             node_delta,
             body_id,
             shifts,
