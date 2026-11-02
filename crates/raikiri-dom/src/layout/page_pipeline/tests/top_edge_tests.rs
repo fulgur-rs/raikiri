@@ -975,3 +975,30 @@ fn a_padded_block_is_not_moved_for_a_box_that_starts_a_page_itself() {
         );
     }
 }
+
+#[test]
+fn a_padded_block_is_not_moved_for_a_box_that_avoids_breaks_around_a_forced_break() {
+    // The box that avoids a break inside it splits where a box in it forces
+    // one, so its height is not a piece to keep with the padding: moving the
+    // block would put that box on a third page.
+    for inner in [
+        "height:20px;break-before:page",
+        "height:20px;break-after:page",
+    ] {
+        let (mut wrapper, mut avoiding, mut inner_id) = (0, 0, 0);
+        let (doc, pages) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:90px");
+            wrapper = block(doc, body, &format!("display:block;{PADDED}"));
+            avoiding = block(doc, wrapper, "display:block;break-inside:avoid");
+            inner_id = block(doc, avoiding, &format!("display:block;{inner}"));
+        });
+        assert_eq!(
+            (
+                [wrapper, avoiding, inner_id].map(|id| page_flow_y(&doc, id)),
+                pages
+            ),
+            ([90.0, 100.0, 100.0], 2),
+            "{inner}"
+        );
+    }
+}

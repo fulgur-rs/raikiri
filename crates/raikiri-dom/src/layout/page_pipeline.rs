@@ -7122,11 +7122,15 @@ fn lineless_piece_end(
         return None;
     }
     // The box the walk starts at is judged by the rules of its own.
-    if depth > 0
-        && (avoids_page_break_inside(cascade.computed[node_id].break_inside)
-            || is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false))
-    {
-        return Some((node.layout.size.height, false));
+    if depth > 0 {
+        if is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false) {
+            return Some((node.layout.size.height, false));
+        }
+        if avoids_page_break_inside(cascade.computed[node_id].break_inside) {
+            // A box that forces a break inside it splits there instead.
+            return (!has_mandatory_break_inside(document, cascade, node_id))
+                .then_some((node.layout.size.height, false));
+        }
     }
     if node.is_ifc_root() {
         return None;
@@ -7843,7 +7847,7 @@ fn is_plain_container_box(document: &Document, node_id: usize) -> bool {
 /// Whether a box below `node_id` forces a page break or starts a named page, so
 /// that the page breaks inside `node_id` where that box asks it to.
 fn has_mandatory_break_inside(
-    document: &super::context::LayoutSession<'_>,
+    document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
