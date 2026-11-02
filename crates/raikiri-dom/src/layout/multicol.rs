@@ -194,7 +194,13 @@ pub(crate) fn compute_multicol_layout(
         .map(|height| {
             multicol_authored_content_height(tree, index, height, parent_width, available_width)
         })
-    } else if stretched_height {
+    } else if stretched_height
+        && (!matches!(placement, Some(FlowPlacement::Stretched(_)))
+            || (inputs.parent_size.height.is_some() && inputs.known_dimensions_are_definite.height))
+    {
+        // An auto-height flex line supplies a content-derived target size,
+        // which must not prevent its columns from balancing. A definite
+        // parent or grid area can constrain the columns instead.
         // A known size from flex/grid placement is already a border-box
         // size, independent of the authored box-sizing value.
         let css = style_of(tree, index);

@@ -8463,8 +8463,9 @@ fn a_text_bearing_multicol_item_keeps_the_flex_cross_size() {
 }
 
 #[test]
-fn non_stretched_text_bearing_multicol_items_still_balance_their_height() {
+fn content_sized_text_bearing_multicol_items_still_balance_their_height() {
     for (container, item_style) in [
+        ("height:auto", ""),
         ("", "margin-top:auto"),
         ("", "margin-bottom:auto"),
         ("", "margin-block:auto"),
