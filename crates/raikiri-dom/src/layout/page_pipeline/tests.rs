@@ -6,6 +6,8 @@ use raikiri_layout_style::values::Clear;
 thread_local! {
     pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
     pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+    pub(super) static FLOAT_SUBTREE_WALKS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static FLOAT_PREFILTER_VISITS: Cell<usize> = const { Cell::new(0) };
 }
 
 pub(super) fn record_sibling_adjacency_work(work: [usize; 3]) {
@@ -32,6 +34,7 @@ mod page_name_storage_tests;
 mod page_start_tests;
 mod paged_spanning_tests;
 mod sibling_adjacency_tests;
+mod sibling_scan_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod top_edge_tests;

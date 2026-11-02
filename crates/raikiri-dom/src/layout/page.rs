@@ -1141,7 +1141,7 @@ pub(crate) fn pagination_child_order(
     pagination_child_order_borrowed(document, cascade, parent_id).into_owned()
 }
 
-fn pagination_child_order_borrowed<'doc>(
+pub(crate) fn pagination_child_order_borrowed<'doc>(
     document: &'doc Document,
     cascade: &CascadeResult,
     parent_id: usize,

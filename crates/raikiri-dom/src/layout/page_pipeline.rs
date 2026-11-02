@@ -6526,12 +6526,15 @@ fn grown_auto_height(
     // `display: contents` children generate no box: their children are laid
     // out as this box's children. A grid's items follow one another in the
     // order of their rows.
-    let mut children = pagination_child_order(document, cascade, parent);
-    children.reverse();
-    while let Some(child) = children.pop() {
+    let ordered = pagination_child_order_borrowed(document, cascade, parent);
+    // The children of `display: contents` boxes found so far, last first:
+    // they come before the rest of `ordered`.
+    let mut unwrapped = Vec::new();
+    let mut rest = ordered.iter();
+    while let Some(child) = unwrapped.pop().or_else(|| rest.next().copied()) {
         let child_node = &document.nodes[child];
         if document.nodes[child].display() == DisplayValue::Contents {
-            children.extend(child_node.children.iter().rev().copied());
+            unwrapped.extend(child_node.children.iter().rev().copied());
             continue;
         }
         if child_node.kind() == NodeKind::Text
@@ -6694,6 +6697,37 @@ fn same_bfc_float_end_in_subtree(
     end
 }
 
+/// Whether an element below `branch` is a left or right float, wherever the
+/// boxes between them stand.
+fn has_float_below(document: &Document, cascade: &CascadeResult, branch: usize) -> bool {
+    // The stack only allocates for a branch with nested elements.
+    let mut nested = Vec::new();
+    let mut parent = branch;
+    loop {
+        for &id in &document.nodes[parent].children {
+            #[cfg(test)]
+            tests::FLOAT_PREFILTER_VISITS.with(|count| count.set(count.get() + 1));
+            let node = &document.nodes[id];
+            if node.kind() != NodeKind::Element {
+                continue;
+            }
+            if matches!(
+                cascade.computed[id].float,
+                FloatValue::Left | FloatValue::Right
+            ) {
+                return true;
+            }
+            if !node.children.is_empty() {
+                nested.push(id);
+            }
+        }
+        match nested.pop() {
+            Some(next) => parent = next,
+            None => return false,
+        }
+    }
+}
+
 /// Visits each left or right float end in `branch`, in `parent`'s flow
 /// coordinates. Traversal stops at an independent BFC so its floats stay
 /// represented by its border box.
@@ -6705,6 +6739,13 @@ fn visit_same_bfc_floats_in_subtree(
     branch_top: f32,
     mut visit: impl FnMut(usize, f32),
 ) {
+    // Without a float below `branch` there is nothing to visit, and the style
+    // queries of the walk below are skipped.
+    if !has_float_below(document, cascade, branch) {
+        return;
+    }
+    #[cfg(test)]
+    tests::FLOAT_SUBTREE_WALKS.with(|count| count.set(count.get() + 1));
     if document.nodes[branch].kind() != NodeKind::Element
         || holds_floats(document, cascade, branch)
         || (matches!(cascade.computed[branch].float, FloatValue::Footnote)
@@ -10636,6 +10677,33 @@ fn shift_later_block_siblings(document: &mut Document, parent: usize, child: usi
     if !moves_later_siblings(document, parent) || delta == 0.0 || !delta.is_finite() {
         return;
     }
+    // The boxes after a box that is a child of `parent` itself are in
+    // `parent`'s own child list, which is walked in place without collecting
+    // the children of every move.
+    if let Some(index) = document.nodes[parent]
+        .children
+        .iter()
+        .position(|&id| id == child)
+        && document.nodes[child].display() != DisplayValue::Contents
+    {
+        // The children of the `display: contents` boxes met on the way.
+        let mut opened = Vec::new();
+        for later in index + 1..document.nodes[parent].children.len() {
+            let mut id = document.nodes[parent].children[later];
+            loop {
+                if document.nodes[id].display() == DisplayValue::Contents {
+                    opened.extend(document.nodes[id].children.iter().copied());
+                } else {
+                    shift_block_sibling(document, id, delta);
+                }
+                match opened.pop() {
+                    Some(next) => id = next,
+                    None => break,
+                }
+            }
+        }
+        return;
+    }
     // `display: contents` children generate no box: their children are laid
     // out as this box's children.
     let mut boxes = Vec::new();
@@ -10656,17 +10724,24 @@ fn shift_later_block_siblings(document: &mut Document, parent: usize, child: usi
         return;
     };
     for &sibling in &boxes[index + 1..] {
-        if document.nodes[sibling].kind() != NodeKind::Element
-            || document.nodes[sibling].display() == DisplayValue::None
-            || matches!(
-                document.nodes[sibling].position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-        {
-            continue;
-        }
-        document.table_layout_node_mut(sibling).layout.location.y += delta;
+        shift_block_sibling(document, sibling, delta);
     }
+}
+
+/// Moves the box `sibling`, one of the boxes after a moved child in block
+/// flow, down by `delta`. Text, boxes that are not rendered and positioned
+/// boxes keep their places.
+fn shift_block_sibling(document: &mut Document, sibling: usize, delta: f32) {
+    if document.nodes[sibling].kind() != NodeKind::Element
+        || document.nodes[sibling].display() == DisplayValue::None
+        || matches!(
+            document.nodes[sibling].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    {
+        return;
+    }
+    document.table_layout_node_mut(sibling).layout.location.y += delta;
 }
 
 /// The side and the normal-flow outer top, bottom and width of a moved
