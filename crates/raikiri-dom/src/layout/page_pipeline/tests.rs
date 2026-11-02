@@ -17449,6 +17449,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     margins.record_bottom(body, first, true, 90.0);
     let at = MarginBreak {
         node_id: second,
+        clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
         natural_page: 1,
@@ -17542,6 +17543,7 @@ fn a_page_edge_cuts_the_margins_around_an_empty_box_where_the_next_box_starts() 
     };
     let at = MarginBreak {
         node_id: empty,
+        clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
         natural_page: 1,

@@ -9,6 +9,7 @@ mod grid_rows;
 mod leading_margins;
 mod line_ranges;
 mod link_events;
+mod margin_clearance;
 mod page_start;
 mod pagination_state;
 mod sibling_adjacency;
@@ -4835,6 +4836,8 @@ fn boxes_are_tied(
 /// candidates.
 #[derive(Default)]
 struct AvoidedBreaks {
+    /// Clearance facts captured before pagination changes float positions.
+    clearance_free: margin_clearance::ClearanceFree,
     /// The block end of each run of boxes joined by avoided breaks, keyed by
     /// the box that starts it among the boxes of its parent or holds it at the
     /// start of its own (see [`avoided_run_ends`]).
@@ -4857,23 +4860,31 @@ struct AvoidedBreaks {
 /// to. A negative margin on that block pulls its top above the empty block, so
 /// a page edge in the run is found from where that block starts.
 ///
-/// A candidate that is a float, out of flow, text, a clearing block or a block
-/// that a forced break or a page name change reaches ends the search without a
-/// result, and so does a block that something other than empty blocks
+/// Floats and out-of-flow subtrees do not end the run. Text, a block whose
+/// clearance is not proven absent, or a block that a forced break or a page
+/// name change reaches ends the search without a result, and so does a block
+/// that something other than empty blocks
 /// separates from the empty one, or that a forced break follows: the margin
 /// stays the empty block's own.
 fn margin_run_ends(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     candidates: &[PageCandidate],
+    clearance_free: &margin_clearance::ClearanceFree,
 ) -> HashMap<usize, MarginRunEnd> {
     let tree = BoxTree::for_layout(document);
     let mut adjacency = sibling_adjacency::SiblingAdjacency::default();
+    // Remove parallel subtrees once, rather than walking the same float run
+    // again for every empty block before it.
+    let candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| participates_in_margin_adjacency(document, cascade, candidate))
+        .collect();
     let joins_run = |candidate: &PageCandidate| {
         let participates = participates_in_margin_adjacency(document, cascade, candidate);
         collapses_with_previous_block(document, candidate, participates) && {
             let computed = &cascade.computed[candidate.node_id];
-            matches!(computed.clear, raikiri_style::property::ClearValue::None)
+            (computed.clear == ClearValue::None || clearance_free.contains(candidate.node_id))
                 && matches!(
                     computed.break_before,
                     BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::AvoidPage
@@ -5036,8 +5047,11 @@ impl AvoidedBreaks {
             contents_box,
             content_width,
         );
-        let margin_run_ends = margin_run_ends(document, cascade, candidates);
+        let clearance_free =
+            margin_clearance::ClearanceFree::collect(document, cascade, candidates);
+        let margin_run_ends = margin_run_ends(document, cascade, candidates, &clearance_free);
         Self {
+            clearance_free,
             run_ends,
             row_leads,
             row_groups,
@@ -9447,6 +9461,8 @@ struct SiblingMargins {
 /// margin above it.
 struct MarginBreak {
     node_id: usize,
+    /// The initial layout proves this clearing box has no used clearance.
+    clearance_free: bool,
     /// The unpaginated top of the box.
     raw_y: f32,
     /// The top of the box in the flow so far.
@@ -9492,7 +9508,7 @@ impl SiblingMargins {
     /// How the top of `at.natural_page` truncates the margin between the box
     /// `at` and the sibling block before it, or `None` when the page edge
     /// falls outside that margin or no margin separates the two. A box that
-    /// clears floats is left alone, since its gap may hold clearance.
+    /// may have clearance is left alone, since its gap may hold that space.
     fn truncation_at_break(
         &mut self,
         document: &super::context::LayoutSession<'_>,
@@ -9501,13 +9517,14 @@ impl SiblingMargins {
         at: &MarginBreak,
     ) -> Option<MarginTruncation> {
         let node_id = at.node_id;
-        // A clearing box's gap may contain clearance. Its used clearance is
-        // not recorded separately, so retain the gap.
+        // Retain a clearing box's gap unless the initial layout proved it
+        // contains no clearance. Pagination may already have moved its floats.
         if !at.collapses_with_previous_block
-            || !matches!(
-                cascade.computed[node_id].clear,
-                raikiri_style::property::ClearValue::None
-            )
+            || !at.clearance_free
+                && !matches!(
+                    cascade.computed[node_id].clear,
+                    raikiri_style::property::ClearValue::None
+                )
         {
             return None;
         }
@@ -9605,10 +9622,11 @@ impl SiblingMargins {
         if at.forced_before
             || pulled <= 0.001
             || !at.collapses_with_previous_block
-            || !matches!(
-                cascade.computed[at.node_id].clear,
-                raikiri_style::property::ClearValue::None
-            )
+            || !at.clearance_free
+                && !matches!(
+                    cascade.computed[at.node_id].clear,
+                    raikiri_style::property::ClearValue::None
+                )
         {
             return None;
         }

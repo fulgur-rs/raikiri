@@ -36,6 +36,7 @@ fn sibling_adjacency_work_does_not_multiply_prefix_width_by_break_count() {
                         &origins,
                         &MarginBreak {
                             node_id: blocks[i],
+                            clearance_free: false,
                             raw_y: page_top + 20.0,
                             effective_y: page_top + 20.0,
                             natural_page: i as u32,
