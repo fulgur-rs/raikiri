@@ -1416,7 +1416,7 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
     // The content of an anonymous cell sits in the cell's owner.
     let owner = tree.ifc_source_owner(idx);
     for b in &root.boxes {
-        let (dx, dy) = relative_offset_of(tree, idx, owner, &root.offsets, b.node);
+        let (dx, dy) = relative_offset_of(tree, idx, owner, |id| root.relative_offset(id), b.node);
         if dx != 0.0 || dy != 0.0 {
             let mut layout = tree.nodes[b.node].layout;
             layout.location.x += dx;
@@ -1428,19 +1428,23 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
 
 /// The offsets of the relatively positioned inline elements that contain
 /// `node`, up to the paragraph root `idx` (or `owner`, the source owner of an
-/// anonymous cell's content), added up. `offsets` holds the offset of each
+/// anonymous cell's content), added up. `offset_of` gives the offset of an
 /// element by node id.
 fn relative_offset_of(
     tree: &Document,
     idx: usize,
     owner: usize,
-    offsets: &[(usize, (f32, f32))],
+    offset_of: impl Fn(usize) -> Option<(f32, f32)>,
     node: usize,
 ) -> (f32, f32) {
     tree.ancestors(node)
         .take_while(|&id| id != idx && id != owner)
-        .filter_map(|id| offsets.iter().find(|(element, _)| *element == id))
-        .fold((0.0, 0.0), |(dx, dy), (_, (x, y))| (dx + x, dy + y))
+        .filter_map(|id| {
+            #[cfg(test)]
+            tests::OOF_OFFSET_STEPS.with(|count| count.set(count.get() + 1));
+            offset_of(id)
+        })
+        .fold((0.0, 0.0), |(dx, dy), (x, y)| (dx + x, dy + y))
 }
 
 /// The nearest ancestor of `node` inside the paragraph rooted at `idx` (or at
@@ -1467,65 +1471,6 @@ fn positioned_inline_ancestor(
                     ancestor.claims_absolute_oof || ancestor.position() != &PositionValue::Static
                 }
         })
-}
-
-/// The padding box of the inline element `inline`, in the coordinates of the
-/// paragraph's content box: the bounding box of the padding boxes of its
-/// `pieces` on the lines (CSS 2.1 10.1). Its borders are the authored ones,
-/// which the pieces carry, whatever its style view reads. `line_shift` gives
-/// the move pagination made to the lines. An element with
-/// no piece of its own, such as a ruby base container, which has no box and
-/// holds its bases, spans the pieces of the elements in it. `None` when
-/// there is none.
-fn inline_padding_box(
-    tree: &LayoutSession<'_>,
-    pieces: &[super::inline_boxes::InlineBoxPiece],
-    inline: usize,
-    line_shift: impl Fn(usize) -> (f32, f32),
-) -> Option<PaddingBox> {
-    let computed = &tree.style_views.cascade().computed[inline].border;
-    let mut border = Edges {
-        top: computed.top.width().px(),
-        right: computed.right.width().px(),
-        bottom: computed.bottom.width().px(),
-        left: computed.left.width().px(),
-    };
-    let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
-    if spanned.is_empty() {
-        border = Edges::ZERO;
-        spanned = pieces
-            .iter()
-            .filter(|piece| tree.ancestors(piece.node).any(|id| id == inline))
-            .collect();
-    }
-    // The edges of a piece: its border box less its borders. A side that is
-    // not an edge of the element has no border, and the content box reaches
-    // the border box there.
-    let (left, top, right, bottom) = spanned
-        .into_iter()
-        .map(|piece| {
-            let (outer, inner) = (piece.border_box, piece.content_box);
-            let (dx, dy) = line_shift(piece.line);
-            (
-                outer.x + dx + border.left.min((inner.x - outer.x).max(0.0)),
-                outer.y + dy + border.top.min((inner.y - outer.y).max(0.0)),
-                outer.x + dx + outer.width
-                    - border
-                        .right
-                        .min((outer.x + outer.width - inner.x - inner.width).max(0.0)),
-                outer.y + dy + outer.height
-                    - border
-                        .bottom
-                        .min((outer.y + outer.height - inner.y - inner.height).max(0.0)),
-            )
-        })
-        .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))?;
-    Some(PaddingBox {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-    })
 }
 
 /// How many times one line is moved down past floats before it is accepted
@@ -4317,7 +4262,6 @@ pub(crate) fn place_out_of_flow(
     let rtl = root.rtl;
     let writing_mode = root.writing_mode;
     let vertical_root = writing_mode != WritingMode::HorizontalTb;
-    let offsets = root.offsets.clone();
     let Some(lines) = root.lines.clone() else {
         return;
     };
@@ -4357,16 +4301,16 @@ pub(crate) fn place_out_of_flow(
     let mut fallback = None;
 
     let owner = tree.ifc_source_owner(idx);
-    // The pieces of the inline elements on the lines, made when a box needs
-    // them.
-    let mut pieces = None;
+    // The padding boxes of the inline elements on the lines, made when a box
+    // needs them.
+    let mut inline_boxes: Option<oof_index::InlinePaddingBoxes> = None;
     // The root's own style, for the boxes that take a static position.
     let mut container_style = None;
     let mut candidates = OofCandidates::new();
     for node in positioned {
         let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
             .and_then(|inline| {
-                let pieces = pieces.get_or_insert_with(|| {
+                let boxes = inline_boxes.get_or_insert_with(|| {
                     let content = shodo::geometry::PhysicalSize {
                         width: if vertical_root {
                             (border_box.width - content_left - border.right - padding.right)
@@ -4377,19 +4321,25 @@ pub(crate) fn place_out_of_flow(
                         height: (border_box.height - content_top - border.bottom - padding.bottom)
                             .max(0.0),
                     };
-                    super::inline_boxes::inline_box_pieces(
+                    oof_index::InlinePaddingBoxes::new(super::inline_boxes::inline_box_pieces(
                         &lines.lines,
                         writing_mode,
                         content,
                         |_| None,
-                    )
+                    ))
                 });
-                inline_padding_box(tree, pieces, inline, |line| {
+                boxes.padding_box(tree, (idx, owner), inline, |line| {
                     super::positioned_runs::block_shift(writing_mode, lines.shift_of(line))
                 })
             })
             .map(|inline| {
-                let (dx, dy) = relative_offset_of(tree, idx, owner, &offsets, node);
+                let offset_of = |id| {
+                    tree.nodes[idx]
+                        .ifc
+                        .as_ref()
+                        .and_then(|root| root.relative_offset(id))
+                };
+                let (dx, dy) = relative_offset_of(tree, idx, owner, offset_of, node);
                 PaddingBox {
                     x: content_left + inline.x + dx,
                     y: content_top + inline.y + dy,
