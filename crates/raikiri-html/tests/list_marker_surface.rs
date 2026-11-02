@@ -124,6 +124,48 @@ fn empty_list_items_still_expose_their_number() {
     );
 }
 
+/// The origin of each marker with text on the first page, in order.
+fn marker_origins(body: &str, extra: &str) -> Vec<(f32, f32)> {
+    let document = lay_out(body, extra);
+    let page = document.page(0).unwrap();
+    page.text_runs()
+        .iter()
+        .filter(|run| run.is_standalone_marker() && !run.text.trim().is_empty())
+        .map(|run| run.origin)
+        .collect()
+}
+
+#[test]
+fn the_marker_of_an_empty_item_sits_on_the_line_the_item_makes() {
+    // The item is one line high whatever it holds, so its marker sits where
+    // the marker of an item with a line of text does.
+    for extra in [
+        "",
+        "li{line-height:50px}",
+        "li{padding:5px 0}",
+        "li{font-size:20px}",
+    ] {
+        let text = marker_origins("<ol><li>A</li></ol>", extra);
+        assert_eq!(text.len(), 1, "{extra}");
+        for empty in ["<li></li>", "<li> </li>", "<li><span></span></li>"] {
+            assert_eq!(
+                marker_origins(&format!("<ol>{empty}</ol>"), extra),
+                text,
+                "{empty} with {extra}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_marker_after_an_empty_item_is_a_line_below_it() {
+    let origins = marker_origins("<ol><li></li><li></li><li></li></ol>", "");
+    assert_eq!(origins.len(), 3);
+    // The lines are 20px high.
+    assert_eq!(origins[1].1 - origins[0].1, 20.0);
+    assert_eq!(origins[2].1 - origins[1].1, 20.0);
+}
+
 #[test]
 fn a_marker_is_not_repeated_on_continuations_of_a_tall_list_item() {
     let document = lay_out(

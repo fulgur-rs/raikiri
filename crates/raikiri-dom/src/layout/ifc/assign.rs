@@ -9,12 +9,15 @@ use super::projection::{
 use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
 use super::style;
 use crate::Document;
+use crate::generated_content::{
+    inside_marker_in_flow, is_page_flow_generated_text, marker_is_enabled,
+};
 use crate::layout::BoxParentScope;
 use crate::layout::box_tree::BoxTree;
 use crate::node::NodeFlags;
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse};
-use raikiri_style::{CascadeResult, ComputedColumnWidth};
-use raikiri_traits::{LayoutError, NodeKind};
+use raikiri_style::{CascadeResult, ComputedColumnWidth, ListStyleType, PseudoElem, StyleNodeId};
+use raikiri_traits::{LayoutError, NodeKind, QuirksMode};
 use rayon::prelude::*;
 use shodo::LayoutContext;
 use std::collections::HashSet;
@@ -131,6 +134,17 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
     }
 }
 
+/// What the children of a block hold, as far as its lines are concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InlineContent {
+    /// Something that makes a line (see [`needs_ifc_layout`]).
+    Line,
+    /// No such inline content, but a block-level child.
+    Block,
+    /// Nothing that makes a line, and no block-level child.
+    Empty,
+}
+
 /// Whether a block qualifies for the IFC path. Inline content that makes a
 /// line is text other than white space (generated text included), an atomic
 /// inline, a `<br>`, or an inline element with an inline-side margin, border,
@@ -138,6 +152,10 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
 /// also qualify its ancestor. Once selected, a vertical IFC root lays out its
 /// ordinary block children on the physical block axis, including empty ones.
 /// Page roots and multicol containers remain on their existing layout paths.
+///
+/// A list item whose outside marker is all it holds qualifies as well: the
+/// marker sits on a line of the item, so the item is one line high (see
+/// [`marker_holds_only_line`]).
 fn needs_ifc_layout(
     doc: &Document,
     cascade: &CascadeResult,
@@ -148,11 +166,88 @@ fn needs_ifc_layout(
     if has_in_flow_generated_text(doc, cascade, idx, counters)? {
         return Ok(true);
     }
+    // A margin alone may keep a paragraph out of lines, but the paragraph is
+    // projected all the same, so it counts here.
+    match inline_content(doc, cascade, idx, fonts, counters, true)? {
+        InlineContent::Line => Ok(true),
+        InlineContent::Block => Ok(false),
+        InlineContent::Empty => Ok(has_outside_marker_box(doc, cascade, idx)),
+    }
+}
+
+/// Whether the outside marker of the list item `idx` is the only thing on its
+/// first line, so that the line must be made for the marker: the item holds
+/// no inline content that makes a line and no block-level child, and its
+/// marker is a box of its own placed outside the item's content (CSS Lists 3,
+/// 3.1). An empty list item is one line high then, whatever it holds besides
+/// the marker (white space, an empty inline element, a float or an absolutely
+/// positioned box).
+pub(super) fn marker_holds_only_line(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    fonts: &shodo::font::FontCollection,
+    counters: &GeneratedCounters,
+) -> Result<bool, IfcError> {
+    if !is_outside_marker_item(cascade, idx)
+        || [PseudoElem::Before, PseudoElem::After]
+            .into_iter()
+            .any(|pseudo| is_page_flow_generated_text(cascade, idx, pseudo))
+    {
+        return Ok(false);
+    }
+    // In quirks mode and limited-quirks mode a margin along the line alone
+    // does not make an inline box a line (Quirks Mode Standard, 3.3), so an
+    // item holding only such a box still gets the line of its marker.
+    let margins_count = !matches!(
+        doc.quirks_mode(),
+        QuirksMode::Quirks | QuirksMode::LimitedQuirks
+    );
+    Ok(
+        inline_content(doc, cascade, idx, fonts, counters, margins_count)? == InlineContent::Empty
+            && has_outside_marker_box(doc, cascade, idx),
+    )
+}
+
+/// Whether `idx` is a list item whose marker, if it has one, is outside.
+fn is_outside_marker_item(cascade: &CascadeResult, idx: usize) -> bool {
+    marker_is_enabled(cascade, idx) && !inside_marker_in_flow(cascade, idx)
+}
+
+/// Whether the list item `idx` has an outside marker box: `::marker` content,
+/// an image, or a `list-style-type` other than `none`. The text of the box may
+/// be empty, as in `list-style-type: ""`; `list-style-type: none` and
+/// `::marker { content: none }` leave no box. This follows the rules by which
+/// the marker is resolved for painting (`marker_render_info`), without the
+/// counters that its text needs.
+fn has_outside_marker_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    is_outside_marker_item(cascade, idx)
+        && (cascade
+            .pseudo
+            .get(&(StyleNodeId::new(idx as u64), PseudoElem::Marker))
+            .is_some_and(|marker| !marker.content.is_empty())
+            || !matches!(cascade.computed[idx].list_style_type, ListStyleType::None)
+            || doc.list_marker_image_size(idx).is_some())
+}
+
+/// What the children of `idx` hold: the first thing that makes a line, else a
+/// block-level child, else nothing (see [`InlineContent`]). `margins_count`
+/// tells whether an inline element with a margin along the line and no border
+/// or padding makes a line.
+fn inline_content(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    fonts: &shodo::font::FontCollection,
+    counters: &GeneratedCounters,
+    margins_count: bool,
+) -> Result<InlineContent, IfcError> {
     let cv = &cascade.computed[idx];
     let vertical_block_children = cv.cssom_writing_mode.is_vertical()
         && !is_layout_root(doc, idx)
         && matches!(cv.column_count, ColumnCountValue::Auto)
         && matches!(cv.column_width, ComputedColumnWidth::Auto);
+    let mut block = false;
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
         let node = &doc.nodes[id];
@@ -160,14 +255,19 @@ fn needs_ifc_layout(
             continue;
         }
         match node.kind() {
-            NodeKind::Text if text_makes_a_line(doc, cascade, id) => return Ok(true),
+            NodeKind::Text if text_makes_a_line(doc, cascade, id) => {
+                return Ok(InlineContent::Line);
+            }
             NodeKind::Element => match box_kind(cascade, doc, id) {
-                Some(IfcBoxKind::Atomic) => return Ok(true),
-                Some(IfcBoxKind::Block) if vertical_block_children => {
-                    if has_in_flow_generated_text(doc, cascade, id, counters)? {
-                        return Ok(true);
+                Some(IfcBoxKind::Atomic) => return Ok(InlineContent::Line),
+                Some(IfcBoxKind::Block) => {
+                    block = true;
+                    if vertical_block_children {
+                        if has_in_flow_generated_text(doc, cascade, id, counters)? {
+                            return Ok(InlineContent::Line);
+                        }
+                        stack.extend(node.children.iter().copied());
                     }
-                    stack.extend(node.children.iter().copied());
                 }
                 Some(_) => {}
                 None => {
@@ -179,11 +279,11 @@ fn needs_ifc_layout(
                         continue;
                     }
                     if has_in_flow_generated_text(doc, cascade, id, counters)? {
-                        return Ok(true);
+                        return Ok(InlineContent::Line);
                     }
                     if doc.nodes[id].display().is_inline_flow() {
                         if node.tag_name() == Some("br") {
-                            return Ok(true);
+                            return Ok(InlineContent::Line);
                         }
                         // An edge the engine cannot map yet keeps the
                         // paragraph out at projection; counting it here only
@@ -193,12 +293,20 @@ fn needs_ifc_layout(
                                 let percent = |sides: shodo::node::Sides| {
                                     sides.inline_start != 0.0 || sides.inline_end != 0.0
                                 };
-                                e.inline_start_total() + e.inline_end_total() != 0.0
-                                    || percent(percents.margin)
+                                let along = |sides: shodo::node::Sides| {
+                                    sides.inline_start + sides.inline_end
+                                };
+                                let sized = if margins_count {
+                                    e.inline_start_total() + e.inline_end_total()
+                                } else {
+                                    along(e.border) + along(e.padding)
+                                };
+                                sized != 0.0
+                                    || (margins_count && percent(percents.margin))
                                     || percent(percents.padding)
                             });
                         if edged {
-                            return Ok(true);
+                            return Ok(InlineContent::Line);
                         }
                     }
                     stack.extend(node.children.iter().copied());
@@ -207,7 +315,11 @@ fn needs_ifc_layout(
             _ => {}
         }
     }
-    Ok(false)
+    Ok(if block {
+        InlineContent::Block
+    } else {
+        InlineContent::Empty
+    })
 }
 
 /// A paragraph the walk accepted, waiting to be shaped.
