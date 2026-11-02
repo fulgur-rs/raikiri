@@ -302,3 +302,154 @@ cases! {
         r#"<div style="display:flex;flex-direction:column;height:0;width:200px"><div id=a style="width:min-content;max-width:50px;aspect-ratio:2/1"><div style="width:10px;height:100px"></div></div></div>"# =>
         [("a", (8.0, 8.0, 50.0, 25.0))];
 }
+
+#[test]
+fn a_percentage_main_size_survives_a_stretched_ratio_items_cross_maximum() {
+    check(
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 100.0, 50.0)),
+            ("d", (8.0, 8.0, 100.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_percentage_main_size_with_a_cross_maximum_needs_no_ratio() {
+    check(
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;max-height:20px"><div style="height:30px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 100.0, 50.0)),
+            ("d", (8.0, 8.0, 100.0, 20.0)),
+        ],
+    );
+}
+
+cases! {
+    main_cross_original:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_fixed_height:
+        r#"<div id=c style="display:flex;width:100px;height:50px"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_wrap:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1;flex-wrap:wrap"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_center:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1;align-items:center"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 23.0, 100.0, 20.0))];
+    main_cross_start:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1;align-items:start"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_row_reverse:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1;flex-direction:row-reverse"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_fixed_width:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100px;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_auto_width:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_calc_width:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:calc(100% - 10px);aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 90.0, 20.0))];
+    main_cross_no_ratio:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;max-height:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_basis_content:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:content"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_basis_zero:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:0px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_basis_fixed:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:40px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 40.0, 20.0))];
+    main_cross_basis_max_content:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:max-content"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_min_height:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;min-height:30px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 30.0))];
+    main_cross_percent_max:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;max-height:50%"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 25.0))];
+    main_cross_padding:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;padding:3px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_border:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;border:2px solid"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_content_box:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;box-sizing:content-box;padding:3px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 26.0))];
+    main_cross_auto_cross_margin:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;margin-top:auto"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 38.0, 100.0, 20.0))];
+    main_cross_cross_margins:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;margin:5px 0"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 13.0, 100.0, 20.0))];
+    main_cross_zero_min:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;min-width:0px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_overflow:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;overflow:hidden"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_self_stretch:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;align-self:stretch"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_grow:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-grow:1"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 100.0, 20.0))];
+    main_cross_column:
+        r#"<div id=c style="display:flex;flex-direction:column;height:100px;aspect-ratio:1/2"><div id=d style="height:100%;aspect-ratio:1/1;max-width:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 100.0)), ("d", (8.0, 8.0, 20.0, 100.0))];
+    main_cross_column_content:
+        r#"<div id=c style="display:flex;flex-direction:column;height:100px;aspect-ratio:1/2"><div id=d style="height:100%;aspect-ratio:1/1;max-width:20px;flex-basis:content"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 100.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+}
+
+cases! {
+    main_cross_auto_main_basis_0:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="aspect-ratio:1/1;max-height:20px;flex-basis:0px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_column_auto_main_basis_0:
+        r#"<div id=c style="display:flex;flex-direction:column;height:100px;aspect-ratio:1/2"><div id=d style="aspect-ratio:1/1;max-width:20px;flex-basis:0px"><div style="height:10px;width:30px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 100.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_auto_main_basis_10:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="aspect-ratio:1/1;max-height:20px;flex-basis:10px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_column_auto_main_basis_10:
+        r#"<div id=c style="display:flex;flex-direction:column;height:100px;aspect-ratio:1/2"><div id=d style="aspect-ratio:1/1;max-width:20px;flex-basis:10px"><div style="height:10px;width:30px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 100.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_auto_main_basis_40:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="aspect-ratio:1/1;max-height:20px;flex-basis:40px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 40.0, 20.0))];
+    main_cross_column_auto_main_basis_40:
+        r#"<div id=c style="display:flex;flex-direction:column;height:100px;aspect-ratio:1/2"><div id=d style="aspect-ratio:1/1;max-width:20px;flex-basis:40px"><div style="height:10px;width:30px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 100.0)), ("d", (8.0, 8.0, 20.0, 40.0))];
+}
+
+cases! {
+    main_cross_resolved_percent_basis:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:40%"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 40.0, 20.0))];
+    main_cross_resolved_calc_basis:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:calc(50% - 10px)"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 40.0, 20.0))];
+    main_cross_cyclic_percent_basis:
+        r#"<div id=c style="display:inline-flex;height:50px"><div id=d style="aspect-ratio:1/1;max-height:20px;flex-basis:40%"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 20.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_cyclic_column_percent_basis:
+        r#"<div id=c style="display:inline-flex;flex-direction:column;width:50px"><div id=d style="aspect-ratio:1/1;max-width:20px;flex-basis:40%"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 20.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_column_reverse:
+        r#"<div id=c style="display:flex;flex-direction:column-reverse;height:100px;aspect-ratio:1/2"><div id=d style="height:100%;aspect-ratio:1/1;max-width:20px"><div style="height:30px;width:10px"></div></div></div>"# =>
+        [("c", (8.0, 8.0, 50.0, 100.0)), ("d", (8.0, 8.0, 20.0, 100.0))];
+    main_cross_shrink_fixed_basis:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px;flex-basis:80px"><div style="height:30px;width:10px"></div></div><div style="width:80px;flex:none"></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+    main_cross_shrink_auto_basis:
+        r#"<div id=c style="display:flex;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;max-height:20px"><div style="height:30px;width:10px"></div></div><div style="width:80px;flex:none"></div></div>"# =>
+        [("c", (8.0, 8.0, 100.0, 50.0)), ("d", (8.0, 8.0, 20.0, 20.0))];
+}
