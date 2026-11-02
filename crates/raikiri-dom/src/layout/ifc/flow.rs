@@ -43,6 +43,11 @@ pub(crate) struct FlowGeometry {
     /// heights of its floats and atomic inlines (CSS 2.1 §10.5). `None` when
     /// the root's height depends on its content.
     pub(crate) definite_height: Option<f32>,
+    /// The most that a horizontal root's `max-height` allows its content box,
+    /// the limit of the room a vertical float or atomic inline fits its lines
+    /// in while the height of the root is open. `None` for a root without a
+    /// length `max-height`.
+    pub(crate) height_cap: Option<f32>,
     /// A vertical root's definite physical content width, its block extent,
     /// the basis for the percentage widths of its empty atomic `::before`
     /// and `::after` boxes. `None` when the width depends on the content.
@@ -68,6 +73,7 @@ impl FlowGeometry {
             edges: (insets.left, insets.right),
             top_edge,
             definite_height: None,
+            height_cap: None,
             vertical_width: None,
             blocks_apart: false,
         }
