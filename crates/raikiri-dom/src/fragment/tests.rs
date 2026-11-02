@@ -383,7 +383,7 @@ fn a_column_width_with_a_count_makes_a_container_of_that_many_columns() {
 mod retirement_index_tests;
 
 thread_local! {
-    static INDEX_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+    static INDEX_WORK: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
 }
 
 pub(super) fn record_index_work(kind: usize, count: usize) {
