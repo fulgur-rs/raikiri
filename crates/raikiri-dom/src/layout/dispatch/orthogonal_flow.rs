@@ -13,14 +13,15 @@
 //! This module measures such a box at its max-content width, the extent of
 //! its columns, and lays it out at that width. Its inline size fits the
 //! height it is offered: the one the parent passes down, else the parent's
-//! definite height, else the page area's. A vertical paragraph root with a
-//! width of its own, a float, or an item of a row flex container is not
-//! stretched by the parent, yet fits the same height ([`with_page_room`]). A
-//! vertical item of a horizontal grid that is asked for the width it gives a
-//! column fits the content height of the grid, or no height when the grid has
-//! none.
+//! definite height, else the page area's, cut at the `max-height` of the
+//! parent. A vertical paragraph root with a width of its own, a float, or an
+//! item of a row flex container is not stretched by the parent, yet fits the
+//! same height ([`with_page_room`]). A vertical item of a horizontal grid that
+//! is asked for the width it gives a column fits the content height of the
+//! grid, or no height when the grid has none.
 
 use crate::layout::context::LayoutSession;
+use crate::layout::ifc::boxes::{max_height_cap, open_height_room};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
 };
@@ -61,10 +62,11 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
 ///
 /// A block container leaves the height it passes down to its children
 /// indefinite. The box is then offered the definite height of its parent, or
-/// else the height of the initial containing block, the page area here, less
-/// its own vertical margins. Whatever else the parent passes down, an
-/// intrinsic or a definite space, is kept as it is. The padding and border of
-/// the box come off the room where it is laid out.
+/// else the height of the initial containing block, the page area here, within
+/// the `max-height` of the parent, less its own vertical margins. Whatever
+/// else the parent passes down, an intrinsic or a definite space, is kept as it
+/// is. The padding and border of the box come off the room where it is laid
+/// out.
 ///
 /// A block container laid out on transposed axes takes its margins off the
 /// room itself, so it is offered the room whole.
@@ -77,8 +79,9 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
 
 /// The room of the margin box of the orthogonal flow `idx` along its inline
 /// axis: `definite` when the parent has a definite height, else the height of
-/// the page area, less the vertical margins of the box where it does not take
-/// them off itself.
+/// the page area within the `max-height` of the parent (see `max_height_cap`),
+/// less the vertical margins of the box where it does not take them off
+/// itself.
 fn page_room(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -102,9 +105,15 @@ fn page_room(
     } else {
         margin.top + margin.bottom
     };
-    // Without a page area there is no room to fit the lines in.
+    // Without a page area, or a limit of the container, there is no room to
+    // fit the lines in.
     definite
-        .or_else(|| crate::layout::ifc::boxes::page_area_height(tree))
+        .or_else(|| {
+            let cap = tree
+                .taffy_parent_of(idx)
+                .and_then(|parent| max_height_cap(tree, parent));
+            open_height_room(tree, cap)
+        })
         .map_or(AvailableSpace::MaxContent, |room| {
             AvailableSpace::Definite((room - margin).max(0.0))
         })

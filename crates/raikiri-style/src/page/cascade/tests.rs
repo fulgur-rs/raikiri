@@ -93,6 +93,186 @@ const RED: CssColor = CssColor {
 };
 
 #[test]
+fn page_and_margin_currentcolor_keep_the_inherited_syntax_class() {
+    for modern in [false, true] {
+        let mut root = ComputedValues::initial();
+        root.color = RED;
+        root.color_modern = modern;
+        for page_color in [
+            "",
+            "color:currentcolor;",
+            "color:light-dark(currentcolor,blue);",
+            "color:inherit;",
+            "color:unset;",
+            "color:var(--missing);",
+        ] {
+            let result = page(
+                &format!("@page{{{page_color}@top-center{{content:'X';color:currentcolor}}}}"),
+                &root,
+            );
+            let rule = result
+                .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+                .unwrap();
+            let computed = result.margin_box_style(&rule, None);
+            assert_eq!(computed.color, RED, "{page_color}");
+            assert_eq!(
+                computed.color_modern, modern,
+                "{page_color}, inherited modern={modern}"
+            );
+        }
+    }
+}
+
+fn page_image_interpolation(
+    image: &BackgroundImage,
+) -> crate::property::GradientColorInterpolation {
+    use crate::property::Gradient;
+    let BackgroundImage::Gradient(gradient) = image else {
+        panic!("expected gradient")
+    };
+    match &**gradient {
+        Gradient::Linear(g) => g.interpolation,
+        Gradient::Radial(g) => g.interpolation,
+        Gradient::Conic(g) => g.interpolation,
+    }
+}
+
+#[test]
+fn page_images_settle_currentcolor_interpolation_without_margin_rules() {
+    use crate::property::MixColorSpace;
+    for (color, default_space) in [
+        ("red", MixColorSpace::Srgb),
+        ("color(srgb 1 0 0)", MixColorSpace::Oklab),
+    ] {
+        for (image, explicit_space) in [
+            ("linear-gradient(currentcolor,blue)", None),
+            ("radial-gradient(currentcolor,blue)", None),
+            ("conic-gradient(currentcolor,blue)", None),
+            ("image-set(linear-gradient(currentcolor,blue) 1x)", None),
+            (
+                "linear-gradient(in srgb,currentcolor,blue)",
+                Some(MixColorSpace::Srgb),
+            ),
+            (
+                "linear-gradient(in oklab,currentcolor,blue)",
+                Some(MixColorSpace::Oklab),
+            ),
+            (
+                "linear-gradient(currentcolor,color(srgb 0 0 1))",
+                Some(MixColorSpace::Oklab),
+            ),
+        ] {
+            let result = page(
+                &format!("@page{{color:{color};background-image:{image};border-image:{image} 1}}"),
+                &ComputedValues::initial(),
+            );
+            for image in [
+                match &result.declarations()[&PropertyKey::BackgroundImage] {
+                    PropertyValue::BackgroundImage(images) => &images[0],
+                    other => panic!("expected background, got {other:?}"),
+                },
+                match &result.declarations()[&PropertyKey::BorderImageSource] {
+                    PropertyValue::BorderImageSource(image) => image,
+                    other => panic!("expected border image, got {other:?}"),
+                },
+            ] {
+                let interpolation = page_image_interpolation(image);
+                assert_eq!(
+                    interpolation.color_space,
+                    explicit_space.unwrap_or(default_space),
+                    "{color}, {image:?}"
+                );
+                assert!(!interpolation.follows_current_color);
+            }
+        }
+    }
+}
+
+#[test]
+fn margin_color_syntax_obeys_overrides_defaulting_and_invalid_values() {
+    use crate::property::MixColorSpace;
+    for (page_color, inherited_modern) in [("red", false), ("color(srgb 1 0 0)", true)] {
+        for (margin_color, modern) in [
+            ("red", false),
+            ("color(srgb 1 0 0)", true),
+            ("currentcolor", inherited_modern),
+            ("light-dark(currentcolor,blue)", inherited_modern),
+            ("inherit", inherited_modern),
+            ("unset", inherited_modern),
+            ("initial", false),
+            ("revert", inherited_modern),
+            ("var(--missing)", inherited_modern),
+        ] {
+            for image in [
+                "linear-gradient(currentcolor,blue)",
+                "radial-gradient(currentcolor,blue)",
+                "conic-gradient(currentcolor,blue)",
+                "image-set(linear-gradient(currentcolor,blue) 1x)",
+            ] {
+                let result = page(
+                    &format!(
+                        "@page{{color:{page_color};@top-center{{content:'X';color:{margin_color};background-image:{image};border-image:{image} 1}}}}"
+                    ),
+                    &ComputedValues::initial(),
+                );
+                let rule = result
+                    .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+                    .unwrap();
+                let computed = result.margin_box_style(&rule, None);
+                assert_eq!(
+                    computed.color_modern, modern,
+                    "page={page_color}, margin={margin_color}"
+                );
+                let expected = if modern {
+                    MixColorSpace::Oklab
+                } else {
+                    MixColorSpace::Srgb
+                };
+                for image in [
+                    &computed.background_layers()[0].image,
+                    &computed.border_image.source,
+                ] {
+                    let interpolation = page_image_interpolation(image);
+                    assert_eq!(
+                        interpolation.color_space, expected,
+                        "page={page_color}, margin={margin_color}"
+                    );
+                    assert!(!interpolation.follows_current_color);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn page_border_gradient_stops_keep_page_and_root_font_bases() {
+    use crate::property::Gradient;
+    let mut root = ComputedValues::initial();
+    root.font_size = ComputedLength(10.0);
+    root.line_height = ComputedLineHeight::Number(3.0);
+    for (unit, pixels) in [("1em", 20.0), ("1rem", 10.0), ("1lh", 40.0), ("1rlh", 30.0)] {
+        let result = page(
+            &format!(
+                "@page{{font-size:20px;line-height:2;color:color(srgb 1 0 0);border-image:linear-gradient(currentcolor {unit},blue) 1}}"
+            ),
+            &root,
+        );
+        let image = result.border_image().unwrap();
+        let BackgroundImage::Gradient(gradient) = image.source else {
+            panic!("expected gradient")
+        };
+        let Gradient::Linear(gradient) = &*gradient else {
+            panic!("expected linear gradient")
+        };
+        assert_eq!(
+            gradient.stops[0].position,
+            Some(LengthPercentageOrCalc::Length(Length::Px(pixels))),
+            "{unit}"
+        );
+    }
+}
+
+#[test]
 fn page_context_currentcolor_uses_page_color() {
     let mut root = ComputedValues::initial();
     root.color = BLUE;

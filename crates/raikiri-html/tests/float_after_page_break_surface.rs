@@ -493,6 +493,61 @@ fn a_box_that_breaks_before_it_sits_beside_the_page_start_float() {
     assert_eq!(margin, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
 }
 
+#[test]
+fn a_break_before_the_first_box_in_a_wrapper_is_the_break_the_float_took() {
+    // A break before the first box inside a wrapper is the wrapper's own, so
+    // the wrapper starts the page beside the float and no page is added, one
+    // wrapper deep or two.
+    for (side, x) in [("left", 40.0), ("right", 0.0)] {
+        for wrapper in ["<div>{}</div>", "<div><div>{}</div></div>"] {
+            let inner = format!("<div style='break-before:page'>{TEXT}</div>");
+            let body = format!(
+                "{BREAK}{}{}",
+                float(side, 40, 50),
+                wrapper.replace("{}", &inner)
+            );
+            assert_eq!(
+                lines(&body),
+                [(1, x, 5.0), (1, x, 35.0), (1, 0.0, 65.0)],
+                "{side} {wrapper}"
+            );
+        }
+    }
+    // A break before the wrapper's second box is a break of its own: the text
+    // goes to a page after the float's.
+    let second = lines(&format!(
+        "{BREAK}{}<div><div style='height:10px'></div>\
+         <div style='break-before:page'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(second, [(2, 0.0, 5.0), (2, 0.0, 35.0)]);
+    // Its margin stays above the first box, and the boxes after it follow it
+    // beside the float.
+    let margin = lines(&format!(
+        "{BREAK}{}<div><div style='break-before:page;margin-top:10px'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(margin, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let nested = lines(&format!(
+        "{BREAK}{}<div><div><div style='break-before:page;margin-top:10px'>{TEXT}</div></div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(nested, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let siblings = lines(&format!(
+        "{BREAK}{}<div><div style='break-before:page'>XX XX</div><div>XX XX</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(siblings, [(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)]);
+    // The wrapper's own generated content comes before the first box, so a
+    // break before that box is a break of its own.
+    let generated = lines(&format!(
+        "<style>.wrap::before{{content:'x'}}</style>{BREAK}{}\
+         <div class=wrap><div style='break-before:page'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(generated, [(1, 40.0, 5.0), (2, 0.0, 5.0), (2, 0.0, 35.0)]);
+}
+
 /// The page, left edge, top and height of every fragment of the boxes whose
 /// `style` attribute starts with `style`.
 fn fragments_styled(body: &str, style: &str) -> Vec<(u32, f32, f32, f32)> {

@@ -2319,9 +2319,13 @@ fn measure_ifc_root(
     let axes = IfcAxes::new(writing_mode, direction);
     // Every geometry of the root keeps its definite height, also when the
     // auto-width loop below lays it out again at a new width.
+    let height_cap = (!vertical)
+        .then(|| crate::layout::ifc::boxes::max_height_cap(tree, idx))
+        .flatten();
     let geometry_of = |content_size| {
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
+        geometry.height_cap = height_cap;
         geometry.vertical_width = vertical_width;
         // The spanners are laid out across the columns once the lines are
         // placed in them.

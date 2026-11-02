@@ -1606,6 +1606,71 @@ fn page_border_image_inherits_current_color_from_the_root() {
     assert_eq!(pixel(&rgba, 100, 15, 50), BLUE);
 }
 
+fn raster_page_gradient(css: &str) -> Vec<u8> {
+    let (document, cascade) = canvas_fixture(Some(css), None);
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    paint_page_background_image(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        PageBackgroundAreas {
+            paper: area,
+            border_box: area,
+        },
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        100,
+    )
+}
+
+#[test]
+fn page_background_currentcolor_uses_its_color_syntax() {
+    for (color, expected_space, other_space) in [
+        ("red", " in srgb", " in oklab"),
+        ("color(srgb 1 0 0)", " in oklab", " in srgb"),
+    ] {
+        // Page conic gradients are not painted by this path yet.
+        for shape in 0..2 {
+            let css = |space: &str| {
+                let images = gradient_values("currentcolor, blue", space);
+                format!(
+                    "html{{color:{color}}}@page{{color:currentcolor;{}}}",
+                    images[shape]
+                )
+            };
+            let default = raster_page_gradient(&css(""));
+            assert!(
+                default == raster_page_gradient(&css(expected_space)),
+                "{color}, shape {shape}"
+            );
+            assert!(
+                default != raster_page_gradient(&css(other_space)),
+                "{color}, shape {shape}"
+            );
+        }
+    }
+}
+
+#[test]
+fn page_currentcolor_image_set_keeps_the_selected_gradients_syntax() {
+    let css = |space: &str| {
+        format!(
+            "@page{{color:color(srgb 1 0 0);background-image:image-set(linear-gradient(to right{space},currentcolor,blue) 1x)}}"
+        )
+    };
+    let implicit = raster_page_gradient(&css(""));
+    assert!(implicit == raster_page_gradient(&css(" in oklab")));
+    assert!(implicit != raster_page_gradient(&css(" in srgb")));
+}
+
 /// Paint a border image with `style` over a 10px by 20px box at x = 0.3 and
 /// rasterize it at `scale` device pixels per CSS pixel.
 fn raster_scaled_border_image(style: &str, device_scale: Option<f32>, scale: f64) -> Vec<u8> {

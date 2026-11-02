@@ -1870,8 +1870,14 @@ fn fit_child(
         // height is the room it fits.
         Size {
             width: room,
-            height: orthogonal_room(tree, node, margin, geometry.definite_height)
-                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: orthogonal_room(
+                tree,
+                node,
+                margin,
+                geometry.definite_height,
+                geometry.height_cap,
+            )
+            .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
         }
     };
     // A vertical paragraph's inline extent is the box's height, so its
@@ -2141,19 +2147,58 @@ pub(crate) fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
         .filter(|height| *height > 0.0)
 }
 
+/// The most height that the content box of the horizontal container
+/// `container` gives a vertical box in it, when its `max-height` is a length:
+/// that length raised to its `min-height`, less the padding and border of the
+/// container where the limits are measured to the border box. A percentage
+/// limit is no limit while the height of the container is open, and the
+/// percentages of the padding count as nothing.
+pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Option<f32> {
+    let style = tree.physical_style(container);
+    let max = style.max_size().height.maybe_resolve(None::<f32>)?;
+    let min = style
+        .min_size()
+        .height
+        .maybe_resolve(None::<f32>)
+        .unwrap_or(0.0);
+    let edges = if style.box_sizing() == BoxSizing::ContentBox {
+        0.0
+    } else {
+        let padding = style.padding().resolve_or_zero(None::<f32>);
+        let border = style.border().resolve_or_zero(None::<f32>);
+        padding.top + padding.bottom + border.top + border.bottom
+    };
+    Some((max.max(min) - edges).max(0.0))
+}
+
+/// The room along its height that a vertical box in a horizontal container is
+/// offered while the height of the container is open: the height of the page
+/// area within `cap`, the most that the container allows, or the one of them
+/// there is. `None` when there is neither, and the lines have no height to
+/// fit.
+pub(crate) fn open_height_room(tree: &LayoutSession<'_>, cap: Option<f32>) -> Option<f32> {
+    [page_area_height(tree), cap]
+        .into_iter()
+        .flatten()
+        .reduce(f32::min)
+}
+
 /// The room along its height that `node`, a float or an atomic inline of a
 /// horizontal paragraph, is offered when it is vertical: the paragraph's
-/// `definite_height` or else the page area's, less the margins of the box.
-/// `None` for a horizontal box, which lays out on the axes of the paragraph.
+/// `definite_height` or else the open room of its height
+/// ([`open_height_room`], with the paragraph's `height_cap`), less the margins
+/// of the box. `None` for a horizontal box, which lays out on the axes of the
+/// paragraph.
 fn orthogonal_room(
     tree: &LayoutSession<'_>,
     node: usize,
     margin: Edges<f32>,
     definite_height: Option<f32>,
+    height_cap: Option<f32>,
 ) -> Option<f32> {
     crate::layout::dispatch::used_writing_mode(tree, node)
         .is_vertical()
-        .then(|| definite_height.or_else(|| page_area_height(tree)))
+        .then(|| definite_height.or_else(|| open_height_room(tree, height_cap)))
         .flatten()
         .map(|height| (height - margin.top - margin.bottom).max(0.0))
 }
@@ -2196,8 +2241,9 @@ fn across_lines_of_orthogonal(
     node: usize,
     margin: Edges<f32>,
     definite_height: Option<f32>,
+    height_cap: Option<f32>,
 ) -> AcrossLines {
-    orthogonal_room(tree, node, margin, definite_height)
+    orthogonal_room(tree, node, margin, definite_height, height_cap)
         .map_or(AcrossLines::MaxContent, AcrossLines::Room)
 }
 
@@ -4699,6 +4745,9 @@ pub(crate) fn intrinsics_of_boxes(
             );
         }
     }
+    // The room that a vertical float or atomic inline of a horizontal paragraph
+    // fits its lines in is cut at the `max-height` of the paragraph's root.
+    let height_cap = (!vertical).then(|| max_height_cap(tree, idx)).flatten();
     for b in boxes {
         let replaced = crate::paint_rules::is_replaced_element(tree.document, b.node);
         let percent = if !replaced {
@@ -4741,7 +4790,13 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         false,
-                        across_lines_of_orthogonal(tree, b.node, margin, percent_height),
+                        across_lines_of_orthogonal(
+                            tree,
+                            b.node,
+                            margin,
+                            percent_height,
+                            height_cap,
+                        ),
                     )
                 };
                 let style = tree.physical_style(b.node);
@@ -4839,7 +4894,13 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         false,
-                        across_lines_of_orthogonal(tree, b.node, margin, percent_height),
+                        across_lines_of_orthogonal(
+                            tree,
+                            b.node,
+                            margin,
+                            percent_height,
+                            height_cap,
+                        ),
                     )
                 };
                 intrinsics.engine.insert_atomic(
