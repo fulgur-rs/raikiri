@@ -20156,6 +20156,9 @@ fn the_insets_of_an_out_of_flow_child_say_how_it_follows_the_lines_of_its_paragr
             "position:absolute;left:0;bottom:0;min-height:50%",
             "position:absolute;left:0;bottom:0;max-height:50%",
             "position:absolute;left:0;bottom:0;height:stretch",
+            "position:absolute;left:0;bottom:0;height:calc(50% - 10px)",
+            "position:absolute;left:0;bottom:0;min-height:calc(50% - 10px)",
+            "position:absolute;left:0;bottom:0;max-height:max(10px, 50%)",
             "position:fixed;left:0;bottom:0",
         ],
     );
@@ -20304,4 +20307,24 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         out_of_flow_moves(&session, &cascade, &moved, 10.0),
         [(ids[0], 12.0), (ids[1], 10.0)]
     );
+}
+
+#[test]
+fn a_length_that_does_not_depend_on_the_paragraph_height_keeps_the_child_following_it() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0;bottom:0;height:20px",
+            "position:absolute;left:0;bottom:0;height:calc(10px + 5px)",
+            "position:absolute;left:0;bottom:0;min-height:0;max-height:none",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    for (index, id) in ids.iter().enumerate() {
+        assert_eq!(
+            out_of_flow_follow(&session, &cascade, root, *id),
+            Some(OutOfFlowFollow::WithHeight),
+            "child {index}"
+        );
+    }
 }

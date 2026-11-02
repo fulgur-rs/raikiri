@@ -5176,12 +5176,14 @@ enum OutOfFlowFollow {
     WithHeight,
 }
 
-/// Whether a size follows the height of the containing block: it resolves
-/// differently against another height, or it is `stretch`, which fills it.
+/// Whether a size follows the height of the containing block: it is a
+/// percentage, a `calc()` that holds one, or `stretch`, which fills it.
 fn follows_height(length: impl Into<Dimension>) -> bool {
-    let length = length.into();
-    length.maybe_resolve(Some(0.0)) != length.maybe_resolve(Some(1.0))
-        || matches!(length.expand(), ExpandedDimension::Stretch)
+    match length.into().expand() {
+        ExpandedDimension::Percent(_) | ExpandedDimension::Stretch => true,
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
+        _ => false,
+    }
 }
 
 /// How the out-of-flow box `node`, one of the boxes of the paragraph `root`,
