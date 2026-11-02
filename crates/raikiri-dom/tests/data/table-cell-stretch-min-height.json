@@ -766,6 +766,39 @@
       "issue": "RAIKIRI-1348",
       "device_scale": 1,
       "profile_note": "Explicit raster profile; None intentionally preserves vector fractional spacing."
+    },
+    {
+      "label": "span-peer",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c rowspan=2><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td><td style='height:300px'>x</td></tr><tr><td style='height:300px'>x</td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          102,
+          604
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          604
+        ],
+        [
+          "i",
+          9,
+          9,
+          240.796875,
+          602
+        ]
+      ],
+      "issue": "RAIKIRI-1347",
+      "page_size": [
+        800,
+        1000
+      ],
+      "page_note": "A taller page records the complete table, cell and image instead of the 600px page fragments (592px and 591px)."
     }
   ],
   "known_preexisting_differences": [
@@ -796,34 +829,6 @@
         ]
       ],
       "issue": "RAIKIRI-1346"
-    },
-    {
-      "label": "span-peer",
-      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c rowspan=2><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td><td style='height:300px'>x</td></tr><tr><td style='height:300px'>x</td></tr></table>",
-      "expected": [
-        [
-          "t",
-          8,
-          8,
-          102,
-          604
-        ],
-        [
-          "c",
-          8,
-          8,
-          90,
-          604
-        ],
-        [
-          "i",
-          9,
-          9,
-          240.796875,
-          602
-        ]
-      ],
-      "issue": "RAIKIRI-1347"
     }
   ]
 }
