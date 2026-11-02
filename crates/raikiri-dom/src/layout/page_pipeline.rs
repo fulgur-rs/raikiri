@@ -7475,8 +7475,9 @@ fn avoid_chain_before_last_box(
     mut names_page: Option<impl FnMut(usize) -> bool>,
 ) -> Option<AvoidChain> {
     let has_named_pages = names_page.is_some();
-    // A block box in the flow that takes block space. Anything else between
-    // the boxes, such as a float or text, is left to the rules for it.
+    // A block box in the flow that takes block space. Text between the boxes
+    // is left to the rules for it. A float lies in a flow of its own: it does
+    // not cut the run, and moves along with the boxes it sits among.
     let is_box = |index: usize| {
         let id = children[index];
         let (in_flow, floated) = flow_flags[index];
@@ -7490,11 +7491,11 @@ fn avoid_chain_before_last_box(
     }
     let mut first = last;
     let starts_block = loop {
-        // A child that generates no box, such as collapsed white space, is
-        // not between the boxes.
+        // A child that generates no box, such as collapsed white space, and
+        // a float are not between the boxes.
         let Some(before) = (0..first)
             .rev()
-            .find(|&index| flow_flags[index] != (None, false))
+            .find(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
         else {
             break true;
         };
@@ -7525,7 +7526,7 @@ fn avoid_chain_before_last_box(
     // before the run is taken instead.
     (first != last
         && (first..=last)
-            .filter(|&index| flow_flags[index] != (None, false))
+            .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
             .all(|index| {
                 moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
             }))
