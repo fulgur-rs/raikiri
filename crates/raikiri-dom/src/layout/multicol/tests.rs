@@ -8407,3 +8407,92 @@ fn authored_comparison_limits_resolve_against_the_requested_basis() {
     assert_eq!(authored.min_width(1000.0), Some(30.0));
     assert_eq!(authored.max_width(1000.0), Some(100.0));
 }
+
+#[test]
+fn a_text_bearing_multicol_item_keeps_the_flex_cross_size() {
+    for container in ["height:50px", "aspect-ratio:2/1"] {
+        for decoration in [
+            "",
+            "padding:5px;border:2px solid",
+            "box-sizing:border-box;padding:5px;border:2px solid",
+        ] {
+            for content_height in [10, 80, 120] {
+                let mut doc = Document::new();
+                crate::layout::test_support::with_ahem(&mut doc);
+                let html = doc.append_element(Some(0), "html", None::<&str>);
+                let body =
+                    doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+                let flex = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some(format!("display:flex;width:100px;{container}")),
+                );
+                let item = doc.append_element(
+                    Some(flex),
+                    "div",
+                    Some(format!("display:block;width:100%;columns:2;{decoration}")),
+                );
+                let child = doc.append_element(
+                    Some(item),
+                    "div",
+                    Some(format!("display:block;height:{content_height}px")),
+                );
+                doc.append_text(child, "AAAA");
+                layout_nested_flex_float_fixture(&mut doc);
+                assert_eq!(
+                    doc.nodes[flex].layout.size.height, 50.0,
+                    "{container};{decoration};{content_height}"
+                );
+                assert_eq!(
+                    doc.nodes[item].layout.size.height, 50.0,
+                    "{container};{decoration};{content_height}"
+                );
+                let root = doc
+                    .fragment_tree
+                    .fragments
+                    .iter()
+                    .find(|fragment| fragment.node_id == item && fragment.parent.is_none())
+                    .unwrap();
+                assert_eq!(
+                    root.rect.height, 50.0,
+                    "fragment: {container};{decoration};{content_height}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn non_stretched_text_bearing_multicol_items_still_balance_their_height() {
+    for (container, item_style) in [
+        ("", "margin-top:auto"),
+        ("", "margin-bottom:auto"),
+        ("", "margin-block:auto"),
+        ("", "align-self:flex-start"),
+        ("align-items:flex-start", ""),
+    ] {
+        let mut doc = Document::new();
+        crate::layout::test_support::with_ahem(&mut doc);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Some(format!("display:flex;width:100px;height:50px;{container}")),
+        );
+        let item = doc.append_element(
+            Some(flex),
+            "div",
+            Some(format!("display:block;width:100%;columns:2;{item_style}")),
+        );
+        for _ in 0..2 {
+            let child = doc.append_element(Some(item), "div", Some("display:block;height:10px"));
+            doc.append_text(child, "AAAA");
+        }
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(
+            doc.nodes[item].layout.size.height, 10.0,
+            "{container};{item_style}"
+        );
+    }
+}
