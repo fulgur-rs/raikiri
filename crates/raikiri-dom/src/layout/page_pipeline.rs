@@ -3022,9 +3022,23 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut cleared = Vec::new();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
-    let mut pending = vec![(0_usize, None::<&str>)];
-    while let Some((parent, inherited)) = pending.pop() {
+    let mut pending = vec![(0_usize, None::<&str>, false)];
+    while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
         let mut after_forced_break = false;
+        // Generated `::before` content is not an arena child; like text, it
+        // takes the parent's page.
+        let before_text = crate::generated_content::is_page_flow_generated_text(
+            cascade,
+            parent,
+            raikiri_style::PseudoElem::Before,
+        );
+        // Whether the box that comes first among the parent's boxes starts
+        // right at the float that began the page: the parent took the forced
+        // break, so a break before that box, which CSS Fragmentation 3 (3.1)
+        // propagates up to the parent's start edge, is the same break. Generated
+        // content of the parent comes before that box, so it is a break of its
+        // own then.
+        let mut page_start_inherited = at_page_start_float && !before_text;
         let mut float_after_break = false;
         // Whether the float that started the page took its own break-before
         // or a change of named page there, and not just the break of the box
@@ -3034,14 +3048,7 @@ fn clear_floats_at_forced_breaks<'name>(
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
         let mut last_block = None;
-        // Generated `::before` content is not an arena child; like text, it
-        // takes the parent's page.
-        let mut previous_page_name = crate::generated_content::is_page_flow_generated_text(
-            cascade,
-            parent,
-            raikiri_style::PseudoElem::Before,
-        )
-        .then_some(inherited);
+        let mut previous_page_name = before_text.then_some(inherited);
         for item in child_boxes(document, parent, true) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
@@ -3056,6 +3063,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 after_forced_break = false;
                 float_after_break = false;
                 float_own_break = false;
+                page_start_inherited = false;
                 previous_page_name = Some(inherited);
                 continue;
             };
@@ -3093,6 +3101,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 continue;
             }
             if is_float(document, child) {
+                page_start_inherited = false;
                 // The first float right after a forced break goes to the new
                 // page, so it clears the earlier page's floats too; the floats
                 // after it line up beside it. The break still carries on to
@@ -3125,7 +3134,9 @@ fn clear_floats_at_forced_breaks<'name>(
             }
             // A float right after the break started the new page, so the box
             // after it lines up beside that float instead of below it.
-            let beside_page_start_float = std::mem::take(&mut float_after_break);
+            let starts_at_inherited = std::mem::take(&mut page_start_inherited);
+            let beside_page_start_float =
+                std::mem::take(&mut float_after_break) || starts_at_inherited;
             let float_took_own_break = std::mem::take(&mut float_own_break);
             last_block = Some(child);
             let start_page_name = if has_named_pages {
@@ -3147,6 +3158,15 @@ fn clear_floats_at_forced_breaks<'name>(
                 page_break_is_forced(document, child, cascade.computed[child].break_before);
             let own_break = named_break || breaks_before;
             let forced = after_forced_break || own_break;
+            // Floats on either side belong to the earlier page, so a
+            // one-sided clear is widened too. A break before the box
+            // coincides with the break of the box before the float that
+            // started the page, but not with the float's own break.
+            let at_page_start_float = (forced || starts_at_inherited)
+                && beside_page_start_float
+                && !named_break
+                && !(breaks_before && float_took_own_break)
+                && !document.nodes[parent].used_writing_mode.is_vertical();
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
             after_forced_break = page_edge_constraint(document, cascade, child, false).0;
@@ -3161,18 +3181,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 child,
                 pagination_on_transposed_axes,
             ) {
-                pending.push((child, own_page_name));
+                pending.push((child, own_page_name, at_page_start_float));
             }
-            // Floats on either side belong to the earlier page, so a
-            // one-sided clear is widened too. A break before the box
-            // coincides with the break of the box before the float that
-            // started the page, but not with the float's own break.
-            if forced
-                && beside_page_start_float
-                && !named_break
-                && !(breaks_before && float_took_own_break)
-                && !document.nodes[parent].used_writing_mode.is_vertical()
-            {
+            if forced && at_page_start_float {
                 // Layout clears the floats before the one that starts the
                 // page, not that float.
                 cleared_to_float_floor.push(child);
@@ -7002,6 +7013,27 @@ fn first_piece_end(
     if boxes.is_empty() {
         return None;
     }
+    // The top line of a flex container cannot be cut where an item that
+    // starts at its top and that no break goes through is still running, so
+    // the container moves whole. Its first piece ends where the last of the
+    // first pieces of those items does, not the first. An item that starts
+    // lower is pushed on alone instead (those on the lines below, among
+    // them), and one that can be cut anywhere or is not understood here adds
+    // no bound of its own.
+    if lays_out_in_flex_rows(document, cascade, node_id) {
+        let layout = node.layout;
+        let content_top = layout.border.top + layout.padding.top;
+        return boxes
+            .iter()
+            .filter_map(|&child| {
+                // The page breaks before the relative offset moves the box.
+                let top = normal_flow_y(document, cascade, body_id, child);
+                (top <= content_top + 0.001).then_some(top)?;
+                let piece = first_piece_end(document, cascade, body_id, child, depth + 1)?;
+                Some(top + piece)
+            })
+            .reduce(f32::max);
+    }
     let examined = if stacks_every_box { boxes.len() } else { 1 };
     let mut least = f32::INFINITY;
     for &child in &boxes[..examined] {
@@ -7013,9 +7045,21 @@ fn first_piece_end(
     least.is_finite().then_some(least)
 }
 
+/// Whether `node_id` is a flex container that lays its items out in rows
+/// across the page.
+fn lays_out_in_flex_rows(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    document.nodes[node_id].display() == DisplayValue::Flex
+        && matches!(
+            cascade.computed[node_id].flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        )
+}
+
 /// How far below the border-box top of the flex container or grid `node_id`
 /// the first piece of its content ends, when it has padding or border above
-/// its items (see [`first_piece_end`]).
+/// its items, or lays them out in rows (see [`first_piece_end`]). Such a
+/// container moves whole with its first piece even where nothing is above it,
+/// as the items of its top line all begin at its top.
 fn leading_piece_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -7023,9 +7067,10 @@ fn leading_piece_end(
     node_id: usize,
 ) -> Option<f32> {
     let layout = &document.nodes[node_id].layout;
-    (layout.border.top + layout.padding.top > 0.0)
-        .then(|| first_piece_end(document, cascade, body_id, node_id, 0))
-        .flatten()
+    (layout.border.top + layout.padding.top > 0.0
+        || lays_out_in_flex_rows(document, cascade, node_id))
+    .then(|| first_piece_end(document, cascade, body_id, node_id, 0))
+    .flatten()
 }
 
 /// Whether a box with padding or border above its content moves to the next

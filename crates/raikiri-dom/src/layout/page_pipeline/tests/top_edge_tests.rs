@@ -286,11 +286,22 @@ fn a_container_moves_when_the_orphans_of_every_item_do_not_fit() {
 }
 
 #[test]
-fn a_container_stays_while_one_item_has_its_first_line_on_the_page() {
+fn a_grid_stays_while_one_item_has_its_first_line_on_the_page() {
     // The first item is pushed down by its padding, the second one is not.
     assert_eq!(
-        container_after(80, FLEX, &["padding-top:30px", ""], 1),
+        container_after(80, GRID, &["padding-top:30px", ""], 1),
         (80.0, 86.0, 2)
+    );
+}
+
+#[test]
+fn a_flex_line_moves_whole_while_one_item_has_its_first_line_on_the_page() {
+    // The first item is pushed down by its padding, the second one is not: the
+    // items of the line are cut together, and the first one cannot be cut
+    // before its line.
+    assert_eq!(
+        container_after(80, FLEX, &["padding-top:30px", ""], 1),
+        (100.0, 106.0, 2)
     );
 }
 
@@ -304,8 +315,15 @@ fn a_container_stays_when_the_next_page_cannot_hold_the_first_piece() {
 
 #[test]
 fn a_container_without_padding_or_border_above_its_items_is_left_to_its_items() {
-    let (container, _, _) = container_after(94, "display:flex", &["", ""], 1);
-    assert_eq!(container, 94.0);
+    // Nothing of the container stays behind alone, and the items sit one above
+    // the other or break in turn.
+    for css in [
+        "display:grid;grid-template-columns:30px 30px",
+        "display:flex;flex-direction:column",
+    ] {
+        let (container, _, _) = container_after(94, css, &["", ""], 1);
+        assert_eq!(container, 94.0, "{css}");
+    }
 }
 
 #[test]
@@ -591,5 +609,194 @@ fn a_block_moves_even_when_its_padding_and_line_do_not_fit_one_page() {
             pages
         ),
         (100.0, 210.0, 3)
+    );
+}
+
+/// `body > [div(lead), container(container_css) > items]` on 100px pages, each
+/// item a block styled with its entry of `item_css`. Returns the page-flow y
+/// of the container and of its items.
+fn row_after(lead: u32, container_css: &str, item_css: &[&str]) -> (f32, Vec<f32>) {
+    let mut container = 0;
+    let mut items = Vec::new();
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{lead}px"));
+        container = block(doc, body, container_css);
+        for css in item_css {
+            items.push(block(doc, container, &format!("display:block;{css}")));
+        }
+    });
+    (
+        page_flow_y(&doc, container),
+        items.iter().map(|&item| page_flow_y(&doc, item)).collect(),
+    )
+}
+
+const AVOID_20: &str = "height:20px;break-inside:avoid";
+const AVOID_40: &str = "height:40px;break-inside:avoid";
+const AVOID_50: &str = "height:50px;break-inside:avoid";
+
+#[test]
+fn a_flex_line_moves_whole_for_an_item_that_cannot_be_cut_and_does_not_fit() {
+    // Whichever item that is, and with or without padding above the items:
+    // they all start at the top of the line, and the line cannot be cut
+    // before the item that does not fit.
+    let padded = "display:flex;padding-top:6px";
+    let bare = "display:flex";
+    for (css, items, expected) in [
+        (padded, ["height:20px", AVOID_40], (100.0, [106.0, 106.0])),
+        (padded, [AVOID_40, "height:20px"], (100.0, [106.0, 106.0])),
+        (padded, [AVOID_40, AVOID_40], (100.0, [106.0, 106.0])),
+        (bare, ["height:20px", AVOID_50], (100.0, [100.0, 100.0])),
+        (bare, [AVOID_50, "height:20px"], (100.0, [100.0, 100.0])),
+        (bare, [AVOID_20, AVOID_50], (100.0, [100.0, 100.0])),
+        (
+            "display:flex;flex-direction:row-reverse",
+            ["height:20px", AVOID_50],
+            (100.0, [100.0, 100.0]),
+        ),
+    ] {
+        let (container, placed) = row_after(60, css, &items);
+        assert_eq!(
+            (container, placed.as_slice()),
+            (expected.0, &expected.1[..]),
+            "{css} {items:?}"
+        );
+    }
+}
+
+#[test]
+fn a_flex_line_stays_when_its_items_fit_or_can_be_cut() {
+    for (css, items) in [
+        // The item ends at the page end.
+        ("display:flex", ["height:20px", AVOID_40]),
+        (
+            "display:flex;padding-top:6px",
+            ["height:20px", "height:30px;break-inside:avoid"],
+        ),
+        // Boxes with nothing in them can be cut anywhere.
+        ("display:flex", ["height:20px", "height:50px"]),
+        (
+            "display:flex;padding-top:6px",
+            ["height:20px", "height:50px"],
+        ),
+    ] {
+        let (container, _) = row_after(60, css, &items);
+        assert_eq!(container, 60.0, "{css} {items:?}");
+    }
+}
+
+#[test]
+fn an_item_that_starts_lower_in_the_line_is_pushed_on_alone() {
+    // The line can be cut above the item, so the rest of it stays.
+    for (css, items, lower) in [
+        (
+            "display:flex;align-items:flex-end",
+            [AVOID_20, "height:50px"],
+            90.0,
+        ),
+        (
+            "display:flex",
+            [
+                "height:20px;margin-top:30px;break-inside:avoid",
+                "height:50px",
+            ],
+            90.0,
+        ),
+    ] {
+        let (container, placed) = row_after(60, css, &items);
+        assert_eq!((container, placed[0]), (60.0, lower), "{css}");
+    }
+    // The tall item starts at the top, and the one beside it goes with it.
+    let (container, placed) = row_after(
+        60,
+        "display:flex;align-items:center",
+        &["height:20px", AVOID_50],
+    );
+    assert_eq!((container, placed[1]), (100.0, 100.0));
+}
+
+#[test]
+fn a_flex_line_is_judged_by_the_normal_flow_place_of_its_items() {
+    // The page breaks before the relative offset moves the item.
+    let (container, _) = row_after(
+        60,
+        "display:flex",
+        &[
+            "height:50px;break-inside:avoid;position:relative;top:10px",
+            "height:20px",
+        ],
+    );
+    assert_eq!(container, 100.0);
+    let (container, _) = row_after(
+        60,
+        "display:flex",
+        &[
+            "height:20px;break-inside:avoid;position:relative;top:50px",
+            "height:20px",
+        ],
+    );
+    assert_eq!(container, 60.0);
+}
+
+#[test]
+fn a_flex_container_that_stacks_its_items_is_left_to_them() {
+    let (container, _) = row_after(
+        60,
+        "display:flex;flex-direction:column",
+        &["height:20px", AVOID_50],
+    );
+    assert_eq!(container, 60.0);
+}
+
+#[test]
+fn a_wrapping_flex_container_moves_whole_for_an_item_of_its_top_line() {
+    let wrap = "display:flex;flex-wrap:wrap;width:100px";
+    // One line.
+    let (container, placed) = row_after(60, wrap, &["height:20px", AVOID_50]);
+    assert_eq!((container, placed), (100.0, vec![100.0, 100.0]));
+    // Two lines, of which the first holds the item.
+    let half = "width:50px";
+    let (container, placed) = row_after(
+        60,
+        wrap,
+        &[
+            &format!("{half};{AVOID_50}"),
+            &format!("{half};height:20px"),
+            &format!("{half};height:20px"),
+        ],
+    );
+    assert_eq!((container, placed), (100.0, vec![100.0, 100.0, 150.0]));
+}
+
+#[test]
+fn a_wrapping_flex_container_stays_for_an_item_of_a_line_below_the_top_one() {
+    // The line with the item goes on to the next page alone.
+    let half = "width:50px";
+    let (container, placed) = row_after(
+        60,
+        "display:flex;flex-wrap:wrap;width:100px",
+        &[
+            &format!("{half};height:20px"),
+            &format!("{half};height:20px"),
+            &format!("{half};{AVOID_50}"),
+        ],
+    );
+    assert_eq!((container, placed[0]), (60.0, 60.0));
+}
+
+#[test]
+fn a_flex_line_in_a_block_moves_after_the_box_before_it() {
+    let (mut before, mut container, mut item) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        let wrapper = block(doc, body, "display:block");
+        before = block(doc, wrapper, "display:block;height:10px");
+        container = block(doc, wrapper, "display:flex");
+        block(doc, container, "display:block;height:20px");
+        item = block(doc, container, &format!("display:block;{AVOID_50}"));
+    });
+    assert_eq!(
+        [before, container, item].map(|id| page_flow_y(&doc, id)),
+        [50.0, 100.0, 100.0]
     );
 }

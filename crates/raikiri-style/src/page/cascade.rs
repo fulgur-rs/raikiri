@@ -93,6 +93,7 @@ pub struct PageContextQuery {
 #[derive(Debug, Clone, PartialEq)]
 struct MarginBoxInheritance {
     color: CssColor,
+    color_modern: bool,
     background_color: CssColor,
     background_color_expression: Option<SmolStr>,
     font_size: ComputedLength,
@@ -107,6 +108,7 @@ impl Default for MarginBoxInheritance {
     fn default() -> Self {
         Self {
             color: CssColor::BLACK,
+            color_modern: false,
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,
             font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
@@ -116,6 +118,39 @@ impl Default for MarginBoxInheritance {
             line_height: None,
             custom_properties: empty_custom_properties(),
         }
+    }
+}
+
+fn contextual_page_value(
+    expression: &crate::property::ContextualColor,
+    current: (CssColor, bool),
+) -> Option<PropertyValue> {
+    let value = expression.resolved_value(current.0)?;
+    // Resolving currentcolor must keep the inherited syntax with its RGBA.
+    Some(match value {
+        PropertyValue::Color(color)
+            if current.1
+                && crate::property::source_color_syntax(&expression.source)
+                    == crate::property::ColorSyntax::CurrentColor =>
+        {
+            PropertyValue::ModernColor(color)
+        }
+        other => other,
+    })
+}
+
+fn page_context_color(
+    value: Option<&PropertyValue>,
+    inherited: (CssColor, bool),
+) -> (CssColor, bool) {
+    let value = value.and_then(|value| match value {
+        PropertyValue::ContextualColor(expression) => contextual_page_value(expression, inherited),
+        other => Some(other.clone()),
+    });
+    match value {
+        Some(PropertyValue::Color(color)) => (color, false),
+        Some(PropertyValue::ModernColor(color)) => (color, true),
+        _ => inherited,
     }
 }
 
@@ -419,9 +454,7 @@ impl PageMarginBoxCascadeResult {
                     resolve_css_wide_color_font(
                         value,
                         inherited.color,
-                        // A margin box does not keep the syntax of the color it
-                        // inherits, so it counts as legacy there.
-                        false,
+                        inherited.color_modern,
                         inherited.background_color,
                         inherited.background_color_expression.as_ref(),
                         inherited.font_size,
@@ -431,27 +464,31 @@ impl PageMarginBoxCascadeResult {
             })
             .collect();
         merged.invalid_at_computed_value_time = invalid_at_computed_value_time;
-        let own_color = merged
-            .declarations
-            .iter()
-            .find_map(|declaration| match &declaration.value {
-                PropertyValue::Color(color) | PropertyValue::ModernColor(color) => Some(*color),
-                PropertyValue::ContextualColor(color) if color.key == PropertyKey::Color => {
-                    crate::property::resolve_contextual_color(&color.source, inherited.color)
-                }
-                _ => None,
-            })
-            .unwrap_or(inherited.color);
+        let inherited_color = (inherited.color, inherited.color_modern);
+        let own_color = page_context_color(
+            merged
+                .declarations
+                .iter()
+                .find(|declaration| declaration.value.key() == PropertyKey::Color)
+                .map(|declaration| &declaration.value),
+            inherited_color,
+        );
         for declaration in &mut merged.declarations {
             if let PropertyValue::ContextualColor(expression) = &declaration.value {
                 let is_color = expression.key == PropertyKey::Color;
-                let resolved = expression
-                    .resolved_value(if is_color { inherited.color } else { own_color })
-                    .unwrap_or(if is_color {
-                        PropertyValue::Color(inherited.color)
+                let resolved = contextual_page_value(
+                    expression,
+                    if is_color { inherited_color } else { own_color },
+                )
+                .unwrap_or(if is_color {
+                    if inherited.color_modern {
+                        PropertyValue::ModernColor(inherited.color)
                     } else {
-                        PropertyValue::BackgroundColor(CssColor::TRANSPARENT)
-                    });
+                        PropertyValue::Color(inherited.color)
+                    }
+                } else {
+                    PropertyValue::BackgroundColor(CssColor::TRANSPARENT)
+                });
                 declaration.update_value(|value| *value = resolved);
             }
         }
@@ -1977,17 +2014,13 @@ pub(crate) fn cascade_page_with_normal_line_height(
 
     // Page winner iteration has no ordering guarantee. Settle its color first,
     // then use that same color for every contextual background expression.
-    let own_color = match resolved
-        .get(&PropertyKey::Color)
-        .map(ResolvedAgainstInherited::as_property_value)
-    {
-        Some(PropertyValue::Color(color) | PropertyValue::ModernColor(color)) => *color,
-        Some(PropertyValue::ContextualColor(color)) => {
-            crate::property::resolve_contextual_color(&color.source, inherited.color)
-                .unwrap_or(inherited.color)
-        }
-        _ => inherited.color,
-    };
+    let inherited_color = (inherited.color, inherited.color_modern);
+    let own_color = page_context_color(
+        resolved
+            .get(&PropertyKey::Color)
+            .map(ResolvedAgainstInherited::as_property_value),
+        inherited_color,
+    );
     let background_color_expression = match resolved
         .get(&PropertyKey::BackgroundColor)
         .map(ResolvedAgainstInherited::as_property_value)
@@ -1997,11 +2030,14 @@ pub(crate) fn cascade_page_with_normal_line_height(
     };
     for (key, value) in &mut resolved {
         if let PropertyValue::ContextualColor(color) = value.as_property_value()
-            && let Some(value_resolved) = color.resolved_value(if *key == PropertyKey::Color {
-                inherited.color
-            } else {
-                own_color
-            })
+            && let Some(value_resolved) = contextual_page_value(
+                color,
+                if *key == PropertyKey::Color {
+                    inherited_color
+                } else {
+                    own_color
+                },
+            )
         {
             *value = resolve_against_inherited(value_resolved, inherited, &ctx);
         }
@@ -2039,7 +2075,9 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // been seen — `best` iteration order is `HashMap`-random.
     let page_ch_advance =
         page_context_ch_advance(&resolved, inherited, font_size, normal_line_height);
-    let ctx = ctx.with_ch_advance(page_ch_advance);
+    let ctx = ctx
+        .with_ch_advance(page_ch_advance)
+        .with_current_color_modern(own_color.1);
     // `rem` = "the computed value of the em unit on the root element"
     // (CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>). The page
     // context is *not* the root element, so this stays the inheritance parent's
@@ -2061,13 +2099,8 @@ pub(crate) fn cascade_page_with_normal_line_height(
         page_context_line_height_basis(&resolved, inherited, font_size, &ctx, normal_line_height);
     let margin_box_inheritance = MarginBoxInheritance {
         background_color_expression,
-        color: match resolved
-            .get(&PropertyKey::Color)
-            .map(ResolvedAgainstInherited::as_property_value)
-        {
-            Some(PropertyValue::Color(color) | PropertyValue::ModernColor(color)) => *color,
-            _ => inherited.color,
-        },
+        color: own_color.0,
+        color_modern: own_color.1,
         background_color: match resolved
             .get(&PropertyKey::BackgroundColor)
             .map(ResolvedAgainstInherited::as_property_value)
