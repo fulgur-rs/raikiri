@@ -14,20 +14,22 @@
 //! its columns, and lays it out at that width. Its inline size fits the
 //! height it is offered: the one the parent passes down, else the parent's
 //! definite height, else the page area's, cut at the `max-height` of the
-//! parent. A vertical paragraph root with a width of its own, a float, or an
-//! item of a row flex container is not stretched by the parent, yet fits the
-//! same height ([`with_page_room`]). A vertical item of a horizontal grid that
-//! is asked for the width it gives a column fits the content height of the
-//! grid, or no height when the grid has none.
+//! parent. A vertical box with a width of its own, a float, or an item of a row
+//! flex container is not stretched by the parent, yet fits the same height
+//! ([`with_page_room`]). A vertical item of a horizontal grid that is asked for
+//! the width it gives a column fits the content height of the grid, or no height
+//! when the grid has none.
 
 use crate::layout::context::LayoutSession;
-use crate::layout::ifc::boxes::{max_height_cap, open_height_room};
+use crate::layout::ifc::boxes::{box_sizing_height_adjustment, max_height_cap, open_height_room};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::{Float, Position, ResolveOrZero};
+use raikiri_layout_style::values::{
+    AlignItemsKeyword, BoxSizing, Float, MaybeResolve, Position, ResolveOrZero,
+};
 
 use raikiri_style::property::DisplayValue;
 
@@ -74,7 +76,48 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
     if inputs.available_space.height != AvailableSpace::MaxContent {
         return inputs.available_space.height;
     }
-    page_room(tree, idx, inputs, inputs.parent_size.height)
+    let definite = inputs
+        .parent_size
+        .height
+        .filter(|&height| !is_stretch_to_dropped_limit(tree, idx, height));
+    page_room(tree, idx, inputs, definite)
+}
+
+/// Whether `height`, the definite content height of the parent of `idx`, is the
+/// one a `max-height` clamps the parent to as a stretched flex item, a limit
+/// that `max_height_cap` drops: the box is then no definite room for `idx`, and
+/// it fits the page area, as it does in a parent that is not stretched. A flex
+/// container with a height of its own makes the stretch definite, whatever the
+/// limit comes to.
+fn is_stretch_to_dropped_limit(tree: &LayoutSession<'_>, idx: usize, height: f32) -> bool {
+    stretch_to_dropped_limit(tree, idx, height).unwrap_or(false)
+}
+
+/// [`is_stretch_to_dropped_limit`], `None` when the parent has no length for a
+/// `max-height` or is no flex item of a container with an open height.
+fn stretch_to_dropped_limit(tree: &LayoutSession<'_>, idx: usize, height: f32) -> Option<bool> {
+    let parent = tree.taffy_parent_of(idx)?;
+    let style = tree.physical_style(parent);
+    let max = style.max_size().height.maybe_resolve(None::<f32>)?;
+    let min = style
+        .min_size()
+        .height
+        .maybe_resolve(None::<f32>)
+        .unwrap_or(0.0);
+    // The height of a flex container that states its own is definite room for
+    // the item it stretches, and the limit is not what settles it.
+    let basis = super::flex_item_percent_basis(tree, parent)
+        .filter(|basis| basis.height.is_none())?
+        .width;
+    let padding = style.padding().resolve_or_zero(basis);
+    let border = style.border().resolve_or_zero(basis);
+    let edges = padding.top + padding.bottom + border.top + border.bottom;
+    Some(
+        style.box_sizing() == BoxSizing::BorderBox
+            && style.size().height.is_auto()
+            && max_height_cap(tree, parent).is_none()
+            && (height + edges - max.max(min)).abs() < 0.01,
+    )
 }
 
 /// The room of the margin box of the orthogonal flow `idx` along its inline
@@ -140,9 +183,9 @@ fn is_vertical_box_in_horizontal_flow(tree: &LayoutSession<'_>, idx: usize) -> b
         })
 }
 
-/// `inputs` for the paragraph root `idx` with the height it fits its lines in
-/// as the available height, when it is a vertical box in a horizontal flow
-/// that is offered none (CSS Writing Modes 4 §7.3.1).
+/// `inputs` for the vertical box `idx` with the height it fits its lines in as
+/// the available height, when it is a vertical box in a horizontal flow that is
+/// offered none (CSS Writing Modes 4 §7.3.1).
 ///
 /// The lines of such a box break at its inline size, its height. A parent that
 /// leaves that height indefinite, as a block container and a row flex container
@@ -155,10 +198,153 @@ pub(super) fn with_page_room(
 ) -> LayoutInput {
     if is_vertical_box_in_horizontal_flow(tree, idx) {
         inputs.available_space.height = offered_height(tree, idx, &inputs);
-    } else if let Some(room) = grid_item_room(tree, idx, &inputs) {
+        inputs
+    } else {
+        with_grid_item_room(tree, idx, inputs)
+    }
+}
+
+/// `inputs` for the vertical item `idx` of a horizontal grid with the height it
+/// fits its lines in as the available height, when they ask for the width it
+/// gives a column ([`grid_item_room`]). A paragraph root takes it through
+/// [`with_page_room`]; a grid container that runs on the axes of its vertical
+/// writing mode takes it here.
+pub(super) fn with_grid_item_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if let Some(room) = grid_item_room(tree, idx, &inputs) {
         inputs.available_space.height = room;
     }
     inputs
+}
+
+/// The horizontal grid container that the in-flow vertical box `idx` is an item
+/// of.
+fn horizontal_grid_of_vertical_item(tree: &LayoutSession<'_>, idx: usize) -> Option<usize> {
+    use super::vertical_oof::used_writing_mode;
+    if tree.nodes[idx].layout_position() == Position::Absolute
+        || !used_writing_mode(tree, idx).is_vertical()
+    {
+        return None;
+    }
+    let grid = tree.taffy_parent_of(idx)?;
+    (tree.nodes[grid].formatting_context == FormattingContext::Grid
+        && !used_writing_mode(tree, grid).is_vertical())
+    .then_some(grid)
+}
+
+/// Whether the horizontal grid container `grid` has a vertical item in flow.
+pub(super) fn has_vertical_item(tree: &LayoutSession<'_>, grid: NodeId) -> bool {
+    tree.child_ids(grid).any(|child| {
+        horizontal_grid_of_vertical_item(tree, usize::from(child)) == Some(usize::from(grid))
+    })
+}
+
+/// Whether the box `idx` fits its lines in the height it is offered, rather than
+/// in the height its parent stretches it to: a vertical box in a horizontal
+/// block container, a row flex container or a grid container, in flow.
+pub(super) fn fits_lines_in_offered_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    is_vertical_box_in_horizontal_flow(tree, idx)
+        || horizontal_grid_of_vertical_item(tree, idx).is_some()
+}
+
+/// Whether the vertical item `idx` of a horizontal grid is stretched to the
+/// height of its row: its alignment in the block axis of the grid is `normal` or
+/// `stretch`, and neither of its vertical margins is `auto` (CSS Box Alignment 3
+/// §6.2).
+pub(super) fn stretches_to_grid_row(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let Some(grid) = horizontal_grid_of_vertical_item(tree, idx) else {
+        return false;
+    };
+    let style = tree.physical_style(idx);
+    let margin = style.margin();
+    if margin.top.is_auto() || margin.bottom.is_auto() {
+        return false;
+    }
+    let alignment = style
+        .bridge_align_self()
+        .unwrap_or_else(|| tree.physical_style(grid).align_items());
+    matches!(
+        alignment.keyword,
+        AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+    )
+}
+
+/// The border-box `height` of the box `idx` within its `min-height` and
+/// `max-height`, where they are lengths. `width_basis` is what its percentage
+/// padding refers to.
+pub(super) fn clamp_to_height_limits(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    width_basis: Option<f32>,
+    height: f32,
+) -> f32 {
+    let style = tree.physical_style(idx);
+    let adjustment = box_sizing_height_adjustment(tree, idx, width_basis.unwrap_or(0.0));
+    let max = style
+        .max_size()
+        .height
+        .maybe_resolve(None::<f32>)
+        .map(|max| max + adjustment);
+    let min = style
+        .min_size()
+        .height
+        .maybe_resolve(None::<f32>)
+        .map(|min| min + adjustment);
+    let height = max.map_or(height, |max| height.min(max));
+    min.map_or(height, |min| height.max(min))
+}
+
+/// The height that the vertical items of the grid container `grid` fit their
+/// lines in while the grid sizes its columns, as the height of its content box.
+///
+/// The grid hands its items the height it has: the one it is given or states.
+/// A grid that is asked for its min-content or max-content width has a height
+/// it is given only where its parent stretches it to a height that is definite,
+/// as that of a flex container is when it states its own; otherwise it has the
+/// height it states, and a stretch to the lines of its row, which the width is
+/// sized before, is no part of its width. A grid whose height is open, but
+/// whose `max-height` limits it, hands its items what the limit leaves when it
+/// is laid out at a width: its rows grow to the lines of the items up to that,
+/// and the items share it by row. `size` is the border-box size the grid is
+/// given or states, `stated` the height it states, and `edges` the padding and
+/// border of the grid above and below.
+pub(super) fn grid_item_content_height(
+    tree: &LayoutSession<'_>,
+    grid: usize,
+    inputs: &LayoutInput,
+    size: Size<Option<f32>>,
+    stated: Option<f32>,
+    edges: f32,
+) -> Option<f32> {
+    let style = tree.physical_style(grid);
+    let basis = inputs.parent_size;
+    let at_a_width = size.width.is_some();
+    let height = if at_a_width || basis.height.is_some() {
+        size.height
+    } else {
+        stated
+    };
+    if let Some(height) = height {
+        return Some((height - edges).max(0.0));
+    }
+    if !at_a_width {
+        return None;
+    }
+    let max = style.max_size().height.maybe_resolve(basis.height)?;
+    let min = style
+        .min_size()
+        .height
+        .maybe_resolve(basis.height)
+        .unwrap_or(0.0);
+    let limit = max.max(min);
+    Some(if style.box_sizing() == BoxSizing::ContentBox {
+        limit
+    } else {
+        (limit - edges).max(0.0)
+    })
 }
 
 /// The height that the vertical item `idx` of a horizontal grid fits its lines
@@ -176,21 +362,13 @@ fn grid_item_room(
     idx: usize,
     inputs: &LayoutInput,
 ) -> Option<AvailableSpace> {
-    use super::vertical_oof::used_writing_mode;
     if inputs.axis != RequestedAxis::Horizontal
+        || inputs.run_mode != RunMode::ComputeSize
         || inputs.known_dimensions.height.is_some()
-        || matches!(inputs.available_space.height, AvailableSpace::Definite(_))
-        || tree.nodes[idx].layout_position() == Position::Absolute
-        || !used_writing_mode(tree, idx).is_vertical()
     {
         return None;
     }
-    let grid = tree.taffy_parent_of(idx)?;
-    if tree.nodes[grid].formatting_context != FormattingContext::Grid
-        || used_writing_mode(tree, grid).is_vertical()
-    {
-        return None;
-    }
+    let grid = horizontal_grid_of_vertical_item(tree, idx)?;
     let &(_, height) = tree
         .context
         .grid_inner_heights
