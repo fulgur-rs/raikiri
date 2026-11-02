@@ -508,6 +508,11 @@ fn a_row_container_ratio_height_is_raised_by_what_the_line_does_not_stretch() {
             &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
         ),
         (
+            "the min-height of a stretched item that sizes its content box",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:40px;padding:10px 0;box-sizing:content-box'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
             "the min-height and margins of a stretched item",
             "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:20px;margin:30px 0'></div></div>",
             &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 38.0, 100.0, 20.0)],
