@@ -38,7 +38,8 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 
 mod oof_index;
-use oof_index::{StaticFallbackIndex, first_anchors};
+use oof_index::StaticFallbackIndex;
+pub(crate) use oof_index::first_anchors;
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
@@ -4029,7 +4030,7 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
     }
 }
 
-fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f32)> {
+pub(crate) fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f32)> {
     lines.lines.iter().enumerate().find_map(|(index, line)| {
         line.fragments()
             .inspect(|_| {

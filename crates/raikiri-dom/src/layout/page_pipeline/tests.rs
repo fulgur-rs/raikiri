@@ -20124,3 +20124,184 @@ fn an_edge_break_gives_up_the_widows_only_when_the_page_keeps_its_orphans() {
     assert_eq!(edge_break_lines(3, 1, 3), 1);
     assert_eq!(edge_break_lines(1, 1, 1), 1);
 }
+
+/// A 40px-wide paragraph `aaaa bbbb` of two 10px lines, with one out-of-flow
+/// span styled by each of `children` and holding a text, after its text.
+fn paragraph_with_out_of_flow_children(
+    root_css: &str,
+    children: &[&str],
+) -> (Document, CascadeResult, usize, Vec<usize>) {
+    let (doc, cascade, _, root, _) =
+        unpaginated_paragraph_with_boxes_after_a_spacer("aaaa bbbb", root_css, 0.0, |doc, root| {
+            for css in children {
+                let child = doc.append_element(Some(root), "span", Some(*css));
+                doc.append_text(child, "c");
+            }
+        });
+    let ids = doc.nodes[root].children[1..].to_vec();
+    (doc, cascade, root, ids)
+}
+
+#[test]
+fn the_insets_of_an_out_of_flow_child_say_how_it_follows_the_lines_of_its_paragraph() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0;top:5px",
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0;top:50%",
+            "position:absolute;left:0;top:5px;bottom:5px",
+            "position:absolute;left:0;bottom:0;height:50%",
+            "position:absolute;left:0;bottom:0;min-height:50%",
+            "position:absolute;left:0;bottom:0;max-height:50%",
+            "position:absolute;left:0;bottom:0;height:stretch",
+            "position:fixed;left:0;bottom:0",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let follow = |index: usize| out_of_flow_follow(&session, &cascade, root, ids[index]);
+    // A fixed `top` places the box whatever the lines do.
+    assert_eq!(follow(0), Some(OutOfFlowFollow::TopAnchored));
+    // Without insets it stays with its anchor on the last line.
+    assert_eq!(follow(1), Some(OutOfFlowFollow::OnLine));
+    // A `bottom` or a percentage `top` follow the height of the paragraph.
+    assert_eq!(follow(2), Some(OutOfFlowFollow::WithHeight));
+    assert_eq!(follow(3), Some(OutOfFlowFollow::WithHeight));
+    // Both insets, a size that follows the height of the paragraph, and a
+    // box that is not absolutely positioned need more than the lines moving.
+    for index in 4..ids.len() {
+        assert_eq!(follow(index), None, "child {index}");
+    }
+}
+
+#[test]
+fn an_out_of_flow_child_whose_containing_block_is_not_the_paragraph_is_left_where_it_is() {
+    // Nothing in the paragraph is positioned, so the box is placed against a
+    // block that the moved lines do not grow by themselves.
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "",
+        &[
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    assert_eq!(out_of_flow_follow(&session, &cascade, root, ids[0]), None);
+    // A box at its static position needs no containing block to follow its
+    // line.
+    assert_eq!(
+        out_of_flow_follow(&session, &cascade, root, ids[1]),
+        Some(OutOfFlowFollow::OnLine)
+    );
+    // Lines that run down the page are not the lines a paragraph moves.
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative;writing-mode:vertical-rl",
+        &["position:absolute;top:0;left:0;bottom:0"],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    assert_eq!(out_of_flow_follow(&session, &cascade, root, ids[0]), None);
+}
+
+#[test]
+fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0;top:5px",
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0;bottom:10%",
+            "position:absolute;left:0;top:50%",
+            "position:absolute;left:0;top:5px;bottom:5px",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let moves = |line: usize| {
+        // The lines from `line` on move 12px and the 20px box grows by 10px.
+        let moved = LineMove {
+            block_id: root,
+            flex_line: None,
+            line,
+            shift: 12.0,
+        };
+        out_of_flow_moves(&session, &cascade, &moved, 10.0)
+    };
+    // The box at its static position goes with its line by the shift; one
+    // against the bottom goes by the growth, less what a percentage of the
+    // taller box adds to it; one at a percentage from the top goes by what
+    // that percentage grows by. A fixed `top` and two insets stay.
+    assert_eq!(
+        moves(1),
+        [(ids[1], 12.0), (ids[2], 10.0), (ids[3], 9.0), (ids[4], 5.0)]
+    );
+    // The box on the last line stays when the move starts after it.
+    assert_eq!(moves(2), [(ids[2], 10.0), (ids[3], 9.0), (ids[4], 5.0)]);
+}
+
+#[test]
+fn text_in_a_static_out_of_flow_child_follows_the_line_it_is_anchored_to() {
+    let (doc, _, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0;top:5px",
+        ],
+    );
+    let texts: Vec<usize> = ids
+        .iter()
+        .map(|&child| doc.nodes[child].children[0])
+        .collect();
+    // The static box is anchored to the last line, so its text goes with that
+    // line and with the lines before it, and not with a move that starts
+    // after.
+    assert!(follows_line_of_paragraph(&doc, texts[0], root, 0));
+    assert!(follows_line_of_paragraph(&doc, texts[0], root, 1));
+    assert!(!follows_line_of_paragraph(&doc, texts[0], root, 2));
+    // A box placed against the bottom or the top is not anchored to a line.
+    for text in &texts[1..] {
+        assert!(!follows_line_of_paragraph(&doc, *text, root, 0));
+    }
+}
+
+#[test]
+fn an_out_of_flow_box_moves_by_what_its_inset_resolves_against_the_grown_box() {
+    let px = |value| LengthPercentageAuto::length(value);
+    let percent = |value| LengthPercentageAuto::percent(value);
+    let auto = LengthPercentageAuto::auto();
+    // A `bottom` of zero keeps the distance to the bottom edge, so the box
+    // moves by the whole growth; a percentage adds what the taller box gives
+    // it, which the box keeps its distance for.
+    assert_eq!(with_height_delta(auto, px(0.0), 20.0, 10.0), 10.0);
+    assert_eq!(with_height_delta(auto, percent(0.1), 20.0, 10.0), 9.0);
+    // A `top` moves by what its percentage of the taller box adds, and not at
+    // all when it is a length.
+    assert_eq!(with_height_delta(percent(0.5), auto, 20.0, 10.0), 5.0);
+    assert_eq!(with_height_delta(px(5.0), auto, 20.0, 10.0), 0.0);
+}
+
+#[test]
+fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+        ],
+    );
+    let boxes = &mut doc.table_layout_node_mut(root).ifc.as_mut().unwrap().boxes;
+    let listed: Vec<_> = boxes.clone();
+    boxes.extend(listed);
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let moved = LineMove {
+        block_id: root,
+        flex_line: None,
+        line: 0,
+        shift: 12.0,
+    };
+    assert_eq!(
+        out_of_flow_moves(&session, &cascade, &moved, 10.0),
+        [(ids[0], 12.0), (ids[1], 10.0)]
+    );
+}

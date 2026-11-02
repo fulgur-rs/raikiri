@@ -1740,7 +1740,12 @@ impl PaginationState {
                 page_origins.page_index_in_flow(text.effective_y - relative_offset)
             {
                 reach_page(control, natural_page)?;
-                self.current_page = self.current_page.max(natural_page);
+                // The text of a box outside the flow falls on the page its
+                // insets put it on, which says nothing about the page the
+                // flow is on.
+                if !candidate.context.is_out_of_flow_descendant() {
+                    self.current_page = self.current_page.max(natural_page);
+                }
             }
         } else {
             self.saw_child = true;
