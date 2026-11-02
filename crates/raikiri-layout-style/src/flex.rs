@@ -121,6 +121,11 @@ impl LayoutStyleView<'_> {
     pub fn flex_wraps(&self) -> bool {
         self.prepared.values.flex_wrap != W::NoWrap
     }
+    /// Whether new flex lines are stacked in reverse cross-axis order.
+    #[inline]
+    pub fn flex_lines_are_reversed(&self) -> bool {
+        self.prepared.values.flex_wrap == W::WrapReverse
+    }
     /// How a container distributes free space along its main axis.
     #[inline]
     pub fn justify_content(&self) -> values::AlignContent {
@@ -168,6 +173,7 @@ impl LayoutStyleView<'_> {
     /// [`Self::bridge_justify_self`] instead.
     #[inline]
     pub fn align_self(&self) -> Option<values::AlignSelf> {
-        self.self_alignment(self.context.align_axis_is_inline)
+        self.table_item_align_self
+            .or_else(|| self.self_alignment(self.context.align_axis_is_inline))
     }
 }

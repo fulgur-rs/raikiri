@@ -917,7 +917,9 @@ impl LayoutSession<'_> {
         {
             capture.insert(idx, inputs);
         }
-        self.compute_child_layout_with_block_ctx(node_id, inputs, None)
+        let output = self.compute_child_layout_with_block_ctx(node_id, inputs, None);
+        table_items::record(self, node_id, inputs, &output);
+        output
     }
 }
 
@@ -1514,6 +1516,7 @@ pub(crate) mod grid_baseline;
 mod grid_oof;
 mod inline_baseline;
 mod intrinsic_scopes;
+pub(super) mod table_items;
 use intrinsic_scopes::{
     with_flex_intrinsic_probe, with_flex_item_basis_bounds, wrapping_min_content_width,
 };
@@ -3627,17 +3630,17 @@ fn flex_layout_sized(
                         inputs,
                         compute_flexbox_layout,
                     );
-                    compute_flexbox_layout(tree, node_id, inputs)
+                    table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
                 })
             } else if tree.context.flex_intrinsic_probe == Some(idx)
                 || measures_intrinsic_width(&inputs)
             {
                 let cross_room = item_cross_room(basis.height, &inputs);
                 with_flex_item_basis_bounds(tree, node_id, cross_room, |tree| {
-                    compute_flexbox_layout(tree, node_id, inputs)
+                    table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
                 })
             } else {
-                compute_flexbox_layout(tree, node_id, inputs)
+                table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
             }
         },
     );
@@ -4383,7 +4386,7 @@ fn grid_layout_sized(
             // The items are still where the algorithm placed them, on the
             // axes it ran on, when the baseline is taken from one of them.
             let algorithm = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
-                let output = compute_grid_layout(tree, node_id, inputs);
+                let output = table_items::layout(tree, node_id, inputs, compute_grid_layout);
                 grid_baseline::with_first_baseline(
                     tree,
                     usize::from(node_id),

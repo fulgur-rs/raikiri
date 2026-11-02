@@ -648,7 +648,8 @@ fn compute_table_layout_checked(
     let flex_column_parent = !absolute_table
         && doc.taffy_parent_of(table_idx).is_some_and(|parent| {
             doc.nodes[parent].formatting_context == FormattingContext::Flex
-                && !doc.physical_style(parent).flex_direction_is_row()
+                && (doc.physical_style(parent).flex_direction_is_row()
+                    == super::dispatch::used_writing_mode(doc, parent).is_vertical())
         });
     // The height a flex or grid parent assigns is that of the whole wrapper
     // box, caption included, except when a definite `flex-basis` sizes the
@@ -761,11 +762,20 @@ fn compute_table_layout_checked(
             stretch_room.filter(|_| absolute_table || !parent_is_flex_or_grid);
         let effective_known = Size {
             width: inputs.known_dimensions.width,
-            height: inputs.known_dimensions.height.or_else(|| {
-                states_height
-                    .then(|| resolve_dimension(table_size.height, inputs.parent_size.height))
-                    .flatten()
-            }),
+            height: inputs
+                .known_dimensions
+                .height
+                .filter(|_| {
+                    !(states_height
+                        && !table_size.height.is_auto()
+                        && item_owns_height(doc, table_idx))
+                })
+                .or_else(|| {
+                    states_height
+                        .then(|| resolve_dimension(table_size.height, inputs.parent_size.height))
+                        .flatten()
+                        .or(stretch_room.filter(|_| item_owns_height(doc, table_idx)))
+                }),
         };
 
         let border_spacing = if collapse {
@@ -907,18 +917,21 @@ fn compute_table_layout_checked(
         // would have reported it in the outer box-sizing domain and within the
         // limits (the minimum wins), and the grid below does not shrink to a
         // maximum that is under the height it is given.
-        let effective_known = if wrapper_measured_by_library && !known_is_wrapper_height {
-            Size {
-                height: effective_known.height.map(|stated| {
-                    let outer =
-                        max_h_outer.map_or(stated + lift_h, |max| (stated + lift_h).min(max));
-                    min_h_outer.map_or(outer, |min| outer.max(min))
-                }),
-                ..effective_known
-            }
-        } else {
-            effective_known
-        };
+        let resolves_item_height =
+            states_height && specified_height.is_some() && item_owns_height(doc, table_idx);
+        let effective_known =
+            if (wrapper_measured_by_library && !known_is_wrapper_height) || resolves_item_height {
+                Size {
+                    height: effective_known.height.map(|stated| {
+                        let outer =
+                            max_h_outer.map_or(stated + lift_h, |max| (stated + lift_h).min(max));
+                        min_h_outer.map_or(outer, |min| outer.max(min))
+                    }),
+                    ..effective_known
+                }
+            } else {
+                effective_known
+            };
 
         if grid.n_cols == 0 || grid.rows.is_empty() {
             // Empty tables shrink-wrap like the main path below: a specified
@@ -1688,27 +1701,30 @@ fn compute_table_layout_checked(
         };
         let vertical_content_height =
             vertical_tracks.iter().sum::<f32>() + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+        // A flex column retains the main size it assigns, but a row flex or
+        // grid item gives up the collapsed rows' share of its cross size.
+        let collapse_shrinks_table = collapsed_rows_share
+            && target_room.is_some()
+            && (item_owns_height(doc, table_idx)
+                || (!parent_is_flex_or_grid && assigned_grid_height.is_none()));
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
                 vertical_content_height + padding_border_size.height
+            } else if collapse_shrinks_table {
+                // The collapsed rows take their share with them; the maximum
+                // still caps the rows that remain, without reapplying a minimum.
+                clamp_min_max(
+                    content_height + padding_border_size.height,
+                    None,
+                    max_h_outer,
+                )
             } else if let Some(assigned) = assigned_grid_height {
                 // The assigned height is outer already, and the table still
                 // holds its rows (as with an authored height below).
                 clamp_min_max(
                     f32_max_compat(assigned, content_height + padding_border_size.height),
                     min_h_outer,
-                    max_h_outer,
-                )
-            } else if collapsed_rows_share && target_room.is_some() && !parent_is_flex_or_grid {
-                // The rows that collapsed took their share of the stated
-                // height or `min-height` with them, so the table is as high as
-                // the rows that remain, however low that is; the maximum still
-                // caps it. A flex or grid parent gives its item a height it
-                // keeps whatever the rows do.
-                clamp_min_max(
-                    content_height + padding_border_size.height,
-                    None,
                     max_h_outer,
                 )
             } else {
@@ -1896,6 +1912,64 @@ fn compute_table_layout_checked(
     } else {
         layout(doc)
     }
+}
+
+pub(super) fn item_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
+    if doc.nodes[table].formatting_context != FormattingContext::Table
+        || doc.nodes[table].layout_position() == Position::Absolute
+        || table_writing_mode(doc, table).is_vertical()
+    {
+        return false;
+    }
+    let Some(parent) = doc.taffy_parent_of(table) else {
+        return false;
+    };
+    match doc.nodes[parent].formatting_context {
+        FormattingContext::Grid => {}
+        FormattingContext::Flex
+            if doc.physical_style(parent).flex_direction_is_row()
+                != super::dispatch::used_writing_mode(doc, parent).is_vertical() => {}
+        _ => return false,
+    }
+    let mut pending = doc.nodes[table].children.clone();
+    while let Some(child) = pending.pop() {
+        let node = &doc.nodes[child];
+        if node.is_display_none() {
+            continue;
+        }
+        if node.collapses_table_rows {
+            return true;
+        }
+        // Cells and captions cannot contribute rows to this table's grid.
+        if !matches!(
+            node.display(),
+            DisplayValue::TableCell | DisplayValue::TableCaption
+        ) && node.formatting_context != FormattingContext::Table
+        {
+            pending.extend(node.children.iter().copied());
+        }
+    }
+    false
+}
+
+pub(super) fn item_style<'a>(
+    doc: &'a LayoutSession<'_>,
+    table: usize,
+    role: crate::layout::style_views::ReadRole,
+) -> LayoutStyleView<'a> {
+    let view = doc.query_style(table, role);
+    if !item_owns_height(doc, table) {
+        return view;
+    }
+    let parent = doc.taffy_parent_of(table).expect("table item has a parent");
+    let flex = doc.nodes[parent].formatting_context == FormattingContext::Flex;
+    let parent_role = if flex {
+        crate::layout::style_views::ReadRole::FlexContainer
+    } else {
+        crate::layout::style_views::ReadRole::GridContainer
+    };
+    let parent = doc.query_style(parent, parent_role);
+    view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex)
 }
 
 fn table_layout_output(

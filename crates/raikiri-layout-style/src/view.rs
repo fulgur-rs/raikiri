@@ -26,6 +26,9 @@ pub struct LayoutStyleView<'a> {
     /// Whether the layout library is told nothing of the height of a table
     /// that owns it (see [`Self::with_hidden_table_height`]).
     hidden_table_height: bool,
+    pub(crate) collapsing_table_height: bool,
+    pub(crate) table_item_align_self: Option<values::AlignSelf>,
+    pub(crate) table_item_justify_self: Option<values::AlignSelf>,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -64,6 +67,9 @@ impl<'a> LayoutStyleView<'a> {
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
             hidden_table_height: false,
+            collapsing_table_height: false,
+            table_item_align_self: None,
+            table_item_justify_self: None,
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -83,6 +89,9 @@ impl<'a> LayoutStyleView<'a> {
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
             hidden_table_height: false,
+            collapsing_table_height: false,
+            table_item_align_self: None,
+            table_item_justify_self: None,
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -130,11 +139,47 @@ impl<'a> LayoutStyleView<'a> {
         self
     }
 
+    /// Let an in-flow table measure the height its collapsed rows leave.
+    /// The parent consumes that measurement instead of reapplying the grid's
+    /// authored height or limits. An authored height must not become stretch
+    /// merely because the library now reads it as auto.
+    pub fn with_collapsing_table_height(
+        mut self,
+        align_items: values::AlignItems,
+        justify_items: values::AlignItems,
+        flex: bool,
+    ) -> Self {
+        let mut alignment = if flex {
+            self.align_self().unwrap_or(align_items)
+        } else if self.geometry_transposed() {
+            self.bridge_justify_self().unwrap_or(justify_items)
+        } else {
+            self.bridge_align_self().unwrap_or(align_items)
+        };
+        if !self.length(LengthProperty::Height).dimension().is_auto()
+            && matches!(
+                alignment.keyword,
+                values::AlignItemsKeyword::Normal | values::AlignItemsKeyword::Stretch
+            )
+        {
+            alignment.keyword = values::AlignItemsKeyword::Start;
+        }
+        if !flex && self.geometry_transposed() {
+            self.table_item_justify_self = Some(alignment);
+        } else {
+            self.table_item_align_self = Some(alignment);
+        }
+        self.hidden_table_height = true;
+        self.collapsing_table_height = true;
+        self
+    }
+
     /// Whether the table resolves its authored stretch height before the
     /// positioning library consumes this measurement-only view.
     #[inline]
     pub(crate) fn table_owns_stretch_height(&self) -> bool {
         self.hidden_table_height
+            && !self.collapsing_table_height
             && matches!(
                 self.length(LengthProperty::Height).value.as_ref(),
                 L::Stretch
