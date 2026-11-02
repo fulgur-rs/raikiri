@@ -99,12 +99,13 @@ pub(crate) fn used_style_length_percentage_auto(
 }
 
 pub(crate) fn used_computed_length_percentage_or_auto(
-    value: ComputedLengthPercentageOrAuto,
+    value: &ComputedLengthPercentageOrAuto,
     basis: f32,
 ) -> Option<f32> {
     let resolved = match value {
-        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Px(px) => *px,
         ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentageOrAuto::Math(value) => value.resolve(basis),
         ComputedLengthPercentageOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
@@ -154,7 +155,13 @@ impl PageMargins {
 }
 
 fn page_length_to_px(length: Length, basis: f32) -> f32 {
-    let value = match length {
+    let value = page_length_raw(length, basis);
+    if value.is_finite() { value } else { 0.0 }
+}
+
+// Comparisons must see raw leaf values; range checks belong to the whole expression.
+fn page_length_raw(length: Length, basis: f32) -> f32 {
+    match length {
         Length::Px(value) => value,
         Length::Pt(value) => value * 96.0 / 72.0,
         Length::Cm(value) => value * 96.0 / 2.54,
@@ -177,17 +184,16 @@ fn page_length_to_px(length: Length, basis: f32) -> f32 {
         | Length::Rlh(value) => value * 16.0,
         Length::Percent(value) => basis * value / 100.0,
         _ => 0.0,
-    };
-    if value.is_finite() { value } else { 0.0 }
+    }
 }
 
-fn page_margin_length(value: LengthOrAuto, basis: f32) -> f32 {
+fn page_margin_length(value: &LengthOrAuto, basis: f32) -> f32 {
     let value = match value {
         LengthOrAuto::Auto => 0.0,
-        LengthOrAuto::Length(length) => page_length_to_px(length, basis),
+        LengthOrAuto::Length(length) => page_length_to_px(*length, basis),
         LengthOrAuto::Calc(CalcLengthPercentage { percent, px }) => {
-            let percent = if percent.is_finite() { percent } else { 0.0 };
-            let px = if px.is_finite() { px } else { 0.0 };
+            let percent = if percent.is_finite() { *percent } else { 0.0 };
+            let px = if px.is_finite() { *px } else { 0.0 };
             px + basis * percent / 100.0
         }
         _ => 0.0,
@@ -237,15 +243,15 @@ fn page_box_side(
         Some(PropertyValue::PaddingTop(value))
         | Some(PropertyValue::PaddingRight(value))
         | Some(PropertyValue::PaddingBottom(value))
-        | Some(PropertyValue::PaddingLeft(value)) => Some(*value),
+        | Some(PropertyValue::PaddingLeft(value)) => Some(value),
         _ => None,
     };
     let padding = value.map_or(0.0, |value| match value {
-        LengthPercentageOrCalc::Length(length) => page_length_to_px(length, basis),
+        LengthPercentageOrCalc::Length(length) => page_length_to_px(*length, basis),
         // Page-context absolutization folds font-relative terms, leaving a
         // percentage with an absolute offset.
         LengthPercentageOrCalc::Calc(calc) => {
-            ComputedLengthPercentageOrCalc::Calc(calc).resolve(basis)
+            ComputedLengthPercentageOrCalc::Calc(*calc).resolve(basis)
         }
         _ => 0.0,
     });
@@ -332,12 +338,12 @@ pub fn page_content_insets_for_page(
 fn page_margin_value(
     declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
     side: PropertyKey,
-) -> Option<LengthOrAuto> {
+) -> Option<&LengthOrAuto> {
     match (side, declarations.get(&side)) {
         (PropertyKey::MarginTop, Some(PropertyValue::MarginTop(value)))
         | (PropertyKey::MarginRight, Some(PropertyValue::MarginRight(value)))
         | (PropertyKey::MarginBottom, Some(PropertyValue::MarginBottom(value)))
-        | (PropertyKey::MarginLeft, Some(PropertyValue::MarginLeft(value))) => Some(*value),
+        | (PropertyKey::MarginLeft, Some(PropertyValue::MarginLeft(value))) => Some(value),
         _ => None,
     }
 }
@@ -356,6 +362,14 @@ fn page_dimension(
         (PropertyKey::Width, PropertyValue::Width(LengthOrAuto::Calc(value)))
         | (PropertyKey::Height, PropertyValue::Height(LengthOrAuto::Calc(value))) => {
             value.px + basis * value.percent / 100.0
+        }
+        (PropertyKey::Width, PropertyValue::Width(LengthOrAuto::Math(value)))
+        | (PropertyKey::Height, PropertyValue::Height(LengthOrAuto::Math(value))) => {
+            let value = value.resolve_with(|length| page_length_raw(length, basis));
+            if !value.is_finite() {
+                return None;
+            }
+            value.max(0.0)
         }
         _ => return None,
     };
@@ -1305,15 +1319,15 @@ pub(crate) fn is_static_position_absolute(
 fn static_absolute_with_boxes(cascade: &CascadeResult, node_id: usize, boxes: BoxTree<'_>) -> bool {
     let computed = &cascade.computed[node_id];
     matches!(boxes.identity(node_id).position(), PositionValue::Absolute)
-        && inset_is_auto(computed.top)
-        && inset_is_auto(computed.bottom)
+        && inset_is_auto(&computed.top)
+        && inset_is_auto(&computed.bottom)
 }
 
 /// Whether an inset is `auto` once layout has read it: only lengths,
 /// percentages and `calc()` constrain a box. This is the mapping of
 /// `LayoutStyleView::inset`; the sizing keywords cannot be authored for an
 /// inset and read as `auto` there too.
-pub(crate) fn inset_is_auto(inset: ComputedLengthPercentageOrAuto) -> bool {
+pub(crate) fn inset_is_auto(inset: &ComputedLengthPercentageOrAuto) -> bool {
     !matches!(
         inset,
         ComputedLengthPercentageOrAuto::Px(_)

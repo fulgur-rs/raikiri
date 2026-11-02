@@ -4457,3 +4457,15 @@ fn math_function_that_folds_to_a_length_is_still_accepted() {
         assert!(parse(value, name).is_some(), "{name}: {value}");
     }
 }
+
+#[test]
+fn comparison_lengths_serialize_without_freezing_relative_or_percentage_leaves() {
+    let mut input = cssparser::ParserInput::new("calc(max(1em, 5%) * 2)");
+    let value =
+        crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+    let serialized = crate::property::serialize_length_or_auto(&LengthOrAuto::Math(value.clone()));
+    let mut input = cssparser::ParserInput::new(&serialized);
+    let restored =
+        crate::property::LengthMath::parse(&mut cssparser::Parser::new(&mut input)).unwrap();
+    assert_eq!(value, restored);
+}

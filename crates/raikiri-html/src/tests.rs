@@ -3152,7 +3152,7 @@ fn margin_block_and_inline_ua_rules_survive_real_parse_and_cascade() {
         let id = find_first_by_tag(&uncascaded.dom, tag)
             .unwrap_or_else(|| panic!("<{tag}> should exist"))
             .0 as usize;
-        let margin = cascade.computed[id].margin;
+        let margin = cascade.computed[id].margin.clone();
         let em = if matches!(tag, "listing" | "plaintext" | "pre" | "xmp") {
             13.0
         } else {
@@ -3211,7 +3211,7 @@ fn margin_block_and_inline_ua_rules_survive_real_parse_and_cascade() {
     let div_id = find_first_by_tag(&uncascaded.dom, "div")
         .expect("<div> should exist")
         .0 as usize;
-    let div_margin = cascade.computed[div_id].margin;
+    let div_margin = cascade.computed[div_id].margin.clone();
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -4001,7 +4001,10 @@ fn heading_ua_rules_set_weight_size_and_block_margins_per_level() {
             (font_size - 16.0 * size).abs() < 1e-3,
             "{tag} size {font_size}"
         );
-        for (side, value) in [("top", cv.margin.top), ("bottom", cv.margin.bottom)] {
+        for (side, value) in [
+            ("top", cv.margin.top.clone()),
+            ("bottom", cv.margin.bottom.clone()),
+        ] {
             let ComputedLengthPercentageOrAuto::Px(px) = value else {
                 panic!("{tag} margin-{side} is not a length: {value:?}");
             };

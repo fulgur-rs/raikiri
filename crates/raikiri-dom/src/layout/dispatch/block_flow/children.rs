@@ -495,9 +495,8 @@ pub(super) fn layout(
             continue;
         }
         let same = shares_parent_context(tree, node, child, &style);
-        // A `stretch` height limit of the child leaves out the margins this
-        // box holds in.
-        let held_margins = content_limits::has_stretch_height_limit(tree, usize::from(child));
+        // Stretch-dependent sizing leaves out the margins this box holds in.
+        let held_margins = content_limits::needs_stretch_height_room(tree, usize::from(child));
         if held_margins {
             tree.context
                 .held_margins

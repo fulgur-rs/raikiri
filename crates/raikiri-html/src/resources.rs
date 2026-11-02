@@ -299,11 +299,12 @@ impl<'a> RenderResources<'a> {
         self
     }
 
-    /// Set the raster output scale used when computing border widths.
+    /// Set the raster output scale used when computing border widths and table spacing.
     ///
     /// For example, `1.0` means one device pixel per CSS pixel and `2.0`
     /// means two device pixels per CSS pixel. `None` preserves fractional
-    /// widths for output-neutral and vector consumers.
+    /// lengths for output-neutral and vector consumers. Table gaps may round
+    /// down to zero; border widths use their separate minimum-pixel rule.
     pub fn border_width_device_scale(mut self, scale: Option<f32>) -> Self {
         self.border_width_device_scale = scale;
         self

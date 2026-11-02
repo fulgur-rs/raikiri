@@ -3,7 +3,7 @@
 use super::*;
 
 /// Keep the first anchor in line and visual-fragment order for each node.
-pub(super) fn first_anchors(lines: &IfcLines) -> HashMap<usize, (usize, f32)> {
+pub(crate) fn first_anchors(lines: &IfcLines) -> HashMap<usize, (usize, f32)> {
     #[cfg(test)]
     tests::OOF_ANCHOR_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
     let mut anchors = HashMap::new();

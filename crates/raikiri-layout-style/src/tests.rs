@@ -8,6 +8,8 @@ use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 mod calc_handle_tests;
 mod core_tests;
+mod inline_box_tests;
+mod math_tests;
 mod owned_tests;
 mod physical_sizing_tests;
 mod policy_tests;
@@ -88,6 +90,35 @@ fn scoped_overrides_distinguish_absence_and_last_wins() {
     let v = LayoutStyleView::new(&p, ViewContext::default(), &pass, &scoped);
     assert_eq!(v.size().width, Dimension::auto());
     assert_eq!(v.aspect_ratio(), None);
+}
+
+#[test]
+fn a_table_that_owns_its_height_hides_the_vertical_sizes_from_the_library() {
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Px(20.0);
+    cv.height = L::Px(40.0);
+    cv.min_height = L::Px(10.0);
+    cv.max_height = L::Px(50.0);
+    cv.top = L::Px(1.0);
+    cv.bottom = L::Px(3.0);
+    let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+    let plain = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+    assert_eq!(plain.size().height, Dimension::length(40.0));
+    assert_eq!(plain.min_size().height, LengthPercentageAuto::length(10.0));
+    assert_eq!(plain.max_size().height, LengthPercentageAuto::length(50.0));
+    let hidden = plain.with_hidden_table_height();
+    assert_eq!(
+        hidden.size(),
+        Size {
+            width: Dimension::length(20.0),
+            height: Dimension::auto()
+        }
+    );
+    assert_eq!(hidden.min_size().height, LengthPercentageAuto::auto());
+    assert_eq!(hidden.max_size().height, LengthPercentageAuto::auto());
+    // The insets and the width limits are read as ever.
+    assert_eq!(hidden.inset(), plain.inset());
+    assert_eq!(hidden.min_size().width, plain.min_size().width);
 }
 
 #[test]
@@ -190,3 +221,24 @@ mod pass_tests;
 
 mod block_tests;
 mod bridge_projection_tests;
+
+pub(crate) fn comparison(
+    source: &str,
+) -> std::sync::Arc<raikiri_style::property::ComputedLengthMath> {
+    use raikiri_style::property::{LengthMath, LengthOrAuto};
+    use raikiri_style::{ComputedLength, ResolveContext, resolve_size_length_percentage_or_auto};
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let specified = LengthMath::parse(&mut parser).expect("valid comparison fixture");
+    parser.expect_exhausted().unwrap();
+    let value = resolve_size_length_percentage_or_auto(
+        LengthOrAuto::Math(specified),
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let L::Math(value) = value else {
+        panic!("percentage tree must survive")
+    };
+    value
+}

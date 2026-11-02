@@ -18,6 +18,10 @@ pub use names::*;
 
 mod calc_serialize;
 
+mod length_math;
+#[doc(hidden)]
+pub use length_math::{ComputedLengthMath, LengthMath};
+
 mod media_math;
 pub(crate) use media_math::{
     MathTypes, MediaNumericType, is_math_function_name, math_value_has_type, parse_math_function,

@@ -543,3 +543,64 @@ fn an_inline_box_with_text_keeps_the_box_it_is_painted_with() {
         &rects((8.0, 80.0, 20.0, 50.0)),
     );
 }
+
+#[test]
+fn empty_vertical_inline_boxes_ignore_sizes_and_block_axis_edges() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for style in [
+            "",
+            "width:30px;height:20px",
+            "min-width:50px",
+            "max-width:5px",
+            "min-height:50px",
+            "max-height:5px",
+            "margin:0 20px",
+            "padding:0 20px",
+            "border-left:5px solid",
+            "border-right:5px solid",
+        ] {
+            check(
+                &format!(
+                    r#"<div id=o style="writing-mode:{mode};height:100px"><span style="{style}"></span></div>"#
+                ),
+                &[("o", (8.0, 8.0, 0.0, 100.0))],
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_vertical_inline_axis_edges_still_make_one_line() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for style in [
+            "padding:20px 0",
+            "border-top:5px solid",
+            "border-bottom:5px solid",
+            "margin-top:5px",
+        ] {
+            check(
+                &format!(
+                    r#"<div id=o style="writing-mode:{mode};height:100px"><span style="{style}"></span></div>"#
+                ),
+                &[("o", (8.0, 8.0, 10.0, 100.0))],
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_vertical_atomic_and_orthogonal_inlines_keep_their_sizes() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        for style in [
+            "display:inline-block;width:30px;height:20px",
+            "writing-mode:horizontal-tb;width:30px;height:20px",
+        ] {
+            check(
+                &format!(
+                    r#"<div id=o style="writing-mode:{mode};height:100px"><span style="{style}"></span></div>"#
+                ),
+                &[("o", (8.0, 8.0, 30.0, 100.0))],
+            );
+        }
+    }
+}

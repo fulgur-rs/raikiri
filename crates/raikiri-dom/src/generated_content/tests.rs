@@ -189,6 +189,116 @@ fn pseudo_counter_view_matches_directive_application_without_cloning_the_map() {
     }
 }
 
+/// The text of the `::before` pseudo-element of a `div` styled by `sheet`.
+fn before_text(sheet: &str) -> String {
+    let mut document = Document::new();
+    let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
+    document.append_text(style, sheet);
+    let element = document.append_element(Some(document.root_index()), "div", None::<&str>);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade succeeds");
+    let snapshots = crate::target::counter_snapshots(&document, &cascade).expect("snapshots");
+    generated_text(&document, &cascade, element, PseudoElem::Before, &snapshots)
+        .expect("before text")
+        .1
+}
+
+#[test]
+fn counter_formats_the_predefined_counter_styles() {
+    // Chromium shows the same text for each style.
+    assert_eq!(
+        before_text(
+            "div { counter-reset: c 5 } \
+             div::before { content: counter(c, decimal-leading-zero) '|' counter(c, lower-alpha) \
+                '|' counter(c, upper-alpha) '|' counter(c, disc) '|' counter(c, cjk-decimal) \
+                '|' counter(c, lower-greek) '|' counter(c, hiragana) '|' counter(c, thai) }"
+        ),
+        "05|e|E|\u{2022}|\u{4e94}|\u{3b5}|\u{304a}|\u{e55}"
+    );
+    // The style name is matched without regard to case, and a style that
+    // cannot show the value falls back as the style says.
+    assert_eq!(
+        before_text(
+            "div { counter-reset: c 13 } \
+             div::before { content: counter(c, Upper-Roman) '|' counter(c, cjk-earthly-branch) \
+                '|' counter(c, upper-alpha) '|' counter(c, unknown-style) }"
+        ),
+        "XIII|\u{4e00}\u{4e09}|M|13"
+    );
+    // A value below the range of the style is shown in decimal.
+    assert_eq!(
+        before_text(
+            "div { counter-reset: c -3 } \
+             div::before { content: counter(c, decimal-leading-zero) '|' counter(c, lower-alpha) \
+                '|' counter(c, lower-roman) '|' counter(c, cjk-decimal) }"
+        ),
+        "-3|-3|-3|-3"
+    );
+}
+
+#[test]
+fn counters_formats_every_value_in_the_predefined_counter_style() {
+    let registry = CounterStyleRegistry::new();
+    let mut snapshot = CounterSnapshot::default();
+    snapshot.insert(Symbol::new("c"), vec![2, 5, 12]);
+    for (style, expected) in [
+        ("decimal-leading-zero", "02.05.12"),
+        ("lower-alpha", "b.e.l"),
+        ("upper-roman", "II.V.XII"),
+        ("cjk-decimal", "\u{4e8c}.\u{4e94}.\u{4e00}\u{4e8c}"),
+        ("disc", "\u{2022}.\u{2022}.\u{2022}"),
+    ] {
+        assert_eq!(
+            format_counters_component(
+                &snapshot,
+                "c",
+                ".",
+                &CounterStyle::Named(style.into()),
+                &registry
+            ),
+            expected,
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn an_author_counter_style_is_tried_before_the_predefined_style_of_its_name() {
+    // Predefined names match without regard to case, so the author style
+    // answers to every spelling of its name; other names match exactly.
+    assert_eq!(
+        before_text(
+            "@counter-style upper-alpha { system: cyclic; symbols: '*' } \
+             @counter-style custom-style { system: cyclic; symbols: '#' } \
+             div { counter-reset: c 5 } \
+             div::before { content: counter(c, upper-alpha) '|' counter(c, Upper-Alpha) \
+                '|' counter(c, lower-alpha) '|' counter(c, custom-style) \
+                '|' counter(c, Custom-Style) }"
+        ),
+        "*|*|e|#|5"
+    );
+    // A rule spelled with capitals answers to its own spelling.
+    assert_eq!(
+        before_text(
+            "@counter-style Lower-Roman { system: cyclic; symbols: '+' } \
+             div { counter-reset: c 5 } \
+             div::before { content: counter(c, Lower-Roman) '|' counter(c, lower-roman) }"
+        ),
+        "+|v"
+    );
+    // A value the author style cannot show goes to its fallback, which here
+    // is decimal, and not to the predefined style of the same name.
+    assert_eq!(
+        before_text(
+            "@counter-style lower-alpha { system: alphabetic; symbols: a b; range: 1 2 } \
+             div { counter-reset: c 5 } \
+             div::before { content: counter(c, lower-alpha) '|' counter(c, upper-alpha) }"
+        ),
+        "5|E"
+    );
+}
+
 #[test]
 fn counters_of_a_counter_that_does_not_exist_is_zero_as_counter_is() {
     let registry = CounterStyleRegistry::new();

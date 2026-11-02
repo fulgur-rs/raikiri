@@ -633,12 +633,133 @@ fn a_run_of_tied_boxes_stays_when_the_edges_fit_and_moves_when_the_next_page_can
         (vec![0.0, 40.0, 70.0], 100.0)
     );
     // 50px of boxes and 60px of padding make 110px, more than a page. The run
-    // still moves: a break before it beats one between its last box and the
-    // padding, which runs on past the page edge.
+    // still moves, as a break before it beats one between its last box and the
+    // padding; the page it moves to starts with the run, and the last box goes
+    // on to the page after with the padding, the avoided break giving way.
     assert_eq!(
         tied_boxes("padding-bottom:60px", &tied),
-        (vec![0.0, 100.0, 130.0], 210.0)
+        (vec![0.0, 100.0, 200.0], 280.0)
     );
+}
+
+#[test]
+fn the_last_box_of_a_run_at_a_page_top_moves_on_with_the_edges_that_do_not_fit() {
+    // The boxes tied to each other and the padding fill the second page
+    // exactly with 50px of padding, and do not with one pixel more.
+    let tied = [(10, ""), (30, "break-after:avoid"), (20, "")];
+    assert_eq!(
+        tied_boxes("padding-bottom:50px", &tied),
+        (vec![0.0, 100.0, 130.0], 200.0)
+    );
+    assert_eq!(
+        tied_boxes("padding-bottom:51px", &tied),
+        (vec![0.0, 100.0, 200.0], 271.0)
+    );
+    // A border closes the block the same way, and so does an avoided break
+    // before the last box instead of one after the box before it.
+    for (second, third) in [
+        ("break-after:avoid", ""),
+        ("", "break-before:avoid"),
+        ("", "break-before:avoid-page"),
+    ] {
+        assert_eq!(
+            tied_boxes(
+                "border-bottom:51px solid",
+                &[(10, ""), (30, second), (20, third)]
+            ),
+            (vec![0.0, 100.0, 200.0], 271.0),
+            "{second} {third}"
+        );
+    }
+}
+
+#[test]
+fn the_last_box_of_a_run_that_starts_its_page_in_the_flow_moves_on_with_the_edges() {
+    // The first box of the run starts the second page where the box before it
+    // ends the first, so the run has nowhere further to go.
+    let tied = [(100, ""), (50, "break-after:avoid"), (40, "")];
+    assert_eq!(
+        tied_boxes("padding-bottom:10px", &tied),
+        (vec![0.0, 100.0, 150.0], 200.0)
+    );
+    assert_eq!(
+        tied_boxes("padding-bottom:11px", &tied),
+        (vec![0.0, 100.0, 200.0], 251.0)
+    );
+}
+
+#[test]
+fn only_the_last_box_of_a_longer_run_moves_on_with_the_edges() {
+    // The other boxes of the run stay together on the page the run moved to.
+    assert_eq!(
+        tied_boxes(
+            "padding-bottom:60px",
+            &[
+                (10, ""),
+                (30, "break-after:avoid"),
+                (30, "break-after:avoid"),
+                (30, "")
+            ]
+        ),
+        (vec![0.0, 100.0, 130.0, 200.0], 290.0)
+    );
+}
+
+#[test]
+fn the_last_box_of_a_run_stays_when_it_crosses_the_end_of_its_page() {
+    // A last box taller than a page breaks inside, wherever it starts.
+    let (positions, _) = tied_boxes(
+        "padding-bottom:30px",
+        &[(10, ""), (30, "break-after:avoid"), (130, "")],
+    );
+    assert_eq!(positions, vec![0.0, 10.0, 40.0]);
+    // So does one that fits a page but starts the second one with the run
+    // and runs past its end: moving it would not take it out of the way.
+    let (positions, _) = tied_boxes(
+        "padding-bottom:30px",
+        &[(100, ""), (50, "break-after:avoid"), (60, "")],
+    );
+    assert_eq!(positions, vec![0.0, 100.0, 150.0]);
+}
+
+#[test]
+fn the_last_box_of_a_run_stays_where_a_box_cannot_move_on_its_own() {
+    // The same boxes as above, 100px, 50px and 40px, and the padding that
+    // sends the last one to the third page when nothing around them holds
+    // them: a clipped parent of a set height, a flex container and a
+    // multicol container keep the page positions the flow gave them.
+    for wrapper in [
+        "display:block;overflow:hidden;height:300px",
+        "display:flex",
+        "display:block;columns:1",
+    ] {
+        let (mut tied, mut last) = (0, 0);
+        let (doc, _) = paged_body(|doc, body| {
+            let outer = block(doc, body, wrapper);
+            let card = block(doc, outer, "display:block;padding-bottom:15px");
+            block(doc, card, "display:block;height:100px");
+            tied = block(doc, card, "display:block;height:50px;break-after:avoid");
+            last = block(doc, card, "display:block;height:40px");
+        });
+        assert_eq!(page_flow_y(&doc, tied), 100.0, "{wrapper}");
+        assert_eq!(page_flow_y(&doc, last), 150.0, "{wrapper}");
+    }
+}
+
+#[test]
+fn the_last_box_of_a_run_in_nested_blocks_moves_on_with_the_edges_of_both() {
+    let (mut tied, mut last) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let outer = block(doc, body, "display:block;padding-bottom:15px");
+        let inner = block(doc, outer, "display:block;padding-bottom:15px");
+        block(doc, inner, "display:block;height:10px");
+        tied = block(doc, inner, "display:block;height:50px;break-after:avoid");
+        last = block(doc, inner, "display:block;height:40px");
+    });
+    // The run of two boxes moves to the second page and ends at 190, where
+    // 30px of padding do not fit: the second box goes to the third page.
+    assert_eq!(page_flow_y(&doc, tied), 100.0);
+    assert_eq!(page_flow_y(&doc, last), 200.0);
 }
 
 #[test]
@@ -1234,6 +1355,62 @@ fn lines_move_when_the_next_page_cannot_hold_them_with_the_edges() {
     assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 210.0));
 }
 
+#[test]
+fn a_paragraph_moved_whole_to_a_page_still_splits_when_the_edges_run_past_its_end() {
+    // The lines end at 70 and the padding below them does not fit, so the
+    // paragraph moves to the top of the next page: 100 to 120 for two lines.
+    // The page break before it is then gone, and 81px of padding after the
+    // lines no longer fit either: the last line goes on to the page after
+    // with the padding, as Chromium prints it.
+    assert_eq!(closed_paragraph_with(2, 80, ""), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(2, 81, ""), (100.0, 291.0));
+    assert_eq!(closed_paragraph_with(2, 90, ""), (100.0, 300.0));
+    // Three lines cannot have two orphans and two widows, so the last line is
+    // what goes: Chromium leaves two lines on the page it moved the paragraph
+    // to.
+    assert_eq!(closed_paragraph_with(3, 70, ""), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(3, 71, ""), (100.0, 281.0));
+    // So do lines that one of the two leaves no break for.
+    for css in ["orphans:3", "widows:3", "orphans:1;widows:3"] {
+        assert_eq!(closed_paragraph_with(3, 71, css), (100.0, 281.0), "{css}");
+    }
+    assert_eq!(closed_paragraph_with(4, 60, "orphans:3"), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(4, 61, "orphans:3"), (100.0, 271.0));
+    // Orphans that a break cannot keep do not hold the lines together either.
+    assert_eq!(closed_paragraph_with(2, 90, "orphans:5"), (100.0, 300.0));
+    assert_eq!(closed_paragraph_with(2, 90, "widows:5"), (100.0, 300.0));
+}
+
+#[test]
+fn the_padding_of_the_paragraph_itself_counts_when_it_splits_after_moving_whole() {
+    // 5px of padding or border below the lines of the paragraph are edges that
+    // follow its last line like those of the div: 20 + 5 + 75 fill the page
+    // and one pixel more does not.
+    for css in ["padding-bottom:5px", "border-bottom:5px solid"] {
+        assert_eq!(closed_paragraph_with(2, 75, css), (100.0, 200.0), "{css}");
+        assert_eq!(closed_paragraph_with(2, 76, css), (100.0, 291.0), "{css}");
+        assert_eq!(closed_paragraph_with(3, 65, css), (100.0, 200.0), "{css}");
+        assert_eq!(closed_paragraph_with(3, 66, css), (100.0, 281.0), "{css}");
+    }
+    // The paragraph moves whole when its box fits the page it moves to,
+    // whatever the edges are: breaking before it beats breaking in it.
+    assert_eq!(
+        closed_paragraph_with(3, 30, "padding-bottom:5px"),
+        (100.0, 165.0)
+    );
+}
+
+#[test]
+fn a_paragraph_of_one_line_moves_whole_whatever_the_edges_below_it() {
+    // A single line has no break to take: it keeps its edges, which run past
+    // the end of the page it moved to.
+    assert_eq!(closed_paragraph_with(1, 90, ""), (100.0, 200.0));
+    assert_eq!(
+        closed_paragraph_with(1, 90, "padding-bottom:5px"),
+        (100.0, 205.0)
+    );
+}
+
 /// `body > [div(10px), div(padding-bottom:40px) > paragraph]` where the
 /// paragraph is `lines` lines of 10px Ahem text, 30px wide. Returns the height
 /// of the div and the page-flow y of the paragraph's first line.
@@ -1350,15 +1527,16 @@ fn a_paragraph_with_a_block_between_its_lines_breaks_at_the_block_and_stays() {
 
 #[test]
 fn boxes_that_are_not_in_the_block_flow_of_the_parent_stay() {
-    for css in ["display:flex;flex-direction:column", "display:grid"] {
-        let mut last = 0;
-        let (doc, _) = paged_body(|doc, body| {
-            let parent = block(doc, body, &format!("padding-bottom:30px;{css}"));
-            block(doc, parent, "display:block;height:70px");
-            last = block(doc, parent, "display:block;height:20px");
-        });
-        assert_eq!(page_flow_y(&doc, last), 70.0, "{css}");
-    }
+    // The rows of a grid are no boxes to break between for the edges of the
+    // grid; the items of a flex column are (see
+    // `the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges`).
+    let mut last = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "padding-bottom:30px;display:grid");
+        block(doc, parent, "display:block;height:70px");
+        last = block(doc, parent, "display:block;height:20px");
+    });
+    assert_eq!(page_flow_y(&doc, last), 70.0);
     // A float and a sticky box are not boxes of the flow that end the parent
     // or are moved with its edges, nor is a sticky flex container or grid.
     for css in [
@@ -1764,9 +1942,6 @@ fn a_card_of_two_lines_after_a_box_in_the_card_moves_whole() {
     // With a box before the paragraph in the card, a break between the two is
     // a better one: the paragraph moves whole, and orphans of two keep it so.
     assert_eq!(closed_paragraph(2, ""), (100.0, 160.0));
-    // When the next page cannot hold the paragraph with the edges, it moves
-    // all the same: a break before it beats one between it and the edges.
-    assert_eq!(closed_paragraph_with(2, 90, ""), (100.0, 210.0));
 }
 
 /// `body > [div(20px), outer > [div(30px), wrapper > paragraph], div(10px)]`
@@ -1912,17 +2087,37 @@ fn a_paragraph_after_a_box_outside_the_block_that_the_edges_close_is_split() {
 /// on 100px pages. Returns the height of the paragraph and the page-flow y of
 /// the paragraph.
 fn card_after_a_lead(lead_css: &str) -> (f32, f32) {
+    card_after_leads(50, &[(0, lead_css)], 2, "")
+}
+
+/// `body > [div(above), div(padding-bottom:40px) > [leads..., paragraph]]`
+/// where each lead is a div of the height and style given, and the paragraph is
+/// `lines` lines of 10px Ahem text, 30px wide, with `paragraph_css`, on 100px
+/// pages. No div comes first when `above` is 0. Returns the height and the
+/// page-flow y of the paragraph.
+fn card_after_leads(
+    above: u32,
+    leads: &[(u32, &str)],
+    lines: usize,
+    paragraph_css: &str,
+) -> (f32, f32) {
     let mut paragraph = 0;
     let (doc, _) = paged_body_with_ifc(|doc, body| {
-        block(doc, body, "display:block;height:50px");
+        if above > 0 {
+            block(doc, body, &format!("display:block;height:{above}px"));
+        }
         let card = block(doc, body, "display:block;padding-bottom:40px");
-        block(doc, card, &format!("display:block;{lead_css}"));
+        for &(height, css) in leads {
+            block(doc, card, &format!("display:block;height:{height}px;{css}"));
+        }
         paragraph = block(
             doc,
             card,
-            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
         );
-        doc.append_text(paragraph, "aaa aaa");
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
     });
     (
         doc.nodes[paragraph].layout.size.height,
@@ -1947,6 +2142,113 @@ fn a_paragraph_after_an_out_of_flow_box_in_the_card_is_split() {
     assert_eq!(
         card_after_a_lead("position:absolute;width:10px;height:10px"),
         (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_paragraph_tied_to_an_empty_block_that_starts_the_card_is_split_between_its_lines() {
+    // The empty block avoids a break after it, so the paragraph is tied to the
+    // first box of the card and no break between boxes is left to take inside
+    // the card. The break falls between the lines, though two lines have too
+    // few for two orphans and two widows: the last one goes to the next page
+    // with the padding, as Chromium prints it.
+    assert_eq!(card_after_a_lead("break-after:avoid"), (60.0, 50.0));
+}
+
+#[test]
+fn a_paragraph_tied_to_the_boxes_before_it_back_to_the_start_is_split_between_its_lines() {
+    // The lines end at 70 on the page and the 40px of padding do not fit. In
+    // each card an avoided break ties the paragraph to every box before it, so
+    // the break falls between the lines whatever their number: the paragraph
+    // spans its lines up to the page end and those that follow, as Chromium
+    // prints two lines as one and one, three as two and one, and four as two
+    // and two.
+    for (lines, above) in [(2, 50), (3, 40), (4, 30)] {
+        let split = match lines {
+            2 => (60.0, 50.0),
+            3 => (70.0, 40.0),
+            _ => (90.0, 30.0),
+        };
+        // An empty block with a break avoided after it or before the next.
+        assert_eq!(
+            card_after_leads(above, &[(0, "break-after:avoid")], lines, ""),
+            split,
+            "{lines} lines after an empty block"
+        );
+        assert_eq!(
+            card_after_leads(above, &[(0, "")], lines, "break-before:avoid"),
+            split,
+            "{lines} lines that avoid a break before them"
+        );
+        // Two empty blocks, each tied to the next.
+        assert_eq!(
+            card_after_leads(
+                above,
+                &[(0, "break-after:avoid"), (0, "break-after:avoid")],
+                lines,
+                ""
+            ),
+            split,
+            "{lines} lines after two empty blocks"
+        );
+        // A box with space, with and without a box above the card.
+        let height = 70 - 10 * lines as u32;
+        assert_eq!(
+            card_after_leads(0, &[(height, "break-after:avoid")], lines, ""),
+            split,
+            "{lines} lines after a box"
+        );
+        assert_eq!(
+            card_after_leads(
+                0,
+                &[
+                    (height - 10, "break-after:avoid"),
+                    (10, "break-after:avoid")
+                ],
+                lines,
+                ""
+            ),
+            split,
+            "{lines} lines after two boxes tied to each other"
+        );
+    }
+}
+
+#[test]
+fn a_float_between_the_boxes_that_tie_a_paragraph_does_not_untie_it() {
+    // The float is no box in the flow of the card: the paragraph is tied to the
+    // box before the float, and its lines are split as without the float.
+    assert_eq!(
+        card_after_leads(
+            0,
+            &[(50, "break-after:avoid"), (10, "float:left;width:0px")],
+            2,
+            ""
+        ),
+        (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_page_name_change_before_a_tied_paragraph_starts_a_page_for_it() {
+    // The paragraph names a page, and the page break that this forces before it
+    // is the one that the avoided break gave way to: the paragraph starts the
+    // next page whole, with the padding after it.
+    assert_eq!(
+        card_after_leads(50, &[(0, "break-after:avoid")], 2, "page:foo"),
+        (20.0, 100.0)
+    );
+}
+
+#[test]
+fn a_paragraph_tied_to_a_box_that_a_break_can_follow_moves_with_it() {
+    // The first box of the card ends where a break is not avoided, so the page
+    // breaks there: the box tied to the paragraph and the paragraph move to the
+    // next page together, as Chromium prints them, and the lines are not
+    // split.
+    assert_eq!(
+        card_after_leads(0, &[(40, ""), (10, "break-after:avoid")], 2, ""),
+        (20.0, 110.0)
     );
 }
 
@@ -2470,5 +2772,443 @@ fn an_empty_block_tied_to_the_paragraph_by_an_avoided_break_leaves_its_lines_to_
             (50.0, 50.0),
             "{lead_css} {paragraph_css}"
         );
+    }
+}
+
+/// `body > div(padding-bottom:{pad}px) > [div(40px), div(30px), ...]` on 100px
+/// pages, where `build` adds a container to the div and returns the boxes to
+/// look at. Returns their page-flow y and the height of the div.
+fn card_with_edges(
+    pad: u32,
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+) -> (Vec<f32>, f32) {
+    let (mut ids, mut card) = (Vec::new(), 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, &format!("display:block;padding-bottom:{pad}px"));
+        block(doc, card, "display:block;height:40px");
+        block(doc, card, "display:block;height:30px");
+        ids = build(doc, card);
+    });
+    (
+        ids.iter().map(|&id| page_flow_y(&doc, id)).collect(),
+        doc.nodes[card].layout.size.height,
+    )
+}
+
+/// A flex column of `items` blocks of 10px, styled with `css`. Returns the
+/// column, then each item.
+fn flex_column_of(doc: &mut Document, parent: usize, items: usize, css: &str) -> Vec<usize> {
+    let column = block(
+        doc,
+        parent,
+        &format!("display:flex;flex-direction:column;{css}"),
+    );
+    let mut ids = vec![column];
+    for _ in 0..items {
+        ids.push(block(doc, column, "display:block;height:10px"));
+    }
+    ids
+}
+
+/// A table with one row of 10px per group in `groups`, styled by the CSS of
+/// that group. Returns the table, then each row.
+fn table_of_row_groups(doc: &mut Document, parent: usize, groups: &[&str]) -> Vec<usize> {
+    let table = block(doc, parent, "display:table;border-spacing:0");
+    let mut ids = vec![table];
+    for css in groups {
+        let group = block(doc, table, &format!("display:table-row-group;{css}"));
+        let row = block(doc, group, "display:table-row");
+        block(doc, row, "display:table-cell;padding:0;height:10px");
+        ids.push(row);
+    }
+    ids
+}
+
+#[test]
+fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
+    // The items end at 90 and the padding below them does not fit. The page
+    // breaks between the items, which beats a break between the last item and
+    // the padding: Chromium sends the last item to the next page with it, and
+    // the container stays where it is.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 12] = [
+        ("flex column of two items", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table of two rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            vec![ids[0], ids[1], ids[3]]
+        }),
+        ("table of two rows in a row group", |doc, card| {
+            let ids = table_of_rows(doc, card, true, 2, 10);
+            vec![ids[0], ids[2], ids[4]]
+        }),
+        ("flex column in a wrapper", |doc, card| {
+            let wrapper = block(doc, card, "display:block");
+            let ids = flex_column_of(doc, wrapper, 2, "");
+            vec![wrapper, ids[1], ids[2]]
+        }),
+        ("flex column of items in a contents box", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let contents = block(doc, column, "display:contents");
+            vec![
+                column,
+                block(doc, contents, "display:block;height:10px"),
+                block(doc, contents, "display:block;height:10px"),
+            ]
+        }),
+        ("flex column with a gap", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "row-gap:5px");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        (
+            "flex column reversed, whose last item comes first in the source",
+            |doc, card| {
+                let ids = flex_column_of(doc, card, 2, "flex-direction:column-reverse");
+                vec![ids[0], ids[2], ids[1]]
+            },
+        ),
+        (
+            "table whose last row is followed by a hidden one",
+            |doc, card| {
+                let ids = table_of_rows(doc, card, false, 2, 10);
+                block(doc, ids[0], "display:none");
+                vec![ids[0], ids[1], ids[3]]
+            },
+        ),
+        ("table with a caption above its one row", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let caption = block(doc, table, "display:table-caption;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            // The caption stays; the row goes with the padding.
+            vec![table, caption, row]
+        }),
+        ("table of two row groups of one row", |doc, card| {
+            let ids = table_of_row_groups(doc, card, &["", ""]);
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        (
+            "table whose one row group avoids breaks around it, not between its rows",
+            |doc, card| {
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(
+                    doc,
+                    table,
+                    "display:table-row-group;break-before:avoid;break-after:avoid",
+                );
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let row = block(doc, group, "display:table-row");
+                block(doc, row, "display:table-cell;padding:0;height:10px");
+                vec![table, first, row]
+            },
+        ),
+        (
+            "table whose last row group avoids breaks but holds one row",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["", "break-inside:avoid"]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+    ];
+    for (label, build) in shapes {
+        let (ys, height) = card_with_edges(30, build);
+        assert_eq!(ys[0], 70.0, "{label}: the container stays: {ys:?}");
+        assert_eq!(ys[1], 70.0, "{label}: the box before it stays: {ys:?}");
+        assert_eq!(ys[2], 100.0, "{label}: the last goes: {ys:?}");
+        assert_eq!(height, 140.0, "{label}");
+    }
+}
+
+#[test]
+fn the_last_item_of_a_container_stays_when_the_edges_fit_the_page() {
+    // The items end at 90: 10px of padding fit below them, 11px do not.
+    for (shape, build) in [
+        (
+            "flex column",
+            (|doc: &mut Document, card: usize| flex_column_of(doc, card, 2, "")[1..].to_vec())
+                as fn(&mut Document, usize) -> Vec<usize>,
+        ),
+        ("table", |doc: &mut Document, card: usize| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            vec![ids[1], ids[3]]
+        }),
+    ] {
+        let (fits, _) = card_with_edges(10, build);
+        assert_eq!(fits, vec![70.0, 80.0], "{shape}");
+        let (does_not_fit, _) = card_with_edges(11, build);
+        assert_eq!(does_not_fit, vec![70.0, 100.0], "{shape}");
+    }
+}
+
+#[test]
+fn the_padding_of_the_container_itself_counts_with_that_of_the_blocks_it_ends() {
+    // The container's own padding and border follow its last item whatever
+    // follows the container: Chromium sends the item to the next page with
+    // them. With the padding of the block around it they add up.
+    let body_child = |css: &str| {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            let column = flex_column_of(doc, body, 0, css)[0];
+            block(doc, column, "display:block;height:70px");
+            let last = block(doc, column, "display:block;height:20px");
+            block(doc, body, "display:block;height:5px");
+            ids = vec![column, last];
+        });
+        ids.iter()
+            .map(|&id| page_flow_y(&doc, id))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(body_child("padding-bottom:30px"), vec![0.0, 100.0]);
+    assert_eq!(body_child("border-bottom:30px solid"), vec![0.0, 100.0]);
+    // 10px fit after the item.
+    assert_eq!(body_child("padding-bottom:10px"), vec![0.0, 70.0]);
+    assert_eq!(body_child("padding-bottom:11px"), vec![0.0, 100.0]);
+    // Five of the container's own, and five of the card's.
+    let sum = |own: u32, card: u32| {
+        let (ys, _) = card_with_edges(card, |doc, parent| {
+            flex_column_of(doc, parent, 2, &format!("padding-bottom:{own}px"))[1..].to_vec()
+        });
+        ys
+    };
+    assert_eq!(sum(5, 5), vec![70.0, 80.0]);
+    assert_eq!(sum(5, 6), vec![70.0, 100.0]);
+    assert_eq!(sum(6, 5), vec![70.0, 100.0]);
+}
+
+#[test]
+fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place() {
+    // The page breaks between the items only at a better place than before
+    // the edges when nothing keeps the items together or makes the last one
+    // something else than a box to move.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 19] = [
+        ("avoided break before the last item", |doc, card| {
+            let ids = flex_column_of(doc, card, 1, "");
+            vec![
+                ids[0],
+                ids[1],
+                block(doc, ids[0], "display:block;height:10px;break-before:avoid"),
+            ]
+        }),
+        ("avoided break after the item before", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px;break-after:avoid");
+            vec![
+                column,
+                first,
+                block(doc, column, "display:block;height:10px"),
+            ]
+        }),
+        ("column that wraps", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "flex-wrap:wrap");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("last item with boxes to break between", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px");
+            let last = block(doc, column, "display:block");
+            block(doc, last, "display:block;height:5px");
+            block(doc, last, "display:block;height:5px");
+            vec![column, first, last]
+        }),
+        ("last item moved by a relative offset", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px");
+            vec![
+                column,
+                first,
+                block(
+                    doc,
+                    column,
+                    "display:block;height:10px;position:relative;top:1px",
+                ),
+            ]
+        }),
+        ("last item in a vertical writing mode", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let first = block(doc, column, "display:block;height:10px");
+            vec![
+                column,
+                first,
+                block(
+                    doc,
+                    column,
+                    "display:block;height:10px;writing-mode:vertical-rl",
+                ),
+            ]
+        }),
+        ("table with a cell that spans rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            doc.set_element_attribute(ids[2], "rowspan", "2").unwrap();
+            vec![ids[0], ids[1], ids[3]]
+        }),
+        ("table with text outside its rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            doc.append_text(ids[0], "x");
+            vec![ids[0], ids[1], ids[3]]
+        }),
+        ("table row group with a row group inside it", |doc, card| {
+            let ids = table_of_rows(doc, card, true, 2, 10);
+            block(doc, ids[0] + 1, "display:table-row-group");
+            vec![ids[0], ids[2], ids[4]]
+        }),
+        (
+            "table with text outside the rows of its group",
+            |doc, card| {
+                let ids = table_of_rows(doc, card, true, 2, 10);
+                doc.append_text(ids[0] + 1, "x");
+                vec![ids[0], ids[2], ids[4]]
+            },
+        ),
+        ("column of a set height", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "height:20px");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table with a footer group", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let group = block(doc, table, "display:table-footer-group");
+            let foot = block(doc, group, "display:table-row");
+            block(doc, foot, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, row, foot]
+        }),
+        ("table with a caption below its rows", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            block(
+                doc,
+                table,
+                "display:table-caption;caption-side:bottom;height:10px",
+            );
+            vec![table, first, row]
+        }),
+        ("table row with an avoided break before it", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row;break-before:avoid");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, first, row]
+        }),
+        (
+            "table whose last row group avoids breaks inside its two rows",
+            |doc, card| {
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let row = block(doc, group, "display:table-row");
+                block(doc, row, "display:table-cell;padding:0;height:10px");
+                vec![table, first, row]
+            },
+        ),
+        (
+            "table whose last row group has an avoided break before it",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["", "break-before:avoid"]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+        (
+            "table whose row group before the last has an avoided break after it",
+            |doc, card| {
+                let ids = table_of_row_groups(doc, card, &["break-after:avoid", ""]);
+                vec![ids[0], ids[1], ids[2]]
+            },
+        ),
+        // Browsers send the whole container on with the edges; it is left
+        // where the flow puts it.
+        ("flex column that avoids breaks inside", |doc, card| {
+            let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
+            vec![ids[0], ids[1], ids[2]]
+        }),
+        ("table that avoids breaks inside", |doc, card| {
+            let table = block(
+                doc,
+                card,
+                "display:table;border-spacing:0;break-inside:avoid",
+            );
+            let first = block(doc, table, "display:table-row");
+            block(doc, first, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, first, row]
+        }),
+    ];
+    for (label, build) in shapes {
+        let (ys, _) = card_with_edges(30, build);
+        assert!(ys[2] < 100.0, "{label}: {ys:?}");
+    }
+}
+
+#[test]
+fn the_last_item_of_a_container_stays_where_a_box_cannot_move_on_its_own() {
+    // The same card as above: a clipped parent of a set height, a flex
+    // container and a multicol container keep the page positions the flow gave
+    // them.
+    for wrapper in [
+        "display:block;overflow:hidden;height:300px",
+        "display:flex",
+        "display:block;columns:1",
+    ] {
+        let mut last = 0;
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let outer = block(doc, body, wrapper);
+            let card = block(doc, outer, "display:block;padding-bottom:30px");
+            block(doc, card, "display:block;height:40px");
+            block(doc, card, "display:block;height:30px");
+            last = flex_column_of(doc, card, 2, "")[2];
+        });
+        assert_eq!(page_flow_y(&doc, last), 80.0, "{wrapper}");
+    }
+}
+
+#[test]
+fn the_margin_below_the_last_item_is_no_edge_without_padding_or_border() {
+    // Nothing closes the container but a margin below its last item, which is
+    // no edge that breaks away from it: the item keeps its place.
+    let (ys, _) = card_with_edges(0, |doc, card| {
+        let column = block(doc, card, "display:flex;flex-direction:column");
+        let first = block(doc, column, "display:block;height:10px");
+        vec![
+            column,
+            first,
+            block(doc, column, "display:block;height:10px;margin-bottom:30px"),
+        ]
+    });
+    assert_eq!(ys[1..], [70.0, 80.0]);
+}
+
+#[test]
+fn a_container_alone_in_its_card_moves_whole_with_the_edges() {
+    // No box in the card is there to break from before the container: the
+    // page breaks before the card, not between the container and the padding
+    // nor between the card's items.
+    for (label, build) in [
+        (
+            "flex column of one item",
+            (|doc: &mut Document, card: usize| flex_column_of(doc, card, 1, "")[1..].to_vec())
+                as fn(&mut Document, usize) -> Vec<usize>,
+        ),
+        ("table of one row", |doc: &mut Document, card: usize| {
+            let ids = table_of_rows(doc, card, false, 1, 10);
+            vec![ids[1]]
+        }),
+    ] {
+        let (mut card, mut item) = (0, Vec::new());
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:70px");
+            card = block(doc, body, "display:block;padding-bottom:30px");
+            item = build(doc, card);
+        });
+        assert_eq!(page_flow_y(&doc, card), 100.0, "{label}");
+        assert_eq!(page_flow_y(&doc, item[0]), 100.0, "{label}");
     }
 }

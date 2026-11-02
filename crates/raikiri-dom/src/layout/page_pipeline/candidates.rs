@@ -8,14 +8,15 @@ use super::{
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
     PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head,
     box_forces_break_after, boxes_are_tied, breaks_only_around, candidate_ancestor_constraints,
-    clears_float_side, closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
-    pagination_child_order, pagination_child_parent_y, paragraph_lines_keep_together,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
+    clears_float_side, closing_edges_of, container_item_tail, first_owned_text_line_top,
+    height_follows_content, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
+    is_plain_block_box, is_plain_container_box, leading_piece_end, lone_box_tail,
+    moves_later_siblings, nested_run_units, normal_flow_bottom, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -72,6 +73,18 @@ pub(super) struct ElementContext {
     /// The box moves to the next page when that crosses a page edge, so that
     /// the edges do not stay behind alone (see [`super::leading_edges_move`]).
     pub(super) leading_piece_end: Option<f32>,
+    /// For the last box of a run of boxes tied by avoided breaks that ends its
+    /// block: the block size of the bottom padding and border that follow it.
+    /// The box moves to the next page with them when the run is as far on as
+    /// it goes and they do not fit after the box, the avoided break giving way
+    /// (see [`super::run_tail_move`]).
+    pub(super) run_tail_edges: f32,
+    /// For the last item of a flex container that stacks its items, or the
+    /// last row of a table: the block size of the bottom padding, border and
+    /// margin that close the container and the blocks it ends, which follow
+    /// the item. The box moves to the next page with them when they do not fit
+    /// after it (see [`super::item_tail_move`]).
+    pub(super) item_tail_edges: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -171,6 +184,16 @@ impl BoxContext {
     pub(super) fn leading_piece_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.leading_piece_end)
+    }
+
+    pub(super) fn run_tail_edges(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.run_tail_edges)
+    }
+
+    pub(super) fn item_tail_edges(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.item_tail_edges)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -405,9 +428,16 @@ struct CandidateFrame<'name> {
     /// Whether no box comes before the node in its parent or in any block the
     /// node starts, up to the outermost block whose bottom padding or border
     /// follows the node: no page break before the node falls inside that
-    /// block. It is read only where `closing_edges` follows the node, and the
-    /// boxes before it are known only for the blocks on that path.
+    /// block. Boxes that `tied_to_start` ties to the node do not count. It is
+    /// read only where `closing_edges` follows the node, and the boxes before
+    /// it are known only for the blocks on that path.
     lone_in_edges: bool,
+    /// Whether avoided breaks tie the node to the box before it in its parent,
+    /// and that box to the one before it in turn, all the way to the first box
+    /// of the parent: no break between boxes is left to take before the node
+    /// inside its parent. It is read only where `closing_edges` follows the
+    /// node.
+    tied_to_start: bool,
     /// The block size of the bottom padding and border that follow the last
     /// line of the paragraph the node is in or is the text of.
     lines_closing_edges: f32,
@@ -417,6 +447,26 @@ struct CandidateFrame<'name> {
     /// How far below its border-box top the run of boxes tied by avoided
     /// breaks ends that the node starts among the boxes of its parent.
     run_unit: Option<f32>,
+    /// Whether the node is the last box of a run that avoided breaks tie it
+    /// to, from a free break on, and ends its block: `closing_edges` follows
+    /// it.
+    run_tail: bool,
+    /// The last item of the flex container, or the last row of the table, that
+    /// the node is in, when the edges that close the container follow it.
+    item_tail: Option<ItemTail>,
+}
+
+/// The last item of a flex container that stacks its items, or the last row of
+/// a table, with the edges that follow it.
+#[derive(Clone, Copy)]
+struct ItemTail {
+    /// The item or row.
+    item: usize,
+    /// Where the border box of the container ends, in source coordinates.
+    container_bottom: f32,
+    /// The block size of the bottom padding and border of the blocks that the
+    /// container ends, and of the margin below it.
+    inherited: f32,
 }
 
 /// How a box is tied by avoided page breaks to the others of the run that ends
@@ -454,9 +504,12 @@ impl CandidateFrame<'_> {
             closing_edges: 0.0,
             previous_box: None,
             lone_in_edges: true,
+            tied_to_start: false,
             lines_closing_edges: 0.0,
             tie: AvoidTie::None,
             run_unit: None,
+            run_tail: false,
+            item_tail: None,
         }
     }
 }
@@ -726,6 +779,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.previous_box = None;
                         child_frame.tie = AvoidTie::None;
                         child_frame.run_unit = None;
+                        child_frame.run_tail = false;
+                        child_frame.item_tail = None;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -972,12 +1027,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let closing_edges_base_shape = (in_flow_block || in_flow_container)
                     && !direct_body_child
                     && frame.closing_edges > 0.0;
-                let closing_edges_shape = closing_edges_base_shape && break_before_available();
-                // With no box before it in the block, the edges follow its
-                // lines when it is a paragraph that breaks between them.
+                // A paragraph that avoided breaks tie to the boxes before it,
+                // all the way to the first, has no break between boxes to
+                // take, not even the one that gives way for the last box of a
+                // block: it is split between its lines like a first box.
+                let closing_edges_shape = closing_edges_base_shape
+                    && break_before_available()
+                    && !(frame.tied_to_start && node.is_ifc_root());
+                // With no box before it in the block, or only boxes tied to
+                // it, the edges follow its lines when it is a paragraph that
+                // breaks between them.
                 let lines_shape = closing_edges_shape
                     || (closing_edges_base_shape
-                        && frame.previous_box.is_none()
+                        && (frame.previous_box.is_none() || frame.tied_to_start)
                         && node.is_ifc_root());
                 // Nothing may break inside it at a better place than before
                 // it. A paragraph with lines enough to break between moves
@@ -986,16 +1048,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // run was. So does a paragraph after a box to break from whose
                 // lines are too few for its orphans and widows: the break
                 // before it is the one between boxes, which beats one between
-                // lines that leaves too few at either end. Not one with
-                // padding or a border of its own below its lines: its box may
-                // run past the page edge where the lines fit and could not
-                // move whole, and browsers then split the lines.
+                // lines that leaves too few at either end.
                 let unbreakable = lines_shape
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
                             && node.is_ifc_root()
-                            && node.layout.padding.bottom + node.layout.border.bottom == 0.0
                             && paragraph_lines_keep_together(document, cascade, node_id)));
                 let closing_edges_base = closing_edges_shape && unbreakable;
                 // A block that holds one box moves whole with the edges that
@@ -1056,12 +1114,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
+                // The last box of such a run goes to the next page with the
+                // edges that follow it when the run has moved as far on as it
+                // goes (the first box starts its page) and they still do not
+                // fit after the box.
+                let run_tail_base = frame.run_tail
+                    && (in_flow_block || in_flow_container)
+                    && frame.closing_edges > 0.0;
                 let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)
                         || is_float
                         || clears_float))
                     || lines_shape
                     || lone_tail.is_some()
+                    || run_tail_base
                     || (avoided_unit.is_some() && !direct_body_child)
                     || (leading_piece.is_some() && !direct_body_child);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
@@ -1079,6 +1145,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
+                let run_tail_candidate = run_tail_base && can_move_nested;
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
                 let leading_piece = leading_piece.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
@@ -1090,9 +1157,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // edges close, the page cannot break before the paragraph at
                 // a better place than between its lines (class C against
                 // class B), so the orphans it cannot keep do not stop it.
+                // A paragraph with a box before it that moves whole to the
+                // next page for them has no such break there: its box ends up
+                // at the top of that page, and its lines split when the edges
+                // still run past the page end.
                 let lines_closing_edges = if lines_shape
                     && can_move_nested
-                    && (!unbreakable || frame.lone_in_edges)
+                    && (!unbreakable || frame.lone_in_edges || closing_edges_shape)
                     && !avoids_break
                     && node.is_ifc_root()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. })
@@ -1117,6 +1188,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || nested_float_candidate
                         || closing_edges_candidate
                         || lone_box_candidate.is_some()
+                        || run_tail_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
                         || is_tall_direct_absolute
@@ -1169,6 +1241,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 },
                                 avoided_unit,
                                 leading_piece_end: leading_piece,
+                                run_tail_edges: if run_tail_candidate {
+                                    frame.closing_edges
+                                } else {
+                                    0.0
+                                },
+                                item_tail_edges: frame
+                                    .item_tail
+                                    .filter(|tail| tail.item == node_id)
+                                    .map_or(0.0, |tail| {
+                                        (tail.container_bottom
+                                            - (candidate_raw_y + candidate_height)
+                                            + tail.inherited)
+                                            .max(0.0)
+                                    }),
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1225,6 +1311,37 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let closing_chain = own_closing_edges
                     .map(|own| own + inherited_edges)
                     .filter(|&edges| edges > 0.0);
+                // The last item of a flex container that stacks its items, or
+                // the last row of a table, is the box that the edges closing
+                // the container follow: its own bottom padding and border, and
+                // those of the blocks it ends. The page may break between the
+                // items or rows instead of between the last of them and the
+                // edges.
+                let item_tail = (in_flow_container
+                    && !is_body
+                    && !document.context.pagination_on_transposed_axes
+                    && height_follows_content(document, node_id)
+                    && node.layout.padding.bottom + node.layout.border.bottom + inherited_edges
+                        > 0.0)
+                    .then(|| container_item_tail(document, cascade, node_id, self.has_named_pages))
+                    .flatten()
+                    .filter(|_| {
+                        let (side_by_side, bounded) =
+                            candidate_ancestor_constraints(document, cascade, node_id, body_id);
+                        !side_by_side && !bounded
+                    })
+                    .map(|item| ItemTail {
+                        item,
+                        container_bottom: raw_y + node.layout.size.height,
+                        inherited: inherited_edges,
+                    });
+                // The row groups of a table pass its last row on.
+                let child_item_tail =
+                    if document.nodes[node_id].display() == DisplayValue::TableRowGroup {
+                        frame.item_tail
+                    } else {
+                        item_tail
+                    };
                 // For each child of a block container, its last in-flow box and
                 // whether it floats: they tell the box before each child, and
                 // the last box that the closing edges follow.
@@ -1344,6 +1461,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // included: `previous_box` forgets a text box, which is no box
                 // to break from for some rules but is one for this.
                 let mut box_before = false;
+                // Whether avoided breaks tie each box so far to the one before
+                // it, from the first box on.
+                let mut tied_from_start = true;
+                let is_block = |id: usize| {
+                    is_plain_block_box(document, id) || is_plain_container_box(document, id)
+                };
                 // A block whose edges nothing around it carries is where the
                 // boxes below it stop looking for a box before them.
                 let child_scope_is_lone = (own_closing_edges.is_some_and(|own| own > 0.0)
@@ -1373,11 +1496,26 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     } else {
                         AvoidTie::None
                     };
+                    // The last box of a run that avoided breaks tie to the boxes
+                    // before it, from a free break on.
+                    let run_tail = matches!(avoid_chain, Some(AvoidChain::Run { .. }))
+                        && last_in_flow == Some(index);
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
+                    // A float between the boxes is no box in their flow, and
+                    // text before the child is left to the rules for it.
+                    let child_tied_to_start = tied_from_start
+                        && flow_flags.get(index).and_then(|&(in_flow, _)| in_flow)
+                            == Some(child_id)
+                        && is_block(child_id)
+                        && child_previous_box.is_some_and(|previous| {
+                            is_block(previous)
+                                && boxes_are_tied(document, cascade, previous, child_id)
+                        });
                     box_before |= matches!(flow_flags.get(index), Some((Some(_), _)));
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
                         previous_box = Some(last_box);
+                        tied_from_start = !child_box_before || child_tied_to_start;
                     }
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
@@ -1419,10 +1557,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
-                            lone_in_edges: !child_box_before && child_scope_is_lone,
+                            lone_in_edges: (!child_box_before || child_tied_to_start)
+                                && child_scope_is_lone,
+                            tied_to_start: child_tied_to_start,
                             lines_closing_edges,
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
+                            run_tail,
+                            item_tail: child_item_tail,
                         },
                     )?;
                 }

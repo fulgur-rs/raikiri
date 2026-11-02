@@ -485,7 +485,7 @@ pub type ComputedWordSpacing = ComputedLetterSpacing;
 /// );
 /// assert_eq!(auto, ComputedLengthPercentageOrAuto::Auto);
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ComputedLengthPercentageOrAuto {
     /// Absolutized length in px.
     Px(f32),
@@ -493,6 +493,8 @@ pub enum ComputedLengthPercentageOrAuto {
     Percent(f32),
     /// A mixed-unit `calc()` retained for used-value resolution.
     Calc(crate::property::CalcLengthPercentage),
+    /// An absolutized comparison with percentages retained for used values.
+    Math(std::sync::Arc<crate::property::ComputedLengthMath>),
     /// The `auto` keyword.
     Auto,
     /// The `min-content` sizing keyword, kept as specified.
@@ -512,13 +514,23 @@ pub enum ComputedLengthPercentageOrAuto {
     Stretch,
 }
 
+impl From<ComputedLengthPercentageOrCalc> for ComputedLengthPercentageOrAuto {
+    fn from(value: ComputedLengthPercentageOrCalc) -> Self {
+        match value {
+            ComputedLengthPercentageOrCalc::Px(px) => Self::Px(px),
+            ComputedLengthPercentageOrCalc::Percent(percent) => Self::Percent(percent),
+            ComputedLengthPercentageOrCalc::Calc(calc) => Self::Calc(calc),
+        }
+    }
+}
+
 impl ComputedLengthPercentageOrAuto {
     /// Whether this is one of the sizing keywords (`min-content`,
     /// `max-content`, `fit-content`) or the `fit-content()` function that take
     /// the size from the box's content rather than from its containing block
     /// (CSS Sizing 3 §3.1.1).
     #[must_use]
-    pub const fn is_content_keyword(self) -> bool {
+    pub const fn is_content_keyword(&self) -> bool {
         matches!(
             self,
             Self::MinContent | Self::MaxContent | Self::FitContent | Self::FitContentOf(_)
@@ -570,7 +582,7 @@ pub struct ComputedCssPosition {
 
 /// Computed `background-size` (the computed counterpart of
 /// [`crate::property::BackgroundSize`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ComputedBackgroundSize {
     /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — each axis independently.
@@ -1636,11 +1648,12 @@ pub struct ResolveContext {
     /// inline axis, the basis of `vi`, is the viewport's height and its
     /// block axis, the basis of `vb`, is the viewport's width.
     pub vertical_root: bool,
-    /// Device pixels per CSS pixel for computed `border-*-width` snapping.
+    /// Device pixels per CSS pixel for computed border widths and table spacing.
     ///
-    /// `None` preserves fractional CSS-pixel widths for output-neutral and
+    /// `None` preserves fractional CSS-pixel lengths for output-neutral and
     /// vector consumers. A finite positive scale applies CSS Values 4's
-    /// “snap a length as a border width” algorithm. Invalid scales are
+    /// “snap a length as a border width” algorithm and quantizes table gaps,
+    /// which may become zero. Invalid scales are
     /// ignored by [`Self::with_border_width_device_scale`].
     pub border_width_device_scale: Option<f32>,
 }
@@ -1672,12 +1685,14 @@ impl ResolveContext {
         self
     }
 
-    /// Configure device-pixel snapping for computed border widths.
+    /// Configure device-pixel quantization for computed border widths and table spacing.
     ///
     /// `device_pixels_per_css_pixel` is the raster output scale. At 1x, one
     /// CSS pixel maps to one device pixel; at 2x, two device pixels map to one
     /// CSS pixel. `None`, zero, negative, NaN, and infinite scales preserve
-    /// fractional CSS-pixel widths.
+    /// fractional CSS-pixel lengths. Table gaps may become zero; border widths
+    /// follow their separate minimum-pixel rule. A new scale requires resolving
+    /// the original specified values again, rather than already computed lengths.
     pub fn with_border_width_device_scale(
         mut self,
         device_pixels_per_css_pixel: Option<f32>,
@@ -2477,6 +2492,9 @@ pub fn resolve_tab_size(
 /// Values 4 §10.7 (properties that disallow negative lengths cannot compute
 /// negative values). WPT `border-spacing-computed.html` checks
 /// `"calc(10px - 0.5em)"` (40px font-size → `-10px`) → `"0px"`.
+/// A configured raster scale quantizes newly specified gaps to device pixels;
+/// an absent scale keeps fractional lengths for vector output. Unchanged
+/// components lifted from computed values keep their exact inherited lengths.
 /// The parser in [`crate::property`] already rejects authored negative values
 /// such as `-20px`; only derived values from calc need clamping here.
 ///
@@ -2502,11 +2520,49 @@ pub fn resolve_border_spacing(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorderSpacing {
-    let horizontal = resolve_length(specified.horizontal, font_size, own_line_height, ctx);
-    let vertical = resolve_length(specified.vertical, font_size, own_line_height, ctx);
+    let resolve = |length, original| {
+        let value = ComputedLength(
+            resolve_length(length, font_size, own_line_height, ctx)
+                .px()
+                .max(0.0),
+        );
+        if matches!(length, Length::Px(px) if Some(px) == original) {
+            return value;
+        }
+        ctx.border_width_device_scale.map_or(value, |scale| {
+            snap_border_spacing_to_device_pixels(value, scale)
+        })
+    };
     ComputedBorderSpacing {
-        horizontal: ComputedLength(horizontal.px().max(0.0)),
-        vertical: ComputedLength(vertical.px().max(0.0)),
+        horizontal: resolve(
+            specified.horizontal,
+            specified.computed_lengths.map(|v| v[0]),
+        ),
+        vertical: resolve(specified.vertical, specified.computed_lengths.map(|v| v[1])),
+    }
+}
+
+/// Quantize raster table gaps without the minimum width required for borders.
+fn snap_border_spacing_to_device_pixels(value: ComputedLength, scale: f32) -> ComputedLength {
+    if !scale.is_finite() || scale <= 0.0 || !value.px().is_finite() {
+        return value;
+    }
+    let scale = f64::from(scale);
+    let device = f64::from(value.px()) * scale;
+    // Chromium's integer length conversion allows 0.01 device pixels near an
+    // integer. Round that correction in computed-length precision so 4.99f32
+    // and 0.99f32 use the same boundary. Keep the multiplication wide.
+    let corrected = device + 0.01;
+    let pixels = if corrected <= f64::from(f32::MAX) {
+        f64::from((corrected as f32).floor())
+    } else {
+        corrected.floor()
+    };
+    let result = (pixels / scale) as f32;
+    if result.is_finite() {
+        ComputedLength(result)
+    } else {
+        value
     }
 }
 
@@ -2816,7 +2872,32 @@ pub fn resolve_length_percentage_or_auto(
         LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
         LengthOrAuto::RelativeCalc(value) => {
             resolve_relative_calc(value, font_size, own_line_height, ctx)
+                .map(ComputedLengthPercentageOrAuto::from)
                 .unwrap_or(ComputedLengthPercentageOrAuto::Auto)
+        }
+        LengthOrAuto::Math(value) => {
+            let value = value.absolutize(|length| {
+                if matches!(length, Length::Lh(_)) && own_line_height.is_none()
+                    || matches!(length, Length::Rlh(_)) && ctx.root_line_height.is_none()
+                {
+                    return None;
+                }
+                let value = match resolve_length_percentage(length, font_size, own_line_height, ctx)
+                {
+                    ComputedLengthPercentage::Px(px) => CalcLengthPercentage { px, percent: 0.0 },
+                    ComputedLengthPercentage::Percent(percent) => {
+                        CalcLengthPercentage { px: 0.0, percent }
+                    }
+                };
+                (value.px.is_finite() && value.percent.is_finite()).then_some(value)
+            });
+            match value {
+                Some(value) if !value.has_percentage() => {
+                    ComputedLengthPercentageOrAuto::Px(value.resolve(0.0))
+                }
+                Some(value) => ComputedLengthPercentageOrAuto::Math(value),
+                None => ComputedLengthPercentageOrAuto::Auto,
+            }
         }
         LengthOrAuto::Length(Length::Lh(v)) => match resolve_lh_multiplier(v, own_line_height) {
             Some(c) => ComputedLengthPercentageOrAuto::Px(c.px()),
@@ -2854,16 +2935,20 @@ pub fn resolve_size_length_percentage_or_auto(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLengthPercentageOrAuto {
+    let mathematical = matches!(
+        &specified,
+        LengthOrAuto::RelativeCalc(_) | LengthOrAuto::Math(_)
+    );
     let computed = resolve_length_percentage_or_auto(specified, font_size, own_line_height, ctx);
-    match (specified, computed) {
-        (LengthOrAuto::RelativeCalc(_), ComputedLengthPercentageOrAuto::Px(px)) => {
+    match computed {
+        ComputedLengthPercentageOrAuto::Px(px) if mathematical => {
             ComputedLengthPercentageOrAuto::Px(px.max(0.0))
         }
         // A calc without a percentage term is fully known now.
-        (LengthOrAuto::Calc(calc), _) if calc.percent == 0.0 && calc.px < 0.0 => {
+        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 && calc.px < 0.0 => {
             ComputedLengthPercentageOrAuto::Px(0.0)
         }
-        _ => computed,
+        other => other,
     }
 }
 
@@ -2881,7 +2966,7 @@ fn resolve_relative_calc(
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
-) -> Option<ComputedLengthPercentageOrAuto> {
+) -> Option<ComputedLengthPercentageOrCalc> {
     resolve_relative_calc_with(
         value,
         font_size,
@@ -2904,10 +2989,9 @@ fn resolve_relative_calc_against_basis(
     ctx: &ResolveContext,
 ) -> Option<f32> {
     let px = match resolve_relative_calc(calc, basis, own_line_height, ctx)? {
-        ComputedLengthPercentageOrAuto::Px(px) => px,
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis.0 * (percent / 100.0),
-        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis.0 * (calc.percent / 100.0),
-        _ => return None, // cov:ignore: a relative calc resolves only to Px, Percent or Calc
+        ComputedLengthPercentageOrCalc::Px(px) => px,
+        ComputedLengthPercentageOrCalc::Percent(percent) => basis.0 * (percent / 100.0),
+        ComputedLengthPercentageOrCalc::Calc(calc) => calc.px + basis.0 * (calc.percent / 100.0),
     };
     px.is_finite().then_some(px.max(0.0))
 }
@@ -2921,14 +3005,14 @@ fn resolve_relative_calc_with(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
     lh_term: impl Fn(f32, Option<ComputedLength>) -> Option<f32>,
-) -> Option<ComputedLengthPercentageOrAuto> {
+) -> Option<ComputedLengthPercentageOrCalc> {
     let px = relative_calc_length_px(value, font_size, own_line_height, ctx, lh_term)?;
     Some(if value.percent == 0.0 {
-        ComputedLengthPercentageOrAuto::Px(px)
+        ComputedLengthPercentageOrCalc::Px(px)
     } else if px == 0.0 {
-        ComputedLengthPercentageOrAuto::Percent(value.percent)
+        ComputedLengthPercentageOrCalc::Percent(value.percent)
     } else {
-        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+        ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
             percent: value.percent,
             px,
         })
@@ -3011,23 +3095,15 @@ pub(crate) fn resolve_css_position_offset(
                 Some(resolve_lh_multiplier(coefficient, basis).map_or(0.0, ComputedLength::px))
             },
         )
-        .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0))
+        .unwrap_or(ComputedLengthPercentageOrCalc::Px(0.0))
         {
-            ComputedLengthPercentageOrAuto::Px(px) => {
+            ComputedLengthPercentageOrCalc::Px(px) => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(px))
             }
-            ComputedLengthPercentageOrAuto::Percent(percent) => {
+            ComputedLengthPercentageOrCalc::Percent(percent) => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(percent))
             }
-            ComputedLengthPercentageOrAuto::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
-            ComputedLengthPercentageOrAuto::Auto
-            | ComputedLengthPercentageOrAuto::MinContent
-            | ComputedLengthPercentageOrAuto::MaxContent
-            | ComputedLengthPercentageOrAuto::FitContent
-            | ComputedLengthPercentageOrAuto::FitContentOf(_)
-            | ComputedLengthPercentageOrAuto::Stretch => {
-                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)) // cov:ignore: a relative calc resolves only to Px, Percent or Calc
-            }
+            ComputedLengthPercentageOrCalc::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
         },
     }
 }
@@ -3287,11 +3363,11 @@ fn resolve_conic_gradient(
 /// using this node's basis).
 ///
 /// Pass `content` through as a keyword (see [`ComputedFlexBasis::Content`] and
-/// the scope notes in [`crate::property::FlexBasisValue`]). Delegate the `auto`
-/// / `<length-percentage>` branch to [`resolve_size_length_percentage_or_auto`],
-/// matching the `<'width'>` grammar exactly, including its `Auto` fallback for
-/// unresolved `Lh`/`Rlh` and its clamp of a math function to `[0,∞]`. Do not
-/// duplicate the implementation.
+/// the scope notes in [`crate::property::FlexBasisValue`]). Resolve the affine
+/// length forms with the shared leaf and relative-calc helpers. Apply the same
+/// unresolved `Lh`/`Rlh` fallback and nonnegative math range policy as
+/// [`resolve_size_length_percentage_or_auto`]. Comparison trees remain outside
+/// the current flex-basis grammar.
 #[doc(hidden)]
 pub fn resolve_flex_basis(
     specified: FlexBasisValue,
@@ -3306,41 +3382,34 @@ pub fn resolve_flex_basis(
         FlexBasisValue::FitContent => ComputedFlexBasis::FitContent,
         FlexBasisValue::Stretch => ComputedFlexBasis::Stretch,
         FlexBasisValue::Auto => ComputedFlexBasis::Auto,
+        FlexBasisValue::Length(Length::Lh(_)) if own_line_height.is_none() => {
+            ComputedFlexBasis::Auto
+        }
+        FlexBasisValue::Length(Length::Rlh(_)) if ctx.root_line_height.is_none() => {
+            ComputedFlexBasis::Auto
+        }
         FlexBasisValue::Length(len) => {
-            computed_flex_basis(LengthOrAuto::Length(len), font_size, own_line_height, ctx)
+            match resolve_length_percentage(len, font_size, own_line_height, ctx) {
+                ComputedLengthPercentage::Px(px) => ComputedFlexBasis::Px(px.max(0.0)),
+                ComputedLengthPercentage::Percent(percent) => {
+                    ComputedFlexBasis::Percent(percent.max(0.0))
+                }
+            }
         }
-        FlexBasisValue::Calc(calc) => {
-            computed_flex_basis(LengthOrAuto::Calc(calc), font_size, own_line_height, ctx)
+        FlexBasisValue::Calc(calc) if calc.percent == 0.0 && calc.px < 0.0 => {
+            ComputedFlexBasis::Px(0.0)
         }
-        FlexBasisValue::RelativeCalc(calc) => computed_flex_basis(
-            LengthOrAuto::RelativeCalc(calc),
-            font_size,
-            own_line_height,
-            ctx,
-        ),
-    }
-}
-
-/// The `<'width'>` branch of [`resolve_flex_basis`].
-fn computed_flex_basis(
-    specified: LengthOrAuto,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> ComputedFlexBasis {
-    match resolve_size_length_percentage_or_auto(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentageOrAuto::Auto => ComputedFlexBasis::Auto,
-        ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
-        // A font-relative calc() whose length terms cancel leaves a bare
-        // percentage, which is clamped to the `[0,∞]` range as well.
-        ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p.max(0.0)),
-        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedFlexBasis::Calc(calc),
-        // cov:ignore: only the width / inline-size parser produces sizing keywords
-        ComputedLengthPercentageOrAuto::MinContent
-        | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_)
-        | ComputedLengthPercentageOrAuto::Stretch => ComputedFlexBasis::Auto,
+        FlexBasisValue::Calc(calc) => ComputedFlexBasis::Calc(calc),
+        FlexBasisValue::RelativeCalc(calc) => {
+            match resolve_relative_calc(calc, font_size, own_line_height, ctx) {
+                Some(ComputedLengthPercentageOrCalc::Px(px)) => ComputedFlexBasis::Px(px.max(0.0)),
+                Some(ComputedLengthPercentageOrCalc::Percent(percent)) => {
+                    ComputedFlexBasis::Percent(percent.max(0.0))
+                }
+                Some(ComputedLengthPercentageOrCalc::Calc(calc)) => ComputedFlexBasis::Calc(calc),
+                None => ComputedFlexBasis::Auto,
+            }
+        }
     }
 }
 
@@ -3624,7 +3693,7 @@ pub fn resolve_length_percentage_or_calc(
         LengthPercentageOrCalc::Length(length) => {
             return resolve_length_percentage(length, font_size, own_line_height, ctx).into();
         }
-        LengthPercentageOrCalc::Calc(calc) => ComputedLengthPercentageOrAuto::Calc(calc),
+        LengthPercentageOrCalc::Calc(calc) => ComputedLengthPercentageOrCalc::Calc(calc),
         // An `lh` term without a basis falls back to zero, as a plain `lh`
         // does; the other terms keep their values. A sum that overflows
         // falls back to zero, the initial value of the properties that use
@@ -3638,7 +3707,7 @@ pub fn resolve_length_percentage_or_calc(
                 Some(resolve_lh_multiplier(coefficient, basis).map_or(0.0, ComputedLength::px))
             },
         )
-        .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0)),
+        .unwrap_or(ComputedLengthPercentageOrCalc::Px(0.0)),
     };
     fold_resolved_calc(resolved)
 }
@@ -3646,22 +3715,16 @@ pub fn resolve_length_percentage_or_calc(
 /// A resolved `<length-percentage>` or `calc()` as a [`ComputedLengthPercentageOrCalc`]:
 /// a `calc()` without a percentage folds to a length. `auto` and the sizing
 /// keywords are no length; they fall back to zero.
-fn fold_resolved_calc(resolved: ComputedLengthPercentageOrAuto) -> ComputedLengthPercentageOrCalc {
+fn fold_resolved_calc(resolved: ComputedLengthPercentageOrCalc) -> ComputedLengthPercentageOrCalc {
     match resolved {
-        ComputedLengthPercentageOrAuto::Percent(percent) => {
+        ComputedLengthPercentageOrCalc::Percent(percent) => {
             ComputedLengthPercentageOrCalc::Percent(percent)
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent != 0.0 => {
+        ComputedLengthPercentageOrCalc::Calc(calc) if calc.percent != 0.0 => {
             ComputedLengthPercentageOrCalc::Calc(calc)
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Px(calc.px),
-        ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px),
-        ComputedLengthPercentageOrAuto::Auto
-        | ComputedLengthPercentageOrAuto::MinContent
-        | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_)
-        | ComputedLengthPercentageOrAuto::Stretch => ComputedLengthPercentageOrCalc::Px(0.0),
+        ComputedLengthPercentageOrCalc::Calc(calc) => ComputedLengthPercentageOrCalc::Px(calc.px),
+        ComputedLengthPercentageOrCalc::Px(px) => ComputedLengthPercentageOrCalc::Px(px),
     }
 }
 
@@ -3686,12 +3749,24 @@ pub fn resolve_margin_length_or_auto(
     ctx: &ResolveContext,
 ) -> ComputedLengthPercentageOrAuto {
     match specified {
+        LengthOrAuto::Math(value) => {
+            match resolve_length_percentage_or_auto(
+                LengthOrAuto::Math(value),
+                font_size,
+                own_line_height,
+                ctx,
+            ) {
+                ComputedLengthPercentageOrAuto::Auto => ComputedLengthPercentageOrAuto::Px(0.0),
+                other => other,
+            }
+        }
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
         LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
         // An `lh` term without a basis falls back to the margin's initial
         // value, as a plain `lh` margin does.
         LengthOrAuto::RelativeCalc(value) => {
             resolve_relative_calc(value, font_size, own_line_height, ctx)
+                .map(ComputedLengthPercentageOrAuto::from)
                 .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0))
         }
         // Only `width` / `inline-size` parse the sizing keywords; a margin
@@ -4098,6 +4173,9 @@ pub(crate) fn lift_background_size(computed: ComputedBackgroundSize) -> Backgrou
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
             ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+            ComputedLengthPercentageOrAuto::Math(value) => {
+                LengthOrAuto::Math(crate::property::LengthMath::from_computed(&value))
+            }
             ComputedLengthPercentageOrAuto::Auto
             | ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
@@ -4508,6 +4586,7 @@ pub fn lift_border_spacing(computed: ComputedBorderSpacing) -> BorderSpacingValu
     BorderSpacingValue {
         horizontal: Length::Px(computed.horizontal.px()),
         vertical: Length::Px(computed.vertical.px()),
+        computed_lengths: Some([computed.horizontal.px(), computed.vertical.px()]),
     }
 }
 

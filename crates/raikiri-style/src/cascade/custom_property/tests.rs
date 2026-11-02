@@ -1826,18 +1826,33 @@ fn calc_length_percentage_value_targets_sizing_inset_and_vertical_align() {
     };
     let calc = LengthOrAuto::Calc(value);
     let cases = [
-        (PropertyKey::Width, PropertyValue::Width(calc)),
-        (PropertyKey::Height, PropertyValue::Height(calc)),
-        (PropertyKey::MaxWidth, PropertyValue::MaxWidth(calc)),
-        (PropertyKey::MaxHeight, PropertyValue::MaxHeight(calc)),
-        (PropertyKey::MinWidth, PropertyValue::MinWidth(calc)),
-        (PropertyKey::MinHeight, PropertyValue::MinHeight(calc)),
-        (PropertyKey::MinBlockSize, PropertyValue::MinBlockSize(calc)),
-        (PropertyKey::InlineSize, PropertyValue::InlineSize(calc)),
-        (PropertyKey::BlockSize, PropertyValue::BlockSize(calc)),
-        (PropertyKey::Top, PropertyValue::Top(calc)),
-        (PropertyKey::Right, PropertyValue::Right(calc)),
-        (PropertyKey::Bottom, PropertyValue::Bottom(calc)),
+        (PropertyKey::Width, PropertyValue::Width(calc.clone())),
+        (PropertyKey::Height, PropertyValue::Height(calc.clone())),
+        (PropertyKey::MaxWidth, PropertyValue::MaxWidth(calc.clone())),
+        (
+            PropertyKey::MaxHeight,
+            PropertyValue::MaxHeight(calc.clone()),
+        ),
+        (PropertyKey::MinWidth, PropertyValue::MinWidth(calc.clone())),
+        (
+            PropertyKey::MinHeight,
+            PropertyValue::MinHeight(calc.clone()),
+        ),
+        (
+            PropertyKey::MinBlockSize,
+            PropertyValue::MinBlockSize(calc.clone()),
+        ),
+        (
+            PropertyKey::InlineSize,
+            PropertyValue::InlineSize(calc.clone()),
+        ),
+        (
+            PropertyKey::BlockSize,
+            PropertyValue::BlockSize(calc.clone()),
+        ),
+        (PropertyKey::Top, PropertyValue::Top(calc.clone())),
+        (PropertyKey::Right, PropertyValue::Right(calc.clone())),
+        (PropertyKey::Bottom, PropertyValue::Bottom(calc.clone())),
         (PropertyKey::Left, PropertyValue::Left(calc)),
         (
             PropertyKey::VerticalAlign,
@@ -3244,4 +3259,110 @@ fn a_substituted_background_position_without_a_comparison_is_folded_as_before() 
             vertical: ComputedCssPositionOffset::Start(Percent(50.0)),
         }
     );
+}
+
+#[test]
+fn sizing_comparisons_survive_direct_custom_and_logical_declarations() {
+    fn size<'a>(
+        cv: &'a crate::ComputedValues,
+        property: &str,
+    ) -> &'a ComputedLengthPercentageOrAuto {
+        match property {
+            "width" | "inline-size" => &cv.width,
+            "height" | "block-size" => &cv.height,
+            "min-width" | "min-inline-size" => &cv.min_width,
+            "min-height" | "min-block-size" => &cv.min_height,
+            "max-width" | "max-inline-size" => &cv.max_width,
+            "max-height" | "max-block-size" => &cv.max_height,
+            _ => panic!("unknown sizing fixture"),
+        }
+    }
+    for property in [
+        "width",
+        "height",
+        "min-width",
+        "min-height",
+        "max-width",
+        "max-height",
+        "inline-size",
+        "block-size",
+        "min-inline-size",
+        "min-block-size",
+        "max-inline-size",
+        "max-block-size",
+    ] {
+        for (source, expected) in [
+            ("min(30px, calc(10px + 5%))", [10.0, 10.5, 30.0]),
+            ("max(10px, 5%)", [10.0, 10.0, 50.0]),
+            ("clamp(5px, calc(10px + 5%), 20px)", [10.0, 10.5, 20.0]),
+            ("min(3em, calc(1em + 5%))", [10.0, 10.5, 30.0]),
+        ] {
+            for value in [source.to_owned(), "var(--size)".to_owned()] {
+                let declarations = format!("font-size:10px; --size:{source}; {property}:{value}");
+                let cv = cascade_doc("", "div", Some(&declarations));
+                let ComputedLengthPercentageOrAuto::Math(expression) = size(&cv, property) else {
+                    panic!("{declarations}: comparison lost: {:?}", size(&cv, property));
+                };
+                for (basis, expected) in [0.0, 10.0, 1000.0].into_iter().zip(expected) {
+                    assert_eq!(
+                        expression.resolve(basis),
+                        expected,
+                        "{declarations} at {basis}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sizing_comparisons_reject_invalid_dimensions_and_keep_the_property_range() {
+    for invalid in [
+        "(max(10px, 5%))",
+        "min(10px, 1s)",
+        "max(10px, 5%) 1px",
+        "calc(min(10px, 5%) * 1px)",
+    ] {
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some(&format!("min-width:7px; min-width:{invalid}")),
+        );
+        assert_eq!(
+            cv.min_width,
+            ComputedLengthPercentageOrAuto::Px(7.0),
+            "{invalid}"
+        );
+    }
+    for (source, expected) in [
+        ("min(-10px, 20px)", 0.0),
+        ("calc(min(-10px, 20px) + 20px)", 10.0),
+        ("clamp(30px, 10px, 20px)", 30.0),
+    ] {
+        let cv = cascade_doc("", "div", Some(&format!("min-width:{source}")));
+        assert_eq!(
+            cv.min_width,
+            ComputedLengthPercentageOrAuto::Px(expected),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn sizing_var_rejects_parentheses_outside_a_math_function() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--size:(max(10px, 5%)); min-width:7px; min-width:var(--size)"),
+    );
+    assert_eq!(cv.min_width, ComputedLengthPercentageOrAuto::Auto);
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--size:calc((max(10px, 5%))); min-width:var(--size)"),
+    );
+    let ComputedLengthPercentageOrAuto::Math(expression) = cv.min_width else {
+        panic!("parentheses inside calc are valid")
+    };
+    assert_eq!(expression.resolve(1000.0), 50.0);
 }

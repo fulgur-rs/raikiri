@@ -601,8 +601,21 @@ class MainTests(unittest.TestCase):
     ) -> None:
         """Write the JSON of every crate; `naming_serde` is a crate whose API names a type of serde.
 
-        `hidden_view` marks every item of the view crate `#[doc(hidden)]`.
+        `hidden_view` marks every item of the view crate `#[doc(hidden)]`. The
+        first-tier list of docs/public-api.md names every visible name outside
+        the consumer crate, so the gate's first-tier check finds nothing.
         """
+        listed: list[str] = []
+        for crate in lint.PUBLISHED_CRATES:
+            if crate == lint.CONSUMER_CRATE or (hidden_view and crate in lint.VIEW_CRATES):
+                continue
+            identifier = crate.replace("-", "_")
+            listed.append(f"{identifier}::plain")
+            if crate == leaking or (crate in lint.VIEW_CRATES and not blind_view):
+                listed.append(f"{identifier}::child_count")
+            if crate == naming_serde:
+                listed.append(f"{identifier}::outside")
+        self.write_tier_doc(directory, listed)
         for crate in lint.ALL_CRATES:
             b = DocBuilder()
             attrs = [{"other": "#[doc(hidden)]"}] if hidden_view and crate in lint.VIEW_CRATES else None
@@ -636,6 +649,32 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("raikiri-paint: raikiri_paint::child_count (function): taffy::tree::node::NodeId", out)
         self.assertNotIn("raikiri-dom:", out)
+
+    def test_the_gate_fails_on_a_name_outside_the_first_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp))
+            self.write_tier_doc(Path(tmp), [])
+            code, out, err = self.run_main(Path(tmp))
+        self.assertEqual(code, 1, out)
+        self.assertIn("raikiri_net: function   raikiri_net::plain", out)
+        self.assertIn("FAIL:", err)
+
+    def test_the_gate_reports_a_leak_and_the_first_tier_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp), leaking="raikiri-paint")
+            self.write_tier_doc(Path(tmp), [])
+            code, out, _ = self.run_main(Path(tmp))
+        self.assertEqual(code, 1)
+        self.assertIn("raikiri-paint: raikiri_paint::child_count (function): taffy::tree::node::NodeId", out)
+        self.assertIn("raikiri_net: function   raikiri_net::plain", out)
+
+    def test_the_gate_without_the_first_tier_list_is_a_tool_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp))
+            (Path(tmp) / lint.FIRST_TIER_DOC).unlink()
+            code, _, err = self.run_main(Path(tmp))
+        self.assertEqual(code, 2)
+        self.assertIn("public-api.md", err)
 
     def test_a_view_crate_with_every_item_hidden_passes_without_a_note(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -311,12 +311,11 @@ fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() 
         heading_then(60, |doc, body| paragraph(doc, body, "", 4)),
         (60.0, 70.0)
     );
-    // One with a definite height cannot: the page breaks where its lines
-    // fall, or it moves whole.
+    // So can one with a definite height, which keeps it.
     for css in ["height:50px", "min-height:50px"] {
         assert_eq!(
             heading_then(60, |doc, body| paragraph(doc, body, css, 4)),
-            (100.0, 110.0),
+            (60.0, 70.0),
             "{css}"
         );
     }

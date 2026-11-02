@@ -4,7 +4,7 @@
 use super::child_frames::{ChildFrames, ChildPlan};
 use super::element_box::ElementBox;
 use super::frames::{DeferralLayer, LayerClose, PaintFrame};
-use super::paint_walk::PaintWalk;
+use super::paint_walk::{ClipScope, PaintWalk};
 use super::{paint_generated_pseudo, push_overflow_clip};
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
@@ -70,16 +70,15 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = *element;
         let (document, cascade, page_box) = (self.document, self.cascade, self.page_box);
-        let scene = &mut *self.scene;
-        let trace = &mut self.trace;
-        let stack = &mut self.stack;
         // The fragmentainer clip encloses the element and its children;
         // close it after any element-local overflow clip.
         if multicol_clip_pushed {
-            stack.push(PaintFrame::PopClip);
+            self.stack.push(PaintFrame::PopClip);
+            self.clip_scopes.push(ClipScope::Eager);
         }
         if fragmentainer_clip_pushed {
-            stack.push(PaintFrame::PopClip);
+            self.stack.push(PaintFrame::PopClip);
+            self.clip_scopes.push(ClipScope::Eager);
         }
         // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
         // the padding box. Min edges are floored outward so a fractional
@@ -101,11 +100,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 layout.border.left,
             ),
         ) {
-            let transform = scene.transform;
-            let clip = push_overflow_clip(scene, resolved, &page_box);
-            stack.push(PaintFrame::PopClip);
+            self.begin_clip_scope(!element.paints_on_page);
+            let transform = self.scene.transform;
+            let clip = push_overflow_clip(self.scene, resolved, &page_box);
+            self.stack.push(PaintFrame::PopClip);
             overflow_clip_pushed = Some((resolved, transform));
-            if let Some(t) = trace.as_deref_mut() {
+            if let Some(t) = self.trace.as_deref_mut() {
                 t.push(crate::PaintTraceEvent::PushOverflowClip(
                     node_id,
                     [clip.x0, clip.y0, clip.x1, clip.y1],

@@ -31,26 +31,26 @@ impl<'a> AuthoredBox<'a> {
     fn width_and_height(
         &self,
     ) -> (
-        ComputedLengthPercentageOrAuto,
-        ComputedLengthPercentageOrAuto,
+        &'a ComputedLengthPercentageOrAuto,
+        &'a ComputedLengthPercentageOrAuto,
     ) {
         use super::super::bridge::is_sizing_keyword;
         use raikiri_layout_style::StyleFlags as F;
         let cv = self.values();
         let (mut width, mut height) =
             super::super::bridge::vertical_logical_size(self.cascade, self.id)
-                .map_or((cv.width, cv.height), |size| (size.width, size.height));
+                .map_or((&cv.width, &cv.height), |size| (&size.width, &size.height));
         if is_sizing_keyword(width) || is_sizing_keyword(height) {
             let flags =
                 super::super::style_views::metadata::sizing_flags(self.doc, self.cascade, self.id);
             if (flags.contains(F::IGNORE_WIDTH_KEYWORD) && is_sizing_keyword(width))
                 || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO)
-                    && width == ComputedLengthPercentageOrAuto::MinContent)
+                    && *width == ComputedLengthPercentageOrAuto::MinContent)
             {
-                width = ComputedLengthPercentageOrAuto::Auto;
+                width = &ComputedLengthPercentageOrAuto::Auto;
             }
             if flags.contains(F::IGNORE_HEIGHT_KEYWORD) && is_sizing_keyword(height) {
-                height = ComputedLengthPercentageOrAuto::Auto;
+                height = &ComputedLengthPercentageOrAuto::Auto;
             }
         }
         (width, height)
@@ -90,12 +90,12 @@ impl<'a> AuthoredBox<'a> {
     /// The definite `min-width` against `basis`. A sizing keyword is no
     /// constraint: layout takes it from the box's content limits instead.
     pub(super) fn min_width(&self, basis: f32) -> Option<f32> {
-        definite_size(self.values().min_width, basis)
+        definite_size(&self.values().min_width, basis)
     }
 
     /// The definite `max-width` against `basis`.
     pub(super) fn max_width(&self, basis: f32) -> Option<f32> {
-        definite_size(self.values().max_width, basis)
+        definite_size(&self.values().max_width, basis)
     }
 
     /// Whether the box floats. Only `left` and `right` float in the style
@@ -147,13 +147,16 @@ fn padding_edge(value: ComputedLengthPercentageOrCalc, basis: f32) -> f32 {
     })
 }
 
-fn definite_size(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
+fn definite_size(value: &ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
     let resolved = match value {
-        ComputedLengthPercentageOrAuto::Px(px) => sanitize_taffy(px, "size", &mut Vec::new()),
+        ComputedLengthPercentageOrAuto::Px(px) => sanitize_taffy(*px, "size", &mut Vec::new()),
         ComputedLengthPercentageOrAuto::Percent(percent) => {
             basis * sanitize_taffy(percent / 100.0, "size", &mut Vec::new())
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) => resolve_calc(calc, basis),
+        ComputedLengthPercentageOrAuto::Math(value) => {
+            AlignedCalc::resolve_math_expression(value, true, basis)
+        }
+        ComputedLengthPercentageOrAuto::Calc(calc) => resolve_calc(*calc, basis),
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent

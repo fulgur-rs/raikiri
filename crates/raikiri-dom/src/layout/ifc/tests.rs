@@ -614,6 +614,7 @@ fn nested_shrink_to_fit_boxes_are_measured_a_few_times_each() {
         ("inline-flex;max-width:1000px;flex-wrap:wrap", 7),
         ("inline-flex;flex:1 0 1px", 8),
         ("inline-flex;flex:0 1 1px", 8),
+        ("inline-flex;flex:0 0 1px", 8),
         ("inline-grid", 12),
     ] {
         let (mut doc, cascade, outermost) = nested_boxes(depth, display);
@@ -625,12 +626,12 @@ fn nested_shrink_to_fit_boxes_are_measured_a_few_times_each() {
         );
         // Each box holds one `X`, as wide as its font size, and the box inside
         // it: side by side in a line or a row, one under the other in a grid,
-        // which is as wide as the `X` then. An item that cannot grow adds at
-        // most its flex basis of 1px for the box inside it.
+        // which is as wide as the `X` then. An item that can shrink below its
+        // content still keeps its automatic minimum width, which is the width
+        // of the box inside it, so every level adds up.
         let mut widths = (1..=depth).map(|level| 10.0 / 1.1f32.powi(level as i32));
         let expected: f32 = match display {
             "inline-grid" => widths.next().expect("a box"),
-            "inline-flex;flex:0 1 1px" => widths.next().expect("a box") + 1.0,
             _ => widths.sum(),
         };
         let width = doc.nodes[outermost].layout.size.width;

@@ -120,7 +120,7 @@ fn listed_lines(
 /// Whether `event` is a box that is not visible, and paints no decoration of
 /// its own wherever its fragments were listed. Its descendants decide for
 /// themselves.
-fn hides_decoration(cascade: &CascadeResult, event: PaintEvent<'_>) -> bool {
+pub(super) fn hides_decoration(cascade: &CascadeResult, event: PaintEvent<'_>) -> bool {
     match event {
         PaintEvent::Box(fragment) => fragment_hides_box(cascade, &fragment),
         PaintEvent::LineBox(piece) => fragment_hides_box(cascade, &piece.fragment),

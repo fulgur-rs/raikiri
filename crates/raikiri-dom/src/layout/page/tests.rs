@@ -461,19 +461,19 @@ fn used_style_length_helpers_cover_used_value_forms() {
         Some(12.0)
     );
     assert_eq!(
-        used_computed_length_percentage_or_auto(ComputedLengthPercentageOrAuto::Px(12.0), 100.0),
+        used_computed_length_percentage_or_auto(&ComputedLengthPercentageOrAuto::Px(12.0), 100.0),
         Some(12.0)
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(
-            ComputedLengthPercentageOrAuto::Percent(25.0),
+            &ComputedLengthPercentageOrAuto::Percent(25.0),
             100.0
         ),
         Some(25.0)
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(
-            ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            &ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
                 percent: 25.0,
                 px: 10.0,
             }),
@@ -482,12 +482,12 @@ fn used_style_length_helpers_cover_used_value_forms() {
         Some(35.0)
     );
     assert_eq!(
-        used_computed_length_percentage_or_auto(ComputedLengthPercentageOrAuto::Auto, 100.0),
+        used_computed_length_percentage_or_auto(&ComputedLengthPercentageOrAuto::Auto, 100.0),
         None
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(
-            ComputedLengthPercentageOrAuto::Px(f32::NAN),
+            &ComputedLengthPercentageOrAuto::Px(f32::NAN),
             100.0
         ),
         None
@@ -1625,4 +1625,64 @@ fn find_body_takes_a_frameset_only_as_a_child_of_the_root_element() {
     let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(find_body(&doc), Some(body));
+}
+
+#[test]
+fn page_sizing_comparisons_resolve_against_paper_before_auto_margin_distribution() {
+    use raikiri_style::{Origin, RuleTree, cascade};
+    for (source, width) in [
+        ("min(30px, calc(10px + 5%))", 30.0),
+        ("max(10px, 5%)", 25.0),
+        ("clamp(5px, calc(10px + 5%), 20px)", 20.0),
+        ("min(-10px, 5%)", 0.0),
+        ("calc(min(-10px, 5%) + 20px)", 10.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        doc.append_element(Some(html), "body", None::<&str>);
+        let mut rules = RuleTree::empty();
+        rules.add_stylesheet(
+            &format!(
+                "@page {{size:500px 400px; width:{source}; height:max(10px, 5%); margin:auto}}"
+            ),
+            Origin::Author,
+        );
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 500.0;
+        page.height = 400.0;
+        let margins = page_margins(&cascade, page);
+        assert_eq!(margins.left, (500.0 - width) / 2.0, "{source}");
+        assert_eq!(margins.right, (500.0 - width) / 2.0, "{source}");
+        assert_eq!(margins.top, 190.0, "{source}");
+        assert_eq!(margins.bottom, 190.0, "{source}");
+    }
+}
+
+#[test]
+fn page_calc_margin_sanitization_and_comparison_overflow_keep_geometry_finite() {
+    for (percent, px, expected) in [
+        (5.0, 10.0, 20.0),
+        (f32::NAN, 10.0, 10.0),
+        (5.0, f32::NAN, 10.0),
+    ] {
+        let value = LengthOrAuto::Calc(CalcLengthPercentage { percent, px });
+        assert_eq!(page_margin_length(&value, 200.0), expected);
+    }
+    let mut doc = Document::new();
+    doc.append_element(Some(0), "html", None::<&str>);
+    let mut rules = raikiri_style::RuleTree::empty();
+    rules.add_stylesheet(
+        "@page {width:max(3e38px,calc(3e38px + 3e38px + 5%))}",
+        raikiri_style::Origin::Author,
+    );
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    assert!(matches!(
+        cascade.page.declarations().get(&PropertyKey::Width),
+        Some(PropertyValue::Width(LengthOrAuto::Math(_)))
+    ));
+    assert_eq!(
+        page_dimension(cascade.page.declarations(), PropertyKey::Width, 500.0),
+        None
+    );
 }

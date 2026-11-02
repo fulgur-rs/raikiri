@@ -82,6 +82,9 @@ bitflags::bitflags! {
         /// context whatever its style says. Set by
         /// [`Node::set_box_properties`] from the display it captures.
         const ROOTS_BLOCK_CONTEXT = 1 << 9;
+        /// The table is laying this cell out at its final physical size on
+        /// vertical axes. Measurement passes retain the horizontal table path.
+        const FINAL_VERTICAL_TABLE_CELL = 1 << 10;
     }
 }
 
@@ -699,6 +702,11 @@ pub struct Node {
     /// against at its last final layout, as taffy's block algorithm derives
     /// it: `None` when that height was not definite.
     pub(crate) percent_basis_height: Option<f32>,
+    /// The border-box height the block flow of this box found for its content
+    /// in its last layout, with its minimum and maximum applied: the height
+    /// `auto` gives it, whatever height it was given. `None` for a box that
+    /// block flow has not laid out.
+    pub(crate) auto_block_size: Option<f32>,
     /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
     pub(crate) flags: NodeFlags,
     /// Node kind and kind-specific fields (tagged union).
@@ -843,6 +851,7 @@ impl Node {
             ifc: None,
             layout: BoxLayout::with_order(0),
             percent_basis_height: None,
+            auto_block_size: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
         }

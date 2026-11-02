@@ -10,6 +10,132 @@ fn enforce_layout_invariants_for_test(document: &mut Document, root: usize) -> V
     })
 }
 
+#[test]
+fn table_cell_inline_underflow_keeps_its_geometry_but_checks_its_children() {
+    for vertical in [false, true] {
+        let mut doc = Document::new();
+        let table = doc.append_element(
+            Some(0),
+            "table",
+            Some(if vertical {
+                "display:table;writing-mode:vertical-rl"
+            } else {
+                "display:table;writing-mode:horizontal-tb"
+            }),
+        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Some(if vertical {
+                "display:table-cell;writing-mode:horizontal-tb"
+            } else {
+                "display:table-cell;writing-mode:vertical-rl"
+            }),
+        );
+        let child = doc.append_element(Some(cell), "div", Some("display:block"));
+        let cell_layout = BoxLayout {
+            order: 3,
+            location: Point { x: 230.0, y: 2.0 },
+            size: if vertical {
+                Size {
+                    width: 22.0,
+                    height: 0.0,
+                }
+            } else {
+                Size {
+                    width: 0.0,
+                    height: 22.0,
+                }
+            },
+            padding: Edges {
+                left: 5.0,
+                right: 5.0,
+                top: 5.0,
+                bottom: 5.0,
+            },
+            border: Edges {
+                left: 1.0,
+                right: 1.0,
+                top: 1.0,
+                bottom: 1.0,
+            },
+            ..BoxLayout::default()
+        };
+        doc.nodes[cell].layout = cell_layout;
+        doc.nodes[child].layout = BoxLayout {
+            order: 4,
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            padding: Edges {
+                left: 20.0,
+                ..Edges::ZERO
+            },
+            ..BoxLayout::default()
+        };
+        let warnings = enforce_layout_invariants_for_test(&mut doc, cell);
+        assert_eq!(doc.nodes[cell].layout, cell_layout);
+        assert_eq!(doc.nodes[child].layout, BoxLayout::with_order(4));
+        assert!(warnings.iter().any(|warning| matches!(
+            warning,
+            LayoutWarn::GeometryInvariantViolated {
+                subtree_count: 1,
+                ..
+            }
+        )));
+    }
+}
+
+#[test]
+fn table_cell_block_underflow_still_resets_the_subtree() {
+    for vertical in [false, true] {
+        let mut doc = Document::new();
+        let table = doc.append_element(
+            Some(0),
+            "table",
+            Some(if vertical {
+                "display:table;writing-mode:vertical-rl"
+            } else {
+                "display:table;writing-mode:horizontal-tb"
+            }),
+        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "td", Some("display:table-cell"));
+        doc.nodes[cell].layout = BoxLayout {
+            order: 3,
+            size: if vertical {
+                Size {
+                    width: 0.0,
+                    height: 22.0,
+                }
+            } else {
+                Size {
+                    width: 22.0,
+                    height: 0.0,
+                }
+            },
+            padding: Edges {
+                left: 5.0,
+                right: 5.0,
+                top: 5.0,
+                bottom: 5.0,
+            },
+            ..BoxLayout::default()
+        };
+        let warnings = enforce_layout_invariants_for_test(&mut doc, cell);
+        assert_eq!(doc.nodes[cell].layout, BoxLayout::with_order(3));
+        assert!(warnings.iter().any(|warning| matches!(
+            warning,
+            LayoutWarn::GeometryInvariantViolated {
+                subtree_count: 1,
+                ..
+            }
+        )));
+    }
+}
+
 /// Whether `v` sits exactly on the symmetric clamp boundary of [`MAX_TAFFY_MAGNITUDE`].
 /// `sanitize_finite` rounds out-of-range finite values exactly to `±MAX_TAFFY_MAGNITUDE`, so this
 /// tells whether the clamp fired on a field. `NaN` takes a separate path that rounds to `0.0`.
@@ -670,7 +796,7 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
 
 /// Direct pin of invariant 1 (content box non-negative). For fields, values that pass through
 /// `sanitize_taffy_layout` (both `size` and `padding` are within `[-MAX, MAX]`) are used to create
-/// `content_box_width() < 0.0`, and `enforce_layout_invariants` is confirmed to (a) zero out that node,
+/// a negative raw content width, and `enforce_layout_invariants` is confirmed to (a) zero out that node,
 /// (b) zero out both the **child within that subtree**, and (c) push `LayoutWarn`. Without (b), it would
 /// be a half-baked state where "only the parent is zeroed out, and the child remains with old values based
 /// on the broken parent," which would newly violate invariant 2.
@@ -681,7 +807,7 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
     let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     // padding.left+right (40.0) is greater than size.width (10.0) =>
-    // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0.size / padding
+    // raw content width = 10.0 - 40.0 = -30.0 < 0.0.
     // Both are individually within `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]`, so
     // `sanitize_taffy_layout`'s field-level clamp does not stop this—a direct reproduction of something that
     // can actually happen.

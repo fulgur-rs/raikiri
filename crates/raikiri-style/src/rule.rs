@@ -752,21 +752,21 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
                 }));
             }
         }
-        PropertyValue::Margin(ref sides) => expand_margin(**sides, push_longhand),
+        PropertyValue::Margin(ref sides) => expand_margin((**sides).clone(), push_longhand),
         PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
         PropertyValue::Padding(ref sides) => expand_padding(**sides, push_longhand),
-        PropertyValue::MarginInline(pair) => {
-            expand_margin_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
+        PropertyValue::MarginInline(ref pair) => {
+            expand_margin_inline(pair.clone(), logical_longhand(d.important, &mut push, LogicalAxis::Inline))
         }
-        PropertyValue::MarginBlock(pair) => {
-            expand_margin_block(pair, logical_longhand(d.important, &mut push, LogicalAxis::Block))
+        PropertyValue::MarginBlock(ref pair) => {
+            expand_margin_block(pair.clone(), logical_longhand(d.important, &mut push, LogicalAxis::Block))
         }
-        PropertyValue::Inset(ref sides) => expand_inset(**sides, push_longhand),
-        PropertyValue::InsetInline(pair) => {
-            expand_inset_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
+        PropertyValue::Inset(ref sides) => expand_inset((**sides).clone(), push_longhand),
+        PropertyValue::InsetInline(ref pair) => {
+            expand_inset_inline(pair.clone(), logical_longhand(d.important, &mut push, LogicalAxis::Inline))
         }
-        PropertyValue::InsetBlock(pair) => {
-            expand_inset_block(pair, logical_longhand(d.important, &mut push, LogicalAxis::Block))
+        PropertyValue::InsetBlock(ref pair) => {
+            expand_inset_block(pair.clone(), logical_longhand(d.important, &mut push, LogicalAxis::Block))
         }
         PropertyValue::PaddingInline(pair) => {
             expand_padding_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))

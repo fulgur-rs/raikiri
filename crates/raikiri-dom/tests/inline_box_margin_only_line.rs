@@ -116,6 +116,75 @@ fn limited_quirks_mode_matches_quirks_mode() {
     check_all(LIMITED_QUIRKS, |case| case.quirks);
 }
 
+fn check_empty_generated(doctype: &str, quirks: bool) {
+    let cases = [
+        ("", 0.0, 0.0),
+        ("padding-left:5px", 10.0, 10.0),
+        ("padding-right:5px", 10.0, 10.0),
+        ("border-left:3px solid", 10.0, 10.0),
+        ("margin-left:5px", 10.0, 0.0),
+        ("margin-left:-5px", 10.0, 0.0),
+        ("padding-left:5%", 10.0, 10.0),
+        ("padding-left:calc(5% + 1px)", 10.0, 10.0),
+        ("padding-top:5px", 0.0, 0.0),
+        ("border-top:3px solid", 0.0, 0.0),
+        ("display:inline-block;width:5px;height:0", 10.0, 0.0),
+        ("display:contents;padding-left:5px", 0.0, 0.0),
+        ("display:none;padding-left:5px", 0.0, 0.0),
+    ];
+    let mut failures = Vec::new();
+    for pseudo in ["before", "after"] {
+        for (style, standards_height, quirks_height) in cases {
+            let height = if quirks {
+                quirks_height
+            } else {
+                standards_height
+            };
+            let body = format!(
+                "<style>#o::{pseudo}{{content:\"\";{style}}}</style>\
+                 <div id=o style='width:100px'></div><div id=c style='height:10px'></div>"
+            );
+            let actual = border_boxes(doctype, &body);
+            for (id, expected) in [
+                ("o", (8.0, 8.0, 100.0, height)),
+                ("c", (8.0, 8.0 + height, 784.0, 10.0)),
+            ] {
+                let found = actual.iter().find(|(name, _)| name == id).map(|(_, r)| *r);
+                if !found.is_some_and(|rect| {
+                    [
+                        rect.0 - expected.0,
+                        rect.1 - expected.1,
+                        rect.2 - expected.2,
+                        rect.3 - expected.3,
+                    ]
+                    .iter()
+                    .all(|difference| difference.abs() <= TOLERANCE)
+                }) {
+                    failures.push(format!(
+                        "::{pseudo} {style}: #{id} is {found:?}, expected {expected:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn standards_mode_empty_generated_boxes_keep_their_edges() {
+    check_empty_generated(STANDARDS, false);
+}
+
+#[test]
+fn quirks_mode_empty_generated_boxes_keep_their_edges() {
+    check_empty_generated(QUIRKS, true);
+}
+
+#[test]
+fn limited_quirks_mode_empty_generated_boxes_keep_their_edges() {
+    check_empty_generated(LIMITED_QUIRKS, true);
+}
+
 const CASES: &[Case] = &[
     Case {
         name: "ml",
@@ -620,3 +689,17 @@ const CASES: &[Case] = &[
         ],
     },
 ];
+
+#[test]
+fn an_empty_generated_prefix_keeps_the_following_first_letter() {
+    let body = "<style>#o::before{content:'';padding-left:5px}\
+        #o::first-letter{font-size:20px;line-height:20px}</style>\
+        <div id=o style='width:100px'>x</div><div id=c style='height:10px'></div>";
+    assert_eq!(
+        border_boxes(STANDARDS, body),
+        vec![
+            ("o".to_owned(), (8.0, 8.0, 100.0, 20.0)),
+            ("c".to_owned(), (8.0, 28.0, 784.0, 10.0)),
+        ]
+    );
+}

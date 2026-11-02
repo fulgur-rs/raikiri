@@ -38,7 +38,8 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 
 mod oof_index;
-use oof_index::{StaticFallbackIndex, first_anchors};
+use oof_index::StaticFallbackIndex;
+pub(crate) use oof_index::first_anchors;
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
@@ -4029,7 +4030,7 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
     }
 }
 
-fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f32)> {
+pub(crate) fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f32)> {
     lines.lines.iter().enumerate().find_map(|(index, line)| {
         line.fragments()
             .inspect(|_| {
@@ -4994,6 +4995,24 @@ fn content_sizes_on_axis(
         AcrossLines::Room(room) => (None, AvailableSpace::Definite(room)),
         AcrossLines::Width(width) => (Some(width), AvailableSpace::Definite(width)),
     };
+    // A replaced box that states `height: stretch` fills the definite height
+    // of the root, less its margins, as it does once it is laid out: its width
+    // along the ratio follows from that height.
+    let known_height = basis
+        .max_content
+        .height
+        .filter(|_| {
+            !vertical
+                && matches!(
+                    tree.physical_style(node).size().height.expand(),
+                    ExpandedDimension::Stretch
+                )
+                && crate::paint_rules::is_replaced_element(tree.document, node)
+        })
+        .map(|room| {
+            let margin = resolved_margins(tree, node, 0.0);
+            (room - margin.top - margin.bottom).max(0.0)
+        });
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
         let parent_size = if available == AvailableSpace::MinContent {
             basis.min_content
@@ -5008,7 +5027,7 @@ fn content_sizes_on_axis(
                 axis,
                 known_dimensions: Size {
                     width: known_width,
-                    height: None,
+                    height: known_height,
                 },
                 known_dimensions_are_definite: Size {
                     width: true,

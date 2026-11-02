@@ -98,7 +98,7 @@ fn lift_column_width(computed: ComputedColumnWidth) -> ColumnWidthValue {
 /// the layers. A node with more or fewer images than the source then repeats
 /// or cuts the list when its own layers are made (CSS Backgrounds and Borders
 /// 3 section 2.1).
-fn layer_items<T: Copy>(
+fn layer_items<T: Clone>(
     source: &ComputedValues,
     whole: impl Fn(&ComputedBackgroundLists) -> Option<&Arc<[T]>>,
     from_layer: impl Fn(&ComputedBackgroundLayer) -> T,
@@ -337,7 +337,7 @@ keyword_defaults! {
         .collect()
     );
     BackgroundSize, false => PropertyValue::BackgroundSize(
-        layer_items(source, |lists| lists.size.as_ref(), |layer| layer.size)
+        layer_items(source, |lists| lists.size.as_ref(), |layer| layer.size.clone())
             .into_iter()
             .map(lift_background_size)
             .collect()

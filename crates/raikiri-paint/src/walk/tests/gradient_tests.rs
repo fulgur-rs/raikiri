@@ -1,7 +1,7 @@
 use super::*;
 
 /// The computed values of a `div` with `style`.
-fn computed_for(style: &str) -> ComputedValues {
+pub(super) fn computed_for(style: &str) -> ComputedValues {
     let mut document = Document::new();
     let id = document.append_element(Some(document.root_index()), "div", Some(style));
     let rules = build_rule_tree(&document);
@@ -1474,7 +1474,14 @@ fn out_of_gamut_conic_stops_clip_after_interpolation() {
     };
     let area = Rect::new(0.0, 0.0, 200.0, 200.0);
     let mut scene = Scene::new();
-    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
+    paint_conic_gradient(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &conic,
+        area,
+        area,
+        cv.color,
+    );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         200,
@@ -1649,7 +1656,14 @@ fn raster_conic(style: &str, width: u32, height: u32) -> Vec<u8> {
     };
     let area = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
     let mut scene = Scene::new();
-    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
+    paint_conic_gradient(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &conic,
+        area,
+        area,
+        cv.color,
+    );
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         width,
@@ -2531,4 +2545,21 @@ fn a_repeating_conic_gradient_of_many_periods_is_drawn_period_by_period() {
         assert!(probe == [255, 0, 0] || probe == [0, 0, 255], "{probe:?}");
     }
     assert!(probes.contains(&[255, 0, 0]) && probes.contains(&[0, 0, 255]));
+}
+
+#[test]
+fn programmatic_gradient_comparison_sizes_use_the_positioning_area() {
+    let values = computed_for("width:min(30px, calc(10px + 5%))");
+    let size = raikiri_style::ComputedBackgroundSize::Explicit {
+        width: values.width,
+        height: raikiri_style::ComputedLengthPercentageOrAuto::Px(10.0),
+    };
+    assert_eq!(
+        gradient::gradient_image_size(&size, Rect::new(0.0, 0.0, 200.0, 100.0)),
+        Some((20.0, 10.0))
+    );
+    assert_eq!(
+        gradient::gradient_image_size(&size, Rect::new(0.0, 0.0, 1000.0, 100.0)),
+        Some((30.0, 10.0))
+    );
 }

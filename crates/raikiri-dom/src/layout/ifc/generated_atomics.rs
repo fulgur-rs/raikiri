@@ -16,7 +16,7 @@ use shodo::geometry::WritingMode;
 /// The box geometry of one empty atomic `::before` or `::after`, as
 /// computed: percentages resolve when the paragraph is laid out, against its
 /// width.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GeneratedAtomic {
     /// The inline engine's id of the pseudo-element.
     pub(crate) id: u64,
@@ -35,7 +35,7 @@ impl GeneratedAtomic {
     pub(crate) fn new(id: u64, cv: &ComputedValues) -> Self {
         Self {
             id,
-            margin: cv.margin,
+            margin: cv.margin.clone(),
             padding: cv.padding,
             border: Sides {
                 top: cv.border.top.width().px(),
@@ -43,8 +43,12 @@ impl GeneratedAtomic {
                 bottom: cv.border.bottom.width().px(),
                 left: cv.border.left.width().px(),
             },
-            width: [cv.width, cv.min_width, cv.max_width],
-            height: [cv.height, cv.min_height, cv.max_height],
+            width: [cv.width.clone(), cv.min_width.clone(), cv.max_width.clone()],
+            height: [
+                cv.height.clone(),
+                cv.min_height.clone(),
+                cv.max_height.clone(),
+            ],
             border_box: cv.box_sizing == BoxSizing::BorderBox,
         }
     }
@@ -75,14 +79,22 @@ impl GeneratedAtomic {
         rtl: bool,
     ) -> shodo::AtomicSize {
         let edges = self.edges(basis);
-        let width = self.used_size(self.width, edges.left + edges.right, containing.0);
-        let height = self.used_size(self.height, edges.top + edges.bottom, containing.1);
+        let width = self.used_size(
+            self.width.each_ref(),
+            edges.left + edges.right,
+            containing.0,
+        );
+        let height = self.used_size(
+            self.height.each_ref(),
+            edges.top + edges.bottom,
+            containing.1,
+        );
         let margin = |value| length_or_auto(value, Some(basis.unwrap_or(0.0))).unwrap_or(0.0);
         let (top, right, bottom, left) = (
-            margin(self.margin.top),
-            margin(self.margin.right),
-            margin(self.margin.bottom),
-            margin(self.margin.left),
+            margin(&self.margin.top),
+            margin(&self.margin.right),
+            margin(&self.margin.bottom),
+            margin(&self.margin.left),
         );
         let (inline_size, block_size, margins) = logical_box(
             (width, height),
@@ -102,7 +114,7 @@ impl GeneratedAtomic {
     /// max]` properties and its `edges` of padding and border.
     fn used_size(
         &self,
-        [size, min_size, max_size]: [ComputedLengthPercentageOrAuto; 3],
+        [size, min_size, max_size]: [&ComputedLengthPercentageOrAuto; 3],
         edges: f32,
         basis: Option<f32>,
     ) -> f32 {

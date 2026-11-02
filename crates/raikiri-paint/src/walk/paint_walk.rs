@@ -41,6 +41,28 @@ pub(super) fn index_fragments(
     (by_parent_and_node, fragmented_nodes)
 }
 
+/// Whether a clip was emitted immediately or recorded until its content
+/// proves that the scope has paint to retain.
+pub(super) enum ClipScope {
+    Eager,
+    Captured { trace_start: Option<usize> },
+}
+
+/// Empty ordinary groups and clips have no effect. Keep every draw and every
+/// special composition/filter conservatively, even when it contains no draw.
+pub(super) fn scene_has_effects(scene: &anyrender::Scene) -> bool {
+    use anyrender::recording::RenderCommand;
+    scene.commands.iter().any(|command| match command {
+        RenderCommand::PushClipLayer(_) | RenderCommand::PopLayer => false,
+        RenderCommand::PushLayer(layer) => {
+            layer.blend != peniko::BlendMode::from(Mix::Normal)
+                || layer.filter.is_some()
+                || layer.backdrop_filter.is_some()
+        }
+        _ => true,
+    })
+}
+
 /// The walk of one page: what it paints into and the work that waits for
 /// frames further down the stack.
 pub(super) struct PaintWalk<'w, S> {
@@ -86,6 +108,7 @@ pub(super) struct PaintWalk<'w, S> {
     /// outermost layer closes after the whole body.
     pub(super) deferral_scopes: Vec<DeferralLayer<'w>>,
     pub(super) stack: Vec<PaintFrame<'w>>,
+    pub(super) clip_scopes: Vec<ClipScope>,
 }
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
@@ -258,6 +281,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Reopen the overflow clip of a block, in the transform the block was
     /// painted in.
     fn push_clip(&mut self, node_id: usize, clip: PaintClip, transform: Affine) {
+        self.begin_clip_scope(true);
         let saved_transform = self.scene.transform;
         self.scene.transform = transform;
         let rect = push_overflow_clip(self.scene, clip, &self.page_box);
@@ -413,11 +437,51 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         self.scene.scene.append_scene(content, Affine::IDENTITY);
     }
 
+    /// Begin recording only scopes whose originating box does not paint here,
+    /// or which reopen around deferred content that may have no lines here.
+    pub(super) fn begin_clip_scope(&mut self, discard_if_empty: bool) {
+        let scope = if discard_if_empty {
+            self.scene.scene.begin_capture();
+            ClipScope::Captured {
+                trace_start: self.trace.as_deref().map(Vec::len),
+            }
+        } else {
+            ClipScope::Eager
+        };
+        self.clip_scopes.push(scope);
+    }
+
     fn pop_clip(&mut self) {
         if let Some(t) = self.trace.as_deref_mut() {
             t.push(crate::PaintTraceEvent::PopClip);
         }
         self.scene.pop_layer();
+        if let ClipScope::Captured { trace_start } = self
+            .clip_scopes
+            .pop()
+            .expect("every paint clip has a scope")
+        {
+            let captured = self.scene.scene.end_capture();
+            let traced_paint =
+                trace_start
+                    .zip(self.trace.as_deref())
+                    .is_some_and(|(start, trace)| {
+                        trace[start..].iter().any(|event| {
+                            matches!(
+                                event,
+                                crate::PaintTraceEvent::Box(_)
+                                    | crate::PaintTraceEvent::Replaced(_)
+                                    | crate::PaintTraceEvent::Text(_)
+                            )
+                        })
+                    });
+            if traced_paint || scene_has_effects(&captured) {
+                // The recorded transforms are already in scene coordinates.
+                self.scene.scene.append_scene(captured, Affine::IDENTITY);
+            } else if let Some((start, trace)) = trace_start.zip(self.trace.as_deref_mut()) {
+                trace.truncate(start);
+            }
+        }
     }
 
     /// Open the opacity group of a translucent inline element around a box

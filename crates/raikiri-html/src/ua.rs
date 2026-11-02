@@ -1,14 +1,15 @@
 //! Bundled UA stylesheet for HTML documents.
 //!
 //! `MINIMAL_UA_CSS` supplies the minimal UA CSS derived from HTML LS §14 "Rendering"
-//! through an independent implementation. `raikiri-html::parse` automatically injects
+//! through an independent implementation, including SVG 2 viewport defaults
+//! for inline SVG. `raikiri-html::parse` automatically injects
 //! this CSS into the Document when parsing completes
 //! (as `StylesheetKind::UserAgent`).
 //!
 //! Allowed specification sources (independent implementation; do not import another UA CSS):
 //!
 //! - Allowed: CSS 2.1 App.D, HTML Living Standard §14, CSS module sample
-//!   style sheet
+//!   style sheets, and SVG 2 §6.8 required UA defaults.
 //! - Disallowed: Chromium `html.css`, Firefox `layout/style/res/html.css`,
 //!   WebKit UA CSS, and UA CSS bundled with blitz.
 
@@ -30,3 +31,6 @@ pub(crate) fn prepared_rule_tree() -> Option<raikiri_style::RuleTree> {
         .as_ref()
         .map(raikiri_style::PreparedStylesheet::to_rule_tree)
 }
+
+#[cfg(test)]
+mod tests;

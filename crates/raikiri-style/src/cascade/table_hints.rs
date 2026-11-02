@@ -86,10 +86,9 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
         .and_then(parse_non_negative_integer)
     {
         let px = Length::Px(spacing as f32);
-        push(PropertyValue::BorderSpacing(BorderSpacingValue {
-            horizontal: px,
-            vertical: px,
-        }))?;
+        push(PropertyValue::BorderSpacing(BorderSpacingValue::new(
+            px, px,
+        )))?;
     }
     if elem.attr("rules").is_some_and(|rules| {
         ["none", "groups", "rows", "cols", "all"]

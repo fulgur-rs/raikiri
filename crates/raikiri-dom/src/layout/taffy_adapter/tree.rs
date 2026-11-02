@@ -12,6 +12,7 @@ use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::TaffyChildIter;
 use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
 use crate::layout::style_views::ReadRole;
+use crate::layout::table;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::TaffyStyle;
 use taffy::{
@@ -187,8 +188,13 @@ impl LayoutContainingBlock for LayoutSession<'_> {
 
     fn get_oof_item_style(&self, node: taffy::NodeId) -> Self::OofItemStyle<'_> {
         let view = self.query_style(usize::from(node), ReadRole::Oof);
-        TaffyStyle::new(if self.oof_alignment_swapped(usize::from(node)) {
+        let view = if self.oof_alignment_swapped(usize::from(node)) {
             view.with_swapped_oof_alignment()
+        } else {
+            view
+        };
+        TaffyStyle::new(if table::wrapper_owns_height(self, usize::from(node)) {
+            view.with_hidden_table_height()
         } else {
             view
         })

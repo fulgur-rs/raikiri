@@ -1,0 +1,979 @@
+{
+  "browser": "Chromium 152.0.7977.82",
+  "conditions": "800x600 viewport; body margin 8px; Ahem explicitly loaded at 10px/10px; div box-sizing:border-box",
+  "cases": [
+    {
+      "label": "min-width:0;aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10px;aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:10px;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "10px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:30px;aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:30px;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "30px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          30,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          30,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:60px;aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:60px;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "60px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          60,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          60,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "40px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;height:30px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;height:30px\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          60,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10px;aspect-ratio:2/1;padding:4px;border:1px solid",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:10px;aspect-ratio:2/1;padding:4px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "columns": "10px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10px;aspect-ratio:2/1;padding:4px;border:1px solid;box-sizing:content-box",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:10px;aspect-ratio:2/1;padding:4px;border:1px solid;box-sizing:content-box\">AAAA BBBB</div></div></div>",
+      "columns": "20px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "sibling <div id=j style=\"width:50px\">x</div>",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div><div id=j style=\"width:50px\">x</div></div></div>",
+      "columns": "50px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          50,
+          35
+        ],
+        [
+          "i",
+          8,
+          8,
+          50,
+          25
+        ],
+        [
+          "j",
+          8,
+          33,
+          50,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "sibling <div id=j>AAAA BBBB</div>",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div><div id=j>AAAA BBBB</div></div></div>",
+      "columns": "40px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          40,
+          40
+        ],
+        [
+          "i",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "j",
+          8,
+          28,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;min-height:30px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          60,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;min-height:0",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:0\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          0
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10%;aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:10%;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;max-height:15px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;max-height:15px\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          15
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          15
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;overflow:hidden",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;overflow:hidden\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          0
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "label": "tall sibling",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;grid-template-columns:auto auto\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div><div id=j style=\"width:50px;height:100px\"></div></div></div>",
+      "columns": "0px 50px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          50,
+          100
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "j",
+          8,
+          8,
+          50,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "nested grid",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=n style=\"display:grid;min-width:0;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div></div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "n",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "tall sibling align-self:stretch",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;grid-template-columns:auto auto\"><div id=i style=\"min-width:0;aspect-ratio:2/1;align-self:stretch\">AAAA BBBB</div><div id=j style=\"width:50px;height:100px\"></div></div></div>",
+      "columns": "0px 50px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          50,
+          100
+        ],
+        [
+          "i",
+          8,
+          8,
+          200,
+          100
+        ],
+        [
+          "j",
+          8,
+          8,
+          50,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "tall sibling align-self:center",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;grid-template-columns:auto auto\"><div id=i style=\"min-width:0;aspect-ratio:2/1;align-self:center\">AAAA BBBB</div><div id=j style=\"width:50px;height:100px\"></div></div></div>",
+      "columns": "0px 50px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          50,
+          100
+        ],
+        [
+          "i",
+          8,
+          48,
+          0,
+          20
+        ],
+        [
+          "j",
+          8,
+          8,
+          50,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "tall sibling align-self:start",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;grid-template-columns:auto auto\"><div id=i style=\"min-width:0;aspect-ratio:2/1;align-self:start\">AAAA BBBB</div><div id=j style=\"width:50px;height:100px\"></div></div></div>",
+      "columns": "0px 50px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          50,
+          100
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "j",
+          8,
+          8,
+          50,
+          100
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;min-height:30px;max-width:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px;max-width:10px\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10px;aspect-ratio:2/1;padding-top:100%",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:10px;aspect-ratio:2/1;padding-top:100%\">AAAA BBBB</div></div></div>",
+      "columns": "10px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;display:flex",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;display:flex\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          0
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;display:grid",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;max-width:300px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;display:grid\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "block content",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1\"><div style=\"width:40px;height:20px\"></div></div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;min-height:30px;justify-self:stretch",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px;justify-self:stretch\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10px;aspect-ratio:2/1;padding:4px;border:1px solid;justify-self:stretch",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:10px;aspect-ratio:2/1;padding:4px;border:1px solid;justify-self:stretch\">AAAA BBBB</div></div></div>",
+      "columns": "10px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;justify-self:center",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;justify-self:center\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          -12,
+          8,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;justify-self:start",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;justify-self:start\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;aspect-ratio:2/1;justify-self:end",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;justify-self:end\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          20
+        ],
+        [
+          "i",
+          -32,
+          8,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "grid width:100px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          50
+        ],
+        [
+          "i",
+          8,
+          8,
+          100,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "grid width:max-content",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:max-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "90px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          90,
+          45
+        ],
+        [
+          "i",
+          8,
+          8,
+          90,
+          45
+        ]
+      ]
+    },
+    {
+      "label": "grid width:100px;justify-items:stretch",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px;justify-items:stretch\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          50
+        ],
+        [
+          "i",
+          8,
+          8,
+          100,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "grid width:100px;justify-items:center",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px;justify-items:center\"><div id=i style=\"min-width:0;aspect-ratio:2/1\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          45
+        ],
+        [
+          "i",
+          13,
+          8,
+          90,
+          45
+        ]
+      ]
+    },
+    {
+      "label": "absolute child control",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;position:relative\"><div id=i style=\"position:absolute;min-width:0;aspect-ratio:2/1;left:0;top:0\">AAAA BBBB</div></div></div>",
+      "columns": "none",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          0
+        ],
+        [
+          "i",
+          8,
+          8,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "definite max-height",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;max-height:15px\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          15
+        ],
+        [
+          "i",
+          8,
+          8,
+          30,
+          15
+        ]
+      ]
+    },
+    {
+      "label": "definite max-height;justify-self:start",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;max-height:15px;justify-self:start\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          15
+        ],
+        [
+          "i",
+          8,
+          8,
+          30,
+          15
+        ]
+      ]
+    },
+    {
+      "label": "definite max-height;justify-self:center",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;max-height:15px;justify-self:center\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          15
+        ],
+        [
+          "i",
+          43,
+          8,
+          30,
+          15
+        ]
+      ]
+    },
+    {
+      "label": "definite max-height;justify-self:stretch",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;max-height:15px;justify-self:stretch\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          15
+        ],
+        [
+          "i",
+          8,
+          8,
+          100,
+          15
+        ]
+      ]
+    },
+    {
+      "label": "height minimum exceeds maximum width:100px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px;max-height:15px\">AAAA BBBB</div></div></div>",
+      "columns": "100px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          60,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "height minimum exceeds maximum width:min-content",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px;max-height:15px\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          60,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "positive minimum max-content AAAA BBBB",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:max-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px\">AAAA BBBB</div></div></div>",
+      "columns": "90px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          90,
+          45
+        ],
+        [
+          "i",
+          8,
+          8,
+          90,
+          45
+        ]
+      ]
+    },
+    {
+      "label": "positive minimum max-content A",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:max-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px\">A</div></div></div>",
+      "columns": "60px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          60,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          60,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "positive minimum min-content AAAA BBBB",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><div id=i style=\"min-width:0;aspect-ratio:2/1;min-height:30px;justify-self:center\">AAAA BBBB</div></div></div>",
+      "columns": "0px",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          30
+        ],
+        [
+          "i",
+          -22,
+          8,
+          60,
+          30
+        ]
+      ]
+    }
+  ]
+}

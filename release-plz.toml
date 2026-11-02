@@ -2,6 +2,12 @@
 git_only = true
 publish = false
 git_release_enable = false
+# The changelog is not maintained (changelog_update = false), so the body of the
+# GitHub Release of a published crate points at the published package instead.
+git_release_body = """
+Published to crates.io: https://crates.io/crates/{{ package }}/{{ version }}
+Documentation: https://docs.rs/{{ package }}/{{ version }}
+"""
 git_tag_enable = true
 git_tag_name = "{{ package }}-v{{ version }}"
 release_always = false
@@ -14,3 +20,55 @@ semver_check = false
 features_always_increment_minor = false
 dependencies_update = false
 max_analyze_commits = 3000
+
+# The crates that go to crates.io (docs/releasing.md). They leave git-only mode,
+# so release-plz reads their latest version from the registry, publish, and get
+# a GitHub Release for their tag. Every other member stays git-only and is only
+# tagged.
+[[package]]
+name = "raikiri-style"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-layout-geometry"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-traits"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-layout-style"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-svg"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-net"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-dom"
+git_only = false
+publish = true
+git_release_enable = true
+
+[[package]]
+name = "raikiri-html"
+git_only = false
+publish = true
+git_release_enable = true

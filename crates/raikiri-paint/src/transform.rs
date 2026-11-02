@@ -1,7 +1,7 @@
 //! Paint-only affine context. Geometry, brushes, glyphs and clips share the
 //! same matrix; layout coordinates and the backend contract stay unchanged.
 
-use anyrender::{Filter, Glyph, NormalizedCoord, PaintRef, PaintScene, RenderContext};
+use anyrender::{Filter, Glyph, NormalizedCoord, PaintRef, PaintScene, RenderContext, Scene};
 use kurbo::{Affine, Rect, Shape, Stroke, Vec2};
 use peniko::{BlendMode, Color, Fill, FontData, StyleRef};
 use std::{any::Any, sync::Arc};
@@ -41,6 +41,13 @@ impl<S: RenderContext> RenderContext for TransformScene<'_, S> {
 }
 
 impl<S: PaintScene> PaintScene for TransformScene<'_, S> {
+    fn append_scene(&mut self, scene: Scene, scene_transform: Affine) {
+        // Preserve owned stop buffers across capture composition. The trait
+        // default replays fills and clones their gradients in recording scenes.
+        self.scene
+            .append_scene(scene, self.transform * scene_transform);
+    }
+
     fn reset(&mut self) {
         self.scene.reset();
     }

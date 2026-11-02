@@ -3364,34 +3364,34 @@ fn border_spacing_accepts_valid_values() {
     // same pattern as `GapShorthand`).
     assert_eq!(
         parse("0px", "border-spacing"),
-        Some(PropertyValue::BorderSpacing(BorderSpacingValue {
-            horizontal: Length::Px(0.0),
-            vertical: Length::Px(0.0),
-        }))
+        Some(PropertyValue::BorderSpacing(BorderSpacingValue::new(
+            Length::Px(0.0),
+            Length::Px(0.0)
+        )))
     );
     // Two components.
     assert_eq!(
         parse("10px 20px", "border-spacing"),
-        Some(PropertyValue::BorderSpacing(BorderSpacingValue {
-            horizontal: Length::Px(10.0),
-            vertical: Length::Px(20.0),
-        }))
+        Some(PropertyValue::BorderSpacing(BorderSpacingValue::new(
+            Length::Px(10.0),
+            Length::Px(20.0)
+        )))
     );
     // Accept unitless `0` as `<length>` (WPT computed `"0"` case).
     assert_eq!(
         parse("0", "border-spacing"),
-        Some(PropertyValue::BorderSpacing(BorderSpacingValue {
-            horizontal: Length::Px(0.0),
-            vertical: Length::Px(0.0),
-        }))
+        Some(PropertyValue::BorderSpacing(BorderSpacingValue::new(
+            Length::Px(0.0),
+            Length::Px(0.0)
+        )))
     );
     // Also accept font-relative lengths as plain lengths.
     assert_eq!(
         parse("0.5em 1px", "border-spacing"),
-        Some(PropertyValue::BorderSpacing(BorderSpacingValue {
-            horizontal: Length::Em(0.5),
-            vertical: Length::Px(1.0),
-        }))
+        Some(PropertyValue::BorderSpacing(BorderSpacingValue::new(
+            Length::Em(0.5),
+            Length::Px(1.0)
+        )))
     );
     // The deferred path accepts a value containing `calc()` (payload: `Deferred`).
     let deferred = parse_entire("calc(10px + 0.5em) calc(10px - 0.5em)", "border-spacing");
@@ -3405,10 +3405,7 @@ fn border_spacing_accepts_valid_values() {
         Some(PropertyValue::Deferred(_))
     ));
     // key mapping.
-    let v = PropertyValue::BorderSpacing(BorderSpacingValue {
-        horizontal: Length::Px(1.0),
-        vertical: Length::Px(2.0),
-    });
+    let v = PropertyValue::BorderSpacing(BorderSpacingValue::new(Length::Px(1.0), Length::Px(2.0)));
     assert_eq!(v.key(), PropertyKey::BorderSpacing);
 }
 

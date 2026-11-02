@@ -3507,3 +3507,22 @@ fn cssom_print_added_page_hint_uses_current_projected_fallback() {
     }];
     assert_cssom_print_matches_static(&html, &styles, &reference);
 }
+
+#[test]
+fn a_programmatic_margin_shorthand_keeps_auto_margins_visible_to_page_geometry() {
+    use raikiri_style::property::{Length, LengthOrAuto, PropertyKey, PropertyValue, Sides};
+    let mut declarations = std::collections::HashMap::new();
+    for right in [LengthOrAuto::Auto, LengthOrAuto::Length(Length::Px(10.0))] {
+        let expected = matches!(right, LengthOrAuto::Auto);
+        declarations.insert(
+            PropertyKey::Margin,
+            PropertyValue::Margin(Box::new(Sides {
+                top: LengthOrAuto::Length(Length::Px(0.0)),
+                right,
+                bottom: LengthOrAuto::Length(Length::Px(0.0)),
+                left: LengthOrAuto::Length(Length::Px(0.0)),
+            })),
+        );
+        assert_eq!(page_has_auto_margin(&declarations), expected);
+    }
+}

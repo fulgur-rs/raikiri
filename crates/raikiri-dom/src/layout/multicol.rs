@@ -3735,13 +3735,13 @@ pub(in crate::layout) fn visit_top_down(
 
 // cov:ignore: exercised by ignored WPT regression and multicol reftests; default coverage skips ignored reftests.
 fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
-    let is_zero = |value: ComputedLengthPercentageOrAuto| match value {
+    let is_zero = |value: &ComputedLengthPercentageOrAuto| match value {
         ComputedLengthPercentageOrAuto::Px(px) | ComputedLengthPercentageOrAuto::Percent(px) => {
             px.abs() <= f32::EPSILON
         }
         _ => false,
     };
-    !is_zero(cv.margin.left) || !is_zero(cv.margin.right)
+    !is_zero(&cv.margin.left) || !is_zero(&cv.margin.right)
 }
 
 /// Whether `id` has an `auto` width that follows from its height through a
@@ -3751,7 +3751,7 @@ fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
 fn width_follows_height(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-        && [cv.height, cv.min_height, cv.max_height]
+        && [&cv.height, &cv.min_height, &cv.max_height]
             .iter()
             .any(|size| !matches!(size, ComputedLengthPercentageOrAuto::Auto))
         && AuthoredBox::new(doc, cascade, id).has_preferred_aspect_ratio()
@@ -3872,6 +3872,13 @@ impl AncestorFacts {
             {
                 Some(calc.px + parent_width * calc.percent / 100.0)
             }
+            ComputedLengthPercentageOrAuto::Math(ref value) => {
+                Some(raikiri_layout_style::AlignedCalc::resolve_math_expression(
+                    value,
+                    true,
+                    parent_width,
+                ))
+            }
             _ => None,
         };
         self.content_width[id] = if doc.nodes[id].display() == DisplayValue::Contents {
@@ -3936,7 +3943,7 @@ impl AncestorFacts {
                 // container around it.
                 self.laid_out_container[parent]
             } else {
-                match values.width {
+                match &values.width {
                     // A length is the width of the box wherever the box is.
                     ComputedLengthPercentageOrAuto::Px(_) => false,
                     // Layout decides an `auto` width, unless this pass

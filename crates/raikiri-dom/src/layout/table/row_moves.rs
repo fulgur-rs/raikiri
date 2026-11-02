@@ -5,6 +5,15 @@ use raikiri_layout_style::values::Position;
 use raikiri_style::property::{BorderCollapseValue, CaptionSideValue, DisplayValue};
 use std::collections::{BTreeSet, HashMap};
 
+/// Whether a cell of `table` spans more than one row.
+pub(crate) fn has_row_spanning_cell(document: &Document, table: usize) -> bool {
+    document.table_objects.rows.get(&table).is_some_and(|rows| {
+        rows.iter()
+            .flat_map(|row| row.cells.iter().copied())
+            .any(|cell| super::get_rowspan(document, cell) != 1)
+    })
+}
+
 /// Brings each table box in line with the rows that pagination moved by the
 /// distances in `moved_rows`. A row group, or a table, whose first row moved
 /// starts with that row on its new page, so no empty fragment of its top edge
@@ -22,13 +31,7 @@ pub(crate) fn follow_moved_rows(
     let tables: BTreeSet<usize> = moved_rows
         .keys()
         .filter_map(|&row| table_of(document, row))
-        .filter(|&table| {
-            !document.table_objects.rows.get(&table).is_some_and(|rows| {
-                rows.iter()
-                    .flat_map(|row| row.cells.iter().copied())
-                    .any(|cell| super::get_rowspan(document, cell) != 1)
-            })
-        })
+        .filter(|&table| !has_row_spanning_cell(document, table))
         .collect();
     for table in tables {
         let repeated_header = repeats_header(table);

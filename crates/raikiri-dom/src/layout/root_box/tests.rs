@@ -350,3 +350,16 @@ fn a_vertical_root_maps_its_logical_sizes_onto_physical_axes() {
     let last = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 2).expect("root box");
     assert_eq!(last.border_box.x + last.border_box.width, 400.0);
 }
+
+#[test]
+fn an_unlaid_vertical_root_maps_logical_sizes_before_scene_geometry() {
+    let (document, cascade) = fixture(
+        "@page {size:200px 100px;margin:0}",
+        "display:block;writing-mode:vertical-rl;inline-size:50px;block-size:300px",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 2).unwrap();
+    assert_eq!(
+        (root.border_box.width, root.border_box.height),
+        (300.0, 50.0)
+    );
+}

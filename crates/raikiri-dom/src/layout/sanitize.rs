@@ -580,8 +580,8 @@ impl LayoutSession<'_> {
 ///
 /// As the `sanitize_taffy_layout` documentation explicitly states, its guard clamps **each field
 /// independently**, so it does not preserve box model containment (CSS Box 3's content ⊆ padding ⊆ border)
-/// — if `size.width` and `padding.{left,right}` saturate simultaneously, `content_box_width()` can become
-/// negative. Also, the internal taffy operation chain returns **raw values before clamping** from child to
+/// — if `size.width` and `padding.{left,right}` saturate simultaneously, their raw difference can become
+/// negative even though the used content width is floored at zero. Also, the internal taffy operation chain returns **raw values before clamping** from child to
 /// parent via `LayoutOutput` (`taffy-0.12.1`'s `compute/block.rs:947,973,981,1072` and
 /// `set_unrounded_layout` are called **after** that, and the child's `Layout` is written not by the child
 /// itself but by the **parent's algorithm**). Therefore, even if a node's position is calculated based on
@@ -590,15 +590,19 @@ impl LayoutSession<'_> {
 ///
 /// # Invariant checked
 ///
-/// **Content box non-negative**: both `Layout::content_box_width()` and `content_box_height()` are
-/// `>= 0.0`. This applies **unconditionally to all nodes**. A probe with
+/// **Content box non-negative**: the border box minus its padding and borders
+/// must be non-negative, except along a table cell's inline axis. Content-box
+/// accessors floor their used dimensions at zero, so inspect the raw fields here.
+/// A probe with
 /// `<div style="width: 10px; padding: 50px; box-sizing: border-box;">` through the normal layout path
 /// (`layout_single_page`) showed that Taffy stretches the border box until
 /// `size.width == padding_left + padding_right` (= `100.0`) and floors the content box to exactly `0.0`
 /// (internal logic similar to `maybe_max(padding_border_size)` in `taffy-0.12.1/src/compute/mod.rs`).
-/// So **in normal CSS not involving non-finite clamps, the content box is never negative**, and checking
-/// this invariant unconditionally does not falsely detect legitimate layouts. Cases where padding or
-/// border saturate, or where `NaN` rounds to `0.0` and makes the content box negative, are caught here.
+/// A fixed table can give an automatic column less width than its cells' edges,
+/// even zero width. Such a cell keeps its edges and position and has zero used
+/// content width. Only the owning table's inline axis permits this underflow;
+/// the other axis and the cell's descendants are still checked. Cases where
+/// padding or border saturate in ordinary boxes are still caught here.
 ///
 /// # Parent-child containment is not checked
 ///
@@ -668,10 +672,41 @@ pub(crate) fn enforce_layout_invariants(document: &mut LayoutSession<'_>, root_i
             continue;
         }
         let layout = document.nodes[idx].layout;
-        if layout.content_box_width() < 0.0 || layout.content_box_height() < 0.0 {
-            zero_layout_subtree(document, idx);
-            content_box_violations += 1;
-            continue;
+        let negative_width = layout.size.width
+            - layout.padding.left
+            - layout.padding.right
+            - layout.border.left
+            - layout.border.right
+            < 0.0;
+        let negative_height = layout.size.height
+            - layout.padding.top
+            - layout.padding.bottom
+            - layout.border.top
+            - layout.border.bottom
+            < 0.0;
+        if negative_width || negative_height {
+            let vertical_table = if document.nodes[idx].display() == DisplayValue::TableCell
+                && layout.size.width >= 0.0
+                && layout.size.height >= 0.0
+            {
+                std::iter::successors(document.taffy_parent_of(idx), |&parent| {
+                    document.taffy_parent_of(parent)
+                })
+                .find(|&parent| {
+                    document.nodes[parent].formatting_context
+                        == crate::node::FormattingContext::Table
+                })
+                .map(|table| document.nodes[table].used_writing_mode.is_vertical())
+            } else {
+                None
+            };
+            if negative_width && vertical_table != Some(false)
+                || negative_height && vertical_table != Some(true)
+            {
+                zero_layout_subtree(document, idx);
+                content_box_violations += 1;
+                continue;
+            }
         }
         let child_count = document.nodes[idx].children.len();
         for i in 0..child_count {

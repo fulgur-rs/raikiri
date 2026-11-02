@@ -174,25 +174,18 @@ pub(super) fn prepared_borders(
             );
         }
     }
-    let columns_in_place =
-        shown
-            .as_ref()
-            .zip(borders_in_place)
-            .map(|(shown, (border_width, in_place))| {
-                ColumnsInPlace::new(
-                    shown,
-                    border_width,
-                    in_place,
-                    borders.as_ref().expect("collapsed border state").clone(),
-                )
-                .with_row_overlaps(
-                    doc,
-                    grid,
-                    &collapsed_rows,
-                    &table_border,
-                    parent_width,
-                )
-            });
+    let columns_in_place = shown.as_ref().zip(borders_in_place).map(
+        |(shown, (border_width, overlap_width, in_place))| {
+            ColumnsInPlace::new(
+                shown,
+                border_width,
+                overlap_width,
+                in_place,
+                borders.as_ref().expect("collapsed border state").clone(),
+            )
+            .with_row_overlaps(doc, grid, &collapsed_rows, &table_border, parent_width)
+        },
+    );
     // Collapsed grid lines (collapse only; separate keeps zero overlaps so
     // the positioning path below is shared).
     // Collapsed rows keep their measured contribution to the columns and to

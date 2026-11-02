@@ -17,7 +17,8 @@
 //! 3. Batch-layout each row's cells with resolved column widths to determine row heights.
 //! 4. Position each cell at (col-origin, row-origin) and write final layouts —
 //!    `border-collapse: collapse` overlaps adjoining cell boxes by the
-//!    collapsed line width (`compute_collapsed_lines`, CSS 2.1 §17.6.2).
+//!    collapsed line width, and the border of a cell at the edge is the
+//!    table's edge (`compute_collapsed_lines`, CSS 2.1 §17.6.2).
 //!
 //! Scope limits (documented, not silent):
 //! - Fixed layout reads cell widths/minimums from the first row and authored
@@ -123,6 +124,23 @@ struct TableGrid {
     col_widths: Vec<ColSizing>,
 }
 
+/// How the row pass aligned the content of a horizontal cell, which a vertical
+/// table redoes once the cell takes the height of its own column.
+#[derive(Debug, Clone, Copy)]
+struct BlockAlignment {
+    /// The height the cell had in the row pass.
+    height: f32,
+    /// The block size of its content, which the room around it is measured from.
+    natural: f32,
+    /// How far the alignment moved the content from the block-start side.
+    shift: f32,
+    /// Whether the pass laid the cell out at that height, which its content may
+    /// depend on, and if so whether the height was definite for the cell and
+    /// for the percentage heights of its children. `None` when it kept the
+    /// lines of the row-height pass, which do not.
+    laid_out_definite: Option<(bool, bool)>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CellPlacement {
     node_id: usize,
@@ -131,9 +149,17 @@ struct CellPlacement {
     col_span: u16,
     row_span: u16,
     specified_width: Dimension,
+    percent_border_padding: f32,
     specified_min_width: Dimension,
     resolved: Option<BoxLayout>,
     natural_height: f32,
+    /// The height the cell asks of its row: its laid-out height, or the height
+    /// it states if that is more.
+    measured_height: f32,
+    /// How the row-height pass spread the room around the content of a
+    /// horizontal cell, kept for a vertical table, whose cell takes the height
+    /// of its own column afterwards.
+    alignment: Option<BlockAlignment>,
     baseline: f32,
     /// Whether the cell has something in flow to take its baseline from: a
     /// line, or a box with height of its own. A baseline-aligned cell without
@@ -187,11 +213,61 @@ fn table_caption(doc: &Document, table: usize) -> Option<usize> {
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
 }
 
+/// How far two edges of a vertical cell's content may be apart and still be the
+/// same edge: layout units are 1/64px, so edges that differ are at least
+/// 0.015px apart.
+const SAME_EDGE_TOLERANCE: f32 = 0.01;
+
+/// How far a flex column's height for a table item may be from the height the
+/// item states and still count as that height: layout units are 1/64px.
+const FLEXED_HEIGHT_TOLERANCE: f32 = 0.02;
+
 /// Whether the caption of `table` takes up room around the grid; an absolutely
 /// positioned one does not.
 fn caption_in_flow(doc: &Document, table: usize) -> bool {
     table_caption(doc, table)
         .is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute)
+}
+
+/// Whether the layout library places an absolutely positioned `table` by the
+/// height of its whole wrapper box rather than by the `height` it states.
+///
+/// A stated `height` is that of the grid box, and a caption in flow comes on
+/// top of it, so the wrapper is taller than the `height` and the library, which
+/// cannot tell the caption's share, would place the box by the wrong extent
+/// (a `bottom` inset anchors the grid's end instead of the caption's). The
+/// style it reads leaves the `height` out (see
+/// [`LayoutStyleView::with_hidden_table_height`]), so it measures the wrapper and
+/// gives that height back as the known one, which the layout of the table
+/// then splits into the caption's share and the grid's.
+///
+/// Numeric heights with both vertical insets stated retain the existing
+/// grid-height positioning contract. A stretch height is always measured:
+/// its wrapper room and intrinsic floor are resolved by the table itself,
+/// even without a caption or with both insets specified.
+pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
+    if doc.nodes[table].formatting_context != FormattingContext::Table
+        || doc.nodes[table].layout_position() != Position::Absolute
+        || table_writing_mode(doc, table).is_vertical()
+    {
+        return false;
+    }
+    // The table's own view answers on the physical axes of its horizontal
+    // writing mode, wherever its containing block runs.
+    let style = doc.table_style(table);
+    let inset = style.inset();
+    // The table resolves stretch against the containing block and its own
+    // intrinsic floor. Measure that result before the parent fixes its size,
+    // including captionless tables and tables with both insets specified.
+    let height = style.size().height.expand();
+    matches!(height, ExpandedDimension::Stretch)
+        || (matches!(
+            height,
+            ExpandedDimension::Length(_)
+                | ExpandedDimension::Percent(_)
+                | ExpandedDimension::Calc(_)
+        ) && (inset.top.is_auto() || inset.bottom.is_auto())
+            && caption_in_flow(doc, table))
 }
 
 /// The height left for the grid box of a horizontal table when a flex or grid
@@ -207,6 +283,26 @@ fn grid_height_in_wrapper(
         .filter(|_| caption_in_flow(doc, table))
         .map_or(0.0, |(size, _)| size.height);
     f32_max_compat(wrapper_height - caption_height, 0.0)
+}
+
+/// The `min-height` that bounds the grid box of a table whose flex column
+/// grew or shrank it: the container bounds the item, the whole wrapper box, so
+/// the grid has what the caption leaves of the minimum. Any other minimum bounds
+/// the grid box itself.
+fn min_h_outer_of_grid(
+    doc: &Document,
+    table: usize,
+    min_h_outer: Option<f32>,
+    item_is_flexed: bool,
+    caption: Option<&(Size<f32>, OofCandidates)>,
+) -> Option<f32> {
+    min_h_outer.map(|minimum| {
+        if item_is_flexed {
+            grid_height_in_wrapper(doc, table, minimum, caption)
+        } else {
+            minimum
+        }
+    })
 }
 
 fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
@@ -495,7 +591,7 @@ fn position_table_caption(
             }
         } else {
             Size {
-                width: grid_size.width,
+                width: grid_size.width.max(caption_size.width),
                 height: grid_size.height + caption_size.height,
             }
         },
@@ -547,35 +643,52 @@ fn compute_table_layout_checked(
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
+    // A flex column is the one parent that sizes its item by a stated height
+    // (a definite `flex-basis`, or else the `height`) before it flexes it.
+    let flex_column_parent = !absolute_table
+        && doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+            doc.nodes[parent].formatting_context == FormattingContext::Flex
+                && !doc.physical_style(parent).flex_direction_is_row()
+        });
     // The height a flex or grid parent assigns is that of the whole wrapper
     // box, caption included, except when a definite `flex-basis` sizes the
     // item along a column: like an authored height, it sizes the grid box
-    // alone, with the caption on top of it.
+    // alone, with the caption on top of it, for as long as the container has
+    // not grown or shrunk the item (see `item_is_flexed` below).
     let parent_assigns_wrapper_height = parent_is_flex_or_grid
-        && !doc.taffy_parent_of(table_idx).is_some_and(|parent| {
-            doc.nodes[parent].formatting_context == FormattingContext::Flex
-                && !doc.physical_style(parent).flex_direction_is_row()
-                && matches!(
-                    doc.physical_style(table_idx).flex_basis().expand(),
-                    ExpandedDimension::Length(_)
-                        | ExpandedDimension::Percent(_)
-                        | ExpandedDimension::Calc(_)
-                )
-        });
-    // The height of the whole wrapper box, caption included, is also what an
-    // absolutely positioned table is given: its layout measures the wrapper
-    // and lays the table out at that size.
-    let wrapper_height_is_assigned = parent_assigns_wrapper_height || absolute_table;
+        && !(flex_column_parent
+            && matches!(
+                doc.physical_style(table_idx).flex_basis().expand(),
+                ExpandedDimension::Length(_)
+                    | ExpandedDimension::Percent(_)
+                    | ExpandedDimension::Calc(_)
+            ));
+    // The layout library measures the wrapper of such a table and gives that
+    // height back, so a known height is the wrapper's even though the table
+    // states one; the height it states is for the measure alone.
+    let wrapper_measured_by_library = absolute_table && wrapper_owns_height(doc, table_idx);
     let grid = cache::table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
-    let (table_padding, table_border_widths) = {
-        let table_style = doc.table_style(table_idx);
-        (table_style.padding(), table_style.border())
+    let table_style = doc.table_style(table_idx);
+    let used_padding = table_style.padding();
+    let intrinsic_padding = table_style.intrinsic_table_padding();
+    let used_pad = resolve_table_rect(&used_padding, inputs.parent_size);
+    // Intrinsic width belongs to the table's own inline axis. The block
+    // extent always uses the edges the containing block resolved for layout.
+    let pad = if absolute_table && !vertical_writing && inputs.run_mode == RunMode::ComputeSize {
+        let intrinsic = resolve_table_rect(&intrinsic_padding, inputs.parent_size);
+        Edges {
+            top: used_pad.top,
+            bottom: used_pad.bottom,
+            ..intrinsic
+        }
+    } else {
+        used_pad
     };
-    let pad = resolve_table_rect(&table_padding, inputs.parent_size);
-    let table_border = resolve_table_rect(&table_border_widths, inputs.parent_size);
+    let table_border = resolve_table_rect(&table_style.border(), inputs.parent_size);
+    let has_used_padding = used_padding != intrinsic_padding;
     let prepared = cache::prepared_borders(
         doc,
         table_idx,
@@ -609,24 +722,65 @@ fn compute_table_layout_checked(
         // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
         let table_size = doc.table_style(table_idx).size();
+
+        // The size of the content of a flex column item (the measure behind its
+        // automatic minimum size, CSS Flexbox 1 §4.5) is that of its rows and
+        // caption, not the height it states: the flex algorithm weighs the two
+        // against each other, and a `flex-basis` or a lower container can take
+        // the item under the height.
+        let states_height = !(flex_column_parent && inputs.sizing_mode == SizingMode::ContentSize);
+        // Keep the unclamped wrapper room separate from a numeric grid height.
+        // In particular, a caption is removed before the grid's min/max limits.
+        let stretch_room = if !vertical_writing
+            && matches!(table_size.height.expand(), ExpandedDimension::Stretch)
+            && (states_height || inputs.known_dimensions.height.is_some())
+        {
+            if absolute_table {
+                inputs.parent_size.height.map(|height| {
+                    let style = doc.table_style(table_idx);
+                    let inset = style.inset();
+                    let insets = super::used_style_length_percentage_auto(inset.top, height)
+                        .unwrap_or(0.0)
+                        + super::used_style_length_percentage_auto(inset.bottom, height)
+                            .unwrap_or(0.0);
+                    let margin = style.margin();
+                    let basis = inputs.parent_size.width.unwrap_or(0.0);
+                    let margins = super::used_style_length_percentage_auto(margin.top, basis)
+                        .unwrap_or(0.0)
+                        + super::used_style_length_percentage_auto(margin.bottom, basis)
+                            .unwrap_or(0.0);
+                    (height - insets.max(0.0) - margins).max(0.0)
+                })
+            } else {
+                crate::layout::dispatch::content_limits::stretch_fit_height(doc, table_idx, &inputs)
+            }
+        } else {
+            None
+        };
+        let stretch_wrapper_room =
+            stretch_room.filter(|_| absolute_table || !parent_is_flex_or_grid);
         let effective_known = Size {
-            width: inputs
-                .known_dimensions
-                .width
-                .or(stated_table_width(table_size.width, &inputs)),
-            height: inputs.known_dimensions.height.or(resolve_dimension(
-                table_size.height,
-                inputs.parent_size.height,
-            )),
+            width: inputs.known_dimensions.width,
+            height: inputs.known_dimensions.height.or_else(|| {
+                states_height
+                    .then(|| resolve_dimension(table_size.height, inputs.parent_size.height))
+                    .flatten()
+            }),
         };
 
         let border_spacing = if collapse {
             (0.0, 0.0)
         } else {
-            (
-                doc.nodes[table_idx].border_spacing.horizontal.0.max(0.0),
-                doc.nodes[table_idx].border_spacing.vertical.0.max(0.0),
-            )
+            let spacing = doc.nodes[table_idx].border_spacing;
+            let inline = spacing.horizontal.0.max(0.0);
+            let block = spacing.vertical.0.max(0.0);
+            // The authored pair follows the inline and block axes. The
+            // layout pass below consumes physical horizontal/vertical gaps.
+            if vertical_writing {
+                (block, inline)
+            } else {
+                (inline, block)
+            }
         };
 
         let padding_border_size = Size {
@@ -657,7 +811,7 @@ fn compute_table_layout_checked(
         let max_h = resolve_dimension(authored_max.height.into(), inputs.parent_size.height);
         let is_content_box = box_sizing == BoxSizing::ContentBox;
         let lift_w = if is_content_box {
-            padding_border_size.width
+            used_pad.left + used_pad.right + collapsed.outer_left + collapsed.outer_right
         } else {
             0.0
         };
@@ -670,20 +824,116 @@ fn compute_table_layout_checked(
         let max_w_outer = max_w.map(|m| m + lift_w);
         let min_h_outer = min_h.map(|m| m + lift_h);
         let max_h_outer = max_h.map(|m| m + lift_h);
+        // Height is measured by the table, so an auto width's ratio transfer
+        // belongs here too. It sizes the columns as well as the outer box,
+        // using the preferred stretch height before intrinsic content floors.
+        let stretch_ratio_width = if absolute_table && table_size.width.is_auto() {
+            stretch_room
+                .zip(doc.table_style(table_idx).aspect_ratio())
+                .map(|(room, ratio)| {
+                    let capped = max_h_outer.map_or(room, |maximum| room.min(maximum));
+                    let outer_height = min_h_outer
+                        .map_or(capped, |minimum| capped.max(minimum))
+                        .max(padding_border_size.height);
+                    (outer_height - lift_h).max(0.0) * ratio
+                })
+                .filter(|width| width.is_finite())
+        } else {
+            None
+        };
+        // Inline tables do not receive a used width from their caller. Lift
+        // the authored width into the same border-box domain and apply its
+        // limits before distributing it among the fixed columns. Stretch
+        // already names border-box room rather than a content-box width.
+        let effective_known = Size {
+            width: effective_known.width.or_else(|| {
+                stated_table_width(table_size.width, &inputs)
+                    .or(stretch_ratio_width)
+                    .map(|width| {
+                        // Vertical tables resolve physical width separately from
+                        // inline tracks, retaining their existing width basis.
+                        if vertical_writing {
+                            return width;
+                        }
+                        let width =
+                            if matches!(table_size.width.expand(), ExpandedDimension::Stretch) {
+                                width
+                            } else {
+                                width + lift_w
+                            };
+                        let maximum = max_w_outer.filter(|maximum| {
+                            min_w_outer.is_none_or(|minimum| minimum <= *maximum)
+                        });
+                        apply_wrapper_width_bounds(width, min_w_outer, maximum)
+                            .max(padding_border_size.width)
+                    })
+            }),
+            ..effective_known
+        };
+        // A flex column gives the item the height it states (see above) while
+        // it has not grown or shrunk it, and that height is the grid box's
+        // alone: the caption comes on top of it. Once the container has moved
+        // the item off that height, the height is the whole wrapper box's, as
+        // for any other flex or grid item, and the grid box takes what the
+        // caption leaves. A `min-height` or `max-height` clamps the item the
+        // same way, which is why it counts as flexing. (An item flexed to land
+        // on the stated height cannot be told from one that was not.)
+        let item_is_flexed = flex_column_parent
+            && caption_in_flow(doc, table_idx)
+            && inputs.known_dimensions.height.is_some_and(|known| {
+                resolve_dimension(
+                    doc.physical_style(table_idx).flex_basis(),
+                    inputs.parent_size.height,
+                )
+                .or(specified_height)
+                .is_some_and(|stated| (known - (stated + lift_h)).abs() > FLEXED_HEIGHT_TOLERANCE)
+            });
+        // A flex or grid parent assigns the height of the whole wrapper box,
+        // caption included, and so does the layout of an absolutely positioned
+        // table, which measures the wrapper and lays the table out at that
+        // size.
+        let wrapper_height_is_assigned =
+            parent_assigns_wrapper_height || absolute_table || item_is_flexed;
+        // What is left of the flex and grid items is the item of a flex column
+        // with a definite `flex-basis` that the container has left alone: the
+        // height it is given is that of its grid box, as an authored `height`
+        // is. (A `flex-basis` does not size an absolutely positioned table,
+        // which is the wrapper's case above.)
+        let parent_sizes_grid_alone = parent_is_flex_or_grid && !wrapper_height_is_assigned;
+        let known_is_wrapper_height = (wrapper_measured_by_library
+            && inputs.known_dimensions.height.is_some())
+            || item_is_flexed;
+        // Without a known height the stated one stands in for it. The library
+        // would have reported it in the outer box-sizing domain and within the
+        // limits (the minimum wins), and the grid below does not shrink to a
+        // maximum that is under the height it is given.
+        let effective_known = if wrapper_measured_by_library && !known_is_wrapper_height {
+            Size {
+                height: effective_known.height.map(|stated| {
+                    let outer =
+                        max_h_outer.map_or(stated + lift_h, |max| (stated + lift_h).min(max));
+                    min_h_outer.map_or(outer, |min| outer.max(min))
+                }),
+                ..effective_known
+            }
+        } else {
+            effective_known
+        };
 
         if grid.n_cols == 0 || grid.rows.is_empty() {
             // Empty tables shrink-wrap like the main path below: a specified
             // width wins; otherwise the container width is only a cap over the
             // padding/border extents (never stretch-to-fill).
-            let specified_w = stated_table_width(table_size.width, &inputs);
+            let specified_w = stated_table_width(table_size.width, &inputs).or(stretch_ratio_width);
             // The outer width the table states: the width the caller resolved
             // or, without one, the stated length plus the padding and border
             // that a content-box table keeps outside it (a `stretch` room is
             // outer already). A `max-width` that took the resolved width below
             // the padding and border does not take the table below them.
             let stated_w = specified_w.map(|stated| {
-                let is_length =
-                    resolve_dimension(table_size.width, inputs.parent_size.width).is_some();
+                let is_length = resolve_dimension(table_size.width, inputs.parent_size.width)
+                    .is_some()
+                    || stretch_ratio_width.is_some();
                 let outer = if is_length { stated + lift_w } else { stated };
                 f32_max_compat(
                     inputs.known_dimensions.width.unwrap_or(outer),
@@ -724,25 +974,43 @@ fn compute_table_layout_checked(
             } else {
                 layout_table_caption(doc, table_idx, width, inputs.parent_size.height)
             };
-            let stated_h = specified_height.map(|stated| {
-                f32_max_compat(
-                    inputs.known_dimensions.height.unwrap_or(stated + lift_h),
-                    padding_border_size.height,
-                )
-            });
-            let mut height = stated_h.unwrap_or_else(|| {
-                let known = effective_known.height.map(|wrapper_height| {
-                    if wrapper_height_is_assigned && !vertical_writing {
-                        grid_height_in_wrapper(
-                            doc,
-                            table_idx,
-                            wrapper_height,
-                            early_caption.as_ref(),
-                        )
-                    } else {
-                        wrapper_height
-                    }
+            let min_h_outer = min_h_outer_of_grid(
+                doc,
+                table_idx,
+                min_h_outer,
+                item_is_flexed,
+                early_caption.as_ref(),
+            );
+            // A content-size measure of a flex column item has no height to
+            // state: it reports the content, so the container can shrink the
+            // item below its `height`.
+            let stated_h = specified_height
+                .filter(|_| {
+                    !known_is_wrapper_height
+                        && (states_height || inputs.known_dimensions.height.is_some())
+                })
+                .map(|stated| {
+                    f32_max_compat(
+                        inputs.known_dimensions.height.unwrap_or(stated + lift_h),
+                        padding_border_size.height,
+                    )
                 });
+            let mut height = stated_h.unwrap_or_else(|| {
+                let known = effective_known
+                    .height
+                    .or(stretch_wrapper_room.filter(|_| absolute_table))
+                    .map(|wrapper_height| {
+                        if wrapper_height_is_assigned && !vertical_writing {
+                            grid_height_in_wrapper(
+                                doc,
+                                table_idx,
+                                wrapper_height,
+                                early_caption.as_ref(),
+                            )
+                        } else {
+                            wrapper_height
+                        }
+                    });
                 known.unwrap_or(0.0).max(padding_border_size.height)
             });
             height = clamp_empty_table_size(
@@ -794,39 +1062,76 @@ fn compute_table_layout_checked(
         // edge, so n tracks take n + 1 gaps. The spacing belongs to the table's
         // content box, so it is part of the extents the tracks share but not of
         // `padding_border_size`. Collapse zeroes `border_spacing`.
-        // A row whose overlapping cells all hide their empty boxes has zero
-        // height and only one spacing side (CSS 2.2 section 17.6.1.1).
-        let hidden_rows: Vec<bool> = hidden_empty_rows(doc, &grid)
-            .into_iter()
-            .zip(collapsed_rows)
-            .map(|(hidden, collapsed)| hidden || *collapsed)
-            .collect();
-        let row_gaps: Vec<_> = hidden_rows
-            .iter()
-            .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
-            .collect();
+        // Match Chromium and Blitz: empty-cells hides paint, not row geometry.
+        // Each group keeps one closing gap, even if every row collapses.
+        // Inside the group only visible rows are spaced apart. Put that gap
+        // immediately before the next visible row, so collapsed row boxes
+        // stay at the preceding row's bottom rather than below the gap.
+        let groups = row_groups(doc, table_idx, &grid);
+        let mut row_gaps = vec![0.0; collapsed_rows.len()];
+        for group in &groups {
+            let mut seen_visible = false;
+            for row in group.rows.clone() {
+                if !collapsed_rows[row] {
+                    if seen_visible {
+                        row_gaps[row - 1] = border_spacing.1;
+                    }
+                    seen_visible = true;
+                }
+            }
+            row_gaps[group.rows.end - 1] = border_spacing.1;
+        }
+        let specified_width = stated_table_width(table_size.width, &inputs);
+        let fixed_columns_collapse = columns_collapse
+            && table_layout == TableLayoutValue::Fixed
+            && specified_width.is_some();
         let shown_columns = collapsed_cols
             .iter()
             .filter(|collapsed| !**collapsed)
             .count();
         let spacing = Size {
-            // With every column collapsed nothing remains to space apart.
-            width: if shown_columns == 0 {
+            // A definite fixed table retains both outer spacing sides even
+            // when every column collapses.
+            width: if shown_columns == 0 && fixed_columns_collapse {
+                border_spacing.0 * 2.0
+            } else if shown_columns == 0 {
                 0.0
             } else {
                 border_spacing.0 * (shown_columns as f32 + 1.0)
             },
-            // With every row collapsed nothing remains to space apart.
-            height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
-                0.0
-            } else {
-                border_spacing.1
-                    * (hidden_rows.iter().filter(|hidden| !**hidden).count() as f32 + 1.0)
-            },
+            // The top gap and each group's closing gap survive even when
+            // every row collapses.
+            height: border_spacing.1 + row_gaps.iter().sum::<f32>(),
         };
         let distrib_insets = Size {
             width: padding_border_size.width - overlap_w + spacing.width,
             height: padding_border_size.height - overlap_h + spacing.height,
+        };
+        // A row that `visibility: collapse` removes still takes its share when
+        // the table shares out the extra height of its own `height` or
+        // `min-height`, with the spacing around it, and gives that share up
+        // afterwards, so the table ends up lower than the height it states
+        // (Chromium; CSS Tables 3 leaves it to the user agent). The rows share
+        // a height that `height: stretch` or a flex or grid parent gives the
+        // table in the same way, and the box keeps that height. A height that
+        // only fragmentation imposes is left out, and so is a vertical table,
+        // which shares along its columns instead: both keep the collapsed rows
+        // out of the sharing as before.
+        let collapsed_rows_share = !vertical_writing
+            && collapsed_rows.iter().any(|collapsed| *collapsed)
+            && (specified_height.is_some()
+                || min_h_outer.is_some()
+                || stretch_room.is_some()
+                || parent_is_flex_or_grid);
+        let sharing_hidden_rows: Vec<bool> = collapsed_rows
+            .iter()
+            .map(|&collapsed| collapsed && !collapsed_rows_share)
+            .collect();
+        let sharing_insets_height = if collapsed_rows_share {
+            padding_border_size.height - overlap_h
+                + border_spacing.1 * (grid.rows.len() as f32 + 1.0)
+        } else {
+            distrib_insets.height
         };
 
         // Specified (non-auto) table width, resolved against the containing
@@ -834,7 +1139,6 @@ fn compute_table_layout_checked(
         // and must NOT stretch to fill the containing block: `effective_known`
         // carries the container-imposed width (800 for top-level blocks), which
         // is a cap for auto tables, the target only for specified widths.
-        let specified_width = stated_table_width(table_size.width, &inputs);
         // In fixed mode an unresolvable specified width (auto, or % of an
         // indefinite container) falls back to the auto algorithm below
         // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
@@ -855,7 +1159,9 @@ fn compute_table_layout_checked(
         {
             (None, None, inputs.available_space.width)
         } else {
-            let intrinsic_grid = if columns_collapse {
+            let fixed_intrinsic =
+                table_layout == TableLayoutValue::Fixed && specified_width.is_some();
+            let intrinsic_grid = if columns_collapse && !fixed_intrinsic {
                 without_collapsed_columns(&grid, collapsed_cols, false)
             } else {
                 grid.clone()
@@ -868,6 +1174,22 @@ fn compute_table_layout_checked(
                 ..inputs
             };
             let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
+                if fixed_intrinsic {
+                    let insets = pad.left
+                        + pad.right
+                        + columns_in_place.as_ref().map_or_else(
+                            || collapsed.inline_border_width(),
+                            |columns| columns.border_width,
+                        )
+                        + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+                    return fixed_intrinsic_width(
+                        doc,
+                        &intrinsic_grid,
+                        border_spacing.0,
+                        insets,
+                        matches!(available_space, AvailableSpace::MaxContent),
+                    );
+                }
                 let probe = LayoutInput {
                     available_space: Size {
                         width: available_space,
@@ -902,7 +1224,25 @@ fn compute_table_layout_checked(
                 min_content: intrinsic_minimum,
                 max_content: intrinsic_maximum,
                 inputs: &inputs,
-                available_space: inputs.available_space.width,
+                // The layout caller caps the available width at the authored
+                // width. A wrapper's fit-content limit uses its containing
+                // block's room instead of that already capped width.
+                available_space: if fixed_intrinsic {
+                    inputs
+                        .parent_size
+                        .width
+                        .map_or(inputs.available_space.width, |width| {
+                            let margin = doc.table_style(table_idx).margin();
+                            let left = super::used_style_length_percentage_auto(margin.left, width)
+                                .unwrap_or(0.0);
+                            let right =
+                                super::used_style_length_percentage_auto(margin.right, width)
+                                    .unwrap_or(0.0);
+                            AvailableSpace::Definite((width - left - right).max(0.0))
+                        })
+                } else {
+                    inputs.available_space.width
+                },
                 horizontal: true,
             };
             let wrapper_minimum =
@@ -960,9 +1300,14 @@ fn compute_table_layout_checked(
                 constrained_available_space,
             )
         };
+        let assigned_wrapper_width =
+            parent_is_flex_or_grid || (absolute_table && has_used_padding && !vertical_writing);
         let inputs_for_columns = LayoutInput {
             known_dimensions: Size {
-                width: match (specified_width, parent_is_flex_or_grid) {
+                width: match (
+                    specified_width.or(stretch_ratio_width),
+                    assigned_wrapper_width,
+                ) {
                     (Some(_), _) | (_, true) => effective_known.width.map(|width| {
                         apply_wrapper_width_bounds(
                             width.max(caption_minimum),
@@ -980,9 +1325,37 @@ fn compute_table_layout_checked(
             },
             ..inputs
         };
+        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
+        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
+        // width keeps the fill basis.
+        let table_width_basis = if assigned_wrapper_width || stretch_ratio_width.is_some() {
+            // A parent can supply a measured wrapper width even when the
+            // table's width is auto. Allocate it with the used padding instead
+            // of shrink-wrapping again with the intrinsic edge basis.
+            effective_known.width
+        } else {
+            match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
+            }
+        };
+        // A fixed layout table takes its columns from the width it states
+        // alone, not from the content, so a `max-width` below that width
+        // shrinks the columns with the table (CSS 2.1 section 17.5.2.1); the
+        // automatic algorithm measures the content against the room instead.
+        // The columns share the width the table comes to: the one its caller
+        // assigned, which has the limits and the padding and border of a
+        // content-box table in it, or else the one it states. A vertical
+        // table keeps the width as stated.
+        let column_basis_width = if table_layout == TableLayoutValue::Fixed && !vertical_writing {
+            specified_width.map(|stated| table_width_basis.unwrap_or(stated))
+        } else {
+            specified_width.or(stretch_ratio_width)
+        };
         let pass = ColumnPass {
+            overlap_width: overlap_w,
             table_layout,
-            specified_width,
+            specified_width: column_basis_width,
             caption_minimum,
             wrapper_minimum,
             wrapper_maximum,
@@ -1006,12 +1379,39 @@ fn compute_table_layout_checked(
                 |columns| columns.border_width,
             )
             + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+        // Apply width floors before removing fixed columns. Redistributing
+        // after collapse would give their share to the remaining columns.
+        let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
+            .into_iter()
+            .flatten()
+            .reduce(f32::max);
+        let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
+            if let Some(minimum) = minimum_table_width {
+                distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
+            }
+        };
         let natural_widths = columns_collapse.then(|| {
-            measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-                resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
-            })
+            let natural_pass = ColumnPass {
+                overlap_width: columns_in_place
+                    .as_ref()
+                    .map_or(overlap_w, |columns| columns.overlap_width),
+                ..pass
+            };
+            let mut widths = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+                resolve_table_columns(doc, &mut grid, &natural_pass, natural_insets_width)
+            });
+            grow_columns(&mut widths, natural_insets_width, None);
+            widths
         });
-        let mut column_widths = if columns_collapse {
+        let mut column_widths = if fixed_columns_collapse {
+            natural_widths
+                .as_ref()
+                .expect("collapsed columns have their natural widths")
+                .iter()
+                .zip(collapsed_cols)
+                .map(|(&width, &hidden)| if hidden { 0.0 } else { width })
+                .collect()
+        } else if columns_collapse {
             let mut remaining = without_collapsed_columns(&grid, collapsed_cols, false);
             let mut widths =
                 resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
@@ -1029,27 +1429,13 @@ fn compute_table_layout_checked(
             resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
         };
 
-        // Extra min-width grows columns (mirrors the min-height→rows path
-        // below, and the definite-width distribution above). Must run before
-        // row heights are measured so cells lay out at final column widths.
-        let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
-            .into_iter()
-            .flatten()
-            .reduce(f32::max);
-        let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
-            if let Some(minimum) = minimum_table_width {
-                distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
-            }
-        };
-        grow_columns(
-            &mut column_widths,
-            distrib_insets.width,
-            columns_collapse.then_some(&collapsed_cols[..]),
-        );
-        let natural_widths = natural_widths.map(|mut widths| {
-            grow_columns(&mut widths, natural_insets_width, None);
-            widths
-        });
+        if !fixed_columns_collapse {
+            grow_columns(
+                &mut column_widths,
+                distrib_insets.width,
+                columns_collapse.then_some(&collapsed_cols[..]),
+            );
+        }
 
         // The table's width follows from its columns alone, so it is settled
         // before the rows are sized: the caption wraps at that width, and a
@@ -1076,32 +1462,46 @@ fn compute_table_layout_checked(
             }
             x
         };
-        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
-        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
-        // width keeps the fill basis.
-        let table_width_basis = if parent_is_flex_or_grid {
-            // Flex/grid supplies a used item width even when the table's own
-            // width is auto. Keep that width instead of shrink-wrapping again.
-            effective_known.width
-        } else {
-            match specified_width {
-                Some(_) => effective_known.width,
-                None => None,
-            }
-        };
         // Vertical tables stack each column's inline track along the physical
         // height, so the physical spacing applies across that stack: the
         // vertical gap between and around the stacked tracks, the horizontal gap
-        // on both sides of the single physical column.
-        let vertical_content_width =
-            column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
+        // on both sides of the single physical column. Every stacked track is as
+        // wide as its cell, so the column is as wide as the widest cell. The
+        // columns share the width of a cell that spans several of them, less the
+        // spacing between them, so the cell is as wide as those columns and that
+        // spacing.
+        let vertical_cell_width = grid
+            .cells
+            .iter()
+            .map(|cell| {
+                let start = usize::from(cell.col_start).min(column_widths.len());
+                let end = (start + usize::from(cell.col_span)).min(column_widths.len());
+                column_widths[start..end].iter().sum::<f32>()
+                    + border_spacing.0 * (end - start).saturating_sub(1) as f32
+            })
+            .chain(column_widths.iter().copied())
+            .fold(0.0, f32::max);
+        let vertical_content_width = vertical_cell_width + border_spacing.0 * 2.0;
         // CSS 2.1 §17.5.2: the used table width is at least the columns plus
         // the spacing and borders, even when the specified width is smaller.
         let min_table_width = content_width + padding_border_size.width;
         let final_width = if vertical_writing {
+            // The width of a vertical table is its extent along the block axis,
+            // which its rows set and the room around it does not change, so a
+            // table that states no width shrinks to them. Only a stated width,
+            // or the used width a flex or grid parent gives its item, sets it.
             effective_known
                 .width
-                .unwrap_or(vertical_content_width + padding_border_size.width)
+                .filter(|_| specified_width.is_some() || parent_is_flex_or_grid)
+                .unwrap_or_else(|| {
+                    clamp_min_max(
+                        vertical_content_width + padding_border_size.width,
+                        min_w_outer,
+                        max_w_outer,
+                    )
+                })
+        } else if fixed_columns_collapse {
+            min_table_width
         } else {
             table_width_basis
                 .map(|w| {
@@ -1135,19 +1535,39 @@ fn compute_table_layout_checked(
         } else {
             layout_table_caption(doc, table_idx, final_width, inputs.parent_size.height)
         };
+        let min_h_outer = min_h_outer_of_grid(
+            doc,
+            table_idx,
+            min_h_outer,
+            item_is_flexed,
+            early_caption.as_ref(),
+        );
         // A flex or grid parent assigns the table the height of the whole
         // wrapper box, caption included, and the grid box takes what is left of
         // it; so does the layout of an absolutely positioned table. This does
         // not hold for an authored height, which sizes the grid box alone (the
-        // wrapper is that much and the caption).
-        let assigned_grid_height = effective_known
-            .height
-            .filter(|_| {
-                wrapper_height_is_assigned && !vertical_writing && specified_height.is_none()
-            })
-            .map(|wrapper_height| {
-                grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
+        // wrapper is that much and the caption), unless the height is the
+        // wrapper's that a flex column gave a table it grew or shrank.
+        let stretch_grid_height = stretch_wrapper_room.map(|wrapper| {
+            let grid_height =
+                grid_height_in_wrapper(doc, table_idx, wrapper, early_caption.as_ref());
+            let capped = max_h_outer.map_or(grid_height, |maximum| {
+                grid_height.min(maximum.max(padding_border_size.height))
             });
+            min_h_outer.map_or(capped, |minimum| capped.max(minimum))
+        });
+        let assigned_grid_height = stretch_grid_height.or_else(|| {
+            effective_known
+                .height
+                .filter(|_| {
+                    wrapper_height_is_assigned
+                        && !vertical_writing
+                        && (specified_height.is_none() || known_is_wrapper_height)
+                })
+                .map(|wrapper_height| {
+                    grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
+                })
+        });
 
         // Row heights
         let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
@@ -1157,7 +1577,7 @@ fn compute_table_layout_checked(
         if let Some(columns) = columns_in_place {
             columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
         }
-        for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
+        for (height, hidden) in row_heights.iter_mut().zip(&sharing_hidden_rows) {
             if *hidden {
                 *height = 0.0;
             }
@@ -1175,20 +1595,27 @@ fn compute_table_layout_checked(
         let parent_sizes_rows = parent_is_flex_or_grid && !vertical_writing;
         let known_target = assigned_grid_height
             .or(effective_known.height)
-            .filter(|_| grid.rows.len() > 1 || specified_height.is_some() || parent_sizes_rows)
-            .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
+            .filter(|_| {
+                grid.rows.len() > 1
+                    || specified_height.is_some()
+                    || parent_sizes_rows
+                    || stretch_room.is_some()
+            })
+            .map(|known_h| known_h - sharing_insets_height);
         // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer
         // domain keeps content-box correct: `min_outer - distrib_insets` =
         // `min_content + overlap`, the track sum that yields `min_content`.
-        let min_target = min_h_outer.map(|mn| f32_max_compat(mn - distrib_insets.height, 0.0));
+        let min_target = min_h_outer.map(|mn| mn - sharing_insets_height);
         // The taller of the two is shared once, so that the percentage heights
-        // of rows resolve against the height the table ends up with.
-        if let Some(target) = [known_target, min_target]
+        // of rows resolve against the height the table ends up with. It is
+        // kept as it is, without the zero floor the rows get, for the vertical
+        // columns below.
+        let target_room = [known_target, min_target]
             .into_iter()
             .flatten()
-            .reduce(f32_max_compat)
-        {
+            .reduce(f32_max_compat);
+        if let Some(target) = target_room.map(|room| f32_max_compat(room, 0.0)) {
             // The row groups share the extra first and the rows without an
             // authored height take their group's share, which keeps the
             // others as they are (see `distribute_extra_to_groups`).
@@ -1198,21 +1625,29 @@ fn compute_table_layout_checked(
             // may come from fragmentation, does not make it definite. They are
             // also left alone in vertical writing modes, which this pass does
             // not adjust.
-            let percents =
-                if !vertical_writing && (specified_height.is_some() || min_h_outer.is_some()) {
-                    percent_height_rows(doc, &grid)
-                } else {
-                    vec![None; grid.rows.len()]
-                };
+            let percents = if !vertical_writing
+                && (specified_height.is_some() || min_h_outer.is_some() || stretch_room.is_some())
+            {
+                percent_height_rows(doc, &grid)
+            } else {
+                vec![None; grid.rows.len()]
+            };
             distribute_extra_to_groups(
                 &mut row_heights,
-                &hidden_rows,
+                &sharing_hidden_rows,
                 &authored,
                 &percents,
-                &row_groups(doc, table_idx, &grid),
+                &groups,
                 border_spacing.1,
                 target,
             );
+        }
+        if collapsed_rows_share {
+            for (height, collapsed) in row_heights.iter_mut().zip(collapsed_rows) {
+                if *collapsed {
+                    *height = 0.0;
+                }
+            }
         }
         if vertical_writing {
             // Vertical columns stack the same row track along the physical
@@ -1221,16 +1656,38 @@ fn compute_table_layout_checked(
             let columns = grid.n_cols as f32;
             let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
             let target = (caption_inline_minimum - edges).max(0.0) / columns;
-            distribute_extra(&mut row_heights, Some(&hidden_rows), target);
+            distribute_extra(&mut row_heights, Some(collapsed_rows), target);
         }
 
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
-        // Vertical tables stack each column's inline track along the physical
-        // height, so the physical spacing applies across that stack: the
-        // vertical gap between and around the stacked tracks, the horizontal gap
-        // on both sides of the single physical column.
-        let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
-            + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+        // Vertical tables stack the columns along the physical height, so the
+        // physical spacing applies across that stack: the vertical gap between
+        // and around the stacked tracks, the horizontal gap on both sides of
+        // the single physical column. Each column is as high as the cells that
+        // start in it ask, the columns of a cell that spans several sharing its
+        // height. The table is at least as high as its authored height or
+        // `min-height` and its caption ask, which the columns share in
+        // proportion to their heights.
+        let vertical_tracks = if vertical_writing {
+            let columns = usize::from(grid.n_cols);
+            let mut tracks = vertical_column_tracks(&grid, border_spacing.1);
+            let spacing_total = border_spacing.1 * (columns + 1) as f32;
+            // The room the rows were given has the spacing of every visible
+            // row taken out of it; the columns stack along that height with
+            // spacing of their own, so all of it comes back.
+            let floor = target_room
+                .map_or(0.0, |room| room + spacing.height)
+                .max(caption_inline_minimum - padding_border_size.height);
+            let natural = tracks.iter().sum::<f32>() + spacing_total;
+            if floor > natural {
+                grow_tracks(&mut tracks, floor - natural);
+            }
+            tracks
+        } else {
+            Vec::new()
+        };
+        let vertical_content_height =
+            vertical_tracks.iter().sum::<f32>() + border_spacing.1 * (grid.n_cols as f32 + 1.0);
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
@@ -1243,16 +1700,35 @@ fn compute_table_layout_checked(
                     min_h_outer,
                     max_h_outer,
                 )
+            } else if collapsed_rows_share && target_room.is_some() && !parent_is_flex_or_grid {
+                // The rows that collapsed took their share of the stated
+                // height or `min-height` with them, so the table is as high as
+                // the rows that remain, however low that is; the maximum still
+                // caps it. A flex or grid parent gives its item a height it
+                // keeps whatever the rows do.
+                clamp_min_max(
+                    content_height + padding_border_size.height,
+                    None,
+                    max_h_outer,
+                )
             } else {
                 effective_known
                     .height
                     .map(|h| {
                         // Taffy reports authored definite table heights in the
-                        // outer box-sizing domain. Auto tables retain the legacy
-                        // known-height normalization used by fragmentation.
+                        // outer box-sizing domain, and so does a flex column
+                        // for the main size it gives a table whose
+                        // `flex-basis` is definite, as long as it has not
+                        // grown or shrunk it: the height of the grid box
+                        // alone, with the caption on top of it. (Once it is
+                        // flexed the height is the wrapper's, which the
+                        // assigned height above takes care of.) Other auto
+                        // tables retain the legacy known-height normalization
+                        // used by fragmentation.
                         // CSS 2.2 §17.5.3: a specified height is a minimum; the
                         // table still holds its rows and the spacing.
-                        let outer_height = if specified_height.is_some() {
+                        let outer_height = if specified_height.is_some() || parent_sizes_grid_alone
+                        {
                             f32_max_compat(h, content_height + padding_border_size.height)
                         } else {
                             (h - padding_border_size.height).max(0.0) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
@@ -1288,7 +1764,7 @@ fn compute_table_layout_checked(
         // Position cells: origin includes padding + collapsed outer border.
         let x_origin = pad.left
             + collapsed.outer_left
-            + if shown_columns == 0 {
+            + if shown_columns == 0 && !fixed_columns_collapse {
                 0.0
             } else {
                 border_spacing.0
@@ -1326,7 +1802,7 @@ fn compute_table_layout_checked(
         };
         let col_origins = track_origins(&column_widths, &col_steps, x_origin);
         let row_origins = track_origins(&row_heights, &row_steps, y_origin);
-        place_cells(
+        let cell_candidates = place_cells(
             doc,
             &mut grid,
             CellPlacementTracks {
@@ -1340,6 +1816,8 @@ fn compute_table_layout_checked(
                 row_origins: &row_origins,
                 row_spacing: border_spacing.1,
                 vertical_writing,
+                height_is_definite: vertical_writing || specified_height.is_some(),
+                stretch_height_is_resolved: stretch_room.is_some(),
             },
             &mut oof_candidates,
         )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
@@ -1351,13 +1829,7 @@ fn compute_table_layout_checked(
         // offset winning. With none, it is the lowest content edge among the
         // cells, measured as the row stretched them; a cell in a collapsed row
         // has no extent, so that edge is the row's top.
-        let first_row_collapsed = collapsed_rows.first() == Some(&true);
-        let first_row_hidden = hidden_rows.first() == Some(&true) && !first_row_collapsed;
-        let first_row_cells = || {
-            grid.cells
-                .iter()
-                .filter(|cell| cell.row == 0 && !first_row_hidden)
-        };
+        let first_row_cells = || grid.cells.iter().filter(|cell| cell.row == 0);
         let first_row_baseline = first_row_cells()
             .filter(|cell| {
                 cell.baseline_from_flow
@@ -1380,17 +1852,19 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_first_baseline =
             (!collapsed_rows.is_empty()).then(|| row_origins[0] + first_row_baseline);
         if vertical_writing {
-            reposition_cells_for_vertical_writing(
+            let mut final_candidates = reposition_cells_for_vertical_writing(
                 doc,
                 &mut grid,
-                &row_heights,
+                &vertical_tracks,
                 (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
                 Point {
                     x: x_origin,
                     y: y_origin,
                 },
                 border_spacing.1,
+                cell_candidates,
             );
+            oof_candidates.append(&mut final_candidates);
         }
         let projected = projects_source_parts(doc, table_idx, &grid);
         let part_claimants = table_part_claimants(doc, table_idx, &oof_candidates);
@@ -1889,9 +2363,12 @@ fn build_table_grid(
                     col_span,
                     row_span,
                     specified_width,
+                    percent_border_padding: 0.0,
                     specified_min_width,
                     resolved: None,
                     natural_height: 0.0,
+                    measured_height: 0.0,
+                    alignment: None,
                     baseline: 0.0,
                     baseline_from_flow: false,
                     row_pass: None,
@@ -2227,9 +2704,12 @@ fn push_row(
             col_span,
             row_span,
             specified_width,
+            percent_border_padding: 0.0,
             specified_min_width,
             resolved: None,
             natural_height: 0.0,
+            measured_height: 0.0,
+            alignment: None,
             baseline: 0.0,
             baseline_from_flow: false,
             row_pass: None,
@@ -2425,6 +2905,7 @@ fn constrain_cell_intrinsic_widths(
 
 /// What the column pass needs besides the grid and the room the tracks share.
 struct ColumnPass {
+    overlap_width: f32,
     table_layout: TableLayoutValue,
     specified_width: Option<f32>,
     caption_minimum: f32,
@@ -2508,11 +2989,48 @@ fn resolve_table_columns(
             percent_width_cap,
         );
     };
+    normalize_fixed_cells(doc, grid, avail, pass.border_spacing_x);
+    resolve_fixed_column_widths(grid, avail, pass.overlap_width)
+}
+
+fn normalize_fixed_cells(
+    doc: &LayoutSession<'_>,
+    grid: &mut TableGrid,
+    avail: f32,
+    border_spacing: f32,
+) {
     for cell in &mut grid.cells {
         if cell.row != 0 {
             continue;
         }
         let style = doc.table_style(cell.node_id);
+        cell.percent_border_padding = if cell.col_span == 1
+            && matches!(style.size().width.expand(), ExpandedDimension::Percent(_))
+            && style.box_sizing() == BoxSizing::ContentBox
+        {
+            let padding = style.padding().resolve_or_zero(Some(avail));
+            let border = style.border().resolve_or_zero(Some(avail));
+            padding.left + padding.right + border.left + border.right
+        } else {
+            0.0
+        };
+        if let ExpandedDimension::Length(width) = style.size().width.expand() {
+            // A length sizes the cell's border box, held to the cell's
+            // `max-width` first. A single percentage cell adds its edges
+            // separately; a spanning percentage only contributes its share of
+            // the net track width.
+            let width = capped_by_max_width(&style, width);
+            let padding = style.padding().resolve_or_zero(Some(avail));
+            let border = style.border().resolve_or_zero(Some(avail));
+            let cell_insets = padding.left + padding.right + border.left + border.right;
+            let outer = if style.box_sizing() == BoxSizing::ContentBox {
+                width + cell_insets
+            } else {
+                width.max(cell_insets)
+            };
+            let gaps = border_spacing * usize::from(cell.col_span).saturating_sub(1) as f32;
+            cell.specified_width = Dimension::length((outer - gaps).max(0.0));
+        }
         if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
             let padding = style.padding().resolve_or_zero(Some(avail));
             let border = style.border().resolve_or_zero(Some(avail));
@@ -2522,11 +3040,26 @@ fn resolve_table_columns(
             } else {
                 minimum.max(cell_insets)
             };
-            let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
+            let gaps = border_spacing * usize::from(cell.col_span).saturating_sub(1) as f32;
             cell.specified_min_width = Dimension::length((outer - gaps).max(0.0));
         }
     }
-    resolve_fixed_column_widths(grid, avail)
+}
+
+/// A `width` held to the `max-width` of the box `style` is of, which is in the
+/// same box-sizing as the width.
+fn capped_by_max_width(style: &LayoutStyleView<'_>, width: f32) -> f32 {
+    resolve_dimension(style.max_size().width.into(), None)
+        .map_or(width, |maximum| width.min(maximum))
+}
+
+/// The `width` a cell states, held within its own `min-width` and `max-width`
+/// (the minimum wins).
+fn within_cell_width_limits(doc: &LayoutSession<'_>, cell: usize, width: f32) -> f32 {
+    let style = doc.table_style(cell);
+    let capped = capped_by_max_width(&style, width);
+    resolve_dimension(style.min_size().width.into(), None)
+        .map_or(capped, |minimum| capped.max(minimum))
 }
 
 // ---------------------------------------------------------------------------
@@ -2677,7 +3210,8 @@ fn resolve_column_widths(
             && matches!(cell.specified_width.expand(), ExpandedDimension::Length(_))
             && col_len[c].is_none()
         {
-            col_len[c] = resolve_dimension(cell.specified_width, None);
+            col_len[c] = resolve_dimension(cell.specified_width, None)
+                .map(|width| within_cell_width_limits(doc, cell.node_id, width));
         }
     }
     for c in 0..n {
@@ -3033,24 +3567,6 @@ fn cell_block_end_edges(doc: &LayoutSession<'_>, cell: &CellPlacement) -> f32 {
     let padding = style.padding().resolve_or_zero(Some(width));
     let border = style.border().resolve_or_zero(Some(width));
     padding.bottom + border.bottom
-}
-
-fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
-    let mut rows = vec![None; grid.rows.len()];
-    for cell in &grid.cells {
-        let start = cell.row as usize;
-        let end = (start + cell.row_span as usize).min(rows.len());
-        for row in &mut rows[start..end] {
-            *row = Some(
-                row.unwrap_or(true)
-                    && doc
-                        .ifc_layout_node(cell.node_id)
-                        .expect("table cell layout view")
-                        .hides_empty_table_cell,
-            );
-        }
-    }
-    rows.into_iter().map(|row| row.unwrap_or(false)).collect()
 }
 
 /// Grow `sizes` (row heights or column widths) until they sum to `target`,
@@ -3534,8 +4050,9 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
     let measure = |doc: &mut LayoutSession<'_>| {
         #[cfg(test)]
         tests::cell_scope_tests::before_measure(doc, cell.node_id);
-        doc.compute_child_layout(
-            NodeId::from(cell.node_id),
+        layout_cell_contents(
+            doc,
+            cell.node_id,
             LayoutInput {
                 run_mode: RunMode::PerformLayout,
                 sizing_mode: SizingMode::InherentSize,
@@ -3602,6 +4119,7 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         }
     });
     let h = output.size.height.max(authored_height);
+    cell.measured_height = h;
     let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
     cell.baseline =
         baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
@@ -3672,6 +4190,62 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
         })
 }
 
+/// The final border-box extent that horizontal cell contents align within.
+/// Block flow publishes its existing alignment size; an unfragmented IFC
+/// keeps the actual line extent even when its caller fixed the cell height.
+fn horizontal_cell_alignment_height(
+    doc: &LayoutSession<'_>,
+    cell: usize,
+    width: f32,
+) -> Option<f32> {
+    let node = doc.ifc_layout_node(cell)?;
+    if let Some(height) = node.auto_block_size {
+        return Some(height);
+    }
+    let root = node.ifc.as_ref()?;
+    if root.writing_mode != shodo::geometry::WritingMode::HorizontalTb
+        || node.multicol.is_some()
+        || root.multicol_fragments.is_some()
+    {
+        return None;
+    }
+    let lines = root.lines.as_ref()?;
+    if lines.fragmentainer_line_ranges.is_some() {
+        return None;
+    }
+    let style = doc.table_style(cell);
+    let padding = style.padding().resolve_or_zero(Some(width));
+    let border = style.border().resolve_or_zero(Some(width));
+    Some(lines.height + padding.top + padding.bottom + border.top + border.bottom)
+}
+
+/// Lay out a cell after its width has been assigned. A horizontal cell's
+/// maximum height constrains intrinsic width probes, but does not cap its
+/// row's content or the height the row gives its children. A vertical cell
+/// keeps its maximum height to constrain inline text wrapping. Descendant
+/// limits still apply.
+fn layout_cell_contents(
+    doc: &mut LayoutSession<'_>,
+    cell: usize,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    if table_writing_mode(doc, cell).is_vertical()
+        || doc.physical_style(cell).max_size().height.is_auto()
+    {
+        return doc.compute_child_layout(NodeId::from(cell), inputs);
+    }
+    let key = doc.nodes.box_key(cell).expect("cell has a box key");
+    let entry = raikiri_layout_style::OwnedPropertyOverride::length(
+        raikiri_layout_style::LengthProperty::MaxHeight,
+        raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+        false,
+    )
+    .expect("physical cell maximum height");
+    doc.with_overrides(vec![(key, entry)], |doc| {
+        doc.compute_child_layout(NodeId::from(cell), inputs)
+    })
+}
+
 struct CellPlacementTracks<'a> {
     column_widths: &'a [f32],
     column_gaps: &'a [f32],
@@ -3683,6 +4257,13 @@ struct CellPlacementTracks<'a> {
     row_origins: &'a [f32],
     row_spacing: f32,
     vertical_writing: bool,
+    /// The table states its own height, so the height of a cell is definite
+    /// for the percentage heights of the cell's children. A vertical table
+    /// keeps the height definite whatever it states.
+    height_is_definite: bool,
+    /// A resolved stretch reflows percentage descendants only in a cell
+    /// whose final block size grew beyond its measured natural size.
+    stretch_height_is_resolved: bool,
 }
 
 fn place_cells(
@@ -3690,7 +4271,7 @@ fn place_cells(
     grid: &mut TableGrid,
     tracks: CellPlacementTracks<'_>,
     oof_candidates: &mut OofCandidates,
-) -> Result<(), raikiri_traits::LayoutError> {
+) -> Result<Vec<(usize, OofCandidates)>, raikiri_traits::LayoutError> {
     let CellPlacementTracks {
         column_widths,
         column_gaps: col_gaps,
@@ -3702,9 +4283,12 @@ fn place_cells(
         row_origins: row_y,
         row_spacing,
         vertical_writing,
+        height_is_definite,
+        stretch_height_is_resolved,
     } = tracks;
     // A cell belongs to the row it starts in. One starting in a collapsed row
     // has no block extent, so it sets no baseline for the rows it spans.
+    let mut cell_candidates = Vec::new();
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
         let row = cell.row as usize;
@@ -3772,41 +4356,80 @@ fn place_cells(
             .row_pass
             .filter(|pass| pass.width == cell_width)
             .map(|pass| pass.scrollable_overflow_rect);
-        let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
-            (rect, OofCandidates::new())
-        } else {
-            let output = doc.compute_child_layout(
-                NodeId::from(cell.node_id),
-                LayoutInput {
-                    run_mode: RunMode::PerformLayout,
-                    sizing_mode: SizingMode::InherentSize,
-                    axis: RequestedAxis::Horizontal,
-                    known_dimensions: Size {
-                        width: Some(cell_width),
-                        height: Some(cell_height),
+        let mut resolved_natural_height = None;
+        let (scrollable_overflow_rect, mut child_candidates, laid_out_definite) =
+            if let Some(rect) = reused {
+                (rect, OofCandidates::new(), None)
+            } else {
+                // A row-derived height resolves percentage and stretch children
+                // only when it adds room beyond the cell's natural content.
+                // Feeding a content-determined height back into that content
+                // would grow it again. Vertical tables retain their inline-axis
+                // basis, which final column placement can change later.
+                // Summing fractional row tracks can add roundoff to a span
+                // whose content has not gained any independent room.
+                let grew = cell_height > cell.natural_height + SAME_EDGE_TOLERANCE;
+                let table_height_is_definite = vertical_writing
+                    || ((height_is_definite || stretch_height_is_resolved) && grew);
+                let cell_has_authored_height =
+                    resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
+                let cell_height_is_definite =
+                    table_height_is_definite || (grew && cell_has_authored_height);
+                // Only the layout of this pass may leave the height the content
+                // has: a cached one, or a cell that is not a block container,
+                // leaves none, and the height measured before stands.
+                doc.nodes[cell.node_id].auto_block_size = None;
+                let output = layout_cell_contents(
+                    doc,
+                    cell.node_id,
+                    LayoutInput {
+                        run_mode: RunMode::PerformLayout,
+                        sizing_mode: SizingMode::InherentSize,
+                        axis: RequestedAxis::Horizontal,
+                        known_dimensions: Size {
+                            width: Some(cell_width),
+                            height: Some(cell_height),
+                        },
+                        parent_size: Size {
+                            width: Some(cell_width),
+                            height: table_height_is_definite.then_some(cell_height),
+                        },
+                        available_space: Size {
+                            width: AvailableSpace::Definite(cell_width),
+                            height: AvailableSpace::Definite(cell_height),
+                        },
+                        known_dimensions_are_definite: Size {
+                            width: true,
+                            height: cell_height_is_definite,
+                        },
+                        vertical_margins_are_collapsible: Line::FALSE,
                     },
-                    parent_size: Size {
-                        width: Some(cell_width),
-                        height: Some(cell_height),
-                    },
-                    available_space: Size {
-                        width: AvailableSpace::Definite(cell_width),
-                        height: AvailableSpace::Definite(cell_height),
-                    },
-                    known_dimensions_are_definite: Size {
-                        width: true,
-                        height: true,
-                    },
-                    vertical_margins_are_collapsible: Line::FALSE,
-                },
-            );
-            (output.scrollable_overflow_rect, output.oof_candidates)
-        };
+                );
+                // The height the content has now that the row height made a
+                // percentage height of a child definite, which the alignment
+                // below follows.
+                let aligned_by_its_end = matches!(
+                    doc.ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .table_vertical_align,
+                    VerticalAlign::Middle | VerticalAlign::Bottom
+                );
+                // An authored cell height remains an independent basis even
+                // when its contents determined the row's final height.
+                resolved_natural_height = ((cell_height_is_definite || cell_has_authored_height)
+                    && aligned_by_its_end)
+                    .then(|| horizontal_cell_alignment_height(doc, cell.node_id, cell_width))
+                    .flatten();
+                (
+                    output.scrollable_overflow_rect,
+                    output.oof_candidates,
+                    Some((table_height_is_definite, cell_height_is_definite)),
+                )
+            };
         child_candidates.translate(Point {
             x: cell_x,
             y: cell_y,
         });
-        oof_candidates.append(&mut child_candidates);
         // A cell laid out by the inline engine has no child layouts: its
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
@@ -3817,7 +4440,8 @@ fn place_cells(
                 style.border().resolve_or_zero(Some(cell_width)),
             )
         };
-        let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
+        let cell_writing_mode = table_writing_mode(doc, cell.node_id);
+        let vertical_cell = cell_writing_mode.is_vertical();
         let collapsed_empty = first_kept.is_none()
             || cell_height == 0.0
                 && doc
@@ -3843,7 +4467,7 @@ fn place_cells(
         let extra = if vertical_cell {
             0.0
         } else {
-            (cell_height - cell.natural_height).max(0.0)
+            (cell_height - resolved_natural_height.unwrap_or(cell.natural_height)).max(0.0)
         };
         let shift = match doc
             .ifc_layout_node(cell.node_id)
@@ -3867,6 +4491,20 @@ fn place_cells(
             }
             _ => 0.0,
         };
+        cell.alignment = (!collapsed_empty && !vertical_cell).then(|| BlockAlignment {
+            height: cell_height,
+            natural: resolved_natural_height.unwrap_or(cell.natural_height),
+            shift,
+            laid_out_definite,
+        });
+        // Retained candidates start before alignment, just like the flow.
+        // The final pass later applies only the change of this initial shift.
+        if vertical_writing && !child_candidates.is_empty() {
+            child_candidates.translate(Point { x: 0.0, y: shift });
+            cell_candidates.push((cell.node_id, child_candidates));
+        } else {
+            oof_candidates.append(&mut child_candidates);
+        }
         padding.top += shift;
         padding.bottom += (extra - shift).max(0.0);
         for child in doc
@@ -3881,7 +4519,7 @@ fn place_cells(
                 doc.store_layout(child, &child_layout);
             }
         }
-        let layout = BoxLayout {
+        let mut layout = BoxLayout {
             order: order as u32,
             location: Point {
                 x: cell_x,
@@ -3897,6 +4535,19 @@ fn place_cells(
             border,
             margin: Edges::ZERO,
         };
+        if vertical_cell && !vertical_writing && !collapsed_empty && first_shown_column.is_some() {
+            // A vertical cell in a horizontal table aligns its content on the
+            // block axis of the cell, the physical width, not on the height
+            // of the row. A vertical table lays its cells out again at its own
+            // size, and aligns them the same way afterwards.
+            align_vertical_cell_on_block_axis(
+                doc,
+                cell.node_id,
+                cell_writing_mode,
+                cell_width,
+                &mut layout,
+            );
+        }
         cell.resolved = Some(layout);
         doc.store_layout(cell.node_id, &layout);
         if doc.is_anonymous_cell(cell.node_id) {
@@ -3914,7 +4565,51 @@ fn place_cells(
             }
         }
     }
-    Ok(())
+    Ok(cell_candidates)
+}
+
+/// The heights of the columns of a vertical table, which stack along its
+/// physical height: each is as high as the tallest cell that starts in it and
+/// spans no other column. A cell that spans several columns shares the height
+/// it lacks among them, once the narrower spans have settled, and the columns
+/// keep the `spacing` between them out of its height.
+fn vertical_column_tracks(grid: &TableGrid, spacing: f32) -> Vec<f32> {
+    let columns = usize::from(grid.n_cols);
+    let mut tracks = vec![0.0f32; columns];
+    let mut spanning = Vec::new();
+    for cell in &grid.cells {
+        let start = usize::from(cell.col_start).min(columns);
+        let end = start
+            .saturating_add(usize::from(cell.col_span))
+            .min(columns);
+        if end - start > 1 {
+            spanning.push((start..end, cell.measured_height));
+        } else if end > start {
+            tracks[start] = f32_max_compat(tracks[start], cell.measured_height);
+        }
+    }
+    spanning.sort_by_key(|(span, _)| (span.len(), span.start));
+    for (span, height) in spanning {
+        let current = spanned_size(&tracks[span.clone()], spacing);
+        if height > current {
+            grow_tracks(&mut tracks[span], height - current);
+        }
+    }
+    tracks
+}
+
+/// Adds `extra` to `tracks` in proportion to their sizes, or equally when none
+/// of them has any.
+fn grow_tracks(tracks: &mut [f32], extra: f32) {
+    let total: f32 = tracks.iter().sum();
+    let count = tracks.len() as f32;
+    for track in tracks.iter_mut() {
+        *track += if total > 0.0 {
+            extra * *track / total
+        } else {
+            extra / count
+        };
+    }
 }
 
 /// Re-map the already measured table grid from horizontal physical axes to
@@ -3924,151 +4619,366 @@ fn place_cells(
 fn reposition_cells_for_vertical_writing(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    row_heights: &[f32],
+    tracks: &[f32],
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
-) {
-    let vertical_track = row_heights.iter().sum::<f32>();
-    if !vertical_track.is_finite() || vertical_track <= 0.0 {
-        return; // cov:ignore: defensive empty/invalid vertical track fallback.
+    cell_candidates: Vec<(usize, OofCandidates)>,
+) -> OofCandidates {
+    let mut final_candidates = OofCandidates::new();
+    // Zero-height columns still place their cells, as in the measurement pass.
+    if !tracks.iter().sum::<f32>().is_finite() {
+        for (_, mut candidates) in cell_candidates {
+            final_candidates.append(&mut candidates);
+        }
+        return final_candidates; // cov:ignore: defensive invalid vertical track fallback.
     }
+    let mut batches = cell_candidates.into_iter().peekable();
     for cell in &mut grid.cells {
-        let col_start = cell.col_start as usize;
+        let mut candidates = if batches
+            .peek()
+            .is_some_and(|(node, _)| *node == cell.node_id)
+        {
+            batches.next().unwrap().1
+        } else {
+            OofCandidates::new()
+        };
+        let col_start = usize::from(cell.col_start).min(tracks.len());
         let col_end = col_start
-            .saturating_add(cell.col_span as usize)
-            .min(usize::from(grid.n_cols));
-        let col_span = col_end.saturating_sub(col_start).max(1);
-        let y = origin.y + (vertical_track + spacing) * col_start as f32;
-        let height = vertical_track * col_span as f32 + spacing * (col_span - 1) as f32;
+            .saturating_add(usize::from(cell.col_span))
+            .min(tracks.len());
+        let y = origin.y
+            + spanned_size(&tracks[..col_start], spacing)
+            + if col_start > 0 { spacing } else { 0.0 };
+        let height = spanned_size(&tracks[col_start..col_end], spacing);
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };
+        let old_location = layout.location;
         layout.location = Point { x: origin.x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
         let cell_writing_mode = table_writing_mode(doc, cell.node_id);
         if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
-            // its own block axis. Preserve the normal pass's vertical shift.
+            // its own block axis, the physical height, which is now the height
+            // of its column and no longer the one the row pass measured. What
+            // depends on that height is laid out again, and the room around
+            // the content is spread again.
+            let mut candidate_offset = Point {
+                x: origin.x - old_location.x,
+                y: y - old_location.y,
+            };
+            if let Some(alignment) = cell.alignment {
+                let relaid = match alignment.laid_out_definite {
+                    Some(definite) if (alignment.height - height).abs() > SAME_EDGE_TOLERANCE => {
+                        let (natural, fresh) = relayout_horizontal_cell(
+                            doc,
+                            cell.node_id,
+                            cell.natural_height,
+                            cell_width,
+                            definite,
+                            layout,
+                        );
+                        candidates = fresh;
+                        candidate_offset = Point { x: origin.x, y };
+                        Some(natural)
+                    }
+                    _ => None,
+                };
+                candidate_offset.y += realign_horizontal_cell(
+                    doc,
+                    cell.node_id,
+                    alignment,
+                    cell.baseline_from_flow,
+                    relaid,
+                    layout,
+                );
+            }
+            candidates.translate(candidate_offset);
+            final_candidates.append(&mut candidates);
             doc.store_layout(cell.node_id, layout);
             continue;
         }
         // Re-layout at the final physical dimensions before distributing
         // block-axis free space; the earlier horizontal measurement cannot
         // determine vertical content's occupied block extent.
-        doc.compute_child_layout(
-            NodeId::from(cell.node_id),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: RequestedAxis::Both,
-                known_dimensions: Size {
-                    width: Some(cell_width),
-                    height: Some(height),
-                },
-                parent_size: Size {
-                    width: Some(cell_width),
-                    height: Some(height),
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(cell_width),
-                    height: AvailableSpace::Definite(height),
-                },
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: true,
-                },
-                vertical_margins_are_collapsible: Line::FALSE,
+        let inputs = LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(cell_width),
+                height: Some(height),
             },
-        );
-        let node = doc
-            .ifc_layout_node(cell.node_id)
-            .expect("table cell layout view");
-        let style = doc.table_style(cell.node_id);
-        let mut padding = style.padding().resolve_or_zero(Some(cell_width));
-        let border = style.border().resolve_or_zero(Some(cell_width));
-        let direction = style.direction();
-        let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
-        let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
-        let natural = if has_lines {
-            lines.map_or(0.0, |lines| lines.height)
-                + padding.left
-                + padding.right
-                + border.left
-                + border.right
-        } else {
-            node.children
-                .iter()
-                .filter(|&&child| doc.nodes[child].layout_position() != Position::Absolute)
-                .map(|&child| {
-                    let child_style = doc.table_style(child);
-                    // Relative insets move ink after normal flow; they must
-                    // not consume the cell's alignment space. Taffy leaves
-                    // floated boxes at their normal positions, so their
-                    // paint-side offsets are not removed here.
-                    let offset = if child_style.float() == Float::None {
-                        let inner_width =
-                            cell_width - padding.left - padding.right - border.left - border.right;
-                        let inset = child_style.inset();
-                        let left = inset.left.maybe_resolve(Some(inner_width));
-                        let right = inset.right.maybe_resolve(Some(inner_width));
-                        if direction == Direction::Rtl {
-                            right.map(|right| -right).or(left).unwrap_or(0.0)
-                        } else {
-                            left.or(right.map(|right| -right)).unwrap_or(0.0)
-                        }
-                    } else {
-                        0.0
-                    };
-                    let child = &doc.ifc_layout_node(child).unwrap().layout;
-                    child.location.x - offset + child.size.width + child.margin.right
-                })
-                .fold(padding.left + border.left, f32::max)
-                + padding.right
-                + border.right
+            parent_size: Size {
+                width: Some(cell_width),
+                height: Some(height),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(cell_width),
+                height: AvailableSpace::Definite(height),
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
         };
-        let extra = (cell_width - natural).max(0.0);
-        let shift = match node.table_vertical_align {
-            VerticalAlign::Middle => extra / 2.0,
-            VerticalAlign::Bottom => extra,
-            _ => 0.0,
-        };
-        // Baseline-aligned block content retains its normal-flow placement;
-        // without an inline baseline, treating it as block-start alignment
-        // would move it across the entire physical cell in vertical-rl.
-        let rtl = matches!(
-            cell_writing_mode,
-            WritingMode::VerticalRl | WritingMode::SidewaysRl
-        ) && (has_lines || !cell_baseline_aligned(node.table_vertical_align));
-        let child_shift = if rtl {
-            if has_lines { -shift } else { extra - shift }
-        } else {
-            shift
-        };
-        if rtl {
-            padding.right += shift;
-            padding.left += extra - shift;
-        } else {
-            padding.left += shift;
-            padding.right += extra - shift;
-        }
-        for child in doc
-            .ifc_layout_node(cell.node_id)
-            .expect("table cell layout view")
-            .children
-            .clone()
-        {
-            if doc.nodes[child].layout_position() != Position::Absolute {
-                let mut layout = doc.nodes[child].layout;
-                layout.location.x += child_shift;
-                doc.store_layout(child, &layout);
-            }
-        }
-        layout.padding = padding;
-        layout.border = border;
+        let output = super::dispatch::with_final_vertical_table_cell(doc, cell.node_id, |doc| {
+            let mut output = layout_cell_contents(doc, cell.node_id, inputs);
+            let shift = align_vertical_cell_on_block_axis(
+                doc,
+                cell.node_id,
+                cell_writing_mode,
+                cell_width,
+                layout,
+            );
+            output.oof_candidates.translate(Point { x: shift, y: 0.0 });
+            super::dispatch::finish_vertical_block_oof(
+                doc,
+                NodeId::from(cell.node_id),
+                &inputs,
+                output,
+            )
+        });
+        // Replace the earlier batch: the final physical dimensions can change
+        // both static-position areas and which descendants the cell claims.
+        layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
+        candidates = output.oof_candidates;
+        candidates.translate(Point { x: origin.x, y });
+        final_candidates.append(&mut candidates);
         doc.store_layout(cell.node_id, layout);
     }
+    final_candidates
+}
+
+/// Lays a horizontal cell out again at the final size in `layout`, the way the
+/// row pass did at the height of its row, so that what depends on the height
+/// (a child with a percentage height) follows it. Returns the block size of the
+/// content to align and the new pending out-of-flow candidates.
+fn relayout_horizontal_cell(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    natural_height: f32,
+    cell_width: f32,
+    (table_height_is_definite, cell_height_is_definite): (bool, bool),
+    layout: &mut BoxLayout,
+) -> (f32, OofCandidates) {
+    let height = layout.size.height;
+    doc.nodes[cell_node].auto_block_size = None;
+    let output = layout_cell_contents(
+        doc,
+        cell_node,
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Horizontal,
+            known_dimensions: Size {
+                width: Some(cell_width),
+                height: Some(height),
+            },
+            parent_size: Size {
+                width: Some(cell_width),
+                height: table_height_is_definite.then_some(height),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(cell_width),
+                height: AvailableSpace::Definite(height),
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: cell_height_is_definite,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        },
+    );
+    layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
+    let aligned_by_its_end = matches!(
+        doc.ifc_layout_node(cell_node)
+            .expect("table cell layout view")
+            .table_vertical_align,
+        VerticalAlign::Middle | VerticalAlign::Bottom
+    );
+    let cell_has_authored_height =
+        resolve_dimension(doc.table_style(cell_node).size().height, None).is_some();
+    let natural = ((cell_height_is_definite || cell_has_authored_height) && aligned_by_its_end)
+        .then(|| horizontal_cell_alignment_height(doc, cell_node, cell_width))
+        .flatten()
+        .unwrap_or(natural_height);
+    (natural, output.oof_candidates)
+}
+
+/// Spreads the room a horizontal cell has around its content again, once the
+/// cell is `layout.size.height` high instead of the height the row pass aligned
+/// it in: the content moves by the change of the shift, and the padding that
+/// carries the room follows. `relaid` is the block size of the content when the
+/// cell was laid out again, which put its children back where no alignment has
+/// moved them. Returns the shift also applied to pending static positions.
+fn realign_horizontal_cell(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    alignment: BlockAlignment,
+    baseline_from_flow: bool,
+    relaid: Option<f32>,
+    layout: &mut BoxLayout,
+) -> f32 {
+    let node = doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view");
+    let natural = relaid.unwrap_or(alignment.natural);
+    let extra = (layout.size.height - natural).max(0.0);
+    let shift = match node.table_vertical_align {
+        VerticalAlign::Top => 0.0,
+        VerticalAlign::Middle => extra / 2.0,
+        VerticalAlign::Bottom => extra,
+        // The row's baseline set this shift. It stays where the row put it,
+        // but a cell with nothing in flow is not pushed past its own room.
+        _ if baseline_from_flow => alignment.shift,
+        _ => alignment.shift.min(extra),
+    };
+    let children = node.children.clone();
+    let row_extra = (alignment.height - alignment.natural).max(0.0);
+    layout.padding.top += shift - alignment.shift;
+    layout.padding.bottom += (extra - shift).max(0.0) - (row_extra - alignment.shift).max(0.0);
+    let placed = if relaid.is_some() {
+        0.0
+    } else {
+        alignment.shift
+    };
+    for child in children {
+        if doc.nodes[child].layout_position() != Position::Absolute {
+            let mut child_layout = doc.nodes[child].layout;
+            child_layout.location.y += shift - placed;
+            doc.store_layout(child, &child_layout);
+        }
+    }
+    shift - placed
+}
+
+/// Aligns the content of a vertical cell on the block axis of the cell, which
+/// is the physical width, once the cell is laid out at its final size: the free
+/// room is spread by the vertical alignment of the cell between the block-start
+/// and block-end sides, as padding and as a shift of the children.
+fn align_vertical_cell_on_block_axis(
+    doc: &mut LayoutSession<'_>,
+    cell_node: usize,
+    cell_writing_mode: WritingMode,
+    cell_width: f32,
+    layout: &mut BoxLayout,
+) -> f32 {
+    let node = doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view");
+    let style = doc.table_style(cell_node);
+    let mut padding = style.padding().resolve_or_zero(Some(cell_width));
+    let border = style.border().resolve_or_zero(Some(cell_width));
+    let direction = style.direction();
+    let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
+    let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
+    let rtl = matches!(
+        cell_writing_mode,
+        WritingMode::VerticalRl | WritingMode::SidewaysRl
+    );
+    // The left and right edges of the children in flow, with their margins.
+    let content_left = padding.left + border.left;
+    let (mut left_edge, mut right_edge) = (f32::INFINITY, content_left);
+    if !has_lines {
+        for &child in &node.children {
+            if doc.nodes[child].layout_position() == Position::Absolute {
+                continue;
+            }
+            let child_style = doc.table_style(child);
+            // Relative insets move ink after normal flow; they must not
+            // consume the cell's alignment space. Taffy leaves floated boxes
+            // at their normal positions, so their paint-side offsets are not
+            // removed here.
+            let offset = if child_style.float() == Float::None {
+                let inner_width =
+                    cell_width - padding.left - padding.right - border.left - border.right;
+                let inset = child_style.inset();
+                let left = inset.left.maybe_resolve(Some(inner_width));
+                let right = inset.right.maybe_resolve(Some(inner_width));
+                // Transposition resolves overconstraints from the block-start
+                // side, while the legacy physical pass uses direction.
+                let reverse = if doc.nodes[cell_node]
+                    .flags
+                    .contains(crate::node::NodeFlags::FINAL_VERTICAL_TABLE_CELL)
+                {
+                    rtl
+                } else {
+                    direction == Direction::Rtl
+                };
+                if reverse {
+                    right.map(|right| -right).or(left).unwrap_or(0.0)
+                } else {
+                    left.or(right.map(|right| -right)).unwrap_or(0.0)
+                }
+            } else {
+                0.0
+            };
+            let child = &doc.ifc_layout_node(child).unwrap().layout;
+            left_edge = left_edge.min(child.location.x - offset - child.margin.left);
+            right_edge =
+                right_edge.max(child.location.x - offset + child.size.width + child.margin.right);
+        }
+    }
+    // The block-start side of a `vertical-rl` cell is on the right. Content
+    // the layout placed against it, as the lines of a block with text are,
+    // takes only the room between its edges and the right side; content it
+    // placed against the left side is taken to reach from there.
+    let right_anchored = rtl && !has_lines && left_edge.is_finite() && {
+        let content_right = cell_width - padding.right - border.right;
+        (content_right - right_edge).abs() < SAME_EDGE_TOLERANCE
+    };
+    let natural = if has_lines {
+        lines.map_or(0.0, |lines| lines.height)
+            + padding.left
+            + padding.right
+            + border.left
+            + border.right
+    } else if right_anchored {
+        right_edge - left_edge + padding.left + padding.right + border.left + border.right
+    } else {
+        right_edge + padding.right + border.right
+    };
+    let extra = (cell_width - natural).max(0.0);
+    let shift = match node.table_vertical_align {
+        VerticalAlign::Middle => extra / 2.0,
+        VerticalAlign::Bottom => extra,
+        _ => 0.0,
+    };
+    let child_shift = if rtl {
+        if has_lines || right_anchored {
+            -shift
+        } else {
+            extra - shift
+        }
+    } else {
+        shift
+    };
+    if rtl {
+        padding.right += shift;
+        padding.left += extra - shift;
+    } else {
+        padding.left += shift;
+        padding.right += extra - shift;
+    }
+    for child in doc
+        .ifc_layout_node(cell_node)
+        .expect("table cell layout view")
+        .children
+        .clone()
+    {
+        if doc.nodes[child].layout_position() != Position::Absolute {
+            let mut child_layout = doc.nodes[child].layout;
+            child_layout.location.x += child_shift;
+            doc.store_layout(child, &child_layout);
+        }
+    }
+    layout.padding = padding;
+    layout.border = border;
+    child_shift
 }
 
 // ---------------------------------------------------------------------------
@@ -4136,79 +5046,281 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
     resolve_dimension(width, Some(avail))
 }
 
-/// Fixed column sizing: no content measurement.
-///
-/// `avail` is the table width net of padding + outer (collapsed) borders.
-/// Per §17.5.2.1, a first-row cell with `colspan == 1` and a specified
-/// `width` (length or percentage-of-table-width) fixes its column; all
-/// remaining columns divide the leftover equally. A `<col>` width fixes a
-/// column that no such cell fixed. Specified widths in non-first rows and
-/// `colspan > 1` first-row widths are ignored. Leftover underflow clamps unfixed
-/// columns to zero (the table overflows rather than shrinking fixed
-/// columns).
-fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
-    let n = grid.n_cols as usize;
-    let mut fixed: Vec<Option<f32>> = vec![None; n];
-    // A specified `<col>` width takes priority over first-row cell widths
-    // (CSS 2.1 §17.5.2.1).
-    // Percentages resolve against the same avail basis as cell percentages.
-    for (c, sz) in grid.col_widths.iter().enumerate() {
-        if c >= n {
-            continue;
-        }
-        let minimum = resolve_dimension(sz.min_width, None);
-        let maximum = resolve_dimension(sz.max_width, None);
-        if let Some(mut x) = fixed_column_width(sz.width, avail) {
-            if let Some(minimum) = minimum {
-                x = f32_max_compat(x, minimum);
-            }
-            if let Some(maximum) = maximum
-                && !minimum.is_some_and(|minimum| minimum > maximum)
-            {
-                x = x.min(maximum);
-            }
-            fixed[c] = Some(x);
+/// A percentage share and its content-box border and padding contribution.
+#[derive(Clone, Copy, Debug)]
+struct FixedPercent {
+    share: f32,
+    edges: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FixedColumn {
+    width: Option<f32>,
+    percent: Option<FixedPercent>,
+    floor: f32,
+    ceiling: Option<f32>,
+}
+
+impl FixedColumn {
+    fn constrain(self, width: f32) -> f32 {
+        self.ceiling
+            .map_or(width, |ceiling| width.min(ceiling))
+            .max(self.floor)
+    }
+
+    fn minimum(self) -> f32 {
+        if self.percent.is_some() {
+            self.floor
+        } else {
+            self.width.unwrap_or(self.floor)
         }
     }
-    // First-row cells set widths only for columns without a specified `<col>` width.
+}
+
+fn fixed_percent(width: Dimension, edges: f32) -> Option<FixedPercent> {
+    match width.expand() {
+        ExpandedDimension::Percent(share) => Some(FixedPercent { share, edges }),
+        _ => None,
+    }
+}
+
+/// Preferred widths and their origins, before distributing the table's room.
+fn fixed_column_constraints(grid: &TableGrid, avail: f32) -> Vec<FixedColumn> {
+    let n = usize::from(grid.n_cols);
+    let mut columns = vec![FixedColumn::default(); n];
+    // A column's length takes precedence over the first row's cells.
+    // A percentage column keeps the larger column or first-row percentage.
+    for (column, sizing) in columns.iter_mut().zip(&grid.col_widths) {
+        if let Some(width) = fixed_column_width(sizing.width, avail) {
+            let minimum = resolve_dimension(sizing.min_width, None);
+            let maximum = resolve_dimension(sizing.max_width, None);
+            column.floor = minimum.unwrap_or(0.0);
+            column.ceiling =
+                maximum.filter(|&maximum| !minimum.is_some_and(|minimum| minimum > maximum));
+            column.width = Some(column.constrain(width));
+            column.percent = fixed_percent(sizing.width, 0.0);
+        }
+    }
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span != 1 {
             continue;
         }
-        let c = cell.col_start as usize;
-        if c < n && fixed[c].is_none() {
-            fixed[c] = fixed_column_width(cell.specified_width, avail);
+        if let Some(column) = columns.get_mut(usize::from(cell.col_start)) {
+            let percent = fixed_percent(cell.specified_width, cell.percent_border_padding);
+            let larger_percent = column
+                .percent
+                .zip(percent)
+                .is_some_and(|(column, cell)| cell.share > column.share);
+            if (column.width.is_none() || larger_percent)
+                && let Some(width) = fixed_column_width(cell.specified_width, avail)
+            {
+                column.percent = percent;
+                column.width = Some(width + percent.map_or(0.0, |percent| percent.edges));
+            }
         }
     }
-    // A `<col>` minimum fixes an otherwise unspecified column.
-    for (c, sz) in grid.col_widths.iter().enumerate() {
-        if c >= n || fixed[c].is_some() {
+    // A column minimum supplies a preferred width only if neither a column
+    // width nor a first-row cell has already supplied one.
+    for (column, sizing) in columns.iter_mut().zip(&grid.col_widths) {
+        if column.width.is_none()
+            && let Some(minimum) = resolve_dimension(sizing.min_width, None)
+        {
+            column.floor = minimum;
+            column.ceiling =
+                resolve_dimension(sizing.max_width, None).filter(|&maximum| minimum <= maximum);
+            column.width = Some(column.constrain(minimum));
+        }
+    }
+    for cell in &grid.cells {
+        if cell.row == 0
+            && cell.col_span == 1
+            && let Some(column) = columns.get_mut(usize::from(cell.col_start))
+        {
+            column.floor = column
+                .floor
+                .max(resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0));
+            column.width = column.width.map(|width| width.max(column.floor));
+        }
+    }
+    for cell in &grid.cells {
+        if cell.row != 0 || cell.col_span <= 1 {
             continue;
         }
-        let minimum = resolve_dimension(sz.min_width, None);
-        let maximum = resolve_dimension(sz.max_width, None);
-        if let Some(mut x) = minimum {
-            if let Some(maximum) = maximum
-                && !minimum.is_some_and(|minimum| minimum > maximum)
+        let Some(width) = fixed_column_width(cell.specified_width, avail) else {
+            continue;
+        };
+        let range =
+            cell_column_range(cell, n).expect("validated table cell spans existing columns");
+        let count = range.len() as f32;
+        for column in &mut columns[range] {
+            if column.width.is_none() {
+                column.width = Some((width / count).max(column.floor));
+                column.percent =
+                    fixed_percent(cell.specified_width, 0.0).map(|percent| FixedPercent {
+                        share: percent.share / count,
+                        edges: 0.0,
+                    });
+            }
+        }
+    }
+    columns
+}
+
+fn fixed_percent_scale(columns: &[FixedColumn]) -> f32 {
+    let sum: f32 = columns
+        .iter()
+        .filter_map(|column| column.percent)
+        .map(|percent| percent.share)
+        .sum();
+    if sum > 1.0 { 1.0 / sum } else { 1.0 }
+}
+
+/// Intrinsic sizes of a fixed table use declared lengths for constrained
+/// columns. Only auto and percentage columns need max-content measurement.
+fn fixed_intrinsic_width(
+    doc: &mut LayoutSession<'_>,
+    grid: &TableGrid,
+    spacing: f32,
+    insets: f32,
+    maximum: bool,
+) -> f32 {
+    let mut grid = grid.clone();
+    normalize_fixed_cells(doc, &mut grid, 0.0, spacing);
+    let columns = fixed_column_constraints(&grid, 0.0);
+    let minimum: f32 = columns.iter().map(|column| column.minimum()).sum();
+    if !maximum {
+        return minimum + insets;
+    }
+    let mut max_widths: Vec<_> = columns.iter().map(|column| column.minimum()).collect();
+    let mut known: Vec<_> = columns
+        .iter()
+        .map(|column| column.width.is_some() && column.percent.is_none())
+        .collect();
+    for cell in grid.cells.iter().filter(|cell| cell.row == 0) {
+        let range = cell_column_range(cell, columns.len()).expect("validated fixed intrinsic grid");
+        if range.clone().all(|column| known[column]) {
+            continue;
+        }
+        let contribution = if let ExpandedDimension::Length(width) = cell.specified_width.expand() {
+            let style = doc.table_style(cell.node_id);
+            let padding = style.padding().resolve_or_zero(Some(0.0));
+            let border = style.border().resolve_or_zero(Some(0.0));
+            let edges = padding.left + padding.right + border.left + border.right;
+            let maximum = resolve_dimension(style.max_size().width.into(), None).map(|maximum| {
+                let outer = if style.box_sizing() == BoxSizing::ContentBox {
+                    maximum + edges
+                } else {
+                    maximum.max(edges)
+                };
+                (outer - spacing * f32::from(cell.col_span.saturating_sub(1))).max(0.0)
+            });
+            maximum.map_or(width, |maximum| width.min(maximum))
+        } else {
+            let outer = measure_cell_inline(
+                doc,
+                cell.node_id,
+                AvailableSpace::MAX_CONTENT,
+                SizingMode::ContentSize,
+            );
+            (outer - spacing * f32::from(cell.col_span.saturating_sub(1))).max(0.0)
+        } / f32::from(cell.col_span);
+        for column in range {
+            if !known[column] {
+                max_widths[column] = max_widths[column].max(contribution);
+                known[column] = true;
+            }
+        }
+    }
+    let scale = fixed_percent_scale(&columns);
+    let shares: Vec<_> = columns
+        .iter()
+        .map(|column| column.percent.map_or(0.0, |percent| percent.share * scale))
+        .collect();
+    let percent_max: Vec<_> = columns
+        .iter()
+        .zip(&max_widths)
+        .map(|(column, &width)| {
+            (width - column.percent.map_or(0.0, |percent| percent.edges)).max(0.0)
+        })
+        .collect();
+    let maximum = percent_columns_max_content_width(max_widths.iter().sum(), &percent_max, &shares);
+    // A full percentage allocation leaves no finite intrinsic width for
+    // length columns. Match Chromium's finite table intrinsic fallback so
+    // later percentage distribution cannot produce infinity minus infinity.
+    let maximum = if maximum.is_infinite() {
+        1_000_000.0
+    } else {
+        maximum
+    };
+    maximum.max(minimum) + insets
+}
+
+/// Distribute the fixed table's room before removing collapsed columns.
+/// Lengths share excess space after percentages; auto columns take the
+/// remainder. Percentages shrink if the assigned lengths leave less room.
+fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32, overlap: f32) -> Vec<f32> {
+    // Internal border overlap compensates for the full-border cell model;
+    // it is not extra space to distribute among explicitly sized columns.
+    let surplus_target = (avail - overlap).max(0.0);
+    let minimum: f32 = fixed_column_constraints(grid, 0.0)
+        .iter()
+        .map(|column| column.minimum())
+        .sum();
+    let avail = avail.max(minimum);
+    let columns = fixed_column_constraints(grid, avail);
+    let n = columns.len();
+    let scale = fixed_percent_scale(&columns);
+    let mut fixed: Vec<_> = columns
+        .iter()
+        .map(|column| {
+            if let Some(percent) = column.percent {
+                Some(column.constrain(percent.share * scale * avail + percent.edges))
+            } else {
+                column.width
+            }
+        })
+        .collect();
+    let mut floors: Vec<_> = columns.iter().map(|column| column.floor).collect();
+    let automatic_count = columns
+        .iter()
+        .filter(|column| column.width.is_none())
+        .count();
+    let length_sum: f32 = columns
+        .iter()
+        .zip(&fixed)
+        .filter(|(column, _)| column.percent.is_none())
+        .filter_map(|(_, width)| *width)
+        .sum();
+    let percent_sum: f32 = columns
+        .iter()
+        .zip(&fixed)
+        .filter(|(column, _)| column.percent.is_some())
+        .filter_map(|(_, width)| *width)
+        .sum();
+    if automatic_count == 0 && length_sum > 0.0 {
+        let extra = (surplus_target - percent_sum - length_sum).max(0.0);
+        for (column, width) in columns.iter().zip(&mut fixed) {
+            if column.percent.is_none()
+                && let Some(width) = width
             {
-                x = x.min(maximum);
-            }
-            fixed[c] = Some(x);
-        }
-    }
-    let mut floors = vec![0.0_f32; n];
-    for cell in &grid.cells {
-        if cell.row == 0 && cell.col_span == 1 {
-            let c = usize::from(cell.col_start);
-            if c < n {
-                floors[c] = floors[c]
-                    .max(resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0));
+                *width += extra * *width / length_sum;
             }
         }
     }
-    for (column, floor) in fixed.iter_mut().zip(&floors) {
-        if let Some(width) = column {
-            *width = width.max(*floor);
+    let assigned_lengths: f32 = columns
+        .iter()
+        .zip(&fixed)
+        .filter(|(column, _)| column.percent.is_none())
+        .filter_map(|(_, width)| *width)
+        .sum();
+    let percent_room = (avail - assigned_lengths).max(0.0);
+    if percent_sum > percent_room {
+        for (column, width) in columns.iter().zip(&mut fixed) {
+            if column.percent.is_some()
+                && let Some(width) = width
+            {
+                *width = (*width * percent_room / percent_sum).max(column.floor);
+            }
         }
     }
     let fixed_sum: f32 = fixed.iter().flatten().sum();
@@ -4230,6 +5342,25 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
         .collect();
+    // With no positive length or auto columns, percentages share the excess.
+    if automatic.is_empty() && length_sum == 0.0 {
+        let has_percent = columns.iter().any(|column| column.percent.is_some());
+        let selected: Vec<_> = columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| !has_percent || column.percent.is_some())
+            .map(|(index, _)| index)
+            .collect();
+        let total: f32 = selected.iter().map(|&index| widths[index]).sum();
+        let extra = (surplus_target - widths.iter().sum::<f32>()).max(0.0);
+        for &index in &selected {
+            widths[index] += if total > 0.0 {
+                extra * widths[index] / total
+            } else {
+                extra / selected.len() as f32
+            };
+        }
+    }
     // The first row's spanning cells, as their columns and minimum width.
     let first_row_spans: Vec<(usize, usize, f32)> = grid
         .cells
@@ -4301,8 +5432,9 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
 /// - `col_overlaps[i]` — width absorbed between column `i` and `i + 1`
 ///   (length `n_cols - 1`; empty for ≤1 column).
 /// - `row_overlaps[j]` — same between row `j` and `j + 1`.
-/// - `outer_*` — collapsed outer border on each side (max of the table's
-///   own border and the edge cells' adjoining borders).
+/// - `outer_*` — the space the table keeps outside the cells on each side:
+///   the width its own border has beyond the narrowest border of the edge
+///   cells, which the box of each of those cells already contains.
 ///
 /// Separate model: all overlaps zero and outers equal the table's own
 /// border widths ([`CollapsedLines::separate`]).
@@ -4321,6 +5453,25 @@ impl CollapsedLines {
     /// outer left and right borders, less the overlaps between columns.
     fn inline_border_width(&self) -> f32 {
         self.outer_left + self.outer_right - self.col_overlaps.iter().sum::<f32>()
+    }
+
+    /// Turn the narrowest border of the cells along each edge, which `outer_*`
+    /// holds (infinite where no cell reaches the edge), into the width the
+    /// table's own border reaches beyond it. The border of an edge cell is
+    /// part of the box of the cell, so the table keeps outside the cells only
+    /// what its own border has beyond theirs; counting both would take the
+    /// border of the cells twice. A cell the table's border wins over has none
+    /// of its own, and the narrowest border is what keeps its content from
+    /// reaching under the table's.
+    fn extend_beyond_edge_cells(&mut self, table_border: &Edges<f32>) {
+        let beyond = |table: f32, cells: f32| {
+            let cells = if cells.is_finite() { cells } else { 0.0 };
+            (table - cells).max(0.0)
+        };
+        self.outer_left = beyond(table_border.left, self.outer_left);
+        self.outer_right = beyond(table_border.right, self.outer_right);
+        self.outer_top = beyond(table_border.top, self.outer_top);
+        self.outer_bottom = beyond(table_border.bottom, self.outer_bottom);
     }
 
     fn separate(table_border: &Edges<f32>) -> Self {
@@ -4727,6 +5878,7 @@ fn resolve_collapsed_borders(
 /// columns that remain give them.
 #[derive(Debug)]
 struct ColumnsInPlace {
+    overlap_width: f32,
     /// [`CollapsedLines::inline_border_width`] with every column in place.
     border_width: f32,
     /// [`CollapsedLines::row_overlaps`] of the cells with the borders `in_place`
@@ -4752,6 +5904,7 @@ impl ColumnsInPlace {
     fn new(
         shown: &TableGrid,
         border_width: f32,
+        overlap_width: f32,
         mut in_place: BorderState,
         remaining: BorderState,
     ) -> Self {
@@ -4768,6 +5921,7 @@ impl ColumnsInPlace {
         }
         Self {
             border_width,
+            overlap_width,
             row_overlaps: Vec::new(),
             in_place,
             remaining,
@@ -4876,13 +6030,13 @@ fn border_width_with_columns_in_place(
     shown: &TableGrid,
     table_idx: usize,
     metrics: (&Edges<f32>, Option<f32>),
-) -> (f32, BorderState) {
+) -> (f32, f32, BorderState) {
     let (table_border, basis) = metrics;
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
     if rows_shown.rows.is_empty() {
         // Nothing shows, so no cell border meets the table's own.
         state.reset_authored(doc, grid);
-        return (table_border.left + table_border.right, state.clone());
+        return (table_border.left + table_border.right, 0.0, state.clone());
     }
     let index = CellIndex::new(&rows_shown);
     state.reset_authored(doc, grid);
@@ -4890,7 +6044,11 @@ fn border_width_with_columns_in_place(
     let lines = compute_collapsed_lines(doc, state, &rows_shown, &index, table_border, basis);
     let in_place = state.clone();
     state.reset_authored(doc, shown);
-    (lines.inline_border_width(), in_place)
+    (
+        lines.inline_border_width(),
+        lines.col_overlaps.iter().sum(),
+        in_place,
+    )
 }
 
 fn compute_collapsed_lines(
@@ -4921,10 +6079,10 @@ fn compute_collapsed_lines(
         let mut lines = CollapsedLines {
             col_overlaps: vec![0.0; n.saturating_sub(1)],
             row_overlaps: vec![0.0; m.saturating_sub(1)],
-            outer_left: table_border.left,
-            outer_right: table_border.right,
-            outer_top: table_border.top,
-            outer_bottom: table_border.bottom,
+            outer_left: f32::INFINITY,
+            outer_right: f32::INFINITY,
+            outer_top: f32::INFINITY,
+            outer_bottom: f32::INFINITY,
         };
         for segment in &segments.vertical {
             let a = segment.leading;
@@ -4933,11 +6091,11 @@ fn compute_collapsed_lines(
             let right = &grid.cells[b];
             if segment.boundary == 0 {
                 if left.col_start == 0 {
-                    lines.outer_left = f32_max_compat(lines.outer_left, borders[a].left);
+                    lines.outer_left = lines.outer_left.min(borders[a].left);
                 }
             } else if segment.boundary == n {
                 if usize::from(left.col_start + left.col_span) == n {
-                    lines.outer_right = f32_max_compat(lines.outer_right, borders[a].right);
+                    lines.outer_right = lines.outer_right.min(borders[a].right);
                 }
             } else if usize::from(left.col_start + left.col_span) == segment.boundary
                 && usize::from(right.col_start) == segment.boundary
@@ -4960,14 +6118,15 @@ fn compute_collapsed_lines(
         // Keep the original placement order and visibility rules at these edges.
         for (pos, cell) in grid.cells.iter().enumerate() {
             if cell.row == 0 {
-                lines.outer_top = f32_max_compat(lines.outer_top, borders[pos].top);
+                lines.outer_top = lines.outer_top.min(borders[pos].top);
             }
         }
         for (pos, cell) in grid.cells.iter().enumerate() {
             if m > 0 && usize::from(cell.row) + usize::from(cell.row_span) == m {
-                lines.outer_bottom = f32_max_compat(lines.outer_bottom, borders[pos].bottom);
+                lines.outer_bottom = lines.outer_bottom.min(borders[pos].bottom);
             }
         }
+        lines.extend_beyond_edge_cells(table_border);
         return lines;
     }
 
@@ -4975,15 +6134,15 @@ fn compute_collapsed_lines(
     // the collapsed line is the max of adjoining borders, and the overlap
     // (absorbed width) is the row-wise max of the pairwise min.
     let mut col_overlaps = vec![0.0f32; n.saturating_sub(1)];
-    let mut outer_left = table_border.left;
-    let mut outer_right = table_border.right;
+    let mut outer_left = f32::INFINITY;
+    let mut outer_right = f32::INFINITY;
     for i in 0..=n {
         if i == 0 {
             for r in 0..m {
                 if let Some((pos, c)) = cell_at(grid, index, r as u16, 0)
                     && c.col_start == 0
                 {
-                    outer_left = f32_max_compat(outer_left, borders[pos].left);
+                    outer_left = outer_left.min(borders[pos].left);
                 }
             }
         } else if i == n {
@@ -4991,7 +6150,7 @@ fn compute_collapsed_lines(
                 if let Some((pos, c)) = cell_at(grid, index, r as u16, (n as u16).saturating_sub(1))
                     && c.col_start + c.col_span == n as u16
                 {
-                    outer_right = f32_max_compat(outer_right, borders[pos].right);
+                    outer_right = outer_right.min(borders[pos].right);
                 }
             }
         } else {
@@ -5012,12 +6171,12 @@ fn compute_collapsed_lines(
 
     // Horizontal boundaries 0..=m, symmetric.
     let mut row_overlaps = vec![0.0f32; m.saturating_sub(1)];
-    let mut outer_top = table_border.top;
-    let mut outer_bottom = table_border.bottom;
+    let mut outer_top = f32::INFINITY;
+    let mut outer_bottom = f32::INFINITY;
     for j in 0..=m {
         if j == 0 {
             for (pos, _) in grid.cells.iter().enumerate().filter(|(_, c)| c.row == 0) {
-                outer_top = f32_max_compat(outer_top, borders[pos].top);
+                outer_top = outer_top.min(borders[pos].top);
             }
         } else if j == m {
             for (pos, _) in grid
@@ -5026,7 +6185,7 @@ fn compute_collapsed_lines(
                 .enumerate()
                 .filter(|(_, c)| c.row as usize + c.row_span as usize == m)
             {
-                outer_bottom = f32_max_compat(outer_bottom, borders[pos].bottom);
+                outer_bottom = outer_bottom.min(borders[pos].bottom);
             }
         } else {
             let mut ov = 0.0f32;
@@ -5044,14 +6203,16 @@ fn compute_collapsed_lines(
         }
     }
 
-    CollapsedLines {
+    let mut lines = CollapsedLines {
         col_overlaps,
         row_overlaps,
         outer_left,
         outer_right,
         outer_top,
         outer_bottom,
-    }
+    };
+    lines.extend_beyond_edge_cells(table_border);
+    lines
 }
 
 #[cfg(test)]

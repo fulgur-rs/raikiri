@@ -93,17 +93,22 @@ intra-doc links); a visible type that `--exhaustive` lists and that the
 document does not list between its `value-types` markers; and a listed value
 type that `--exhaustive` does not list (it has `#[non_exhaustive]` now, or is
 hidden or gone). The value types are the ones that stay exhaustive on purpose,
-so the report says whether every other type has the attribute. It is a report,
-not part of the gate: a name it lists is either hidden with `#[doc(hidden)]` or
-added to the list because the consumer needs it, and a type is given
-`#[non_exhaustive]` or listed as a value type.
+so the report says whether every other type has the attribute. A name it lists
+is either hidden with `#[doc(hidden)]` or added to the list because the
+consumer needs it, and a type is given `#[non_exhaustive]` or listed as a value
+type.
+
+Without one of these options the run is the gate: it runs the Taffy and
+third-party check and then the `--first-tier` report on the same JSON, prints
+both, and fails if either finds something.
 
 `--json-dir DIR` reads the JSON files from DIR (named `<crate with _>.json`)
 instead of running cargo.
 
-Exit status: 0 on pass, 1 when an item names a Taffy type, 2 on a tooling error
-(cargo failed, a JSON file is missing or of an unknown format, the walker went
-blind).
+Exit status: 0 on pass, 1 when an item names a Taffy type, a published crate
+names an unlisted crate or the first-tier report is not empty, 2 on a tooling
+error (cargo failed, a JSON file or `docs/public-api.md` is missing or of an
+unknown format, the walker went blind).
 """
 
 from __future__ import annotations
@@ -722,7 +727,14 @@ def main(argv: list[str] | None = None) -> int:
             }
             sys.stdout.write(surface.format_usage(surface.scan_usage(args.usage, surfaces), surfaces))
             return 0
-        return run_check(json_dir, args.verbose)
+        # The gate runs both checks without stopping at the first failure, so a
+        # change that breaks both sees the whole report in one run.
+        checked = run_check(json_dir, args.verbose)
+        # The first-tier verdict goes to stderr; flush so that a log of both
+        # streams shows the two reports in order.
+        sys.stdout.flush()
+        first_tier = run_first_tier(args.repo_root, json_dir)
+        return max(checked, first_tier)
     except ToolError as error:
         print(f"public-api-lint: error: {error}", file=sys.stderr)
         return 2

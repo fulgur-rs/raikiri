@@ -112,7 +112,7 @@ fn a_block_taller_than_a_page_is_judged_by_its_first_line() {
 fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
     // Four 10px lines from y=70 on a page that ends at 100: three fit.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
-    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(fit.total_lines, 4);
     assert!(fit.starts_on_page);
     assert_eq!(fit.lines_before_break, 3);
@@ -121,17 +121,17 @@ fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
     assert!(fit.violates_line_constraints);
 
     // Non-positive values are used as 1, so a single widow is enough.
-    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 0, -1);
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 0, -1, 0.0);
     assert_eq!((fit.orphans, fit.widows), (1, 1));
     assert!(!fit.violates_line_constraints);
 
     // Lines that all fit need no break, whatever the constraints.
-    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 5, 5);
+    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 5, 5, 0.0);
     assert_eq!(fit.lines_before_break, 4);
     assert!(!fit.violates_line_constraints);
 
     // A first line that starts at the page end belongs to a later page.
-    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 1, 1);
+    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 1, 1, 0.0);
     assert!(!fit.starts_on_page);
     assert_eq!(fit.lines_before_break, 0);
 }
@@ -16116,13 +16116,13 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let pages = PageOrigins::new(&[], 100.0);
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
-    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
-    // Four lines hold two orphans and two widows, so the widows stay at two.
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2, 0.0);
+    // The used widows are the computed ones.
     assert_eq!(fit.widows, 2);
     // Room for both constraints and shiftable lines: the break moves up.
     assert_eq!(
         fit.fix(&lines, 70.0, 0, &pages, true, || true),
-        LineBreakFix::MoveLines([Some((2, 10.0, 1)), None])
+        LineBreakFix::MoveLines(vec![(2, 10.0, 1)])
     );
     // Lines that cannot shift fall back to moving the whole block.
     assert_eq!(
@@ -16136,45 +16136,45 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     );
     // Too few lines for the orphans never ask whether lines can shift.
     let short = [(0.0, 10.0), (10.0, 20.0)];
-    let fit = ParagraphLineFit::measure(&short, 90.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&short, 90.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&short, 90.0, 0, &pages, true, || unreachable!()),
         LineBreakFix::MoveBlock
     );
     let three = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
-    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 3, 1);
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 3, 1, 0.0);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || unreachable!()),
         LineBreakFix::MoveBlock
     );
     // Three lines under the default orphans and widows of 2: the paragraph
     // keeps its orphans and the last piece takes the one line they leave.
-    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || true),
         LineBreakFix::Keep
     );
     // With one orphan and two widows the break moves up to leave two lines.
-    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2);
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2, 0.0);
     assert_eq!(
         fit.fix(&three, 80.0, 0, &pages, true, || true),
-        LineBreakFix::MoveLines([Some((1, 10.0, 1)), None])
+        LineBreakFix::MoveLines(vec![(1, 10.0, 1)])
     );
     // A break that honors both constraints needs no repair.
-    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&lines, 60.0, 0, &pages, true, || true),
         LineBreakFix::Keep
     );
     // A paragraph that starts on a later page is left alone.
-    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&lines, 100.0, 0, &pages, true, || true),
         LineBreakFix::Keep
     );
     // A single orphan has no break to move up, so allowed lines still fall
     // back to the block, or to the natural break when it cannot move.
-    let fit = ParagraphLineFit::measure(&lines, 90.0, 0.0, 100.0, 2, 1);
+    let fit = ParagraphLineFit::measure(&lines, 90.0, 0.0, 100.0, 2, 1, 0.0);
     assert_eq!(
         fit.fix(&lines, 90.0, 0, &pages, true, || true),
         LineBreakFix::MoveBlock
@@ -16188,11 +16188,248 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let long: Vec<(f32, f32)> = (0..14)
         .map(|line| (line as f32 * 10.0, line as f32 * 10.0 + 10.0))
         .collect();
-    let fit = ParagraphLineFit::measure(&long, 70.0, 0.0, 100.0, 2, 2);
+    let fit = ParagraphLineFit::measure(&long, 70.0, 0.0, 100.0, 2, 2, 0.0);
     assert_eq!(
         fit.fix(&long, 70.0, 0, &pages, false, || true),
-        LineBreakFix::MoveLines([None, Some((12, 10.0, 2))])
+        LineBreakFix::MoveLines(vec![(12, 10.0, 2)])
     );
+}
+
+#[test]
+fn paragraph_line_moves_start_each_page_with_the_line_that_does_not_fit() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // Seven 30px lines. Each page of 100px holds three, and the line after
+    // them crosses the page end, so it starts the next page 10px lower.
+    let lines: Vec<(f32, f32)> = (0..7)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    // Lines that fit need no move.
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 1, 1, 0.0, &pages),
+        Vec::new()
+    );
+    // One orphan and one widow: the line that crosses each end moves, and the
+    // lines after it follow with it.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 1, 1, 0.0, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // The first line of a paragraph is never pushed, as the block holding it
+    // moves instead, and a line that the flow already carries past the page
+    // end is not either.
+    assert_eq!(
+        paragraph_line_moves(&lines[..2], 80.0, 0, 1, 1, 0.0, &pages),
+        Vec::new()
+    );
+    // The last page would hold one line, fewer than the two widows the default
+    // asks for: the page before gives up its last line, which it can spare
+    // and keep its two orphans.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 2, 2, 0.0, &pages),
+        vec![(3, 10.0, 1), (5, 40.0, 2)]
+    );
+    // Three widows ask for more than the page before can spare and still keep
+    // its two orphans, so it gives up the one line it can.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 2, 3, 0.0, &pages),
+        vec![(3, 10.0, 1), (5, 40.0, 2)]
+    );
+    // With as many orphans as the page before has lines, it spares none.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 3, 3, 0.0, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // Four widows are more lines than a page holds. The first break gives up
+    // a line, though the lines then run past the end of the next page and the
+    // last of them starts the page after it.
+    assert_eq!(
+        paragraph_line_moves(&lines[..6], 0.0, 0, 2, 4, 0.0, &pages),
+        vec![(2, 40.0, 1), (5, 10.0, 2)]
+    );
+    // A break after the first is left as it falls: no page holds the widows.
+    assert_eq!(
+        paragraph_line_moves(&lines, 0.0, 0, 2, 4, 0.0, &pages),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // A paragraph without lines has nothing to move.
+    assert_eq!(
+        paragraph_line_moves(&[], 0.0, 0, 2, 2, 0.0, &pages),
+        Vec::new()
+    );
+}
+
+#[test]
+fn paragraph_line_moves_keep_the_edges_below_the_last_line_with_it() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines: Vec<(f32, f32)> = (0..7)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    // Three lines end at 90 on a page that ends at 100. Edges of 10px below
+    // them fit, and 15px do not: the last line starts the next page, 40px
+    // lower, with them. The page cannot keep two orphans and give up two
+    // widows, so it gives up only that line.
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 2, 2, 10.0, &pages),
+        Vec::new()
+    );
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 2, 2, 15.0, &pages),
+        vec![(2, 40.0, 1)]
+    );
+    assert_eq!(
+        paragraph_line_moves(&lines[..2], 30.0, 0, 2, 2, 15.0, &pages),
+        vec![(1, 40.0, 1)]
+    );
+    // A paragraph of one line has no break to make between lines.
+    assert_eq!(
+        paragraph_line_moves(&lines[..1], 70.0, 0, 1, 1, 15.0, &pages),
+        Vec::new()
+    );
+    // A page that can keep its orphans gives up the widows: three lines with
+    // one orphan and two widows split one and two.
+    assert_eq!(
+        paragraph_line_moves(&lines[..3], 0.0, 0, 1, 2, 15.0, &pages),
+        vec![(1, 70.0, 1)]
+    );
+    let tall = PageOrigins::new(&[], 280.0);
+    let long: Vec<(f32, f32)> = (0..9)
+        .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+        .collect();
+    for (orphans, widows, kept) in [(2, 2, 7), (1, 1, 8), (2, 3, 6), (1, 5, 4), (4, 4, 5)] {
+        assert_eq!(
+            paragraph_line_moves(&long, 0.0, 0, orphans, widows, 15.0, &tall),
+            vec![(kept, 280.0 - kept as f32 * 30.0, 1)],
+            "orphans {orphans}, widows {widows}"
+        );
+    }
+    // A last line that already starts a page stays, however tall the edges.
+    assert_eq!(
+        paragraph_line_moves(&lines[..4], 0.0, 0, 1, 1, 500.0, &pages),
+        vec![(3, 10.0, 1)]
+    );
+    // The lines that the page ends need are repaired first, for the widows,
+    // and the last line then goes with the edges from where it comes out.
+    // Five lines with three widows give up the line the first page can spare:
+    // (3 | 2) becomes (2 | 3), and the edges below the last line end the
+    // second page, so that line starts a third: (2 | 2 | 1).
+    // Seven lines with one orphan: the second page gives up the lines it can
+    // spare for the three widows, (3 | 3 | 1) becomes (3 | 1 | 3), and the
+    // edges then take the last line of the third page: (3 | 1 | 2 | 1).
+    assert_eq!(
+        lines_on_each_page(
+            &paragraph_line_moves(&lines[..5], 0.0, 0, 2, 3, 15.0, &pages),
+            5,
+            0.0,
+            &pages
+        ),
+        [2, 2, 1]
+    );
+    assert_eq!(
+        lines_on_each_page(
+            &paragraph_line_moves(&lines[..7], 0.0, 0, 1, 3, 15.0, &pages),
+            7,
+            0.0,
+            &pages
+        ),
+        [3, 1, 2, 1]
+    );
+}
+
+#[test]
+fn a_paragraph_whose_lines_fit_moves_its_last_line_for_the_edges_below_it() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = [(0.0, 30.0), (30.0, 60.0), (60.0, 90.0)];
+    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 2, 2, 0.0);
+    // The lines fit, so there is nothing to repair.
+    assert_eq!(
+        fit.fix(&lines, 0.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // Edges that fit leave it so.
+    let fits = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 2, 2, 10.0);
+    assert_eq!(
+        fits.fix(&lines, 0.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // Edges that do not fit take the last line to the next page, the block
+    // staying where it is.
+    let overflows = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 2, 2, 15.0);
+    assert_eq!(
+        overflows.fix(&lines, 0.0, 0, &pages, true, || true),
+        LineBreakFix::MoveLines(vec![(2, 40.0, 1)])
+    );
+    // Lines that cannot shift inside their paragraph are left alone.
+    assert_eq!(
+        overflows.fix(&lines, 0.0, 0, &pages, true, || false),
+        LineBreakFix::Keep
+    );
+    // A paragraph of one line has nothing to break between.
+    let single = ParagraphLineFit::measure(&lines[..1], 70.0, 0.0, 100.0, 2, 2, 15.0);
+    assert_eq!(
+        single.fix(&lines[..1], 70.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+}
+
+/// The number of lines on each page, from the first to the last that holds one,
+/// when `lines` lines of 30px that start at `effective_y` are moved by `moves`.
+fn lines_on_each_page(
+    moves: &[LineBreakMove],
+    lines: usize,
+    effective_y: f32,
+    pages: &PageOrigins,
+) -> Vec<usize> {
+    let mut counts: Vec<usize> = Vec::new();
+    for line in 0..lines {
+        let shift: f32 = moves
+            .iter()
+            .filter(|&&(first, _, _)| first <= line)
+            .map(|&(_, delta, _)| delta)
+            .sum();
+        let top = effective_y + line as f32 * 30.0 + shift;
+        let page = pages.page_index_for_y(top + 0.001) as usize;
+        if counts.len() <= page {
+            counts.resize(page + 1, 0);
+        }
+        counts[page] += 1;
+    }
+    counts
+}
+
+#[test]
+fn paragraph_line_moves_split_long_paragraphs_as_chromium_does() {
+    // Pages of ten 30px lines. (lines, y of the first, orphans, widows, lines on
+    // each page): the counts Chromium prints for the same paragraphs, read with
+    // `pdftotext -bbox` from `page.pdf`.
+    let pages = PageOrigins::new(&[], 300.0);
+    let cases: &[(usize, f32, usize, usize, &[usize])] = &[
+        (21, 0.0, 2, 2, &[10, 9, 2]),
+        (22, 0.0, 2, 2, &[10, 10, 2]),
+        (22, 0.0, 2, 4, &[10, 8, 4]),
+        (32, 0.0, 2, 4, &[10, 10, 8, 4]),
+        (22, 0.0, 3, 4, &[10, 8, 4]),
+        (22, 0.0, 2, 6, &[10, 6, 6]),
+        (23, 0.0, 2, 6, &[10, 7, 6]),
+        (22, 0.0, 4, 6, &[10, 6, 6]),
+        (32, 0.0, 4, 6, &[10, 10, 6, 6]),
+        (22, 0.0, 2, 9, &[10, 3, 9]),
+        (12, 0.0, 2, 9, &[3, 9]),
+        (21, 15.0, 2, 4, &[9, 8, 4]),
+        (22, 60.0, 2, 4, &[8, 10, 4]),
+        (30, 15.0, 2, 5, &[9, 10, 6, 5]),
+        (13, 60.0, 2, 9, &[4, 9]),
+    ];
+    for &(lines, y, orphans, widows, expected) in cases {
+        let metrics: Vec<(f32, f32)> = (0..lines)
+            .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
+            .collect();
+        let moves = paragraph_line_moves(&metrics, y, 0, orphans, widows, 0.0, &pages);
+        assert_eq!(
+            lines_on_each_page(&moves, lines, y, &pages),
+            expected,
+            "{lines} lines at {y}, orphans {orphans}, widows {widows}"
+        );
+    }
 }
 
 #[test]
@@ -18142,6 +18379,17 @@ fn unpaginated_paragraph_after_a_spacer(
     root_css: &str,
     spacer_height: f32,
 ) -> (Document, CascadeResult, usize, usize, usize) {
+    unpaginated_paragraph_with_boxes_after_a_spacer(text, root_css, spacer_height, |_, _| {})
+}
+
+/// [`unpaginated_paragraph_after_a_spacer`] with `add_boxes` run on the
+/// document and the root once the text is in it.
+fn unpaginated_paragraph_with_boxes_after_a_spacer(
+    text: &str,
+    root_css: &str,
+    spacer_height: f32,
+    add_boxes: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize, usize, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
@@ -18152,6 +18400,7 @@ fn unpaginated_paragraph_after_a_spacer(
     );
     let root = doc.append_element(Some(body), "div", Some(&root_css));
     let text = doc.append_text(root, text);
+    add_boxes(&mut doc, root);
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     doc.set_font_collection_with_limits(
@@ -18318,8 +18567,20 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
 #[test]
 fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once() {
     // The 20px root starts 95px down a 100px page: its first line ends at 105.
-    let (mut doc, cascade, body, root, text) =
-        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "height:20px", 95.0);
+    // A box among its lines keeps them from moving down inside it, so the
+    // block moves as a unit.
+    let (mut doc, cascade, body, root, text) = unpaginated_paragraph_with_boxes_after_a_spacer(
+        "aaaa bbbb",
+        "height:20px",
+        95.0,
+        |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("display:inline-block;width:10px;height:10px"),
+            );
+        },
+    );
     let pages = PageOrigins::new(&[], 100.0);
     let lines = TextLineIndex::default();
     let node_count = doc.nodes.len();
@@ -18493,7 +18754,16 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     // break moves up a line, which the text grows by.
     let (_, (moved, text), state, root, _) = keep("aaaa bbbb cccc dddd", 70.0, 100.0);
     moved.unwrap();
-    assert_eq!(state.deferred_shifts.line_splits, [(root, 2, 10.0)]);
+    assert_eq!(
+        state.deferred_shifts.line_splits,
+        [LineSplit {
+            root,
+            first_moved: 2,
+            shift: 10.0,
+            growth: 10.0,
+            page: 1,
+        }]
+    );
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 70.0));
     assert_eq!(text.height, 50.0);
 
@@ -18502,6 +18772,33 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     moved.unwrap();
     assert!(state.deferred_shifts.line_splits.is_empty());
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 10.0));
+}
+
+#[test]
+fn the_excess_of_a_paragraph_is_given_back_once_the_flow_leaves_it_to_the_earliest_page() {
+    let (doc, _, body, root, text) = unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);
+    let after = doc.nodes[body].children[0];
+    let lines = TextLineIndex::default();
+    let mut shifts = DeferredShifts {
+        // Two texts of the paragraph took a shift that its box did not grow
+        // by, the second one when the flow was already on a later page.
+        excess_shifts: vec![(root, -20.0, 1), (root, -5.0, 3)],
+        ..Default::default()
+    };
+    let mut flow_shift = 40.0;
+    // Inside the paragraph nothing is given back.
+    let reached = shifts.apply_reached(&doc, &lines, text, None, 3, &mut flow_shift);
+    assert_eq!((reached, flow_shift, shifts.page_floor), (None, 40.0, None));
+    assert_eq!(shifts.excess_shifts.len(), 2);
+    // Past the paragraph both are, and the flow goes back no further than the
+    // page it was on before the first one.
+    let reached = shifts.apply_reached(&doc, &lines, after, None, 3, &mut flow_shift);
+    assert_eq!((reached, flow_shift), (None, 15.0));
+    assert_eq!(shifts.page_floor, Some(1));
+    assert!(shifts.excess_shifts.is_empty());
+    // Once given back they are not given back again.
+    shifts.apply_reached(&doc, &lines, after, None, 3, &mut flow_shift);
+    assert_eq!(flow_shift, 15.0);
 }
 
 #[test]
@@ -19111,7 +19408,7 @@ fn only_lengths_and_percentages_are_explicit_insets() {
     use raikiri_style::ComputedLengthPercentageOrAuto as Inset;
     for explicit in [Inset::Px(0.0), Inset::Px(5.0), Inset::Percent(10.0)] {
         assert!(
-            !crate::layout::page::inset_is_auto(explicit),
+            !crate::layout::page::inset_is_auto(&explicit),
             "{explicit:?}"
         );
     }
@@ -19121,7 +19418,7 @@ fn only_lengths_and_percentages_are_explicit_insets() {
         Inset::MaxContent,
         Inset::FitContent,
     ] {
-        assert!(crate::layout::page::inset_is_auto(auto), "{auto:?}");
+        assert!(crate::layout::page::inset_is_auto(&auto), "{auto:?}");
     }
 }
 
@@ -19212,12 +19509,15 @@ fn block_axis_insets_of_the_transposed_cascade_match_a_view_on_the_roots_axes() 
             for (&key, &expected) in keys.iter().zip(&expected) {
                 let computed = &transposed_cascade.computed[key];
                 assert_eq!(
-                    (inset_is_auto(computed.top), inset_is_auto(computed.bottom)),
+                    (
+                        inset_is_auto(&computed.top),
+                        inset_is_auto(&computed.bottom)
+                    ),
                     expected,
                     "{root_wm}: key {key}"
                 );
                 let physical = &cascade.computed[key];
-                differs |= inset_is_auto(physical.top) != inset_is_auto(computed.top);
+                differs |= inset_is_auto(&physical.top) != inset_is_auto(&computed.top);
             }
             assert!(differs, "the exchange of axes is observable");
         });
@@ -19812,4 +20112,219 @@ fn a_tall_block_whose_first_line_is_inline_markup_moves_whole() {
 
 thread_local! {
     pub(super) static LINE_CENTER_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn an_edge_break_gives_up_the_widows_only_when_the_page_keeps_its_orphans() {
+    assert_eq!(edge_break_lines(9, 2, 2), 2);
+    assert_eq!(edge_break_lines(9, 4, 5), 5);
+    // One line left is fewer than two orphans, and no lines left is fewer
+    // than one.
+    assert_eq!(edge_break_lines(3, 2, 2), 1);
+    assert_eq!(edge_break_lines(3, 1, 3), 1);
+    assert_eq!(edge_break_lines(1, 1, 1), 1);
+}
+
+/// A 40px-wide paragraph `aaaa bbbb` of two 10px lines, with one out-of-flow
+/// span styled by each of `children` and holding a text, after its text.
+fn paragraph_with_out_of_flow_children(
+    root_css: &str,
+    children: &[&str],
+) -> (Document, CascadeResult, usize, Vec<usize>) {
+    let (doc, cascade, _, root, _) =
+        unpaginated_paragraph_with_boxes_after_a_spacer("aaaa bbbb", root_css, 0.0, |doc, root| {
+            for css in children {
+                let child = doc.append_element(Some(root), "span", Some(*css));
+                doc.append_text(child, "c");
+            }
+        });
+    let ids = doc.nodes[root].children[1..].to_vec();
+    (doc, cascade, root, ids)
+}
+
+#[test]
+fn the_insets_of_an_out_of_flow_child_say_how_it_follows_the_lines_of_its_paragraph() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0;top:5px",
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0;top:50%",
+            "position:absolute;left:0;top:5px;bottom:5px",
+            "position:absolute;left:0;bottom:0;height:50%",
+            "position:absolute;left:0;bottom:0;min-height:50%",
+            "position:absolute;left:0;bottom:0;max-height:50%",
+            "position:absolute;left:0;bottom:0;height:stretch",
+            "position:absolute;left:0;bottom:0;height:calc(50% - 10px)",
+            "position:absolute;left:0;bottom:0;min-height:calc(50% - 10px)",
+            "position:absolute;left:0;bottom:0;max-height:max(10px, 50%)",
+            "position:fixed;left:0;bottom:0",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let follow = |index: usize| out_of_flow_follow(&session, &cascade, root, ids[index]);
+    // A fixed `top` places the box whatever the lines do.
+    assert_eq!(follow(0), Some(OutOfFlowFollow::TopAnchored));
+    // Without insets it stays with its anchor on the last line.
+    assert_eq!(follow(1), Some(OutOfFlowFollow::OnLine));
+    // A `bottom` or a percentage `top` follow the height of the paragraph.
+    assert_eq!(follow(2), Some(OutOfFlowFollow::WithHeight));
+    assert_eq!(follow(3), Some(OutOfFlowFollow::WithHeight));
+    // Both insets, a size that follows the height of the paragraph, and a
+    // box that is not absolutely positioned need more than the lines moving.
+    for index in 4..ids.len() {
+        assert_eq!(follow(index), None, "child {index}");
+    }
+}
+
+#[test]
+fn an_out_of_flow_child_whose_containing_block_is_not_the_paragraph_is_left_where_it_is() {
+    // Nothing in the paragraph is positioned, so the box is placed against a
+    // block that the moved lines do not grow by themselves.
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "",
+        &[
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    assert_eq!(out_of_flow_follow(&session, &cascade, root, ids[0]), None);
+    // A box at its static position needs no containing block to follow its
+    // line.
+    assert_eq!(
+        out_of_flow_follow(&session, &cascade, root, ids[1]),
+        Some(OutOfFlowFollow::OnLine)
+    );
+    // Lines that run down the page are not the lines a paragraph moves.
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative;writing-mode:vertical-rl",
+        &["position:absolute;top:0;left:0;bottom:0"],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    assert_eq!(out_of_flow_follow(&session, &cascade, root, ids[0]), None);
+}
+
+#[test]
+fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0;top:5px",
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0;bottom:10%",
+            "position:absolute;left:0;top:50%",
+            "position:absolute;left:0;top:5px;bottom:5px",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let moves = |line: usize| {
+        // The lines from `line` on move 12px and the 20px box grows by 10px.
+        let moved = LineMove {
+            block_id: root,
+            flex_line: None,
+            line,
+            shift: 12.0,
+        };
+        out_of_flow_moves(&session, &cascade, &moved, 10.0)
+    };
+    // The box at its static position goes with its line by the shift; one
+    // against the bottom goes by the growth, less what a percentage of the
+    // taller box adds to it; one at a percentage from the top goes by what
+    // that percentage grows by. A fixed `top` and two insets stay.
+    assert_eq!(
+        moves(1),
+        [(ids[1], 12.0), (ids[2], 10.0), (ids[3], 9.0), (ids[4], 5.0)]
+    );
+    // The box on the last line stays when the move starts after it.
+    assert_eq!(moves(2), [(ids[2], 10.0), (ids[3], 9.0), (ids[4], 5.0)]);
+}
+
+#[test]
+fn text_in_a_static_out_of_flow_child_follows_the_line_it_is_anchored_to() {
+    let (doc, _, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+            "position:absolute;left:0;top:5px",
+        ],
+    );
+    let texts: Vec<usize> = ids
+        .iter()
+        .map(|&child| doc.nodes[child].children[0])
+        .collect();
+    // The static box is anchored to the last line, so its text goes with that
+    // line and with the lines before it, and not with a move that starts
+    // after.
+    assert!(follows_line_of_paragraph(&doc, texts[0], root, 0));
+    assert!(follows_line_of_paragraph(&doc, texts[0], root, 1));
+    assert!(!follows_line_of_paragraph(&doc, texts[0], root, 2));
+    // A box placed against the bottom or the top is not anchored to a line.
+    for text in &texts[1..] {
+        assert!(!follows_line_of_paragraph(&doc, *text, root, 0));
+    }
+}
+
+#[test]
+fn an_out_of_flow_box_moves_by_what_its_inset_resolves_against_the_grown_box() {
+    let px = |value| LengthPercentageAuto::length(value);
+    let percent = |value| LengthPercentageAuto::percent(value);
+    let auto = LengthPercentageAuto::auto();
+    // A `bottom` of zero keeps the distance to the bottom edge, so the box
+    // moves by the whole growth; a percentage adds what the taller box gives
+    // it, which the box keeps its distance for.
+    assert_eq!(with_height_delta(auto, px(0.0), 20.0, 10.0), 10.0);
+    assert_eq!(with_height_delta(auto, percent(0.1), 20.0, 10.0), 9.0);
+    // A `top` moves by what its percentage of the taller box adds, and not at
+    // all when it is a length.
+    assert_eq!(with_height_delta(percent(0.5), auto, 20.0, 10.0), 5.0);
+    assert_eq!(with_height_delta(px(5.0), auto, 20.0, 10.0), 0.0);
+}
+
+#[test]
+fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0",
+            "position:absolute;left:0;bottom:0",
+        ],
+    );
+    let boxes = &mut doc.table_layout_node_mut(root).ifc.as_mut().unwrap().boxes;
+    let listed: Vec<_> = boxes.clone();
+    boxes.extend(listed);
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let moved = LineMove {
+        block_id: root,
+        flex_line: None,
+        line: 0,
+        shift: 12.0,
+    };
+    assert_eq!(
+        out_of_flow_moves(&session, &cascade, &moved, 10.0),
+        [(ids[0], 12.0), (ids[1], 10.0)]
+    );
+}
+
+#[test]
+fn a_length_that_does_not_depend_on_the_paragraph_height_keeps_the_child_following_it() {
+    let (mut doc, cascade, root, ids) = paragraph_with_out_of_flow_children(
+        "position:relative",
+        &[
+            "position:absolute;left:0;bottom:0;height:20px",
+            "position:absolute;left:0;bottom:0;height:calc(10px + 5px)",
+            "position:absolute;left:0;bottom:0;min-height:0;max-height:none",
+        ],
+    );
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    for (index, id) in ids.iter().enumerate() {
+        assert_eq!(
+            out_of_flow_follow(&session, &cascade, root, *id),
+            Some(OutOfFlowFollow::WithHeight),
+            "child {index}"
+        );
+    }
 }

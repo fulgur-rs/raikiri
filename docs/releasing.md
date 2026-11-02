@@ -9,28 +9,44 @@ path dependencies follow the main workspace version.
 ## Release flow
 
 1. A push to `main` starts the **Release-plz** workflow. It can also be started
-   manually with **Run workflow**, selecting `main`.
+   manually with **Run workflow**, selecting `main`; leave **release** off to
+   only update the Release PR.
 2. On the first run, with version `0.0.1` and no `raikiri-v*` tag, the workflow
    tags the initial version. No version bump PR is needed for this baseline.
 3. Later pushes create or update a Release PR that changes the shared version,
    internal dependency requirements, and lockfiles. The Wasmtime tools lockfile
    is synchronized on the same PR using the existing GitHub App token.
-4. Review and merge that PR. The next workflow run tags each workspace member
-   with `<package>-v<version>`, for example `raikiri-v0.0.2`.
+4. Review and merge that PR. The workflow run of the merge detects the Release
+   PR (its `release-plz-<date>` branch in the merge subject, or a
+   `chore: release vX.Y.Z` commit in the push) and starts the **release** job,
+   which waits for an approval of the `crates-io` environment.
+5. After the approval, the job publishes the eight crates listed under
+   [Which crates are published](#which-crates-are-published) to crates.io and
+   tags each workspace member with `<package>-v<version>`, for example
+   `raikiri-v0.0.6`. Rejecting the approval publishes and tags nothing.
 
 All 14 main workspace members share the version, including private test and
 benchmark crates. New members must also use `version.workspace = true`.
-The workflow only runs its release jobs on `main`. Tag creation completes
-before version analysis in each run. Only Release PR jobs use concurrency
-control: tag jobs must run for every merge, including when newer pushes arrive.
+The workflow only runs its release jobs on `main`. Tag creation and publishing
+complete before version analysis in each run: the Release PR job waits for the
+release job, and runs when the release job is skipped because the push is not a
+release. The release job is serialized so that two runs cannot publish the same
+version; an ordinary push skips it and never waits for an approval.
 
-`release-plz.toml` enables git-only mode and explicitly disables Cargo publishing
-and GitHub Releases. The release workflow uses no crates.io token and never runs
-`cargo publish`; the dry run described under [Publishing to
-crates.io](#publishing-to-cratesio) is a separate CI job that publishes nothing.
+`release-plz.toml` keeps git-only mode and disables Cargo publishing for the
+workspace, and turns both around for the eight published crates: release-plz
+reads their latest version from crates.io and publishes them, and reads the
+others from their git tags and only tags them. Each published crate also
+gets a GitHub Release for its tag; the other members get none.
 The Release PR uses the existing `RELEASE_PLZ_APP_CLIENT_ID` repository variable
 and `RELEASE_PLZ_APP_PRIVATE_KEY` secret so PR CI can run. Tag creation uses
-`GITHUB_TOKEN`. Both jobs pin release-plz to the locally verified **0.4.0**.
+`GITHUB_TOKEN`. Publishing uses crates.io Trusted Publishing: the release job
+runs in the `crates-io` environment with `id-token: write`, and
+`rust-lang/crates-io-auth-action` exchanges the GitHub OIDC token for a
+short-lived crates.io token. Each published crate trusts the workflow
+`release-plz.yml` of `fulgur-rs/raikiri` in the environment `crates-io` on
+crates.io; no long-lived token is stored. Both release-plz jobs pin release-plz
+to the locally verified **0.4.0**.
 
 The initial-release configuration temporarily sets `release_always = true`.
 After the baseline exists, the regular `release_always = false` setting requires
@@ -75,9 +91,9 @@ The main workspace lockfile changes only local package versions.
 
 ## Publishing to crates.io
 
-Nothing is published yet: release-plz runs in git-only mode, and the crate names
-are only reserved on crates.io (every name below exists at `0.0.0`). This section
-records what is ready for the first publication and what still needs a decision.
+The eight crates below are published by the release job of the Release-plz
+workflow (see [Release flow](#release-flow)). Before their first publication
+each name existed on crates.io only as a `0.0.0` reservation.
 
 ### Which crates are published
 
@@ -131,24 +147,33 @@ its own, for example one that reads a file outside its crate directory, and a
 dependency cycle that publishing would hit. It builds the library of each package
 and not its tests.
 
-### What is still open
+### License
 
-- **License files.** The manifests say `MIT OR Apache-2.0`, but the repository
-  has no `LICENSE-MIT` or `LICENSE-APACHE`, so the packages carry no license
-  text. Adding them needs the name of the copyright holder.
-- **Authentication.** Publishing from CI needs one of the following; neither is
-  set up.
-  - *Trusted Publishing* (OIDC): crates.io trusts a GitHub Actions workflow of this
-    repository, configured per crate on crates.io, so no long-lived secret is
-    stored. It can be set up now, because the reserved names already exist.
-  - *An API token* stored as the `CARGO_REGISTRY_TOKEN` secret, scoped to these
-    crates.
-- **Switching release-plz to publish.** Today `release-plz.toml` sets `git_only =
-  true` and `publish = false`, and the workflow uses no registry credential.
-  Publishing needs `git_only` removed, `publish` enabled for the eight crates
-  (and kept off for the rest), and the workflow given the credential above. Do
-  this on a Release PR that is meant to be published, because the next merge of
-  one would publish it.
+The repository root holds `LICENSE-MIT` and `LICENSE-APACHE` (copyright Lutom
+LLC. and contributors), matching `license = "MIT OR Apache-2.0"`. Each published
+crate links both files into its directory, so `cargo package` puts the text in
+every package.
+
+### First publication
+
+release-plz treats a package whose version already has a git tag as released,
+so it never publishes `0.0.5`: that version was tagged while the crates were
+git-only. Enabling publishing therefore comes with the shared version moved to
+`0.0.6`, which has no tag. In that state `release-pr` proposes no further bump,
+and nothing is published until someone asks for it:
+
+1. Start **Release-plz** with **Run workflow** on `main` and **release** on.
+2. Approve the `crates-io` environment of the release job.
+3. The job publishes the eight crates at `0.0.6` in dependency order and tags
+   every workspace member `<package>-v0.0.6`.
+
+The same manual run releases the current version whenever a merged Release PR
+was not detected; packages already on crates.io or already tagged are skipped.
+From `0.0.6` on, the registry and the tags agree, and later versions go through
+Release PRs as described in [Release flow](#release-flow).
+
+### Notes
+
 - **Package size.** `raikiri-style` and `raikiri-dom` are the largest packages
   (1.4 MiB and 1.6 MiB compressed, mostly sources and the unit tests next to
   them). crates.io accepts up to 10 MiB, so no change is needed.

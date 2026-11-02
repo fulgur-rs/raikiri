@@ -303,7 +303,7 @@ impl<'a> StyleViews<'a> {
         let mut has_calcs = false;
         let data = PreparedData::prepare_with(values, |_, expression, range| {
             has_calcs = true;
-            let key = (expression.px.to_bits(), expression.percent.to_bits(), range);
+            let key = (expression.clone(), range);
             owners
                 .entry(key)
                 .or_insert_with(|| {
@@ -477,6 +477,10 @@ impl LayoutSession<'_> {
         };
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
+            context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+        }
+        if matches!(role, ReadRole::GridItem) {
+            context.grid_item_ratio = self.grid_item_ratio(idx);
         }
         if matches!(role, ReadRole::BlockItem) {
             context.block_item_basis = self
@@ -490,6 +494,138 @@ impl LayoutSession<'_> {
                 .and_then(|&(_, basis)| basis);
         }
         view.with_context(context)
+    }
+
+    /// Preserve replaced sizes and defer content-based automatic ratio sizes
+    /// to the item. The parent otherwise transfers bounds into stated replaced
+    /// sizes or treats a non-replaced ratio height as final without its content floor.
+    fn grid_item_ratio(&self, idx: usize) -> raikiri_layout_style::GridItemRatio {
+        use raikiri_layout_style::GridItemRatio;
+        use raikiri_layout_style::values::{
+            AlignItemsKeyword, AlignSelf, ExpandedLengthPercentageAuto,
+        };
+        let item = self.physical_style(idx);
+        if self.container_is_vertical(idx)
+            || self.nodes[idx].used_writing_mode.is_vertical()
+            || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
+            || item.stated_aspect_ratio().is_none()
+        {
+            return GridItemRatio::Declared;
+        }
+        if crate::paint_rules::is_replaced_element(self.document, idx) {
+            return if item.is_replaced()
+                && (!item.size().width.is_auto()
+                    || !item.size().height.is_auto()
+                    || matches!(
+                        item.min_size().width.expand(),
+                        ExpandedLengthPercentageAuto::Length(_)
+                            | ExpandedLengthPercentageAuto::Percent(_)
+                            | ExpandedLengthPercentageAuto::Calc(_)
+                    ))
+            {
+                GridItemRatio::Replaced
+            } else {
+                GridItemRatio::Declared
+            };
+        }
+        if !item.size().width.is_auto()
+            || !item.size().height.is_auto()
+            || !matches!(
+                self.nodes[idx].formatting_context,
+                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
+            )
+            || !matches!(
+                item.min_size().width.expand(),
+                ExpandedLengthPercentageAuto::Length(_)
+                    | ExpandedLengthPercentageAuto::Percent(_)
+                    | ExpandedLengthPercentageAuto::Calc(_)
+            )
+        {
+            return GridItemRatio::Declared;
+        }
+        let alignment = item.bridge_align_self().unwrap_or_else(|| {
+            self.taffy_parent_of(idx)
+                .map_or(AlignSelf::NORMAL, |parent| {
+                    self.physical_style(parent).align_items()
+                })
+        });
+        let alignment = if alignment.keyword == AlignItemsKeyword::Normal {
+            AlignSelf::START
+        } else {
+            alignment
+        };
+        let justify = item.bridge_justify_self().unwrap_or_else(|| {
+            self.taffy_parent_of(idx)
+                .map_or(AlignSelf::NORMAL, |parent| {
+                    self.physical_style(parent).justify_items()
+                })
+        });
+        let justify = if justify.keyword == AlignItemsKeyword::Normal {
+            AlignSelf::START
+        } else {
+            justify
+        };
+        GridItemRatio::MeasuredByItem {
+            align_self: alignment,
+            justify_self: justify,
+        }
+    }
+
+    /// The limits on the cross size of the flex item `idx` that its stated cross
+    /// size holds, where `item` is the view of the item the flex algorithm reads.
+    ///
+    /// The flex algorithm carries a `min-*` or `max-*` size of the main axis
+    /// across the aspect ratio into a limit on the cross size of an item that has
+    /// none of its own, and clamps the cross size the item states with it. A
+    /// cross size the item states is the one it has whatever the limits of the
+    /// main axis are: a `max-width` of 30px on a box that states its height of
+    /// 50px and has a ratio of 1 leaves the box 50px high. Only a cross size that
+    /// is `auto` follows the ratio.
+    ///
+    /// A limit the item has on the cross axis itself is left as it is, so that it
+    /// clamps the cross size it states. A minimum is held in place only when the
+    /// item has no maximum on that axis, as a held minimum would win over it.
+    fn held_cross_size(
+        &self,
+        idx: usize,
+        item: raikiri_layout_style::LayoutStyleView<'_>,
+    ) -> Option<raikiri_layout_style::HeldCrossSize> {
+        use raikiri_layout_style::{Axis, HeldCrossSize};
+        if item.aspect_ratio().is_none() || self.container_is_vertical(idx) {
+            return None;
+        }
+        let is_row = self
+            .taffy_parent_of(idx)
+            .is_none_or(|container| self.physical_style(container).flex_direction_is_row());
+        let (size, min, max) = (item.size(), item.min_size(), item.max_size());
+        let (cross, main_min, main_max, cross_min, cross_max, axis) = if is_row {
+            (
+                size.height,
+                min.width,
+                max.width,
+                min.height,
+                max.height,
+                Axis::Y,
+            )
+        } else {
+            (
+                size.width,
+                min.height,
+                max.height,
+                min.width,
+                max.width,
+                Axis::X,
+            )
+        };
+        if !states_a_size(cross) {
+            return None;
+        }
+        let held = HeldCrossSize {
+            axis,
+            min: !main_min.is_auto() && cross_min.is_auto() && cross_max.is_auto(),
+            max: !main_max.is_auto() && cross_max.is_auto(),
+        };
+        (held.min || held.max).then_some(held)
     }
 
     /// The aspect ratio the flex algorithm is told about the flex item `idx`.
