@@ -338,3 +338,22 @@ fn positioned_contents_wrappers_keep_their_float_in_the_parent_context() {
         assert_eq!(pages(&body), (2, vec![(1, 0.0, 10.0)]), "{position}");
     }
 }
+
+#[test]
+fn a_footnote_does_not_give_clearance_to_the_next_block() {
+    // This is a native footnote contract, not a Chromium comparison.
+    // Footnotes reserve page space, but are not left/right floats in the
+    // block's formatting context, so clear must not add a separate gap.
+    let with_clear = |clear| {
+        pages(&format!(
+            "{}<div style='height:0'></div>\
+             <aside style='float:footnote;width:10px;height:5px'></aside>\
+             <div style='height:30px;margin-top:-10px;clear:{clear}'>X</div>",
+            lead_in(30)
+        ))
+    };
+    let ordinary = with_clear("none");
+    assert_eq!(ordinary.0, 2);
+    assert_eq!(ordinary.1.len(), 1);
+    assert_eq!(with_clear("both"), ordinary);
+}
