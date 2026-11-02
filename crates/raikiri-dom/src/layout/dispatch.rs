@@ -5176,6 +5176,7 @@ impl LayoutSession<'_> {
         let parent = usize::from(node_id);
         let items = grid_baseline::recorded_items(self, parent, &info);
         self.nodes[parent].grid_item_row_starts = items.rows;
+        self.nodes[parent].grid_item_rows = items.row_areas;
         self.nodes[parent].grid_item_column_starts = items.columns;
         self.nodes[parent].grid_items_without_baseline = items.excluded;
         self.nodes[parent].grid_item_areas = items.areas;

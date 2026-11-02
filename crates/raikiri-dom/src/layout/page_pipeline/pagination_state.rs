@@ -528,6 +528,52 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Move a deferred first row without moving its grid's leading edges.
+    fn move_first_grid_row(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        effective_y: f32,
+    ) -> Option<PageCandidate> {
+        let row = candidate.context.first_grid_row()?;
+        let flow_y = effective_y
+            - accumulated_relative_offset_y(document, env.cascade, env.body_id, candidate.node_id);
+        let page = env
+            .page_origins
+            .page_index_in_flow(flow_y)
+            .filter(|&page| page > self.current_page && self.reach.flow_max >= page)
+            .unwrap_or(self.current_page);
+        let start = env.page_origins.origin(page);
+        let delta = row.content_shift(flow_y, start, start + env.page_origins.step_at(page))?;
+        if delta <= 0.001 {
+            return None;
+        }
+        // Every recorded in-flow item follows the deferred first row, including
+        // later rows. The grid's leading edges keep their original position.
+        let items = document.nodes[candidate.node_id].grid_item_rows.to_vec();
+        for item in items {
+            let top = current_abs_y(document, item.item);
+            materialize_y(document, item.item, top + delta);
+        }
+        document.nodes[candidate.node_id].layout.size.height += delta;
+        grow_ancestors_for_shift(
+            document,
+            env.cascade,
+            candidate.node_id,
+            delta,
+            env.body_id,
+            &mut self.subtree_shifts,
+            entry.page_before_candidate,
+            &IfcBoxShifts::default(),
+        );
+        self.flow_shift += delta;
+        let mut grown = candidate.clone();
+        grown.height = document.nodes[candidate.node_id].layout.size.height;
+        Some(grown)
+    }
+
     /// Places the box `candidate` after its start: keeps a footnote in the
     /// page-local area of its anchor, or begins the box, starts it on its page,
     /// records it among its siblings, makes room for the header of the table
@@ -556,10 +602,10 @@ impl PaginationState {
             return self.place_footnote(document, env, candidate);
         }
         let raw_y = candidate.raw_y;
-        let height = candidate.height;
         let (page_break, mut position) = self.begin_box(document, env, candidate, entry);
         let page_transition =
             self.start_box_page(document, env, candidate, entry, &page_break, &mut position)?;
+        let grown = self.move_first_grid_row(document, env, candidate, entry, position.effective_y);
         let BoxPosition {
             mut effective_y,
             starts_after_forced_break,
@@ -572,6 +618,11 @@ impl PaginationState {
             &page_break,
             starts_after_forced_break,
         );
+
+        // Sibling adjacency uses the original unpaginated bottom. Only page
+        // reach and trailing-edge placement need the grown grid's height.
+        let candidate = grown.as_ref().unwrap_or(candidate);
+        let height = candidate.height;
 
         let header_delta = make_room_for_table_header(
             document,
@@ -1002,8 +1053,13 @@ impl PaginationState {
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
-        overflow.page |= closing_edges_move(candidate, &fit)
-            || leading_edges_move(candidate, &fit)
+        let grid_row = candidate.context.first_grid_row();
+        let grid_content_break =
+            grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
+        overflow.page |= grid_row.is_some_and(|row| {
+            row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
+        }) || closing_edges_move(candidate, &fit)
+            || (grid_content_break.is_none() && leading_edges_move(candidate, &fit))
             || run_tail_move(candidate, &fit);
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
