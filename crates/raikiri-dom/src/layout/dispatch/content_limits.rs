@@ -991,6 +991,30 @@ fn height_without_ratio(
     probe(tree, node_id, key, along, entries)
 }
 
+/// The border-box minimum height that the `min-width` of the box `idx` carries
+/// across its aspect ratio when its `min-height` is `auto`, or `0` where it
+/// carries none.
+fn min_height_from_min_width(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    containing_size: Size<f32>,
+) -> f32 {
+    let mut style = super::block_flow::style_input::physical(tree, idx);
+    style.min_size.height = LengthPercentageAuto::auto();
+    super::block_flow::Metrics::resolve(
+        &style,
+        false,
+        tree.nodes[idx].ratio_in_content_box,
+        LayoutInput {
+            parent_size: containing_size.map(Some),
+            ..LayoutInput::HIDDEN
+        },
+    )
+    .min
+    .height
+    .unwrap_or(0.0)
+}
+
 /// The sizes of the `candidates`, out-of-flow boxes with an aspect ratio in a
 /// containing block of `containing_size`, that the library gets wrong when it
 /// carries a minimum or maximum across the ratio or takes the height the ratio
@@ -1010,7 +1034,9 @@ fn height_without_ratio(
 ///   than its content at that width, unless it scrolls or states a `min-height`
 ///   (CSS Sizing 4 §5.1). The library takes the height the ratio gives as final,
 ///   so the floor goes in as the `min-height` of the box, bounded by its
-///   `max-height`.
+///   `max-height`. That `min-height` replaces the one the box's `min-width`
+///   carries across the ratio, so it holds that one too, and so does a
+///   `min-height` the box states where the carried one is larger.
 ///
 /// The mirror of [`ratio_width_floors`], which does the same for a box that
 /// states its height.
@@ -1025,6 +1051,7 @@ pub(super) fn ratio_bound_overrides(
         node_id: NodeId,
         width: f32,
         adjustment: f32,
+        transferred: f32,
         own_max: Option<f32>,
     }
     let mut entries = Vec::new();
@@ -1086,9 +1113,6 @@ pub(super) fn ratio_bound_overrides(
         if min.width.is_auto() && carries_minimum {
             entries.push((key, px_length(LengthProperty::MinWidth, 0.0)));
         }
-        if !min.height.is_auto() || scrolls {
-            continue;
-        }
         let adjustment = if border_box {
             Size::ZERO
         } else {
@@ -1097,6 +1121,39 @@ pub(super) fn ratio_bound_overrides(
                 height: edges.height,
             }
         };
+        let transferred = if min.width.is_auto() {
+            0.0
+        } else {
+            min_height_from_min_width(tree, idx, containing_size)
+        };
+        let own_max_height = own_max
+            .height
+            .map(|size| (size + adjustment.height).max(edges.height));
+        if !min.height.is_auto() {
+            // The ratio gives the height of the width the minimum raised, even
+            // where the box states a `min-height` of its own, which the library
+            // then takes for the only minimum.
+            let own_min = min
+                .height
+                .maybe_resolve(Some(containing_size.height))
+                .map_or(0.0, |size| size + adjustment.height)
+                .max(edges.height);
+            let transferred =
+                own_max_height.map_or(transferred, |maximum| transferred.min(maximum));
+            if transferred > own_min {
+                entries.push((
+                    key,
+                    px_length(
+                        LengthProperty::MinHeight,
+                        (transferred - adjustment.height).max(0.0),
+                    ),
+                ));
+            }
+            continue;
+        }
+        if scrolls {
+            continue;
+        }
         let own_min_width = min.width.maybe_resolve(Some(containing_size.width));
         let width = Bounds {
             min: Some(
@@ -1112,9 +1169,8 @@ pub(super) fn ratio_bound_overrides(
             node_id: candidate,
             width,
             adjustment: adjustment.height,
-            own_max: own_max
-                .height
-                .map(|size| (size + adjustment.height).max(edges.height)),
+            transferred,
+            own_max: own_max_height,
         });
     }
     if floors.is_empty() {
@@ -1124,9 +1180,11 @@ pub(super) fn ratio_bound_overrides(
         for floor in floors {
             let content =
                 height_without_ratio(tree, floor.node_id, containing_size.width, floor.width);
-            let height = floor
-                .own_max
-                .map_or(content, |maximum| content.min(maximum));
+            // The floor installed as the `min-height` replaces the minimum
+            // that the `min-width` carries across the ratio, so it holds that
+            // one too.
+            let height = content.max(floor.transferred);
+            let height = floor.own_max.map_or(height, |maximum| height.min(maximum));
             entries.push((
                 floor.key,
                 px_length(

@@ -493,3 +493,75 @@ fn a_maximum_below_the_padding_and_border_is_raised_before_it_is_carried() {
         ),
     ]);
 }
+
+#[test]
+fn a_minimum_width_raises_the_height_the_ratio_gives_even_below_the_content_floor() {
+    // A box that states its width is raised to its `min-width`, and the ratio gives the height of that width, whatever its content and `min-height` are. These boxes have no border unless they say so.
+    check(vec![
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1"></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+        (
+            r#"position:absolute;display:block;border:solid 10px green;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;border:solid 10px green;width:80px;min-width:200px;aspect-ratio:2/1"></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1"><div style="height:150px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 150.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;max-height:60px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;max-height:60px;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 60.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;max-height:60px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;max-height:60px;aspect-ratio:2/1"><div style="height:150px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 60.0])],
+        ),
+        (
+            r#"position:absolute;display:block;border:solid 10px green;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;border:solid 10px green;width:80px;min-width:200px;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+        (
+            r#"position:absolute;display:block;box-sizing:content-box;padding:10px;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;box-sizing:content-box;padding:10px;width:80px;min-width:200px;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 220.0, 120.0])],
+        ),
+        (
+            r#"position:absolute;display:block;box-sizing:content-box;padding:10px;width:80px;min-width:200px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;box-sizing:content-box;padding:10px;width:80px;min-width:200px;aspect-ratio:2/1"><div style="height:150px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 220.0, 170.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:50%;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:50%;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 150.0, 75.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;max-width:150px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;max-width:150px;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1;overflow:auto"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;aspect-ratio:2/1;overflow:auto"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+        (
+            r#"position:absolute;display:block;width:80px;min-width:200px;min-height:30px;aspect-ratio:2/1"#,
+            r#"<div style="position:relative;width:300px;height:300px"><div id=o style="position:absolute;display:block;width:80px;min-width:200px;min-height:30px;aspect-ratio:2/1"><div style="height:20px"></div></div></div>"#.to_string(),
+            &[("o", [0.0, 0.0, 200.0, 100.0])],
+        ),
+    ]);
+}
