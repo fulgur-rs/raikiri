@@ -67,6 +67,7 @@ mod cell_index;
 pub(crate) mod headers;
 pub(crate) mod row_moves;
 mod rowspan;
+mod spanned_rows;
 use cell_index::CellIndex;
 
 // ---------------------------------------------------------------------------
@@ -77,6 +78,8 @@ use cell_index::CellIndex;
 thread_local! {
     pub(super) static GRID_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static BORDER_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Rows whose parts `position_source_table_parts` listed for a cell.
+    pub(super) static PART_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 const MAX_TABLE_NESTING: u32 = 8;
@@ -2208,13 +2211,57 @@ fn position_source_table_parts(
         doc.nodes[part].layout = BoxLayout::new();
     }
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
-        for &id in parts.keys() {
+        // Only a part with some area can overlap a cell, so only those get a
+        // slot; the others keep the empty list they start with.
+        let mut slot_of: rustc_hash::FxHashMap<usize, usize> = Default::default();
+        let mut slot_parts: Vec<(usize, BoxLayout)> = Vec::new();
+        for (&id, &part) in &parts {
             doc.table_objects
                 .part_background_cells
                 .insert(id, Vec::new());
+            if part.size.width > 0.0 && part.size.height > 0.0 {
+                slot_of.insert(id, slot_parts.len());
+                slot_parts.push((id, part));
+            }
         }
-        // Visit only the rows occupied by each cell and their group ancestors.
-        // Scanning the whole cell grid for every row would be quadratic.
+        // The slots of the parts each row belongs to, from the row outward,
+        // found once per row rather than once for every cell that spans it.
+        let mut row_slots: Vec<Vec<usize>> = Vec::with_capacity(grid.rows.len());
+        for &marker in &grid.rows {
+            let mut slots = Vec::new();
+            let mut source =
+                AncestorCursor::new(Some(doc.ifc_source_owner(marker)), ParentRelation::Source);
+            while let Some(id) = source.current() {
+                if id == boundary {
+                    break;
+                }
+                if let Some(&slot) = slot_of.get(&id) {
+                    slots.push(slot);
+                }
+                source.advance(doc);
+            }
+            row_slots.push(slots);
+        }
+        // Rows one after the other that belong to the same parts add nothing
+        // the first of them did not, for any cell: `next_run[row]` is the first
+        // row after `row` that belongs to other parts. Rows too short for a
+        // part of their own, empty rows of one group, make a run.
+        let mut next_run = vec![0usize; row_slots.len()];
+        for row in (0..row_slots.len()).rev() {
+            next_run[row] = if row_slots.get(row + 1) == Some(&row_slots[row]) {
+                next_run[row + 1]
+            } else {
+                row + 1
+            };
+        }
+        // Visit only the rows occupied by each cell. Scanning the whole cell
+        // grid for every row would be quadratic. A part reached through
+        // several rows of one cell, a row group say, takes the cell once: the
+        // number of the cell marks the slot.
+        let mut backgrounds: Vec<Vec<raikiri_traits::PaintRect>> =
+            vec![Vec::new(); slot_parts.len()];
+        let mut listed_for = vec![0usize; slot_parts.len()];
+        let mut shown_cells = 0usize;
         for cell in &grid.cells {
             if doc
                 .ifc_layout_node(cell.node_id)
@@ -2226,40 +2273,38 @@ fn position_source_table_parts(
             let layout = cell
                 .resolved
                 .expect("cells were positioned before source parts");
-            let mut listed = std::collections::HashSet::new();
+            shown_cells += 1;
             let end_row = (usize::from(cell.row) + usize::from(cell.row_span)).min(grid.rows.len());
-            for &marker in &grid.rows[usize::from(cell.row)..end_row] {
-                let mut source =
-                    AncestorCursor::new(Some(doc.ifc_source_owner(marker)), ParentRelation::Source);
-                while let Some(id) = source.current() {
-                    if id == boundary {
-                        break;
+            let mut row = usize::from(cell.row);
+            while row < end_row {
+                #[cfg(test)]
+                PART_ROW_VISITS.with(|count| count.set(count.get() + 1));
+                for &slot in &row_slots[row] {
+                    if listed_for[slot] == shown_cells {
+                        continue;
                     }
-                    if let Some(part) = parts.get(&id)
-                        && listed.insert(id)
-                    {
-                        let left = part.location.x.max(layout.location.x);
-                        let top = part.location.y.max(layout.location.y);
-                        let right = (part.location.x + part.size.width)
-                            .min(layout.location.x + layout.size.width);
-                        let bottom = (part.location.y + part.size.height)
-                            .min(layout.location.y + layout.size.height);
-                        if right > left && bottom > top {
-                            doc.table_objects
-                                .part_background_cells
-                                .get_mut(&id)
-                                .expect("table parts were initialized")
-                                .push(raikiri_traits::PaintRect::new(
-                                    left - part.location.x,
-                                    top - part.location.y,
-                                    right - left,
-                                    bottom - top,
-                                ));
-                        }
+                    listed_for[slot] = shown_cells;
+                    let part = &slot_parts[slot].1;
+                    let left = part.location.x.max(layout.location.x);
+                    let top = part.location.y.max(layout.location.y);
+                    let right = (part.location.x + part.size.width)
+                        .min(layout.location.x + layout.size.width);
+                    let bottom = (part.location.y + part.size.height)
+                        .min(layout.location.y + layout.size.height);
+                    if right > left && bottom > top {
+                        backgrounds[slot].push(raikiri_traits::PaintRect::new(
+                            left - part.location.x,
+                            top - part.location.y,
+                            right - left,
+                            bottom - top,
+                        ));
                     }
-                    source.advance(doc);
                 }
+                row = next_run[row];
             }
+        }
+        for ((id, _), rects) in slot_parts.iter().zip(backgrounds) {
+            doc.table_objects.part_background_cells.insert(*id, rects);
         }
     }
     let origin_of = |owner: usize| {
@@ -4382,6 +4427,7 @@ fn place_cells(
     // A cell belongs to the row it starts in. One starting in a collapsed row
     // has no block extent, so it sets no baseline for the rows it spans.
     let mut cell_candidates = Vec::new();
+    let mut spanned_rows = spanned_rows::SpannedRows::new(collapsed_rows, row_heights, row_gaps);
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
         let row = cell.row as usize;
@@ -4401,15 +4447,17 @@ fn place_cells(
         // in a collapsed row departs from that on purpose: Chromium keeps it
         // in the row it belongs to, with no extent even when later rows of
         // its span remain.
-        let mut kept = (cell.row as usize..span_end).filter(|&row| !collapsed_rows[row]);
-        let first_kept = kept.next().filter(|_| !collapsed_rows[cell.row as usize]);
+        let spanned = cell.row as usize..span_end;
+        let first_kept = (!spanned.is_empty() && !collapsed_rows[cell.row as usize])
+            .then_some(cell.row as usize);
         let (start_row, end_row) = match first_kept {
-            Some(first) => (first, kept.next_back().unwrap_or(first) + 1),
+            Some(first) => (
+                first,
+                spanned_rows.last_kept(spanned.clone()).unwrap_or(first) + 1,
+            ),
             None => (cell.row as usize, cell.row as usize),
         };
-        let spans_collapsed_row = collapsed_rows[cell.row as usize..span_end]
-            .iter()
-            .any(|collapsed| *collapsed);
+        let spans_collapsed_row = spanned_rows.any_collapsed(spanned);
         // The same holds across columns: the cell keeps the columns that
         // remain, and none of its width when they all collapse.
         let mut shown_columns = columns.clone().filter(|&column| !collapsed_cols[column]);
@@ -4433,11 +4481,8 @@ fn place_cells(
             + col_gaps[start_col..end_col.saturating_sub(1).max(start_col)]
                 .iter()
                 .sum::<f32>();
-        let cell_height = row_heights[start_row..end_row].iter().sum::<f32>()
-            + row_gaps[start_row..end_row.saturating_sub(1).max(start_row)]
-                .iter()
-                .filter(|gap| **gap != 0.0)
-                .count() as f32
+        let cell_height = spanned_rows.height(start_row..end_row)
+            + spanned_rows.nonzero_gaps(start_row..end_row.saturating_sub(1).max(start_row)) as f32
                 * row_spacing;
         // Final layout for cell contents with definite size. A cell whose
         // content does not depend on its height keeps its row-pass lines.
