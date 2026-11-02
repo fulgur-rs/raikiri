@@ -312,7 +312,7 @@ fn hoisted_overflow(
 /// own `overflow_rect` contributes to a container that scrolls when
 /// `container_scrolls` (<https://drafts.csswg.org/css-overflow-3/#scrollable>).
 /// A box that clips or contains its overflow contributes its border box only.
-fn overflow_contribution(
+pub(in crate::layout::dispatch) fn overflow_contribution(
     location: Point<f32>,
     size: Size<f32>,
     overflow_rect: Edges<f32>,

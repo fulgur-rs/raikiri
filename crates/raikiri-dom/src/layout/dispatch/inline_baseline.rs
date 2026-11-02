@@ -398,7 +398,7 @@ fn reach_of(location: Point<f32>, overflow: Edges<f32>) -> Edges<f32> {
 
 /// The distance the item of the container `idx` that holds `node` moved, when
 /// it did.
-fn shift_of(
+pub(super) fn shift_of(
     tree: &LayoutSession<'_>,
     idx: usize,
     shifts: &[(usize, f32)],

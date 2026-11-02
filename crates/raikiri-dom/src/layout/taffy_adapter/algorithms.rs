@@ -15,6 +15,9 @@ use raikiri_layout_style::values::{
     LengthPercentageAuto, MaybeResolve, Position,
 };
 
+mod flex_baseline;
+pub(crate) use flex_baseline::{Call as FlexReplayCall, source as flex_baseline_source};
+
 /// The inputs a flex or grid container is laid out with: a `width` of
 /// `stretch` takes the room the caller offers the border box, which has its
 /// margins taken off already (CSS Sizing 4 §5.1), within the `min-width` and

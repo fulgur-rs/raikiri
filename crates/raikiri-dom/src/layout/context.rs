@@ -72,6 +72,7 @@ pub(crate) struct LayoutContext {
     /// What the grid algorithm reported for each grid container laid out so
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
+    pub(super) table_item_captures: Vec<super::dispatch::table_items::Capture>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     /// The root whose out-of-flow candidates are being recorded, and the
     /// candidates it hands to the library's positioning pass for the initial
