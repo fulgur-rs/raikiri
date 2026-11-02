@@ -3335,6 +3335,26 @@ fn a_container_that_avoids_breaks_inside_moves_whole_with_the_edges() {
 }
 
 #[test]
+fn an_avoiding_box_with_a_forced_break_inside_stays_where_the_break_splits_it() {
+    // `break-inside` does not stop a forced break, so the box is split there
+    // wherever it sits: moving it whole first would only add a page.
+    for column in [true, false] {
+        let (ys, _) = card_with_edges(30, |doc, card| {
+            let display = if column {
+                "display:flex;flex-direction:column;"
+            } else {
+                "display:block;"
+            };
+            let outer = block(doc, card, &format!("{display}break-inside:avoid"));
+            let first = block(doc, outer, "display:block;height:10px");
+            let second = block(doc, outer, "display:block;height:10px;break-before:page");
+            vec![outer, first, second]
+        });
+        assert_eq!(ys, [70.0, 70.0, 100.0], "column: {column}");
+    }
+}
+
+#[test]
 fn the_last_item_of_a_container_stays_where_a_box_cannot_move_on_its_own() {
     // The same card as above: a clipped parent of a set height, a flex
     // container and a multicol container keep the page positions the flow gave
