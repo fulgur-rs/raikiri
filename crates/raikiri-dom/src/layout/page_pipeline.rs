@@ -6547,12 +6547,15 @@ fn grown_auto_height(
     // `display: contents` children generate no box: their children are laid
     // out as this box's children. A grid's items follow one another in the
     // order of their rows.
-    let mut children = pagination_child_order(document, cascade, parent);
-    children.reverse();
-    while let Some(child) = children.pop() {
+    let ordered = pagination_child_order_borrowed(document, cascade, parent);
+    // The children of `display: contents` boxes found so far, last first:
+    // they come before the rest of `ordered`.
+    let mut unwrapped = Vec::new();
+    let mut rest = ordered.iter();
+    while let Some(child) = unwrapped.pop().or_else(|| rest.next().copied()) {
         let child_node = &document.nodes[child];
         if document.nodes[child].display() == DisplayValue::Contents {
-            children.extend(child_node.children.iter().rev().copied());
+            unwrapped.extend(child_node.children.iter().rev().copied());
             continue;
         }
         if child_node.kind() == NodeKind::Text
@@ -6715,6 +6718,60 @@ fn same_bfc_float_end_in_subtree(
     end
 }
 
+/// Whether `node_id` has an element among its children.
+fn has_element_child(document: &Document, node_id: usize) -> bool {
+    document.nodes[node_id]
+        .children
+        .iter()
+        .any(|&id| document.nodes[id].kind() == NodeKind::Element)
+}
+
+/// Whether an element below `branch` is a left or right float that the walk
+/// of its subtree can reach, which does not go into a box that holds its own
+/// floats. The answer reads the styles of the boxes it reaches and nothing
+/// else, so it may be `true` for a float that the walk skips for another
+/// reason, but is never `false` for one that it visits.
+fn has_float_below(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    branch: usize,
+) -> bool {
+    // The stack only allocates for a branch with nested elements.
+    let mut nested = Vec::new();
+    let mut parent = branch;
+    loop {
+        for &id in &document.nodes[parent].children {
+            #[cfg(test)]
+            tests::FLOAT_PREFILTER_VISITS.with(|count| count.set(count.get() + 1));
+            let node = &document.nodes[id];
+            if node.kind() != NodeKind::Element {
+                continue;
+            }
+            if matches!(
+                cascade.computed[id].float,
+                FloatValue::Left | FloatValue::Right
+            ) {
+                return true;
+            }
+            // A `display: contents` element has no box, so its children stand
+            // in its parent's. Any other box that holds its floats keeps them
+            // from the branch, and the style of the box decides that: a flex
+            // or grid item below the branch has its container in between,
+            // which the walk never goes through.
+            if has_element_child(document, id)
+                && (node.display() == DisplayValue::Contents
+                    || !holds_floats_by_style(document, cascade, id))
+            {
+                nested.push(id);
+            }
+        }
+        match nested.pop() {
+            Some(next) => parent = next,
+            None => return false,
+        }
+    }
+}
+
 /// Visits each left or right float end in `branch`, in `parent`'s flow
 /// coordinates. Traversal stops at an independent BFC so its floats stay
 /// represented by its border box.
@@ -6726,8 +6783,12 @@ fn visit_same_bfc_floats_in_subtree(
     branch_top: f32,
     mut visit: impl FnMut(usize, f32),
 ) {
-    if document.nodes[branch].kind() != NodeKind::Element
-        || holds_floats(document, cascade, branch)
+    // A box without an element in it has no float to visit, which the walk
+    // below would find out only after the style queries about the box.
+    if document.nodes[branch].kind() != NodeKind::Element || !has_element_child(document, branch) {
+        return;
+    }
+    if holds_floats(document, cascade, branch)
         || (matches!(cascade.computed[branch].float, FloatValue::Footnote)
             && is_floating_box_for_pagination(document, cascade, branch))
         // cov:ignore: abs/fixed are caught above; running() is normalized by cascade.
@@ -6738,6 +6799,14 @@ fn visit_same_bfc_floats_in_subtree(
     {
         return;
     }
+    // A box with no float below it that the walk reaches has nothing to
+    // visit, and the style queries of the walk below are skipped. A box that
+    // holds its floats itself is rejected above, so its subtree is not read.
+    if !has_float_below(document, cascade, branch) {
+        return;
+    }
+    #[cfg(test)]
+    tests::FLOAT_SUBTREE_WALKS.with(|count| count.set(count.get() + 1));
     let branch_offset = branch_top
         - layout_relative_offset_y(document, cascade, body_id, branch)
         - if document.contributes_layout_offset(branch) {
@@ -10657,6 +10726,33 @@ fn shift_later_block_siblings(document: &mut Document, parent: usize, child: usi
     if !moves_later_siblings(document, parent) || delta == 0.0 || !delta.is_finite() {
         return;
     }
+    // The boxes after a box that is a child of `parent` itself are in
+    // `parent`'s own child list, which is walked in place without collecting
+    // the children of every move.
+    if let Some(index) = document.nodes[parent]
+        .children
+        .iter()
+        .position(|&id| id == child)
+        && document.nodes[child].display() != DisplayValue::Contents
+    {
+        // The children of the `display: contents` boxes met on the way.
+        let mut opened = Vec::new();
+        for later in index + 1..document.nodes[parent].children.len() {
+            let mut id = document.nodes[parent].children[later];
+            loop {
+                if document.nodes[id].display() == DisplayValue::Contents {
+                    opened.extend(document.nodes[id].children.iter().copied());
+                } else {
+                    shift_block_sibling(document, id, delta);
+                }
+                match opened.pop() {
+                    Some(next) => id = next,
+                    None => break,
+                }
+            }
+        }
+        return;
+    }
     // `display: contents` children generate no box: their children are laid
     // out as this box's children.
     let mut boxes = Vec::new();
@@ -10677,17 +10773,24 @@ fn shift_later_block_siblings(document: &mut Document, parent: usize, child: usi
         return;
     };
     for &sibling in &boxes[index + 1..] {
-        if document.nodes[sibling].kind() != NodeKind::Element
-            || document.nodes[sibling].display() == DisplayValue::None
-            || matches!(
-                document.nodes[sibling].position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-        {
-            continue;
-        }
-        document.table_layout_node_mut(sibling).layout.location.y += delta;
+        shift_block_sibling(document, sibling, delta);
     }
+}
+
+/// Moves the box `sibling`, one of the boxes after a moved child in block
+/// flow, down by `delta`. Text, boxes that are not rendered and positioned
+/// boxes keep their places.
+fn shift_block_sibling(document: &mut Document, sibling: usize, delta: f32) {
+    if document.nodes[sibling].kind() != NodeKind::Element
+        || document.nodes[sibling].display() == DisplayValue::None
+        || matches!(
+            document.nodes[sibling].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    {
+        return;
+    }
+    document.table_layout_node_mut(sibling).layout.location.y += delta;
 }
 
 /// The side and the normal-flow outer top, bottom and width of a moved
@@ -11220,16 +11323,18 @@ fn holds_floats(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
+    holds_floats_by_style(document, cascade, node_id) || is_flex_or_grid_item(document, node_id)
+}
+
+/// Whether the style of the box `node_id` alone makes it hold the floats
+/// inside it, without a look at the box around it.
+fn holds_floats_by_style(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     let computed = &cascade.computed[node_id];
-    let item = BoxTree::for_layout(document)
-        .parent(node_id, BoxParentScope::Document)
-        .is_some_and(|container| {
-            document.nodes[container]
-                .formatting_context
-                .is_flex_or_grid()
-        });
     document.nodes[node_id].layout_display() == Display::FlowRoot
-        || item
         || !(document.nodes[node_id].display().is_inline_flow()
             || matches!(
                 document.nodes[node_id].display(),
@@ -11240,6 +11345,17 @@ fn holds_floats(
         || scrolls_overflow(document, computed, node_id)
         || document.nodes[node_id].multicol.is_some()
         || establishes_containment_context(computed)
+}
+
+/// Whether the box `node_id` is an item of a flex or grid container.
+fn is_flex_or_grid_item(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    BoxTree::for_layout(document)
+        .parent(node_id, BoxParentScope::Document)
+        .is_some_and(|container| {
+            document.nodes[container]
+                .formatting_context
+                .is_flex_or_grid()
+        })
 }
 
 /// Whether the box `node_id` is a scroll container on either axis.
