@@ -1798,7 +1798,7 @@ fn with_item_content_limits_for_parent_sizes(
                         vertical_margins_are_collapsible: Line::FALSE,
                     };
 
-                    if let Some((width, size)) = item
+                    let ratio_is_redundant = if let Some((width, size)) = item
                         .ratio_minimum
                         .and_then(|minimum| Some((minimum.width, minimum.stretched?)))
                     {
@@ -1808,7 +1808,21 @@ fn with_item_content_limits_for_parent_sizes(
                             LengthProperty::Width
                         };
                         push_size_overrides(tree, idx, vec![px_length(property, size)]);
-                    }
+                        let basis = tree.physical_style(idx).flex_basis();
+                        let main_parent = if width {
+                            parent_size.width
+                        } else {
+                            parent_size.height
+                        };
+                        if basis.is_auto() {
+                            item.ratio_minimum
+                                .is_some_and(|minimum| minimum.stated.is_some())
+                        } else {
+                            basis.maybe_resolve(main_parent).is_some()
+                        }
+                    } else {
+                        false
+                    };
                     let mut width = if limits.has_width()
                         || (is_replaced_content(tree, idx) && limits.has_height())
                     {
@@ -1849,6 +1863,18 @@ fn with_item_content_limits_for_parent_sizes(
                         push_size_overrides(tree, idx, vec![zero_length(cross)]);
                     }
 
+                    // Keep the ratio while measuring the automatic minimum:
+                    // it may still supply a floor from the stretched cross size.
+                    // Once that floor is installed, both axes are definite.
+                    // The parent must not transfer a cross maximum through the
+                    // ratio into a main maximum that shrinks the flex basis.
+                    if ratio_is_redundant {
+                        push_size_overrides(
+                            tree,
+                            idx,
+                            vec![OwnedPropertyOverride::aspect_ratio(None)],
+                        );
+                    }
                     let cache = tree.take_layout_cache(idx);
                     tree.context.content_limit_probes.push(idx);
                     saved_caches.push((idx, cache));
