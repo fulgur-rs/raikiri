@@ -5837,7 +5837,8 @@ fn adjoining_margin_extremes(
 
 /// The outer block extents `(top, bottom)` of the floats that come before `id`
 /// among its siblings, in the coordinates of their parent, the ones `id`'s
-/// lines were broken against.
+/// lines were broken against. The floats before a `display: contents` box
+/// that holds `id` are not among its siblings, and so are not listed.
 fn preceding_float_extents(
     document: &Document,
     cascade: &CascadeResult,
@@ -5846,10 +5847,13 @@ fn preceding_float_extents(
     let Some(parent) = document.layout_parent_of(id) else {
         return Vec::new();
     };
-    document.nodes[parent]
-        .children
+    let siblings = &document.nodes[parent].children;
+    let position = siblings
         .iter()
-        .take_while(|&&sibling| sibling != id)
+        .position(|&sibling| sibling == id)
+        .unwrap_or(0);
+    siblings[..position]
+        .iter()
         .filter(|&&sibling| {
             is_floating_box_for_pagination(document, cascade, sibling)
                 && document.layout_parent_of(sibling) == Some(parent)
@@ -5875,8 +5879,8 @@ fn preceding_float_extents(
 /// float put one below itself, stays too, as does one whose lines sit beside
 /// floats that are not among `floats`. A paragraph that mixes in block
 /// children or generated blocks is not looked into, since the blocks leave
-/// gaps of their own, and neither is a box below `id` that clears a float or is
-/// not a plain block.
+/// gaps of their own. Neither is a box, `id` or one below it, that is not a
+/// plain block, or clears a float.
 fn lines_stay_put_when_moved(
     document: &Document,
     cascade: &CascadeResult,
@@ -5885,6 +5889,14 @@ fn lines_stay_put_when_moved(
     delta: f32,
     floats: &[(f32, f32)],
 ) -> bool {
+    // A box of a formatting context of its own is placed beside the floats as
+    // a whole, not line by line, and one in vertical writing breaks its lines
+    // along the other axis.
+    if !margins_may_collapse_through(document, cascade, id)
+        || document.nodes[id].used_writing_mode.is_vertical()
+    {
+        return false;
+    }
     if let Some(ifc) = document
         .ifc_layout_node(id)
         .and_then(|node| node.ifc.as_ref())
@@ -5906,7 +5918,6 @@ fn lines_stay_put_when_moved(
     // its own may have been put below the float as well.
     boxes.into_iter().all(|child| {
         cascade.computed[child].clear == ClearValue::None
-            && margins_may_collapse_through(document, cascade, child)
             && document.layout_parent_of(child) == Some(id)
             && lines_stay_put_when_moved(
                 document,

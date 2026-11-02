@@ -4520,6 +4520,78 @@ fn a_box_holding_a_paragraph_is_judged_by_the_paragraph() {
 }
 
 #[test]
+fn a_box_of_a_formatting_context_of_its_own_is_not_moved_line_by_line() {
+    let (mut doc, cascade, _float, root) = ahem_paragraph_beside_float(
+        "aaaa bbbb cccc",
+        "float:left;width:30px;height:20px",
+        "overflow:hidden",
+    );
+    lay_out(&mut doc, &cascade);
+    // The box is placed beside the float as a whole, so its lines say nothing
+    // about the float, and moving it below the float would keep its width.
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert_eq!(floats, [(0.0, 20.0)]);
+    let top = doc.nodes[root].layout.location.y;
+    assert!(!lines_stay_put_when_moved(
+        &doc, &cascade, root, top, 5.0, &floats
+    ));
+}
+
+#[test]
+fn only_the_floats_before_a_box_among_its_siblings_are_listed() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let float = |doc: &mut Document, side: &str, height: u32| {
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Some(&format!(
+                "display:block;float:{side};width:10px;height:{height}px"
+            )),
+        )
+    };
+    let first = float(&mut doc, "left", 20);
+    let contents = doc.append_element(Some(wrapper), "div", Some("display:contents"));
+    let root = doc.append_element(Some(contents), "div", Some("display:block"));
+    doc.append_text(root, "aaaa bbbb cccc");
+    let later = float(&mut doc, "right", 5);
+    let beside = doc.append_element(Some(wrapper), "div", Some("display:block"));
+    doc.append_text(beside, "dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    // The floats before a `display: contents` box are not among the siblings
+    // of the box it holds, so none is listed for it.
+    assert_eq!(doc.layout_parent_of(root), Some(contents));
+    assert!(preceding_float_extents(&doc, &cascade, root).is_empty());
+    // A direct child lists the floats before it, and a float lists the ones
+    // before it only.
+    let extent = |doc: &Document, id: usize| {
+        let layout = &doc.nodes[id].layout;
+        (
+            layout.location.y - layout.margin.top,
+            layout.location.y + layout.size.height + layout.margin.bottom,
+        )
+    };
+    assert_eq!(
+        preceding_float_extents(&doc, &cascade, beside),
+        [extent(&doc, first), extent(&doc, later)]
+    );
+    assert!(preceding_float_extents(&doc, &cascade, first).is_empty());
+    assert_eq!(
+        preceding_float_extents(&doc, &cascade, later),
+        [extent(&doc, first)]
+    );
+}
+
+#[test]
 fn a_paragraph_with_a_block_child_is_not_looked_into() {
     let (mut doc, cascade, _float, root) =
         ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
