@@ -49,7 +49,19 @@ pub struct RaikiriTreeSink {
     /// separate the `style` attribute into raikiri-dom::Node.inline_style,
     /// and preserve namespace-qualified attributes (for example SVG
     /// `xlink:href`) with their namespace URI, prefix, and local name.
+    /// Once an element has been merged into, add to it only through
+    /// `add_attrs_if_missing`, which keeps `attribute_names` in step.
     attributes: RefCell<FxHashMap<usize, Vec<Attribute>>>,
+    /// Names already present on the elements that `add_attrs_if_missing`
+    /// merges into (in practice `<html>` and `<body>`, once a start tag of
+    /// theirs repeats), so that each merge asks a set instead of scanning
+    /// every attribute the element gained from the tags before it. An entry
+    /// is built from the element's attributes the first time it is merged
+    /// into; from then on `add_attrs_if_missing` is the only code that adds an
+    /// attribute to the element.
+    attribute_names: RefCell<FxHashMap<usize, FxHashSet<QualName>>>,
+    #[cfg(test)]
+    pub(crate) attribute_name_sets_built: Cell<usize>,
     /// Buffer of nonfatal parse errors reported by html5ever. Move these to
     /// UncascadedDocument.warnings on `finish()`.
     warnings: RefCell<Vec<RenderWarning>>,
@@ -132,6 +144,9 @@ impl RaikiriTreeSink {
             }),
             overflow_element_handle: Cell::new(OVERFLOW_HANDLE),
             attributes: RefCell::new(FxHashMap::default()),
+            attribute_names: RefCell::new(FxHashMap::default()),
+            #[cfg(test)]
+            attribute_name_sets_built: Cell::new(0),
             warnings: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
             max_parse_warnings,
@@ -692,9 +707,16 @@ impl TreeSink for RaikiriTreeSink {
         }
         let mut store = self.attributes.borrow_mut();
         let existing = store.entry(*target).or_default();
+        let mut name_sets = self.attribute_names.borrow_mut();
+        let known = name_sets.entry(*target).or_insert_with(|| {
+            #[cfg(test)]
+            self.attribute_name_sets_built
+                .set(self.attribute_name_sets_built.get() + 1);
+            existing.iter().map(|a| a.name.clone()).collect()
+        });
         let missing: Vec<Attribute> = attrs
             .into_iter()
-            .filter(|a| !existing.iter().any(|e| e.name == a.name))
+            .filter(|a| !known.contains(&a.name))
             .collect();
         if missing.is_empty() {
             return;
@@ -719,6 +741,7 @@ impl TreeSink for RaikiriTreeSink {
             );
             return;
         }
+        known.extend(missing.iter().map(|a| a.name.clone()));
         existing.extend(missing);
     }
 

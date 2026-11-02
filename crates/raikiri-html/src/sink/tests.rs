@@ -1,5 +1,6 @@
 use super::*;
 
+mod attribute_merge_tests;
 mod body_candidate_tests;
 mod collect_external_stylesheet_hrefs_tests;
 mod dom_node_budget_tests;
