@@ -1,7 +1,7 @@
 use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, RunMode};
 use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, MaybeResolve};
 
 use super::super::intrinsic_scopes::with_ratio_height_probe;
 
@@ -137,4 +137,91 @@ fn flex_item_container_resolves_edges_during_indefinite_main_axis_measurement() 
     assert_eq!(output.size.width, 30.0);
     assert_eq!(tree.style_view(child).padding(), padding);
     assert_eq!(tree.style_view(child).padding().left, padding.left);
+}
+
+#[test]
+fn ratio_percentage_heights_restore_authored_values_after_layout_and_unwind() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:flex;width:100px;aspect-ratio:2/1",
+        "height:150%;min-height:125%;max-height:200%",
+    );
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let heights = |tree: &LayoutSession<'_>| {
+        let style = tree.physical_style(child);
+        [
+            style.size().height.maybe_resolve(Some(100.0)),
+            style.min_size().height.maybe_resolve(Some(100.0)),
+            style.max_size().height.maybe_resolve(Some(100.0)),
+        ]
+    };
+    assert_eq!(heights(&tree), [Some(150.0), Some(125.0), Some(200.0)]);
+    super::super::intrinsic_scopes::with_ratio_percentage_heights(
+        &mut tree,
+        NodeId::from(parent),
+        Some(50.0),
+        RunMode::PerformLayout,
+        |tree| assert_eq!(heights(tree), [Some(75.0), Some(62.5), Some(100.0)]),
+    );
+    assert_eq!(heights(&tree), [Some(150.0), Some(125.0), Some(200.0)]);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::intrinsic_scopes::with_ratio_percentage_heights(
+            &mut tree,
+            NodeId::from(parent),
+            Some(50.0),
+            RunMode::PerformLayout,
+            |tree| {
+                assert_eq!(heights(tree), [Some(75.0), Some(62.5), Some(100.0)]);
+                panic!("ratio percentage height unwind");
+            },
+        );
+    }));
+    assert!(panic.is_err());
+    assert_eq!(heights(&tree), [Some(150.0), Some(125.0), Some(200.0)]);
+}
+
+#[test]
+fn a_layout_after_ratio_percentage_scope_rebuilds_descendant_geometry() {
+    let (mut doc, _, child, _) =
+        fixture_with_styles("display:flex;width:100px;aspect-ratio:2/1", "height:150%");
+    let parent = doc.nodes[child].parent.unwrap();
+    let grandchild = doc.append_element(Some(child), "div", Some("display:block;height:50%"));
+    doc.mark_in_document_flags();
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let inputs = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        known_dimensions: Size {
+            width: Some(100.0),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::MaxContent,
+        },
+        ..LayoutInput::HIDDEN
+    };
+    let node = NodeId::from(child);
+    assert_eq!(tree.compute_child_layout(node, inputs).size.height, 150.0);
+    assert_eq!(tree.nodes[grandchild].layout.size.height, 75.0);
+    super::super::intrinsic_scopes::with_ratio_percentage_heights(
+        &mut tree,
+        NodeId::from(parent),
+        Some(50.0),
+        RunMode::PerformLayout,
+        |tree| {
+            assert_eq!(tree.compute_child_layout(node, inputs).size.height, 75.0);
+            assert_eq!(tree.nodes[grandchild].layout.size.height, 37.5);
+        },
+    );
+    assert_eq!(tree.compute_child_layout(node, inputs).size.height, 150.0);
+    assert_eq!(tree.nodes[grandchild].layout.size.height, 75.0);
 }

@@ -83,6 +83,80 @@ pub(super) fn with_flex_intrinsic_probe<R>(
     }
 }
 
+/// Resolve item height percentages and column flex bases against the height the container's ratio
+/// supplies, before its content can raise that height. Keep those values for
+/// the content probe and final layout so growth does not resolve them twice.
+/// An item of a column flex container first contributes its content height,
+/// so its descendants keep their ordinary percentage resolution there.
+pub(super) fn with_ratio_percentage_heights<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    height: Option<f32>,
+    run_mode: RunMode,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let idx = usize::from(node_id);
+    let Some(height) = height.filter(|_| {
+        tree.nodes[idx].layout_display() == Display::Flex
+            && !tree.has_vertical_writing_mode(idx)
+            && !tree.in_column_flex_container(idx)
+    }) else {
+        return layout(tree);
+    };
+    let column = !tree.physical_style(idx).flex_direction_is_row();
+    let items = tree
+        .child_ids(node_id)
+        .filter_map(|child| {
+            let idx = usize::from(child);
+            if tree.nodes[idx].layout_position() == Position::Absolute {
+                return None;
+            }
+            let style = tree.physical_style(idx);
+            let entries = [
+                (P::Height, style.size().height),
+                (P::MinHeight, style.min_size().height.into()),
+                (P::MaxHeight, style.max_size().height.into()),
+            ]
+            .into_iter()
+            .chain(column.then(|| (P::FlexBasis, style.flex_basis())))
+            .filter_map(|(property, size): (P, Dimension)| {
+                let percentage = match size.expand() {
+                    ExpandedDimension::Percent(_) => true,
+                    ExpandedDimension::Calc(calc) => calc.has_percentage(),
+                    _ => false,
+                };
+                percentage.then(|| {
+                    O::length(
+                        property,
+                        L::Px(size.maybe_resolve(Some(height)).expect("percentage height")),
+                        true,
+                    )
+                    .expect("physical item height")
+                })
+            })
+            .collect::<Vec<_>>();
+            (!entries.is_empty()).then_some((idx, entries))
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return layout(tree);
+    }
+    with_saved_probe_caches(tree, items.len(), |tree, saved| {
+        for (idx, entries) in items {
+            let key = tree.nodes.box_key(idx).expect("ratio item box");
+            let mut cache = tree.take_layout_cache(idx);
+            if run_mode == RunMode::PerformLayout {
+                // A different final layout replaces descendant geometry, so
+                // the old final entry can no longer stand for that geometry.
+                cache.forget_final_layout();
+            }
+            saved.push((idx, cache));
+            tree.push_local_overrides(entries.into_iter().map(|entry| (key, entry)).collect());
+        }
+        layout(tree)
+    })
+}
+
 /// Run `probe`, which measures the content height of the flex container
 /// `node_id` to raise the height its aspect ratio gives it, while the items the
 /// container stretches add only their `min-height` to that measure (see
