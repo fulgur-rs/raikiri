@@ -608,9 +608,28 @@ pub(super) fn with_column_item_content_height<R>(
                 crate::layout::resolve_dimension(style.size().width, Some(inner_width))
                     .map(|width| width + across)
             };
-            let Some(width) = width else {
+            // The width the container gives the item is within its `min-width`
+            // and `max-width`, which the content is measured at. A bound that
+            // does not resolve leaves the width the item gets unknown.
+            let bound = |value: LengthPercentageAuto| {
+                if value.is_auto() {
+                    Some(None)
+                } else {
+                    crate::layout::resolve_length_percentage_auto(value, Some(inner_width))
+                        .map(|bound| Some(bound + across))
+                }
+            };
+            let (Some(width), Some(min), Some(max)) = (
+                width,
+                bound(style.min_size().width),
+                bound(style.max_size().width),
+            ) else {
                 continue;
             };
+            let width = max
+                .map_or(width, |max| width.min(max))
+                .max(min.unwrap_or(0.0))
+                .max(across);
             let edges = vertical_content_edges(&style);
             let content = (tree
                 .compute_child_layout(child, content_height_probe(width, inner_width))

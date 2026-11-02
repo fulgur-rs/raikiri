@@ -9,7 +9,8 @@
 //! the bounds its flex base size and its `min-width` and `max-width` give, not
 //! its flex base size alone. An item of a column container whose flex base size
 //! is a length is as tall as that size, within its minimum height, whatever
-//! `height` it states.
+//! `height` it states; its content is measured at the width its `width`,
+//! `min-width` and `max-width` give it.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
@@ -292,4 +293,31 @@ cases! {
     reversed_max_content_container_scrolling_item_flex_1_1_0_with_a_max_width:
         r#"<div id=o style="float:left;display:flex;flex-direction:row-reverse"><div id=b style="width:30px">b</div><div id=a style="flex:1 1 0;overflow:auto;max-width:50px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
         [("a", (8.0, 8.0, 50.0, 36.0)), ("b", (58.0, 8.0, 30.0, 36.0)), ("o", (8.0, 8.0, 80.0, 36.0))];
+    column_item_with_a_max_width_keeps_a_stated_height_below_its_content_at_that_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;max-width:40px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_item_with_a_percentage_max_width_keeps_a_stated_height_below_its_content_at_that_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;max-width:20%;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_item_with_a_min_width_wider_than_the_container_is_as_tall_as_its_content_at_that_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:60px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:60px;min-width:100px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 100.0, 26.0)), ("b", (8.0, 8.0, 60.0, 20.0)), ("o", (8.0, 8.0, 60.0, 46.0))];
+    column_item_with_a_min_width_wider_than_the_container_keeps_a_stated_height_below_its_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:60px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;min-width:100px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 100.0, 20.0)), ("b", (8.0, 8.0, 60.0, 20.0)), ("o", (8.0, 8.0, 60.0, 40.0))];
+    column_item_with_a_40px_width_keeps_a_stated_height_below_its_content_at_that_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;width:40px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_item_with_a_width_above_its_max_width_keeps_a_stated_height_below_its_content_at_the_max_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;width:80px;max-width:40px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_content_box_item_with_a_max_width_keeps_a_stated_height_below_its_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;max-width:40px;box-sizing:content-box;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 48.0, 26.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 46.0))];
+    column_item_with_a_max_width_and_an_80px_height_is_as_tall_as_its_content_at_that_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:80px;max-width:40px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 40.0, 36.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 56.0))];
+    column_floated_container_item_with_a_max_width_keeps_a_stated_height_below_its_content:
+        r#"<div id=o style="float:left;display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;max-width:40px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
 }
