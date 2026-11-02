@@ -25,6 +25,7 @@ use crate::layout::ifc::boxes::{box_sizing_height_adjustment, max_height_cap, op
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
 };
+use crate::layout::taffy_adapter::columns_follow_their_items;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::{
@@ -308,7 +309,9 @@ pub(super) fn clamp_to_height_limits(
 /// sized before, is no part of its width. A grid whose height is open, but
 /// whose `max-height` limits it, hands its items what the limit leaves when it
 /// is laid out at a width: its rows grow to the lines of the items up to that,
-/// and the items share it by row. `size` is the border-box size the grid is
+/// and the items share it by row. That holds where some column follows its
+/// items; columns that all have a size of their own leave the rows to the lines
+/// of the items, as without a limit. `size` is the border-box size the grid is
 /// given or states, `stated` the height it states, and `edges` the padding and
 /// border of the grid above and below.
 pub(super) fn grid_item_content_height(
@@ -330,7 +333,10 @@ pub(super) fn grid_item_content_height(
     if let Some(height) = height {
         return Some((height - edges).max(0.0));
     }
-    if !at_a_width {
+    // The limit informs the width of a column that follows its items. A column
+    // of a size of its own is laid out with the rows the items make, whatever
+    // the limit is.
+    if !at_a_width || !columns_follow_their_items(&style) {
         return None;
     }
     let max = style.max_size().height.maybe_resolve(basis.height)?;

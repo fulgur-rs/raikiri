@@ -481,3 +481,104 @@ fn a_max_height_does_not_shrink_the_row_of_a_horizontal_item() {
         ],
     );
 }
+
+#[test]
+fn columns_with_a_size_of_their_own_leave_the_lines_of_a_vertical_item_to_its_row() {
+    // The limit is the room of a vertical item where the width of its column
+    // follows it. A column of a length, a `minmax()` of two lengths, a
+    // `minmax(0, 1fr)` or a repeat of lengths is as wide as it is whatever the
+    // item is, so the item keeps one line of 90px and the grid is cut to the
+    // limit.
+    let grid = |columns: &str, placement: &str| {
+        format!(
+            "<div id=p style=\"display:grid;width:200px;max-height:70px;\
+             grid-template-columns:{columns}\"><div id=v style=\"\
+             writing-mode:vertical-rl;justify-self:start;{placement}\">{TEXT}</div></div>"
+        )
+    };
+    for columns in [
+        "100px",
+        "100px 100px",
+        "repeat(2, 100px)",
+        "minmax(0, 1fr)",
+        "minmax(10px, 100px)",
+    ] {
+        assert_boxes(
+            &grid(columns, ""),
+            &[
+                ("p", [0.0, 0.0, 200.0, 70.0]),
+                ("v", [0.0, 0.0, 10.0, 90.0]),
+            ],
+        );
+    }
+    // A column that follows its item does: two columns of 10px in 70px.
+    for columns in ["auto", "1fr", "min-content", "minmax(10px, max-content)"] {
+        assert_boxes(
+            &grid(columns, ""),
+            &[
+                ("p", [0.0, 0.0, 200.0, 70.0]),
+                ("v", [0.0, 0.0, 20.0, 70.0]),
+            ],
+        );
+    }
+    // The item is in the automatic column here.
+    assert_boxes(
+        &grid("100px auto", "grid-column:2"),
+        &[
+            ("p", [0.0, 0.0, 200.0, 70.0]),
+            ("v", [100.0, 0.0, 20.0, 70.0]),
+        ],
+    );
+    // Without a template the implicit columns are `auto`, and `grid-auto-columns`
+    // sizes them otherwise.
+    let implicit = |auto_columns: &str| {
+        format!(
+            "<div id=p style=\"display:grid;width:200px;max-height:70px;\
+             grid-auto-columns:{auto_columns}\"><div id=v style=\"writing-mode:vertical-rl;\
+             justify-self:start\">{TEXT}</div></div>"
+        )
+    };
+    assert_boxes(
+        &implicit("minmax(0, 100px)"),
+        &[
+            ("p", [0.0, 0.0, 200.0, 70.0]),
+            ("v", [0.0, 0.0, 10.0, 90.0]),
+        ],
+    );
+    assert_boxes(
+        &implicit("auto"),
+        &[
+            ("p", [0.0, 0.0, 200.0, 70.0]),
+            ("v", [0.0, 0.0, 20.0, 70.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_vertical_item_lets_a_horizontal_row_shrink_to_the_limit_of_a_grid_as_in_chromium() {
+    // Where a column follows the vertical item, the limit is the space the rows
+    // share, so the row of a horizontal item that may shrink to nothing gives
+    // way to it, as it does in the browser.
+    assert_boxes(
+        "<div id=p style=\"display:grid;width:100px;max-height:10px\">\
+         <div id=o style=\"min-height:0;font:100px/1 Ahem\">X</div>\
+         <div id=v style=\"writing-mode:vertical-rl;grid-column:2;grid-row:1\"></div></div>",
+        &[
+            ("p", [0.0, 0.0, 100.0, 10.0]),
+            ("o", [0.0, 0.0, 100.0, 10.0]),
+            ("v", [100.0, 0.0, 0.0, 10.0]),
+        ],
+    );
+    // Columns of lengths do not take the limit, and the row keeps its content.
+    assert_boxes(
+        "<div id=p style=\"display:grid;width:200px;max-height:10px;\
+         grid-template-columns:100px 100px\">\
+         <div id=o style=\"min-height:0;font:100px/1 Ahem\">X</div>\
+         <div id=v style=\"writing-mode:vertical-rl\">AAAA BBBB</div></div>",
+        &[
+            ("p", [0.0, 0.0, 200.0, 10.0]),
+            ("o", [0.0, 0.0, 100.0, 100.0]),
+            ("v", [100.0, 0.0, 100.0, 100.0]),
+        ],
+    );
+}
