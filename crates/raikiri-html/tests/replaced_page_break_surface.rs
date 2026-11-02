@@ -448,6 +448,14 @@ fn a_columns_own_clip_keeps_an_image_whose_visible_part_fits() {
 }
 
 #[test]
+fn a_sticky_column_image_keeps_the_existing_pagination_path() {
+    // Sticky positioning is outside the new static/relative eligibility.
+    // This native guard control does not claim Chromium conformance.
+    let body = column_after_lead(&column_image(400, "position:sticky;top:0"), "");
+    assert_eq!(extents_of("o", &body)[0], Some((308, 600)));
+}
+
+#[test]
 fn an_image_alone_in_its_line_follows_the_same_rule() {
     let spacer = "<div style='height:300px'></div>";
     assert_eq!(
