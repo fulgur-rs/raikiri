@@ -640,7 +640,7 @@ impl LayoutSession<'_> {
     /// An item with a flex basis of `content` that states its cross size gets
     /// its flex base size from that size through the ratio, even when it states
     /// its main size too and the ratio has nothing left to do for its own size.
-    fn flex_item_ratio(&self, idx: usize) -> raikiri_layout_style::FlexItemRatio {
+    pub(crate) fn flex_item_ratio(&self, idx: usize) -> raikiri_layout_style::FlexItemRatio {
         use raikiri_layout_style::FlexItemRatio;
         use raikiri_layout_style::values::ExpandedDimension;
         let item = self.physical_style(idx);
@@ -661,17 +661,14 @@ impl LayoutSession<'_> {
         let width_stands_in = self.nodes[idx].svg_width_follows_available;
         let main_is_stated = states_a_size(main) && (!is_row || !width_stands_in);
         // Hiding the ratio leaves the cross size to the box itself, which
-        // only blocks, flex and grid containers and replaced boxes derive from
-        // the main size they are measured at; a paragraph measures its content
-        // instead. A flex container derives its height from its width but not
-        // its width from its height, so it keeps the ratio as an item of a
-        // column, where the main size is the height. On vertical writing axes
-        // it keeps the ratio too, as it leaves its height to the flex
-        // algorithm.
+        // only blocks, flex and grid containers, paragraphs and replaced boxes
+        // derive from the main size they are measured at. A paragraph or a
+        // flex container on vertical writing axes keeps the ratio, as it
+        // leaves its height to the flex algorithm.
         let derives_cross_from_ratio = match self.nodes[idx].formatting_context {
             FormattingContext::Block | FormattingContext::Grid => true,
-            FormattingContext::Flex => {
-                is_row && crate::layout::dispatch::block_right_to_left(self, idx).is_none()
+            FormattingContext::Inline | FormattingContext::Flex => {
+                crate::layout::dispatch::block_right_to_left(self, idx).is_none()
             }
             _ => false,
         };
