@@ -4859,7 +4859,8 @@ struct AvoidedBreaks {
 /// A candidate that is a float, out of flow, text, a clearing block or a block
 /// that a forced break or a page name change reaches ends the search without a
 /// result, and so does a block that something other than empty blocks
-/// separates from the empty one: the margin stays the empty block's own.
+/// separates from the empty one, or that a forced break follows: the margin
+/// stays the empty block's own.
 fn margin_run_ends(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -4883,7 +4884,9 @@ fn margin_run_ends(
     // leads to is known when the empty block before it asks.
     for (index, candidate) in candidates.iter().enumerate().rev() {
         let node_id = candidate.node_id;
-        if !joins_run(candidate) || !collapses_through(document, cascade, node_id, candidate.height)
+        if !joins_run(candidate)
+            || !collapses_through(document, cascade, node_id, candidate.height)
+            || !no_forced_break_inside_or_after(document, cascade, node_id)
         {
             continue;
         }
@@ -4911,6 +4914,26 @@ fn margin_run_ends(
         ends.insert(node_id, end);
     }
     ends
+}
+
+/// Whether no break is forced after `node_id` or after a box inside it: a
+/// forced break after the last box inside it comes after `node_id` as well.
+fn no_forced_break_inside_or_after(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut pending = vec![node_id];
+    while let Some(id) = pending.pop() {
+        if !matches!(
+            cascade.computed[id].break_after,
+            BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::AvoidPage
+        ) {
+            return false;
+        }
+        pending.extend(document.nodes[id].children.iter().copied());
+    }
+    true
 }
 
 /// Where a box and its page stand when the box is tested for moving to the

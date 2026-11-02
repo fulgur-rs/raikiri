@@ -178,11 +178,32 @@ fn the_run_is_cut_at_a_later_page_edge_too() {
 
 #[test]
 fn a_forced_break_after_the_empty_block_keeps_the_margin_of_the_block_after_it() {
-    // The break between them is forced, and the margin below it is kept in full
-    // on the new page.
+    // The empty block starts the second page, since the margin below the
+    // lead-in crosses the page edge, and the break after it is forced: the
+    // margin of the next block is kept in full on the third page. A negative
+    // one pulls the block up over the page before it, where its text is drawn.
     let empty = "<div style='height:0;break-after:page'></div>";
-    let body = format!("{}{empty}{}", lead_in(30), block(10));
-    assert_eq!(pages(&body), (3, vec![(2, 0.0, 15.0)]));
+    for (margin, page, top) in [
+        (10, 2, 15.0),
+        (-10, 2, -5.0),
+        (-25, 1, 80.0),
+        (-40, 1, 65.0),
+    ] {
+        let body = format!("{}{empty}{}", lead_in(30), block(margin));
+        assert_eq!(pages(&body).1, vec![(page, 0.0, top)], "{margin}");
+    }
+}
+
+#[test]
+fn a_forced_break_after_a_box_inside_the_empty_block_ends_the_run_too() {
+    // The break comes after the block that holds the empty one, wherever it is
+    // set.
+    let inside = "<div><div style='height:0;break-after:page'></div></div>";
+    let wrapper = "<div style='break-after:page'><div style='height:0'></div></div>";
+    for empty in [inside, wrapper] {
+        let body = format!("{}{empty}{}", lead_in(30), block(-40));
+        assert_eq!(pages(&body).1, vec![(1, 0.0, 65.0)], "{empty}");
+    }
 }
 
 #[test]
