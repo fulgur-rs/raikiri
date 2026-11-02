@@ -15,8 +15,8 @@
 //! `none`.
 
 use raikiri_layout_style::values::{
-    BoxSizing, Dimension, Display, ExpandedDimension, ExpandedLengthPercentageAuto, LengthIdentity,
-    LengthPercentage, LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
+    AlignItems, BoxSizing, Dimension, Display, ExpandedDimension, ExpandedLengthPercentageAuto,
+    LengthIdentity, LengthPercentage, LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -1470,7 +1470,8 @@ impl ItemLimits {
 }
 
 /// The automatic minimum size of a flex item that has a preferred aspect ratio
-/// and states its size across the main axis of its container.
+/// and has a size across the main axis of its container, stated or given by
+/// the container stretching it.
 ///
 /// Such an item takes its size along the main axis from the ratio, and the
 /// layout library holds its automatic minimum size down to that size. The
@@ -1498,6 +1499,13 @@ struct RatioMinimum {
     /// the box-sizing box of the style, where they resolve.
     stated: Option<f32>,
     max: Option<f32>,
+    /// The size across the main axis that the container gives an item that
+    /// states none, in the box-sizing box of the style and within its `min-*`
+    /// and `max-*` there. The item states it while its minimum is measured and
+    /// while it is laid out, so that it takes the paths of an item that states
+    /// its size across: its content is not cut by the `max-*` across, which
+    /// the ratio would carry to the main axis.
+    stretched: Option<f32>,
 }
 
 /// The [`RatioMinimum`] of the flex item `idx` of `container`, if the item
@@ -1556,17 +1564,6 @@ fn ratio_minimum(
     if !states_main || main_minimum != (true, true) || !main_max_keyword.is_auto() {
         return None;
     }
-    let mut cross = cross.maybe_resolve(cross_basis)?;
-    let bounds = (
-        cross_bounds.0.maybe_resolve(cross_basis),
-        cross_bounds.1.maybe_resolve(cross_basis),
-    );
-    if let Some(max) = bounds.1 {
-        cross = cross.min(max);
-    }
-    if let Some(min) = bounds.0 {
-        cross = cross.max(min);
-    }
     // The ratio relates the content boxes when the box sizes its content, or
     // the ratio says `auto`, and the border boxes otherwise.
     let content_sized = item.box_sizing() == BoxSizing::ContentBox;
@@ -1579,6 +1576,24 @@ fn ratio_minimum(
     } else {
         (edges.height, edges.width)
     };
+    let stated_cross = cross.maybe_resolve(cross_basis);
+    let mut cross = match stated_cross {
+        Some(cross) => cross,
+        None => {
+            let stretched = stretched_cross_size(tree, container, idx, cross, width, parent_size)?;
+            (stretched - if content_sized { edges_cross } else { 0.0 }).max(0.0)
+        }
+    };
+    let bounds = (
+        cross_bounds.0.maybe_resolve(cross_basis),
+        cross_bounds.1.maybe_resolve(cross_basis),
+    );
+    if let Some(max) = bounds.1 {
+        cross = cross.min(max);
+    }
+    if let Some(min) = bounds.0 {
+        cross = cross.max(min);
+    }
     let carry = |cross: f32| {
         let border_box = cross + if content_sized { edges_cross } else { 0.0 };
         let related = if relates_content {
@@ -1613,7 +1628,65 @@ fn ratio_minimum(
         } else {
             (bounds.0.map(carry), bounds.1.map(carry))
         },
+        stretched: stated_cross.is_none().then_some(cross),
     })
+}
+
+/// The border-box size across the main axis that the flex container
+/// `container` gives its item `idx` by stretching it, or `None` where the item
+/// does not take its size across from the container.
+///
+/// A container that may form more than one line, or has no definite size
+/// across, leaves the size across to the line, and an item with a vertical
+/// writing mode is sized by its own axes. An `auto` size across is
+/// stretched when the alignment of the item says `stretch` or `normal` and
+/// neither of its margins across is `auto` (CSS Flexbox 1 §9.4), and a `stretch`
+/// size across whatever the alignment says. Either takes the size of the
+/// container across, less the margins.
+fn stretched_cross_size(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    idx: usize,
+    cross: Dimension,
+    width: bool,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    let container = tree.physical_style(container);
+    if container.flex_wraps() || tree.has_vertical_writing_mode(idx) {
+        return None;
+    }
+    let room = if width {
+        parent_size.height
+    } else {
+        parent_size.width
+    }?;
+    let item = tree.physical_style(idx);
+    let margin = item.margin();
+    let (start, end) = if width {
+        (margin.top, margin.bottom)
+    } else {
+        (margin.left, margin.right)
+    };
+    if !matches!(
+        cross.expand(),
+        ExpandedDimension::Auto
+            | ExpandedDimension::Stretch
+            | ExpandedDimension::Percent(_)
+            | ExpandedDimension::Calc(_)
+    ) {
+        return None;
+    }
+    if cross.expand() != ExpandedDimension::Stretch {
+        let stretched = matches!(
+            item.align_self().or(Some(container.align_items())),
+            None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
+        );
+        if !stretched || start.is_auto() || end.is_auto() {
+            return None;
+        }
+    }
+    let side = |side: LengthPercentageAuto| side.resolve(parent_size.width).unwrap_or(0.0);
+    Some((room - side(start) - side(end)).max(0.0))
 }
 
 /// `minimum`, the content-based automatic minimum size of a flex item along
@@ -1644,9 +1717,13 @@ fn capped_ratio_minimum(ratio_minimum: RatioMinimum, minimum: Option<f32>) -> Op
 }
 
 fn zero_length(property: LengthProperty) -> OwnedPropertyOverride {
+    px_length(property, 0.0)
+}
+
+fn px_length(property: LengthProperty, size: f32) -> OwnedPropertyOverride {
     OwnedPropertyOverride::length(
         property,
-        raikiri_style::ComputedLengthPercentageOrAuto::Px(0.0),
+        raikiri_style::ComputedLengthPercentageOrAuto::Px(size),
         true,
     )
     .expect("resolved pixel bound")
@@ -1702,6 +1779,17 @@ fn with_item_content_limits_for_parent_sizes(
                         vertical_margins_are_collapsible: Line::FALSE,
                     };
 
+                    if let Some((width, size)) = item
+                        .ratio_minimum
+                        .and_then(|minimum| Some((minimum.width, minimum.stretched?)))
+                    {
+                        let property = if width {
+                            LengthProperty::Height
+                        } else {
+                            LengthProperty::Width
+                        };
+                        push_size_overrides(tree, idx, vec![px_length(property, size)]);
+                    }
                     let mut width = if limits.has_width()
                         || (is_replaced_content(tree, idx) && limits.has_height())
                     {
