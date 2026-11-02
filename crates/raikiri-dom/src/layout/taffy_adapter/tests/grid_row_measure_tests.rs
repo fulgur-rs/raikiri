@@ -200,3 +200,31 @@ fn nested_baseline_measure_requests_restore_the_previous_owner_after_a_panic() {
     assert!(result.is_err());
     assert_eq!(tree.context.baseline_measure_owners, [0]);
 }
+
+#[test]
+fn a_vertical_baseline_measure_keeps_the_horizontal_owner_and_exports_no_baseline() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(Some(0), "div", Some("display:grid"));
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;writing-mode:vertical-rl;width:10px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.context.baseline_measure_owners.push(parent);
+    let output = tree.with_baseline_measure(child, |tree| {
+        assert_eq!(tree.context.baseline_measure_owners, [parent]);
+        tree.compute_child_layout(
+            child.into(),
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                ..LayoutInput::HIDDEN
+            },
+        )
+    });
+    assert_eq!(output.baselines.first, None);
+    assert_eq!(tree.context.baseline_measure_owners, [parent]);
+    assert_eq!(tree.nodes[child].layout.size, Size::ZERO);
+}

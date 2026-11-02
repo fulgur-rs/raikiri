@@ -191,9 +191,6 @@ impl LayoutPartialTree for RowMeasure<'_, '_> {
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
         let mut inputs = LayoutInput::from_taffy(inputs);
-        if inputs.run_mode == RunMode::PerformHiddenLayout {
-            return LayoutOutput::HIDDEN.into_taffy();
-        }
         let node = NodeId::from_taffy(node);
         let baseline = self.baseline_request(usize::from(node), &inputs);
         let placed = inputs.run_mode == RunMode::PerformLayout;
