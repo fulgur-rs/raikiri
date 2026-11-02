@@ -5844,10 +5844,8 @@ fn preceding_float_extents(
     cascade: &CascadeResult,
     id: usize,
 ) -> Vec<(f32, f32)> {
-    let Some(parent) = document.layout_parent_of(id) else {
-        return Vec::new();
-    };
-    let siblings = &document.nodes[parent].children;
+    let parent = document.layout_parent_of(id);
+    let siblings = parent.map_or(&[][..], |parent| &document.nodes[parent].children[..]);
     let position = siblings
         .iter()
         .position(|&sibling| sibling == id)
@@ -5859,7 +5857,7 @@ fn preceding_float_extents(
         .filter(|&&sibling| {
             is_floating_box_for_pagination(document, cascade, sibling)
                 && float_side_index(cascade.computed[sibling].float).is_some()
-                && document.layout_parent_of(sibling) == Some(parent)
+                && document.layout_parent_of(sibling) == parent
         })
         .map(|&float| float_outer_extent(document, float))
         .collect()
