@@ -365,9 +365,9 @@ fn container_with_item(build_item: impl FnOnce(&mut Document, usize)) -> f32 {
 
 #[test]
 fn a_container_is_left_alone_when_its_first_piece_cannot_be_read() {
-    // A block between lines, a float, a table, a positioned box and a box with
-    // nothing in it: no piece of their content is known to keep together.
-    let unread: [(&str, ItemBuilder); 5] = [
+    // A block between lines, a float, a table and a positioned box:
+    // no piece of their content is known to keep together.
+    let unread: [(&str, ItemBuilder); 4] = [
         (
             "block between lines",
             Box::new(|doc, container| {
@@ -397,12 +397,6 @@ fn a_container_is_left_alone_when_its_first_piece_cannot_be_read() {
             "positioned",
             Box::new(|doc, container| {
                 paragraph(doc, container, 1, "position:sticky;top:0");
-            }),
-        ),
-        (
-            "empty",
-            Box::new(|doc, container| {
-                block(doc, container, "display:block;height:20px");
             }),
         ),
     ];
@@ -1054,6 +1048,71 @@ fn a_padded_block_is_not_moved_for_a_box_that_avoids_breaks_around_a_forced_brea
             ),
             ([90.0, 100.0, 100.0], 2),
             "{inner}"
+        );
+    }
+}
+
+#[test]
+fn empty_flex_items_move_with_edges_that_reach_or_cross_the_page_end() {
+    for lead in [94, 97] {
+        for css in [
+            "display:flex;padding-top:6px",
+            "display:flex;padding-top:6px;flex-direction:row-reverse",
+            "display:flex;border-top:6px solid",
+        ] {
+            let (container, items) = row_after(lead, css, &["height:20px", "height:20px"]);
+            assert_eq!(
+                (container, items.as_slice()),
+                (100.0, &[106.0, 106.0][..]),
+                "{lead} {css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_flex_items_keep_cutting_when_some_height_fits_after_the_edges() {
+    for lead in [80, 90] {
+        for css in [
+            "display:flex;padding-top:6px",
+            "display:flex;padding-top:6px;flex-direction:row-reverse",
+            "display:flex;border-top:6px solid",
+        ] {
+            let (container, items) = row_after(lead, css, &["height:20px", "height:20px"]);
+            let top = lead as f32;
+            assert_eq!(
+                (container, items.as_slice()),
+                (top, &[top + 6.0, top + 6.0][..]),
+                "{lead} {css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_single_empty_flex_item_moves_with_padding_that_ends_the_page() {
+    assert_eq!(
+        container_with_item(|doc, container| {
+            block(doc, container, "display:block;height:20px");
+        }),
+        100.0
+    );
+}
+
+#[test]
+fn nested_empty_flex_items_keep_the_edges_only_when_the_first_piece_does_not_fit() {
+    for (lead, expected) in [(94, 100.0), (97, 100.0), (90, 90.0)] {
+        let (mut container, mut item) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{lead}px"));
+            container = block(doc, body, FLEX);
+            item = block(doc, container, "display:block");
+            block(doc, item, "display:block;height:20px");
+        });
+        assert_eq!(
+            (page_flow_y(&doc, container), page_flow_y(&doc, item)),
+            (expected, expected + 6.0),
+            "{lead}"
         );
     }
 }
