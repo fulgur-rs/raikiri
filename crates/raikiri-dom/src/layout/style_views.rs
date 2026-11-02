@@ -664,10 +664,15 @@ impl LayoutSession<'_> {
         // only blocks, flex and grid containers, paragraphs and replaced boxes
         // derive from the main size they are measured at. A paragraph or a
         // flex container on vertical writing axes keeps the ratio, as it
-        // leaves its height to the flex algorithm.
+        // leaves its height to the flex algorithm, and so does a paragraph
+        // that is a multicol container, which is measured by its own path.
         let derives_cross_from_ratio = match self.nodes[idx].formatting_context {
             FormattingContext::Block | FormattingContext::Grid => true,
-            FormattingContext::Inline | FormattingContext::Flex => {
+            FormattingContext::Inline => {
+                self.nodes[idx].multicol.is_none()
+                    && crate::layout::dispatch::block_right_to_left(self, idx).is_none()
+            }
+            FormattingContext::Flex => {
                 crate::layout::dispatch::block_right_to_left(self, idx).is_none()
             }
             _ => false,

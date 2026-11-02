@@ -275,4 +275,10 @@ cases! {
     margins_of_a_paragraph_item_stay_outside_its_ratio_box:
         r#"<div style="display:flex;width:100px"><div id=a style="width:20px;aspect-ratio:1;flex-grow:1;margin:5px">x</div></div>"# =>
         [("a", (13.0, 13.0, 90.0, 90.0))];
+    a_multicol_paragraph_item_that_does_not_flex_keeps_the_ratio_size:
+        r#"<div style="display:flex;width:100px"><div id=a style="columns:2;width:50px;aspect-ratio:1">x</div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 50.0))];
+    a_tall_ratio_multicol_paragraph_item_that_does_not_flex_keeps_the_ratio_size:
+        r#"<div style="display:flex;width:100px"><div id=a style="column-count:2;width:50px;aspect-ratio:1/2">x</div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 100.0))];
 }
