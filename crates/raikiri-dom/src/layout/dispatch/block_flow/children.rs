@@ -654,6 +654,16 @@ pub(super) fn layout(
         );
         child_input.known_dimensions.width = Some(child_width);
         child_input.available_space.width = AvailableSpace::Definite(child_width);
+        if style.item_is_table && matches!(style.size.width.expand(), ExpandedDimension::Auto) {
+            // A table of `auto` width is handed the room it was measured in and
+            // sizes itself from its columns there. Its columns are set in that
+            // room even where one of them is then removed by
+            // `visibility: collapse`, so the width left after the removal must
+            // not stand in for it.
+            let room = child_metrics.clamp_width(area_width.max(0.0));
+            child_input.known_dimensions.width = Some(room);
+            child_input.available_space.width = AvailableSpace::Definite(room);
+        }
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
         // Clearance refers to preceding floats. Descendant floats created
