@@ -26,6 +26,7 @@ mod closing_edge_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
 mod geometry_lookup_tests;
+mod grid_row_tests;
 mod line_ranges_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;

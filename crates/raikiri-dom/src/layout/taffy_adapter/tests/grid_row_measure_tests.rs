@@ -62,6 +62,7 @@ fn provisional_rows_include_only_in_flow_items_and_do_not_publish_layout() {
     );
     assert!(!tree.context.grid_layout_info.contains_key(&grid));
     assert!(tree.nodes[grid].grid_item_row_starts.is_empty());
+    assert!(tree.nodes[grid].grid_item_rows.is_empty());
     assert!(tree.nodes[grid].grid_item_column_starts.is_empty());
     assert!(tree.nodes[grid].grid_item_areas.is_empty());
     assert!(tree.nodes[grid].grid_items_without_baseline.is_empty());
@@ -103,6 +104,7 @@ fn baseline_replay_keeps_nested_geometry_and_grid_metadata_private() {
                     (
                         node.layout,
                         node.grid_item_row_starts.to_vec(),
+                        node.grid_item_rows.to_vec(),
                         node.grid_item_column_starts.to_vec(),
                         node.grid_items_without_baseline.to_vec(),
                         node.grid_item_areas.to_vec(),

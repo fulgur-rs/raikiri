@@ -5,6 +5,7 @@ mod candidates;
 pub(crate) mod column_projection;
 mod footnotes;
 mod fragment_sources;
+mod grid_rows;
 mod leading_margins;
 mod line_ranges;
 mod link_events;
