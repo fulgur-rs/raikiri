@@ -958,3 +958,20 @@ fn a_square_formatting_context_settles_in_the_widest_room_it_fits_beside_the_flo
         (160.0, 0.0, 40.0, 40.0)
     );
 }
+
+#[test]
+fn a_zero_height_native_block_can_collapse_through_its_empty_child() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(Some(0), "div", Some("display:block"));
+    let root = doc.append_element(Some(parent), "div", Some("display:block;height:0"));
+    doc.append_element(
+        Some(root),
+        "div",
+        Some("display:block;height:0;margin-top:30px;margin-bottom:5px"),
+    );
+    let mut input = inputs();
+    input.vertical_margins_are_collapsible = Line::TRUE;
+    let output = block_layout(&mut doc, NodeId::from(root), input, None);
+    assert_eq!(output.size.height, 0.0);
+    assert!(output.margins_can_collapse_through);
+}

@@ -1188,7 +1188,7 @@ impl LayoutSession<'_> {
                     width: 0.0,
                     height: 0.0,
                 });
-                return compute_leaf_layout(
+                let mut output = compute_leaf_layout(
                     inputs,
                     &TaffyStyle::new(style),
                     resolve_calc,
@@ -1197,6 +1197,16 @@ impl LayoutSession<'_> {
                         height: known.height.unwrap_or(natural.height),
                     },
                 );
+                let style = block_flow::style_input::physical(tree, idx);
+                correct_empty_vertical_leaf_collapse(
+                    tree,
+                    idx,
+                    inputs,
+                    block_ctx.is_some(),
+                    &style,
+                    &mut output,
+                );
+                return output;
             }
             if tree.nodes[idx].is_inline_svg_root()
                 && tree.nodes[idx].attribute("width").is_none()
@@ -1379,26 +1389,14 @@ impl LayoutSession<'_> {
                 if let Some(cap) = stretch_cap {
                     output.size.height = output.size.height.min(cap);
                 }
-                if block_ctx.is_some()
-                    && formatting_context == FormattingContext::Block
-                    && tree.nodes[idx].children.is_empty()
-                    && !item_is_replaced
-                    && leaf_intrinsic.is_none()
-                    && !tree.nodes[idx].is_inline_svg_root()
-                    && !tree.nodes[idx].size_containment.width
-                    && !tree.nodes[idx].size_containment.height
-                    && vertical_block::has_same_vertical_block_parent(tree, idx)
-                {
-                    // A physical leaf tests height for collapse-through;
-                    // its vertical parent needs the width-axis answer.
-                    // Reuse the same rules without changing its geometry.
-                    output.margins_can_collapse_through = output.size.width == 0.0
-                        && crate::layout::taffy_adapter::empty_leaf_collapses_on_transposed_axes(
-                            transposed_axes::transpose_inputs(inputs, true),
-                            &style,
-                            resolve_calc,
-                        );
-                }
+                correct_empty_vertical_leaf_collapse(
+                    tree,
+                    idx,
+                    inputs,
+                    block_ctx.is_some(),
+                    &style,
+                    &mut output,
+                );
                 output
             } else {
                 match formatting_context {
@@ -3245,6 +3243,39 @@ pub(crate) fn finish_vertical_block_oof(
         output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
     }
     output
+}
+
+/// Correct an empty physical leaf's collapse metadata on its block axis.
+/// The physical geometry is retained, including for a size-contained probe
+/// whose source children are temporarily hidden.
+fn correct_empty_vertical_leaf_collapse(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: LayoutInput,
+    shared_context: bool,
+    style: &raikiri_layout_style::BoxStyle,
+    output: &mut LayoutOutput,
+) {
+    let node = &tree.nodes[idx];
+    let empty_measurement = tree.context.size_contained_measure.last() == Some(&idx);
+    // Hidden inline content makes no line during an empty size measurement.
+    let empty_block = node.formatting_context == FormattingContext::Block
+        || (empty_measurement && node.formatting_context == FormattingContext::Inline);
+    if shared_context
+        && empty_block
+        && (node.children.is_empty() || empty_measurement)
+        && block_flow::shares_context(style)
+        && leaf_intrinsic_size(node).is_none()
+        && !node.is_inline_svg_root()
+        && vertical_block::has_same_vertical_block_parent(tree, idx)
+    {
+        output.margins_can_collapse_through = output.size.width == 0.0
+            && crate::layout::taffy_adapter::empty_leaf_collapses_on_transposed_axes(
+                transposed_axes::transpose_inputs(inputs, true),
+                style,
+                resolve_calc,
+            );
+    }
 }
 
 /// Lay out the block container `node_id` with taffy's block algorithm.
