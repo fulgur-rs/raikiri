@@ -14,6 +14,96 @@ fn recascade(doc: &mut crate::Document) -> raikiri_style::CascadeResult {
 }
 
 #[test]
+fn a_br_line_has_real_positive_metrics_without_a_text_owner() {
+    let (mut doc, cascade, root) = ahem_paragraph("\n", "");
+    lay_out(&mut doc, &cascade);
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap();
+    assert_eq!(lines.lines.len(), 1);
+    assert_eq!(lines.lines[0].block_size(), 10.0);
+    assert!(super::glyph_owners(&lines.lines[0]).is_empty());
+    let unplaced = super::single_unplaced_line(&doc, root).expect("the br line needs placement");
+    assert_eq!((unplaced.line.top, unplaced.line.bottom), (0.0, 10.0));
+    assert!(!unplaced.atomic);
+}
+
+#[test]
+fn an_empty_outside_list_item_has_a_real_line_to_place() {
+    let (mut doc, cascade, root) =
+        ahem_paragraph("", "display:list-item;list-style-position:outside");
+    lay_out(&mut doc, &cascade);
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap();
+    assert_eq!(lines.lines.len(), 1);
+    assert_eq!(lines.lines[0].block_size(), 10.0);
+    assert!(super::glyph_owners(&lines.lines[0]).is_empty());
+    let unplaced = super::single_unplaced_line(&doc, root).expect("the empty item needs placement");
+    assert_eq!((unplaced.line.top, unplaced.line.bottom), (0.0, 10.0));
+    assert!(!unplaced.atomic);
+}
+
+#[test]
+fn no_line_zero_height_and_multiple_lines_do_not_make_an_unplaced_single_line() {
+    for (text, css) in [
+        ("", "height:10px"),
+        ("", "display:list-item;list-style:none;height:10px"),
+        ("\n", "line-height:0"),
+        ("\n\n", ""),
+    ] {
+        let (mut doc, cascade, root) = ahem_paragraph(text, css);
+        lay_out(&mut doc, &cascade);
+        assert!(
+            super::single_unplaced_line(&doc, root).is_none(),
+            "{text:?}, {css}"
+        );
+    }
+}
+
+#[test]
+fn a_multicol_line_keeps_its_fragmented_placement() {
+    let (mut doc, cascade, root) = ahem_paragraph("\n", "columns:2;column-gap:0;height:20px");
+    lay_out(&mut doc, &cascade);
+    assert!(
+        doc.nodes[root]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .multicol_fragments
+            .is_some()
+    );
+    assert!(super::single_unplaced_line(&doc, root).is_none());
+}
+
+#[test]
+fn a_generated_block_and_a_br_are_not_a_single_line_paragraph() {
+    let (mut doc, _, root) = ahem_paragraph("\n", "");
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(style, "div::before{content:'';display:block;height:5px}");
+    let cascade = recascade(&mut doc);
+    lay_out(&mut doc, &cascade);
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap();
+    assert_eq!(lines.lines.len(), 1);
+    assert_eq!(lines.placed_blocks.len(), 1);
+    assert!(super::single_unplaced_line(&doc, root).is_none());
+}
+
+#[test]
 fn a_text_node_owns_the_lines_it_shows_up_on() {
     // Ahem at 10px, width 40: "aaaa", "bbbb", "cccc" are one line each.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
