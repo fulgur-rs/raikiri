@@ -4,6 +4,7 @@ pub(super) mod clear_break_tests;
 mod group_align_tests;
 mod intrinsic_block_size_tests;
 mod oof_index_tests;
+mod oof_inline_containing_block_tests;
 mod orthogonal_baseline_tests;
 mod percent_edge_tests;
 mod rtl_margin_tests;
@@ -17,6 +18,9 @@ thread_local! {
     pub(super) static OOF_BOX_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_PLACE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_PIECE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_PADDING_BOX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_OFFSET_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 use crate::layout::ifc::flow::FlowGeometry;
