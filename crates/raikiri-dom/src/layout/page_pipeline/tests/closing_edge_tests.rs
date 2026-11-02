@@ -3836,3 +3836,84 @@ fn floats_in_every_gap_of_a_chain_of_three_do_not_cut_it() {
         [0.0, 100.0, 130.0, 155.0]
     );
 }
+
+/// `body > div(padding-bottom:15px) > [A 30, B 30 (break-after:avoid), C]` on
+/// 100px pages, where `build` makes C and returns the boxes to look at.
+/// Returns the page-flow y of A, B and those boxes.
+fn chain_ending_in(build: impl FnOnce(&mut Document, usize) -> Vec<usize>) -> Vec<f32> {
+    let (mut ids, mut card) = (Vec::new(), 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, "display:block;padding-bottom:15px");
+        ids.push(block(doc, card, "display:block;height:30px"));
+        ids.push(block(
+            doc,
+            card,
+            "display:block;height:30px;break-after:avoid",
+        ));
+        ids.extend(build(doc, card));
+    });
+    ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
+}
+
+#[test]
+fn a_chain_that_ends_in_one_row_of_a_flex_grid_or_table_moves_with_the_edges() {
+    // A container that holds one row has nowhere to break at: it moves with
+    // the boxes it is tied to, and the padding of the parent with them.
+    for css in ["display:flex", "display:grid", "display:table"] {
+        assert_eq!(
+            chain_ending_in(|doc, card| vec![block(doc, card, &format!("height:35px;{css}"))]),
+            [0.0, 100.0, 130.0],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_chain_that_ends_in_a_grid_of_two_rows_moves_whole_with_the_edges() {
+    // A grid moves whole when it ends at the page end, rows or not.
+    assert_eq!(
+        chain_ending_in(|doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-rows:17px 18px");
+            vec![
+                grid,
+                block(doc, grid, "display:block"),
+                block(doc, grid, "display:block"),
+            ]
+        }),
+        [0.0, 100.0, 130.0, 130.0, 147.0]
+    );
+}
+
+#[test]
+fn a_chain_that_ends_in_a_stacked_flex_or_table_breaks_between_its_last_items() {
+    // The page breaks between the items or rows, so the chain stays and the
+    // last one moves with the padding.
+    assert_eq!(
+        chain_ending_in(|doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            vec![
+                block(doc, column, "display:block;height:17px"),
+                block(doc, column, "display:block;height:18px"),
+            ]
+        }),
+        [0.0, 30.0, 60.0, 100.0]
+    );
+    assert_eq!(
+        chain_ending_in(|doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            [17, 18]
+                .map(|height| {
+                    let group = block(doc, table, "display:table-row-group");
+                    let row = block(doc, group, "display:table-row");
+                    block(
+                        doc,
+                        row,
+                        &format!("display:table-cell;padding:0;height:{height}px"),
+                    );
+                    row
+                })
+                .to_vec()
+        }),
+        [0.0, 30.0, 60.0, 100.0]
+    );
+}
