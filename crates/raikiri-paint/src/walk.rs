@@ -1716,8 +1716,8 @@ fn list_marker_image_transform(
 /// when the item's page is not the one that draws it.
 ///
 /// The marker's baseline meets the item's first line (CSS Lists 3 §3.1),
-/// where the page's text runs place it. It belongs to the item's first page,
-/// so the item's later pages draw none.
+/// where the page's text runs place it. It belongs to the page holding that
+/// line, so the item's other pages draw none.
 fn list_marker_text_top(
     document: &Document,
     cascade: &CascadeResult,

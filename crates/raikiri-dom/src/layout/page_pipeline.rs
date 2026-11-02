@@ -2166,6 +2166,53 @@ fn paragraph_line_moves(
         .collect()
 }
 
+/// The moves that keep every line of a paragraph inside an absolutely
+/// positioned box whole on one page: a line that crosses a page end starts the
+/// next page, and the lines after it move down with it. `orphans` and
+/// `widows` do not apply to such a box, and its first line moves like any
+/// other: the page breaks between the box's top edge and its first line. A line
+/// taller than the page it would start stays where it is, as it fits no page.
+///
+/// `line_metrics` and `effective_y` are as for [`widows_break_on_next_page`].
+fn positioned_line_moves(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_origins: &PageOrigins,
+) -> Vec<LineBreakMove> {
+    let mut shift = 0.0_f32;
+    let mut moves = Vec::new();
+    for (line, &(line_top, line_bottom)) in line_metrics.iter().enumerate() {
+        let top = effective_y + line_top + shift;
+        let bottom = effective_y + line_bottom + shift;
+        let page = page_origins.page_index_for_y(top + 0.001);
+        let next = page.saturating_add(1);
+        let crosses =
+            top > page_origins.origin(page) + 0.001 && bottom > page_origins.origin(next) + 0.001;
+        let delta = page_origins.origin(next) - top;
+        if crosses
+            && line_bottom - line_top <= page_origins.step_at(next) + 0.001
+            && delta.is_finite()
+            && delta > 0.0
+        {
+            moves.push((line, delta, next));
+            shift += delta;
+        }
+    }
+    moves
+}
+
+/// Whether `node_id` is an absolutely positioned box that no fixed box
+/// holds. A fixed box repeats on every page, and what it holds does not break.
+fn is_unfixed_absolute_box(document: &Document, node_id: usize) -> bool {
+    let fixed = |id: usize| {
+        document.nodes[id].kind() == NodeKind::Element
+            && document.nodes[id].position() == &PositionValue::Fixed
+    };
+    document.nodes[node_id].kind() == NodeKind::Element
+        && document.nodes[node_id].position() == &PositionValue::Absolute
+        && !document.ancestors(node_id).any(fixed)
+}
+
 /// A forced page break between two lines of a paragraph, and where the
 /// content that follows it starts the next page.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3978,6 +4025,9 @@ fn paginate_flow(
             halt.finish()?;
             break;
         }
+    }
+    if let Err(halt) = state.keep_positioned_lines(document, &env) {
+        halt.finish()?;
     }
 
     // A container the walk moved has its columns filled for another place,
@@ -6933,6 +6983,13 @@ fn unbreakable_box_moves(
 /// moves with the `closing_edges_span` of block size that the rest of the run
 /// takes below it, so that the run keeps together (see
 /// [`avoid_chain_before_last_box`]).
+///
+/// A block that holds one box may be tied by an avoided break to the box before
+/// it. The run of boxes those breaks tie cannot be kept together once its first
+/// box starts its page and the block still does not fit after it, so the
+/// avoided break gives way and the page breaks before the block, as browsers
+/// do. While the first box sits further down the page, the run moves as a
+/// whole instead, and the block does not move on its own.
 fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let edges = candidate.context.closing_edges();
     let inside = candidate.context.closing_edges_inside();
@@ -6949,6 +7006,10 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     edges + inside > 0.0
         && box_end - inside <= page_end + 0.001
         && candidate.height + span - inside <= next_page_step + 0.001
+        && candidate
+            .context
+            .lone_run_head_offset()
+            .is_none_or(|offset| flow_y - offset <= page_start + 0.001)
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
 
@@ -9224,6 +9285,24 @@ fn with_height_delta(
     }
 }
 
+/// Moves the lines of the paragraph `moved.block_id` from `moved.line` on down
+/// by `moved.shift`, together with the out-of-flow boxes of the paragraph that
+/// follow them (see [`out_of_flow_moves`]), and grows the paragraph's box to
+/// hold them. Returns how far the box grew.
+fn shift_paragraph_lines(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: &LineMove,
+) -> f32 {
+    let growth = lines_shift_growth(document, moved.block_id, moved.shift);
+    let follows = out_of_flow_moves(document, cascade, moved, growth);
+    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
+    for (node, delta) in follows {
+        document.nodes[node].layout.location.y += delta;
+    }
+    growth
+}
+
 /// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`
 /// and brings along what has to follow them: the flex lines after a flex
 /// item paragraph, and the ancestors that hold the paragraph, which grow to
@@ -9236,12 +9315,7 @@ fn move_paragraph_lines(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> f32 {
-    let growth = lines_shift_growth(document, moved.block_id, moved.shift);
-    let follows = out_of_flow_moves(document, cascade, moved, growth);
-    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
-    for (node, delta) in follows {
-        document.nodes[node].layout.location.y += delta;
-    }
+    let growth = shift_paragraph_lines(document, cascade, moved);
     if let Some((item, container)) = moved.flex_line {
         shift_later_flex_lines(document, container, item, growth);
     }
