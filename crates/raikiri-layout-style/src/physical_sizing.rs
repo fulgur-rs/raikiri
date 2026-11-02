@@ -14,6 +14,7 @@ impl OwnedPropertyOverride {
                     | MinHeight
                     | MaxWidth
                     | MaxHeight
+                    | FlexBasis
                     | BorderTop
                     | BorderRight
                     | BorderBottom
@@ -98,9 +99,9 @@ impl OwnedPropertyOverride {
             OverrideKind::Length(LengthProperty::MaxHeight, value) => {
                 style.max_size.height = value.auto(false);
             }
-            // A box style holds no flex properties, so the probe's shrink factor
-            // is accepted and changes nothing.
-            OverrideKind::FlexShrink(_) => {}
+            // A box style holds no flex properties, so the parent's basis and
+            // shrink overrides are accepted and change nothing in this snapshot.
+            OverrideKind::FlexShrink(_) | OverrideKind::Length(LengthProperty::FlexBasis, _) => {}
             OverrideKind::Length(LengthProperty::BorderTop, value) => {
                 style.border.top = value.lp(crate::PercentBasis::Taffy);
             }

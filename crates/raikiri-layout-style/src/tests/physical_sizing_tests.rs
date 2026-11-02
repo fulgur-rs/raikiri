@@ -88,6 +88,7 @@ fn physical_sizing_membership_matches_the_accepted_properties() {
         MinHeight,
         MaxWidth,
         MaxHeight,
+        FlexBasis,
         BorderTop,
         BorderRight,
         BorderBottom,
@@ -101,7 +102,7 @@ fn physical_sizing_membership_matches_the_accepted_properties() {
                 .is_ok()
         );
     }
-    for property in [MarginLeft, PaddingTop, Top, FlexBasis, ColumnGap] {
+    for property in [MarginLeft, PaddingTop, Top, ColumnGap] {
         let entry = OwnedPropertyOverride::length(property, L::Px(3.0), true).unwrap();
         assert!(!entry.is_physical_sizing(), "{property:?}");
         assert!(

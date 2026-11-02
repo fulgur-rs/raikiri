@@ -4255,19 +4255,20 @@ fn with_ratio_height(
     node_id: NodeId,
     mut inputs: LayoutInput,
     sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
-) -> LayoutInput {
+    layout: impl FnOnce(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
     let idx = usize::from(node_id);
     let height_follows_width = inputs.known_dimensions.height.is_none()
         && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal);
     if !height_follows_width {
-        return inputs;
+        return layout(tree, inputs);
     }
     let style = block_flow::style_input::physical(tree, idx);
     // A measure that ignores the sizes of the box (`ContentSize`) sees an
     // `auto` height whatever the style says.
     let auto_height = inputs.sizing_mode == SizingMode::ContentSize || style.size.height.is_auto();
     if style.aspect_ratio.is_none() || !auto_height {
-        return inputs;
+        return layout(tree, inputs);
     }
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let mut metrics = block_flow::Metrics::resolve(&style, false, content_box_ratio, inputs);
@@ -4289,10 +4290,23 @@ fn with_ratio_height(
         inputs.known_dimensions_are_definite.width = true;
         metrics = block_flow::Metrics::resolve(&style, false, content_box_ratio, inputs);
     }
-    let height = ratio_height(tree, node_id, inputs, &metrics, sized);
-    inputs.known_dimensions.height = height;
-    inputs.known_dimensions_are_definite.height |= height.is_some();
-    inputs
+    let percentage_height = metrics
+        .preferred
+        .height
+        .filter(|_| metrics.ratio_height)
+        .map(|height| (height - metrics.inset.vertical_axis_sum()).max(0.0));
+    intrinsic_scopes::with_ratio_percentage_heights(
+        tree,
+        node_id,
+        percentage_height,
+        inputs.run_mode,
+        |tree| {
+            let height = ratio_height(tree, node_id, inputs, &metrics, sized);
+            inputs.known_dimensions.height = height;
+            inputs.known_dimensions_are_definite.height |= height.is_some();
+            layout(tree, inputs)
+        },
+    )
 }
 
 /// Whether an inherent layout already has a physical width and a known or
@@ -4417,20 +4431,22 @@ fn laid_out_with_ratio_height(
     original: LayoutInput,
     sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let inputs = with_ratio_height(tree, node_id, original, sized);
-    let height_from_ratio =
-        original.known_dimensions.height.is_none() && inputs.known_dimensions.height.is_some();
-    let both_settled =
-        inputs.known_dimensions.width.is_some() && inputs.known_dimensions.height.is_some();
-    let drop_ratio =
-        (height_from_ratio || both_settled || ratio_dimensions_are_settled(tree, node_id, &inputs))
+    with_ratio_height(tree, node_id, original, sized, |tree, inputs| {
+        let height_from_ratio =
+            original.known_dimensions.height.is_none() && inputs.known_dimensions.height.is_some();
+        let both_settled =
+            inputs.known_dimensions.width.is_some() && inputs.known_dimensions.height.is_some();
+        let drop_ratio = (height_from_ratio
+            || both_settled
+            || ratio_dimensions_are_settled(tree, node_id, &inputs))
             && block_flow::style_input::physical(tree, usize::from(node_id))
                 .aspect_ratio
                 .is_some();
-    if !drop_ratio {
-        return sized(tree, node_id, inputs);
-    }
-    without_container_ratio(tree, node_id, |tree| sized(tree, node_id, inputs))
+        if !drop_ratio {
+            return sized(tree, node_id, inputs);
+        }
+        without_container_ratio(tree, node_id, |tree| sized(tree, node_id, inputs))
+    })
 }
 
 /// Disable only the container's ratio, keeping its cache apart and preserving
