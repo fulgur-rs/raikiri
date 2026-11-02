@@ -411,6 +411,28 @@ fn a_block_tied_to_the_box_before_it_in_a_wrapper_goes_on_with_the_wrapper_edges
 }
 
 #[test]
+fn a_block_ending_a_wrapper_of_tied_boxes_goes_on_alone_below_the_page_top() {
+    // Every box of the wrapper is tied to its first, so the avoided break
+    // before the block gives way for the wrapper's own padding, wherever the
+    // wrapper starts. The first box is not at the top of the page here, and
+    // the block goes on without it. (Browsers move that box on to the next
+    // page too, which is not done.)
+    let (mut lead, mut card, mut only, mut after) = (0, 0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:20px");
+        let wrapper = block(doc, body, "display:block;padding-bottom:10px");
+        lead = block(doc, wrapper, "display:block;height:50px;break-after:avoid");
+        card = block(doc, wrapper, "display:block;padding-bottom:30px");
+        only = block(doc, card, "display:block;height:30px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, lead), 20.0);
+    assert_eq!(page_flow_y(&doc, card), 100.0);
+    assert_eq!(page_flow_y(&doc, only), 100.0);
+    assert_eq!(page_flow_y(&doc, after), 170.0);
+}
+
+#[test]
 fn a_block_tied_to_the_box_before_it_stays_when_it_would_gain_nothing() {
     // The edges fit after the box.
     assert_eq!(

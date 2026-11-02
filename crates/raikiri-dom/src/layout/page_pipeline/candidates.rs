@@ -1298,7 +1298,6 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                             .max(0.0)
                                     }),
                                 lone_run_head_offset: tie_offset
-                                    .filter(|_| lone_box_candidate.is_some())
                                     .filter(|_| !break_before_available()),
                             },
                         ),
