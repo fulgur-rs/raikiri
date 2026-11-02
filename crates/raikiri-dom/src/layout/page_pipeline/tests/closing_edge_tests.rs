@@ -2792,13 +2792,33 @@ fn a_block_that_avoids_breaks_stays_with_its_parent_when_the_edges_fit() {
 }
 
 #[test]
-fn a_block_that_avoids_breaks_but_does_not_fit_the_page_leaves_its_parent_in_place() {
-    // The avoiding block runs past the page end on its own, so it moves alone
-    // and the padding below it follows it.
+fn a_block_that_avoids_breaks_and_begins_its_parent_takes_the_parent_along() {
+    // The avoiding block runs past the page end on its own, and no page breaks
+    // between the start of its parent and the block, so the parent starts the
+    // next page with it, and the padding below follows.
     let (mut parent, mut avoided) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:60px");
         parent = block(doc, body, "display:block;padding-bottom:30px");
+        avoided = block(doc, parent, "display:block;break-inside:avoid");
+        block(doc, avoided, "display:block;height:30px");
+        block(doc, avoided, "display:block;height:40px");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, parent), page_flow_y(&doc, avoided)),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_leaves_a_parent_that_something_precedes_it_in_place() {
+    // A box before it keeps the parent's start on this page: only the
+    // avoiding block moves, and the padding below it follows it.
+    let (mut parent, mut avoided) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, "display:block;padding-bottom:30px");
+        block(doc, parent, "display:block;height:0");
         avoided = block(doc, parent, "display:block;break-inside:avoid");
         block(doc, avoided, "display:block;height:30px");
         block(doc, avoided, "display:block;height:40px");

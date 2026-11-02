@@ -544,6 +544,7 @@ fn a_flow_root_grows_for_a_float_after_the_moved_block() {
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:60px");
         root = block(doc, body, "display:flow-root");
+        block(doc, root, "position:absolute;width:0;height:0");
         moved = block(doc, root, "display:block;height:60px;break-inside:avoid");
         later_float = block(doc, root, "float:left;width:20px;height:80px");
         following = block(doc, body, "display:block;height:10px");
@@ -759,6 +760,7 @@ fn a_formatting_context_grows_with_a_float_that_moved_inside_a_min_height_block(
         let root = block(doc, body, "display:flow-root");
         ids.push(root);
         let wrapper = block(doc, root, "display:block;min-height:100px");
+        block(doc, wrapper, "position:absolute;width:0;height:0");
         let moved = block(doc, wrapper, "display:block;break-inside:avoid");
         ids.push(moved);
         block(doc, moved, "float:left;width:20px;height:150px");
@@ -830,6 +832,7 @@ fn a_formatting_context_keeps_its_max_height_when_a_float_moves_inside_a_min_hei
                 &format!("display:flow-root;max-height:{max_height}"),
             );
             let wrapper = block(doc, root, "display:block;min-height:100px");
+            block(doc, wrapper, "position:absolute;width:0;height:0");
             let moved = block(doc, wrapper, "display:block;break-inside:avoid");
             block(doc, moved, "float:left;width:20px;height:150px");
             block(doc, moved, "display:block;height:60px");
