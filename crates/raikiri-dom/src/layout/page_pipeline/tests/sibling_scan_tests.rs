@@ -78,53 +78,173 @@ fn only_the_boxes_around_a_float_start_the_float_walk() {
     assert!(walks <= 4 * count, "{walks} walks for {count} blocks");
 }
 
-/// Whether an element below `branch` is a left or right float, found by
-/// visiting the whole subtree.
-fn float_below_by_walk(doc: &Document, cascade: &CascadeResult, branch: usize) -> bool {
-    doc.preorder(branch).skip(1).any(|id| {
-        doc.nodes[id].kind() == NodeKind::Element
-            && matches!(
-                cascade.computed[id].float,
-                FloatValue::Left | FloatValue::Right
+/// Whether the walk of the subtree of `branch` reaches a left or right float,
+/// by the rules of the walk written out plainly.
+fn reachable_float_below(
+    doc: &crate::layout::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    branch: usize,
+) -> bool {
+    doc.nodes[branch].children.iter().any(|&child| {
+        let node = &doc.nodes[child];
+        if node.kind() != NodeKind::Element
+            || node.display() == DisplayValue::None
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
             )
+        {
+            return false;
+        }
+        if matches!(
+            cascade.computed[child].float,
+            FloatValue::Left | FloatValue::Right
+        ) {
+            return true;
+        }
+        if node.display() != DisplayValue::Contents && holds_floats(doc, cascade, child) {
+            return false;
+        }
+        reachable_float_below(doc, cascade, child)
     })
 }
 
 #[test]
-fn the_float_prefilter_agrees_with_a_walk_of_every_subtree() {
-    let fixture = block_fixture("", |doc, root| {
+fn the_float_prefilter_stops_where_the_walk_does() {
+    // Boxes in which the prefilter finds a float, and boxes in which every
+    // float is held by a box in between or skipped by the walk.
+    let (mut open, mut closed) = (Vec::new(), Vec::new());
+    let float = "display:block;float:left";
+    let mut fixture = block_fixture("", |doc, root| {
         let plain = doc.append_element(Some(root), "div", Some("display:block"));
         doc.append_text(plain, "x");
+        closed.push(plain);
         let nested = doc.append_element(Some(root), "div", Some("display:block"));
         let inner = doc.append_element(Some(nested), "div", Some("display:block"));
         let deep = doc.append_element(Some(inner), "div", Some("display:block"));
         doc.append_element(Some(deep), "span", Some("display:block;float:right"));
+        open.push(nested);
         let wrapper = doc.append_element(Some(root), "div", Some("display:contents"));
         let beside = doc.append_element(Some(wrapper), "div", Some("display:block"));
-        doc.append_element(Some(beside), "span", Some("display:block;float:left"));
+        doc.append_element(Some(beside), "span", Some(float));
+        open.push(wrapper);
+        // Each of these holds, or leaves out, the float inside it.
+        for css in [
+            "display:flow-root",
+            "display:block;overflow:hidden",
+            "display:flex",
+            "display:grid",
+            "display:inline-block",
+            "display:block;contain:paint",
+            "display:block;column-count:2",
+            "display:none",
+            "position:absolute",
+        ] {
+            let outer = doc.append_element(Some(root), "div", Some("display:block"));
+            let holder = doc.append_element(Some(outer), "div", Some(css));
+            let child = doc.append_element(Some(holder), "div", Some("display:block"));
+            doc.append_element(Some(child), "span", Some(float));
+            closed.push(outer);
+        }
+        let lifted = doc.append_element(Some(root), "div", Some("display:contents"));
+        let held = doc.append_element(Some(lifted), "div", Some("display:flow-root"));
+        doc.append_element(Some(held), "span", Some(float));
+        closed.push(lifted);
         let sideways = doc.append_element(Some(root), "div", Some("display:block"));
-        doc.append_element(
-            Some(sideways),
-            "span",
-            Some("display:block;float:inline-start"),
-        );
-        doc.append_element(Some(sideways), "span", Some("display:block;float:none"));
-        let empty = doc.append_element(Some(root), "div", Some("display:block"));
-        let _ = empty;
+        doc.append_element(Some(sideways), "span", Some("float:inline-start"));
+        doc.append_element(Some(sideways), "span", Some("float:none"));
+        doc.append_element(Some(root), "div", Some("display:block"));
     });
     let nodes: Vec<usize> = fixture.doc.preorder(0).collect();
+    let session = paginating(&mut fixture.doc, &fixture.cascade);
     let (mut seen_float, mut seen_none) = (false, false);
     for node in nodes {
-        let expected = float_below_by_walk(&fixture.doc, &fixture.cascade, node);
-        assert_eq!(
-            has_float_below(&fixture.doc, &fixture.cascade, node),
-            expected,
-            "{node}"
-        );
-        seen_float |= expected;
-        seen_none |= !expected;
+        let reached = reachable_float_below(&session, &fixture.cascade, node);
+        let found = has_float_below(&session, &fixture.cascade, node);
+        // The walk never reaches a float that the prefilter misses.
+        assert!(found || !reached, "{node}");
+        seen_float |= reached;
+        seen_none |= !found;
     }
     assert!(seen_float && seen_none);
+    for &node in &open {
+        assert!(has_float_below(&session, &fixture.cascade, node), "{node}");
+    }
+    for &node in &closed {
+        assert!(!has_float_below(&session, &fixture.cascade, node), "{node}");
+    }
+}
+
+#[test]
+fn a_branch_that_holds_its_floats_is_rejected_before_its_subtree_is_read() {
+    let mut ids = Vec::new();
+    let mut fixture = block_fixture("", |doc, root| {
+        for css in [
+            "display:flow-root",
+            "display:block;overflow:hidden",
+            "display:block",
+        ] {
+            let branch = doc.append_element(Some(root), "div", Some(css));
+            let mut parent = branch;
+            for _ in 0..8 {
+                parent = doc.append_element(Some(parent), "div", Some("display:block"));
+                doc.append_element(Some(parent), "span", Some("display:block;float:left"));
+            }
+            ids.push(branch);
+        }
+    });
+    let body = fixture.doc.parent_of(fixture.root).unwrap();
+    let session = paginating(&mut fixture.doc, &fixture.cascade);
+    let ends: Vec<(f32, usize)> = ids
+        .iter()
+        .map(|&branch| {
+            reset();
+            let end = same_bfc_float_end_in_subtree(&session, &fixture.cascade, body, branch, 0.0);
+            (end, counts().1)
+        })
+        .collect();
+    // The boxes that hold their floats are not read, and the end of their
+    // floats is not part of the answer.
+    assert_eq!(ends[0], (f32::NEG_INFINITY, 0));
+    assert_eq!(ends[1], (f32::NEG_INFINITY, 0));
+    // A plain block gives the end of the floats inside it.
+    assert!(ends[2].0 > f32::NEG_INFINITY && ends[2].1 > 0, "{ends:?}");
+}
+
+/// The prefilter reads the boxes of `blocks` blocks that avoid a break inside
+/// and hold their floats by `css`, each with `inside` boxes in it, while they
+/// move to the pages after one another.
+fn prefilter_reads_with(css: &str, blocks: usize, inside: usize) -> usize {
+    reset();
+    paginated_ys(
+        |doc, body| {
+            let section = doc.append_element(Some(body), "section", Some("display:block"));
+            (0..blocks)
+                .map(|_| {
+                    let block = doc.append_element(Some(section), "div", Some(css));
+                    for _ in 0..inside {
+                        doc.append_element(Some(block), "div", Some("display:block;height:1px"));
+                    }
+                    block
+                })
+                .collect()
+        },
+        &[],
+    );
+    counts().1
+}
+
+#[test]
+fn the_boxes_inside_a_block_that_holds_its_floats_are_not_read_as_blocks_move() {
+    for css in [
+        "display:flow-root;height:60px;break-inside:avoid",
+        "display:block;overflow:hidden;height:60px;break-inside:avoid",
+    ] {
+        let bare = prefilter_reads_with(css, 12, 0);
+        let full = prefilter_reads_with(css, 12, 40);
+        assert!(bare > 0, "{css}");
+        assert_eq!(bare, full, "{css}");
+    }
 }
 
 /// The boxes after `child` in `parent`, moved as the walk that collects all
