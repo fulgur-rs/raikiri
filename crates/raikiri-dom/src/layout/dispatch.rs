@@ -1379,6 +1379,26 @@ impl LayoutSession<'_> {
                 if let Some(cap) = stretch_cap {
                     output.size.height = output.size.height.min(cap);
                 }
+                if block_ctx.is_some()
+                    && formatting_context == FormattingContext::Block
+                    && tree.nodes[idx].children.is_empty()
+                    && !item_is_replaced
+                    && leaf_intrinsic.is_none()
+                    && !tree.nodes[idx].is_inline_svg_root()
+                    && !tree.nodes[idx].size_containment.width
+                    && !tree.nodes[idx].size_containment.height
+                    && vertical_block::has_same_vertical_block_parent(tree, idx)
+                {
+                    // A physical leaf tests height for collapse-through;
+                    // its vertical parent needs the width-axis answer.
+                    // Reuse the same rules without changing its geometry.
+                    output.margins_can_collapse_through = output.size.width == 0.0
+                        && crate::layout::taffy_adapter::empty_leaf_collapses_on_transposed_axes(
+                            transposed_axes::transpose_inputs(inputs, true),
+                            &style,
+                            resolve_calc,
+                        );
+                }
                 output
             } else {
                 match formatting_context {

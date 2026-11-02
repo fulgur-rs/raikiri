@@ -26,7 +26,9 @@
 pub(crate) mod algorithms;
 mod cache;
 pub(crate) mod convert;
+mod empty_leaf;
 mod float;
+pub(crate) use empty_leaf::empty_leaf_collapses_on_transposed_axes;
 mod grid_info;
 mod grid_rows;
 mod margin_set;
