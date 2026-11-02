@@ -66,10 +66,17 @@ fn unstretched_alignment_does_not_acquire_a_reversed_stretch_offset() {
 
 #[test]
 fn a_detached_table_does_not_borrow_a_parents_height() {
-    let mut doc = Document::new();
-    let table = doc.append_element(None, "table", Some("display:table"));
+    let (mut doc, root, table, _) = fixture();
     let cascade = cascaded(&doc);
-    let tree = LayoutSession::bridged(&mut doc, &cascade);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    capture(&mut tree, root);
+    assert!(crate::layout::table::item_owns_height(&tree, table));
+    tree.detach_from_parent(table);
+    assert_eq!(
+        tree.nodes[table].formatting_context,
+        FormattingContext::Table
+    );
+    assert_eq!(tree.taffy_parent_of(table), None);
     assert!(!crate::layout::table::item_owns_height(&tree, table));
 }
 
