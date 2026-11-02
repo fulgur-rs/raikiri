@@ -24,14 +24,14 @@ pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
-use super::ifc::boxes::IfcBoxKind;
+use super::ifc::boxes::{IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
-use raikiri_layout_style::values::{BoxSizing, Position};
+use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -5161,6 +5161,78 @@ fn is_top_anchored_out_of_flow(
     }
 }
 
+/// How an out-of-flow box of a paragraph is placed when the lines of the
+/// paragraph move down inside it, and what moves the box along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutOfFlowFollow {
+    /// A block-start inset of a fixed length places it: the lines do not
+    /// matter.
+    TopAnchored,
+    /// Without insets along the block axis it keeps the place of its anchor
+    /// on a line, and moves with that line.
+    OnLine,
+    /// A `bottom`, or a `top` that is a percentage, places it against the
+    /// padding box of the paragraph, whose height the moved lines grow.
+    WithHeight,
+}
+
+/// Whether a size follows the height of the containing block: it is a
+/// percentage, a `calc()` that holds one, or `stretch`, which fills it.
+fn follows_height(length: impl Into<Dimension>) -> bool {
+    match length.into().expand() {
+        ExpandedDimension::Percent(_) | ExpandedDimension::Stretch => true,
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
+        _ => false,
+    }
+}
+
+/// How the out-of-flow box `node`, one of the boxes of the paragraph `root`,
+/// follows lines that move down, or `None` when it would need more than that
+/// to stay where its insets put it: another box is its containing block and a
+/// `bottom` or a percentage places it against that box, its size depends on
+/// the height of the containing block, both insets place it, or it does not
+/// follow the static position of a line.
+fn out_of_flow_follow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    node: usize,
+) -> Option<OutOfFlowFollow> {
+    if is_top_anchored_out_of_flow(document, cascade, node) {
+        return Some(OutOfFlowFollow::TopAnchored);
+    }
+    let ifc = document.ifc_layout_node(root)?.ifc.as_ref()?;
+    if ifc.writing_mode != shodo::geometry::WritingMode::HorizontalTb
+        || document.context.pagination_on_transposed_axes
+        || document.nodes[node].position() != &PositionValue::Absolute
+    {
+        return None;
+    }
+    let style = document.physical_style(node);
+    // A size that follows the height of the containing block moves its end
+    // when the paragraph grows.
+    if follows_height(style.size().height)
+        || follows_height(style.min_size().height)
+        || follows_height(style.max_size().height)
+    {
+        return None;
+    }
+    let inset = style.inset();
+    match (inset.top.is_auto(), inset.bottom.is_auto()) {
+        (true, true) => document
+            .oof_coordinates
+            .get(&node)
+            .is_some_and(|coordinate| coordinate.follow_static_y)
+            .then_some(OutOfFlowFollow::OnLine),
+        (false, false) => None,
+        _ => document
+            .oof_coordinates
+            .get(&node)
+            .is_some_and(|coordinate| coordinate.owner == root)
+            .then_some(OutOfFlowFollow::WithHeight),
+    }
+}
+
 fn in_inset_out_of_flow_subtree(
     document: &Document,
     cascade: &CascadeResult,
@@ -7912,9 +7984,10 @@ fn box_leaves_lines_to_pagination(
 }
 
 /// Whether later lines of the paragraph `block_id` can move down inside it: it
-/// is in one column and holds nothing but text, and out-of-flow boxes that a
-/// block-start inset places away from the lines. Its box grows with the moved
-/// lines as far as its height allows (see [`lines_shift_growth`]).
+/// is in one column and holds nothing but text, and out-of-flow boxes that
+/// stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
+/// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_inside(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7928,7 +8001,7 @@ fn lines_can_shift_inside(
                 ifc.multicol_fragments.is_none()
                     && ifc.boxes.iter().all(|b| {
                         b.kind == IfcBoxKind::OutOfFlow
-                            && is_top_anchored_out_of_flow(document, cascade, b.node)
+                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
                     })
             })
 }
@@ -7937,7 +8010,8 @@ fn lines_can_shift_inside(
 /// children can move down inside it: its height grows with them, it is in one
 /// column, and the only boxes it lays out are those block children, which
 /// follow the moved lines when pagination reaches them, and out-of-flow boxes
-/// that a block-axis inset places away from the lines.
+/// that a block-axis inset places away from the lines or that follow them (see
+/// [`out_of_flow_follow`]).
 fn lines_can_shift_between_blocks(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7952,7 +8026,9 @@ fn lines_can_shift_between_blocks(
                     && ifc.boxes.iter().all(|b| {
                         b.kind == IfcBoxKind::Block
                             || (b.kind == IfcBoxKind::OutOfFlow
-                                && has_explicit_block_axis_inset(document, cascade, b.node))
+                                && (has_explicit_block_axis_inset(document, cascade, b.node)
+                                    || out_of_flow_follow(document, cascade, block_id, b.node)
+                                        .is_some()))
                     })
             })
 }
@@ -7962,8 +8038,9 @@ fn lines_can_shift_between_blocks(
 /// last line: the block children follow the moved lines when pagination reaches
 /// them, and the paragraph's own checks judge all the lines as one run. It is
 /// in one column, and apart from those blocks lays out only out-of-flow boxes
-/// that a block-start inset places away from the lines. Its box grows with the
-/// moved lines as far as its height allows (see [`lines_shift_growth`]).
+/// that stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
+/// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_above_blocks(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7978,7 +8055,7 @@ fn lines_can_shift_above_blocks(
                     && ifc.boxes.iter().all(|b| {
                         b.kind == IfcBoxKind::Block
                             || b.kind == IfcBoxKind::OutOfFlow
-                                && is_top_anchored_out_of_flow(document, cascade, b.node)
+                                && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
                     })
                     && ifc.lines.as_ref().is_some_and(|lines| {
                         lines
@@ -8055,6 +8132,16 @@ fn follows_line_of_paragraph(
                 .block_line_starts
                 .iter()
                 .any(|&(child, after)| child == block && after > line)
+                // A box out of the flow with no insets along the block axis
+                // keeps the static position of its anchor, on a line. Lines
+                // only move when every such box is one that
+                // `out_of_flow_follow` puts on its line, so its text goes
+                // with that line.
+                || document
+                    .oof_coordinates
+                    .get(&block)
+                    .is_some_and(|coordinate| coordinate.follow_static_y)
+                    && find_oof_anchor(lines, block).is_some_and(|(anchor, _)| anchor >= line)
         })
 }
 
@@ -8719,6 +8806,78 @@ struct LineMove {
     shift: f32,
 }
 
+/// How far each out-of-flow box of the paragraph `moved.block_id` moves down
+/// when its lines from `moved.line` on move by `moved.shift` and its box grows
+/// by `growth`. A box that a fixed `top` places stays; one at the static
+/// position of a line that moved goes with the line; one placed by a `bottom`
+/// or a percentage `top` follows the end of the paragraph's padding box, which
+/// is its containing block.
+fn out_of_flow_moves(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: &LineMove,
+    growth: f32,
+) -> Vec<(usize, f32)> {
+    let root = moved.block_id;
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| Some((node, node.ifc.as_ref()?)))
+        .into_iter()
+        .flat_map(|(node, ifc)| {
+            let height =
+                node.layout.size.height - node.layout.border.top - node.layout.border.bottom;
+            // The anchors are looked up once for all the boxes at a static
+            // position, and a box listed twice moves once.
+            let anchors = std::cell::OnceCell::new();
+            let mut seen = HashSet::new();
+            ifc.boxes
+                .iter()
+                .filter(|b| b.kind == IfcBoxKind::OutOfFlow)
+                .filter_map(move |b| {
+                    if !seen.insert(b.node) {
+                        return None;
+                    }
+                    let delta = match out_of_flow_follow(document, cascade, root, b.node)? {
+                        OutOfFlowFollow::TopAnchored => return None,
+                        OutOfFlowFollow::OnLine => {
+                            let anchors = anchors.get_or_init(|| {
+                                ifc.lines.as_ref().map(first_anchors).unwrap_or_default()
+                            });
+                            let (line, _) = anchors.get(&b.node)?;
+                            (*line >= moved.line).then_some(moved.shift)?
+                        }
+                        OutOfFlowFollow::WithHeight => {
+                            let inset = document.physical_style(b.node).inset();
+                            with_height_delta(inset.top, inset.bottom, height, growth)
+                        }
+                    };
+                    Some((b.node, delta))
+                })
+        })
+        .collect()
+}
+
+/// How far an out-of-flow box placed by `top` or `bottom` (the other `auto`)
+/// against a padding box `height` tall moves down when that box grows by
+/// `growth`: a `top` moves by what its percentage of the taller box adds, and
+/// a `bottom` keeps its distance to the new bottom edge, so the box moves by
+/// the growth less what its percentage of the taller box adds.
+fn with_height_delta(
+    top: LengthPercentageAuto,
+    bottom: LengthPercentageAuto,
+    height: f32,
+    growth: f32,
+) -> f32 {
+    let at = |length: LengthPercentageAuto, height: f32| {
+        length.maybe_resolve(Some(height)).unwrap_or(0.0)
+    };
+    if top.is_auto() {
+        growth - (at(bottom, height + growth) - at(bottom, height))
+    } else {
+        at(top, height + growth) - at(top, height)
+    }
+}
+
 /// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`
 /// and brings along what has to follow them: the flex lines after a flex
 /// item paragraph, and the ancestors that hold the paragraph, which grow to
@@ -8732,7 +8891,11 @@ fn move_paragraph_lines(
     flow_page: u32,
 ) -> f32 {
     let growth = lines_shift_growth(document, moved.block_id, moved.shift);
+    let follows = out_of_flow_moves(document, cascade, moved, growth);
     shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
+    for (node, delta) in follows {
+        document.nodes[node].layout.location.y += delta;
+    }
     if let Some((item, container)) = moved.flex_line {
         shift_later_flex_lines(document, container, item, growth);
     }
