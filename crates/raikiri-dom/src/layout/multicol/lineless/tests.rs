@@ -877,10 +877,25 @@ fn balance_all_stops_balancing_rows_once_its_probes_use_up_the_budget() {
     assert_eq!(heights[1], 100.0);
 }
 
+mod absolute_parent_tests;
 mod parent_column_tests;
 
 thread_local! {
     static PARENT_COMPARISONS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+    static ABSOLUTE_PARENT_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+/// Counts the work of finding the piece of a containing block that holds a
+/// piece of an absolutely positioned box: `amount` entries of the index of
+/// the containing block's pieces (kind 0) or lookups in it (kind 1), and the
+/// pieces of absolutely positioned boxes read for the clips of the pieces of
+/// their containing blocks (kind 2).
+pub(super) fn record_absolute_parent_work(kind: usize, amount: usize) {
+    ABSOLUTE_PARENT_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += amount;
+        work.set(counts);
+    });
 }
 
 pub(super) fn record_parent_comparison(kind: usize) {
