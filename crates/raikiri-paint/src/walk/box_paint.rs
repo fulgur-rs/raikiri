@@ -854,8 +854,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = self.geometry;
         let scene = &mut *self.scene;
-        // A generated list marker belongs to the first principal
-        // fragment; inherited ancestor fragment state is unrelated.
+        // Prepared outside images follow the page of their first line;
+        // other markers belong to the first principal fragment, regardless
+        // of inherited ancestor fragment state.
         if !paints_as_absolute_continuation
             && cv.display == DisplayValue::ListItem
             && (document
