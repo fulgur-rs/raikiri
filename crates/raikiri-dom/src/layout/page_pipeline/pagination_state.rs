@@ -1053,10 +1053,10 @@ impl PaginationState {
         let row_flex_break_before =
             forced_before && in_row_flex_container(document, cascade, node_id);
         if landing.is_finite() {
-            // A box that no page break goes through and that begins the plain
-            // blocks around it takes them to the next page, rather than
-            // leaving their start on this one.
-            let holder = if overflow.unbreakable
+            // A box that no page break goes through, or that avoids one inside
+            // it, and that begins the plain blocks around it takes them to the
+            // next page, rather than leaving their start on this one.
+            let holder = if (overflow.unbreakable || overflow.moved_for_avoided_break)
                 && !forced_transition
                 && is_block_flow_box(document, cascade, candidate)
                 && !candidate.context.is_float_descendant()

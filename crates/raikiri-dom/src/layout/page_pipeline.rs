@@ -4860,6 +4860,11 @@ struct BoxOverflow {
     /// also counted in `page`. It does so even as the first box of the flow
     /// when a margin above it keeps it from starting the page.
     unbreakable: bool,
+    /// The box avoids a break inside it (`break-inside`) and moves to the next
+    /// page for that, which is also counted in `page`. A line of generated
+    /// text that is kept whole, or a box that moves for the edges that close
+    /// its parent, is not this.
+    moved_for_avoided_break: bool,
     /// The box starts a run of boxes joined by avoided breaks that would
     /// cross the page edge.
     avoided_run: bool,
@@ -4973,21 +4978,18 @@ impl AvoidedBreaks {
         // line alone: the margin and padding after the line break across
         // the edge like those of a paragraph of text. A box shorter than the
         // line ends where the box does.
-        let avoided_end = if box_avoids_page_break_inside(
-            document,
-            node_id,
-            cascade.computed[node_id].break_inside,
-        ) {
+        let avoids_break_inside =
+            box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
+        let avoided_end = if avoids_break_inside {
             Some(page_box_end)
         } else {
             unplaced_line
                 .filter(|line| !line.atomic)
                 .map(|line| flow_y + line.end.min(height))
         };
-        let page = unbreakable
-            || avoided_end.is_some_and(|end| {
-                avoided_box_moves(flow_y, margin_top, end, page_start, page_end)
-            });
+        let moves_for_avoided_end = avoided_end
+            .is_some_and(|end| avoided_box_moves(flow_y, margin_top, end, page_start, page_end));
+        let page = unbreakable || moves_for_avoided_end;
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
         let page = page || (avoided_run && !candidate.context.is_direct_body_element());
@@ -5043,6 +5045,7 @@ impl AvoidedBreaks {
         BoxOverflow {
             page,
             unbreakable,
+            moved_for_avoided_break: avoids_break_inside && moves_for_avoided_end,
             avoided_run,
             table_row,
             table_row_lead,
@@ -5193,9 +5196,9 @@ fn first_box_ancestor_at_start(
 }
 
 /// The outermost box that moves to the next page together with `node_id`, a
-/// box that no page break goes through, when it is the first thing in the
-/// plain blocks around it: the ancestors that render nothing before it and
-/// have no top border or padding.
+/// box that no page break goes through or that avoids one inside it, when it
+/// is the first thing in the plain blocks around it: the ancestors that render
+/// nothing before it and have no top border or padding.
 ///
 /// A page does not break between such an ancestor's start and its first child
 /// (CSS Break 3 §4.1), so the ancestor starts the next page with the child

@@ -9387,6 +9387,18 @@ fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
     page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
 }
 
+/// Places a zero-size absolutely positioned box in `wrapper`. Something placed
+/// against a block keeps it from moving to the next page with the box that
+/// begins it (see `first_box_ancestor_at_start`), so the tests of how a
+/// wrapper grows around a moved box can keep the wrapper where it is.
+fn hold_in_place(doc: &mut Document, wrapper: usize) {
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("position:absolute;width:0;height:0"),
+    );
+}
+
 /// `body > div(60px) > div(wrapper_css) > div(avoid, 60px)` on 100px pages.
 /// Returns the avoiding box's page-flow y, the wrapper's height and the
 /// page count.
@@ -9407,6 +9419,7 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
         "div",
         Some(&format!("display:block;width:100px;{wrapper_css}")),
     );
+    hold_in_place(&mut doc, wrapper);
     let avoiding = doc.append_element(
         Some(wrapper),
         "div",
@@ -9506,6 +9519,7 @@ fn avoiding_block_in_wrapper(
             "div",
             Some(&format!("display:block;{wrapper_css}")),
         );
+        hold_in_place(doc, wrapper);
         avoiding = doc.append_element(
             Some(wrapper),
             "div",
@@ -9549,6 +9563,7 @@ fn a_moved_box_inside_a_contents_element_lengthens_the_box_around_it() {
     let (doc, _) = paged_body(|doc, body| {
         doc.append_element(Some(body), "div", Some("display:block;height:50px"));
         wrapper = doc.append_element(Some(body), "div", Some("display:block"));
+        hold_in_place(doc, wrapper);
         let contents = doc.append_element(Some(wrapper), "span", Some("display:contents"));
         avoiding = doc.append_element(
             Some(contents),
@@ -13153,12 +13168,14 @@ fn break_inside_avoid_does_not_move_an_inline_box() {
 fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
     let (mut wrapper, mut after) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        doc.append_element(Some(body), "div", Some("display:block;height:59px"));
         wrapper = doc.append_element(
             Some(body),
             "div",
             Some("display:block;min-height:100px;font:10px/10px monospace"),
         );
+        // A box before the moved one keeps the wrapper where it is.
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:1px"));
         doc.append_element(
             Some(wrapper),
             "div",
@@ -13167,9 +13184,9 @@ fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
         doc.append_text(wrapper, "x");
         after = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
-    // The block moves 40px, and the line after it now ends 110px into the
+    // The block moves 40px, and the line after it now ends 111px into the
     // wrapper, past its `min-height`.
-    assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 111.0);
     assert_eq!(page_flow_y(&doc, after), 170.0);
 }
 
@@ -13181,6 +13198,7 @@ fn a_percentage_bound_resolves_against_a_percentage_height() {
         let fixed = doc.append_element(Some(body), "div", Some("display:block;height:200px"));
         let half = doc.append_element(Some(fixed), "div", Some("display:block;height:50%"));
         wrapper = doc.append_element(Some(half), "div", Some("display:block;max-height:70%"));
+        hold_in_place(doc, wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
@@ -13247,6 +13265,7 @@ fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) 
             doc.append_text(outer, "x");
         }
         let wrapper = doc.append_element(Some(outer), "div", Some("display:block"));
+        hold_in_place(doc, wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
@@ -14582,6 +14601,7 @@ fn an_ancestor_grows_only_past_its_min_height_when_later_boxes_follow_a_moved_bo
         doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let wrapper = doc.append_element(Some(body), "div", Some("display:block;min-height:100px"));
         ids.push(wrapper);
+        hold_in_place(doc, wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
@@ -17685,6 +17705,7 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
     let overflow = |table_row_lead: f32| BoxOverflow {
         page: false,
         unbreakable: false,
+        moved_for_avoided_break: false,
         avoided_run: false,
         table_row: false,
         table_row_lead,
@@ -18187,6 +18208,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         overflow: BoxOverflow {
             page: false,
             unbreakable: false,
+            moved_for_avoided_break: false,
             avoided_run: false,
             table_row: false,
             table_row_lead: 0.0,
@@ -19356,6 +19378,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         overflow: BoxOverflow {
             page: !forced,
             unbreakable: false,
+            moved_for_avoided_break: false,
             avoided_run: false,
             table_row: false,
             table_row_lead: 0.0,
