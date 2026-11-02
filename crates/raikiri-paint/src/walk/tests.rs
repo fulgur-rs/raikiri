@@ -11,6 +11,7 @@ mod conic_budget_tests;
 mod empty_clip_tests;
 mod gradient_tests;
 mod image_sharing_tests;
+mod marker_image_line_tests;
 
 /// The conic gradient a computed `background-image` holds.
 fn conic_of(

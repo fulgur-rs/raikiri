@@ -858,9 +858,17 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // fragment; inherited ancestor fragment state is unrelated.
         if !paints_as_absolute_continuation
             && cv.display == DisplayValue::ListItem
-            && fragment_id.is_none_or(|id| {
-                layout_fragments[id].node_id != node_id || layout_fragments[id].fragment_index == 0
-            })
+            && (document
+                .list_marker_image_top(
+                    node_id,
+                    (content_origin_y, inside_fixed || fixed_in_viewport),
+                    paint_y,
+                )
+                .is_some_and(|top| top.is_some())
+                || fragment_id.is_none_or(|id| {
+                    layout_fragments[id].node_id != node_id
+                        || layout_fragments[id].fragment_index == 0
+                }))
         {
             // An empty list item still owns a generated marker.
             // Its principal box has zero width/height, which the
