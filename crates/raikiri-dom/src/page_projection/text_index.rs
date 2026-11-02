@@ -217,7 +217,7 @@ impl PageTextIndex {
                     page.push(placement);
                 }
             } else if let Some((owner, _)) = crate::generated_content::generated_origin(root.node)
-                && let Some(first) = markers.get(&owner).and_then(MarkerText::first_page)
+                && let Some(first) = markers.get(&owner).and_then(MarkerText::page)
             {
                 for &position in positions.get(&first).into_iter().flatten() {
                     work.check()?;

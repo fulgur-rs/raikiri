@@ -1189,3 +1189,49 @@ fn indexed_line_candidates_match_the_fresh_page_ownership_predicate() {
         }
     }
 }
+
+fn flow_pages(ranges: &[(f32, f32)]) -> Vec<PageFragment> {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(index, &range)| {
+            let mut page = PageFragment::new();
+            page.page_index = index as u32;
+            page.content_origin_y = range.0;
+            page.flow_range = Some(range);
+            page
+        })
+        .collect()
+}
+
+#[test]
+fn a_marker_goes_to_the_page_holding_the_middle_of_its_line() {
+    let pages = flow_pages(&[(0.0, 100.0), (100.0, 200.0), (200.0, 300.0)]);
+    let flow = FlowPages::new(&pages);
+    let first = Some((0, 0.0));
+    assert_eq!(marker_page(Some(50.0), Some(&flow), first), Some((0, 0.0)));
+    assert_eq!(
+        marker_page(Some(150.0), Some(&flow), first),
+        Some((1, 100.0))
+    );
+    // Pages before the item's first one never draw its marker.
+    assert_eq!(
+        marker_page(Some(50.0), Some(&flow), Some((2, 200.0))),
+        Some((2, 200.0))
+    );
+}
+
+#[test]
+fn a_marker_keeps_the_first_page_without_a_line_or_a_flow_down_the_page() {
+    let pages = flow_pages(&[(0.0, 100.0), (100.0, 200.0)]);
+    let flow = FlowPages::new(&pages);
+    let first = Some((0, 0.0));
+    // No line to align with.
+    assert_eq!(marker_page(None, Some(&flow), first), first);
+    // A flow that runs across the page, which has no flow pages here.
+    assert_eq!(marker_page(Some(150.0), None, first), first);
+    // A line past the end of the last page.
+    assert_eq!(marker_page(Some(500.0), Some(&flow), first), first);
+    // An item with no page at all.
+    assert_eq!(marker_page(Some(150.0), Some(&flow), None), None);
+}
