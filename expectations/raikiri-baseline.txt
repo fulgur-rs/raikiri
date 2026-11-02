@@ -5534,3 +5534,7 @@ css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html
 # --- A vertical table as wide as its cells (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
 # A table in a vertical writing mode is as wide as its rows (CSS 2 section 17.5.2), not as wide as the room around it, so its cells shrink to their content the way the `width: fit-content` boxes of the reference do. The test was XFAIL before and KEEP in an audit-vacuous-passes run.
 css/css-tables/baseline-vertical.html
+
+# --- The automatic minimum height of an absolute box with an aspect ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-11-02) ---
+# An absolute box that states its width and an aspect ratio, and leaves its height `auto`, is as tall as its content at that width, not as tall as the ratio gives (CSS Sizing 4 section 5.1): the 100px wide box with a 100px tall child is a 100px square. audit-vacuous-passes reports VACUOUS-UNSTYLED in two runs, because the box is the same square without the aspect ratio; the test failed (a box 50px tall) before the change and is kept as a guard, as the css-page entries above are.
+css/css-sizing/aspect-ratio/abspos-012.html

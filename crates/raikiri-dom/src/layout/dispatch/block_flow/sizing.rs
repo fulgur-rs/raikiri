@@ -156,7 +156,16 @@ impl Metrics {
             }
         };
         let own_min = style.min_size.maybe_resolve(inputs.parent_size);
+        // A border-box box is no smaller than its padding and border, so a
+        // maximum below them is raised to them, and carries across the ratio as
+        // they do: `aspect-ratio: 2 / 1; max-height: 40px` with 25px of border
+        // is a box 50px tall and at most 100px wide.
         let own_max = style.max_size.maybe_resolve(inputs.parent_size);
+        let own_max = if style.box_sizing == BoxSizing::ContentBox {
+            own_max
+        } else {
+            own_max.maybe_max(padding_border.sum_axes())
+        };
         let carried_min = carried(own_min);
         let carried_max = carried(own_max);
         let (min_width, max_width) = bounds(
