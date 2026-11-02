@@ -43,6 +43,41 @@ fn first_content_image_pieces<const COUNT: bool>(
 /// box it is sliced from.
 pub(super) type BlockPiece = (InlineBoxPiece, BackgroundSlice);
 
+/// The page-local slice that a transformed generated block turns about.
+/// Relative positioning moves the slice after flow ownership is decided.
+fn transformed_block_piece(
+    mut piece: InlineBoxPiece,
+    page_lines: Option<crate::walk::PageLines>,
+    base: IfcPosition,
+) -> Option<InlineBoxPiece> {
+    let Some(crate::walk::PageLines::AlongY {
+        start,
+        end,
+        paint_shift,
+    }) = page_lines
+    else {
+        return Some(piece);
+    };
+    let flow_origin = base.y + base.shift_y - paint_shift;
+    let top = piece.border_box.y + flow_origin;
+    let bottom = top + piece.border_box.height;
+    let low = top.max(start);
+    let high = bottom.min(end);
+    if high <= low {
+        return None;
+    }
+    piece.has_start_edge &= low == top;
+    piece.has_end_edge &= high == bottom;
+    piece.border_box.y += low - top;
+    piece.border_box.height = high - low;
+    let content_top = piece.content_box.y + flow_origin;
+    let content_bottom = content_top + piece.content_box.height;
+    let content_low = content_top.max(low);
+    piece.content_box.y += content_low - content_top;
+    piece.content_box.height = (content_bottom.min(high) - content_low).max(0.0);
+    Some(piece)
+}
+
 /// Where a page that keeps the paragraph whole holds it: the paragraph's
 /// content box, whose position in the page `base` gives. `None` when no page
 /// keeps the paragraph whole.
@@ -304,6 +339,17 @@ impl<'a> LinePaint<'a, '_> {
             else {
                 continue;
             };
+            let turned = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node);
+            let local_piece;
+            let piece = if turned.is_some() {
+                let Some(slice) = transformed_block_piece(*piece, self.page_lines, base) else {
+                    continue;
+                };
+                local_piece = slice;
+                &local_piece
+            } else {
+                piece
+            };
             let outer = piece.border_box;
             if outer.width <= 0.0 || outer.height <= 0.0 {
                 continue;
@@ -312,6 +358,18 @@ impl<'a> LinePaint<'a, '_> {
             let (x, y) = (base.x + dx, base.y + base.shift_y + dy);
             let paint = groups.for_line(piece.line);
             let group = paint.piece_group(piece);
+            let mut piece_transform = self.paint_transform;
+            if let Some(turned) = turned {
+                let turn = crate::walk::element_transform(
+                    turned,
+                    x + outer.x,
+                    y + outer.y,
+                    outer.width,
+                    outer.height,
+                );
+                piece_transform *= turn;
+                paint.turn(group, piece, turn);
+            }
             // The piece's edges are along the block axis: its progression runs
             // down the page, or across it in a vertical paragraph, from the
             // side its lines start on.
@@ -333,7 +391,7 @@ impl<'a> LinePaint<'a, '_> {
                 y,
                 self.pixel_source,
                 self.warnings,
-                self.paint_transform,
+                piece_transform,
                 piece_fixed_viewport(self.paragraph, cv, piece, self.fixed_viewport),
             );
         }
