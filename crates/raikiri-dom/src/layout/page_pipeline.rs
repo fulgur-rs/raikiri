@@ -7376,8 +7376,8 @@ fn first_piece_end(
     // the container moves whole. Its first piece ends where the last of the
     // first pieces of those items does, not the first. An item that starts
     // lower is pushed on alone instead (those on the lines below, among
-    // them), and one that can be cut anywhere or is not understood here adds
-    // no bound of its own.
+    // them). A cuttable lineless item contributes only the minimal piece
+    // that keeps leading edges with it; an unread item adds no bound.
     if lays_out_in_flex_rows(document, cascade, node_id) {
         let layout = node.layout;
         let content_top = layout.border.top + layout.padding.top;
@@ -7387,7 +7387,14 @@ fn first_piece_end(
                 // The page breaks before the relative offset moves the box.
                 let top = normal_flow_y(document, cascade, body_id, child);
                 (top <= content_top + 0.001).then_some(top)?;
-                let piece = first_piece_end(document, cascade, body_id, child, depth + 1)?;
+                let piece = first_piece_end(document, cascade, body_id, child, depth + 1).or_else(
+                    || {
+                        // A cuttable lineless item still keeps the edges above
+                        // it when its content begins at or past the page end.
+                        lineless_piece_end(document, cascade, body_id, child, depth + 1)
+                            .map(|(end, _)| end)
+                    },
+                )?;
                 Some(top + piece)
             })
             .reduce(f32::max);
