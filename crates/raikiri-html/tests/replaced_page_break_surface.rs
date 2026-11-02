@@ -412,3 +412,204 @@ fn an_image_that_the_clipping_wrapper_cuts_short_moves_only_when_the_wrapper_cro
     assert_eq!(extents_of("o", &body), [None, Some((0, 200))], "{body}");
     assert_eq!(extents_of("t", &body), [None, Some((200, 250))], "{body}");
 }
+
+#[test]
+fn a_wrapper_with_a_top_edge_moves_to_the_next_page_with_the_image_below_it() {
+    // The page breaks before the wrapper, not between its padding or border
+    // and the image: the wrapper starts the next page and the image lands
+    // below those edges.
+    let spacer = "<div style='height:300px'></div>";
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    let image = block_image(400);
+    let cases = [
+        (
+            format!("<div id=o style='width:340px;padding:16px;border:1px solid'>{image}</div>"),
+            ((0, 434), (17, 417), (434, 484)),
+        ),
+        (
+            format!("<div id=o style='width:340px;padding-top:10px'>{image}</div>"),
+            ((0, 410), (10, 410), (410, 460)),
+        ),
+        (
+            format!("<div id=o style='width:340px;border-top:5px solid'>{image}</div>"),
+            ((0, 405), (5, 405), (405, 455)),
+        ),
+        // A clipping wrapper keeps its height on the next page.
+        (
+            format!(
+                "<div id=o style='width:340px;padding:10px;overflow:hidden;height:440px'>\
+                 {image}</div>"
+            ),
+            ((0, 440), (10, 410), (440, 490)),
+        ),
+        // The margin above the wrapper is cut by the break, the one below it kept.
+        (
+            format!("<div id=o style='width:340px;margin:20px 0;padding:16px'>{image}</div>"),
+            ((0, 432), (16, 416), (452, 502)),
+        ),
+        // Wrappers nested around the image add their edges.
+        (
+            format!(
+                "<div id=o style='width:340px;padding:10px'>\
+                 <div style='padding:5px'>{image}</div></div>"
+            ),
+            ((0, 430), (15, 415), (430, 480)),
+        ),
+    ];
+    for (wrapper, (wrapper_extent, image_extent, trailer_extent)) in cases {
+        let body = format!("{spacer}{wrapper}{trailer}");
+        assert_eq!(
+            extents_of("o", &body),
+            [None, Some(wrapper_extent)],
+            "{body}"
+        );
+        assert_eq!(image_extents(&body), [None, Some(image_extent)], "{body}");
+        assert_eq!(
+            extents_of("t", &body),
+            [None, Some(trailer_extent)],
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_wrapper_that_keeps_the_margin_of_the_image_inside_moves_with_it_and_the_margin_stays() {
+    // `overflow: hidden` keeps the margin of the image from collapsing through
+    // the wrapper, so the margin is part of the wrapper and is not cut.
+    let spacer = "<div style='height:300px'></div>";
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    let image = format!("{IMAGE} style='display:block;width:300px;height:400px;margin-top:20px'>");
+    for (wrapper_style, wrapper_extent, image_extent, trailer_extent) in [
+        ("overflow:hidden", (0, 420), (20, 420), (420, 470)),
+        (
+            "overflow:hidden;padding-top:10px",
+            (0, 430),
+            (30, 430),
+            (430, 480),
+        ),
+        ("display:flow-root", (0, 420), (20, 420), (420, 470)),
+    ] {
+        let body =
+            format!("{spacer}<div id=o style='width:340px;{wrapper_style}'>{image}</div>{trailer}");
+        assert_eq!(
+            extents_of("o", &body),
+            [None, Some(wrapper_extent)],
+            "{body}"
+        );
+        assert_eq!(image_extents(&body), [None, Some(image_extent)], "{body}");
+        assert_eq!(
+            extents_of("t", &body),
+            [None, Some(trailer_extent)],
+            "{body}"
+        );
+    }
+    // A margin that collapses through the wrapper is cut by the break.
+    let body = format!("{spacer}<div id=o style='width:340px'>{image}</div>{trailer}");
+    assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+}
+
+#[test]
+fn a_wrapper_with_a_top_edge_stays_when_the_image_does_not_begin_it_or_it_starts_the_page() {
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    // Something before the image stays on this page with the wrapper.
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:340px;padding:10px'>\
+         <div style='height:10px'></div>{}</div>{trailer}",
+        block_image(400)
+    );
+    assert_eq!(
+        extents_of("o", &body),
+        [Some((308, 600)), Some((0, 410))],
+        "{body}"
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+    // A wrapper that starts the second page gains nothing by moving.
+    let body = format!(
+        "<div style='height:592px'></div>\
+         <div id=o style='width:340px;padding:16px'>{}</div>{trailer}",
+        block_image(300)
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 332))], "{body}");
+    assert_eq!(image_extents(&body), [None, Some((16, 316))], "{body}");
+    // The image fits the next page below the padding, down to the last pixel,
+    // and the box after the wrapper goes on from there.
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:340px;padding:16px'>{}</div>{trailer}",
+        block_image(560)
+    );
+    assert_eq!(
+        extents_of("o", &body),
+        [None, Some((0, 592)), None],
+        "{body}"
+    );
+    assert_eq!(
+        image_extents(&body),
+        [None, Some((16, 576)), None],
+        "{body}"
+    );
+    assert_eq!(
+        extents_of("t", &body),
+        [None, Some((592, 600)), Some((0, 42))],
+        "{body}"
+    );
+}
+
+#[test]
+fn a_margin_above_the_wrapper_is_cut_by_the_break_like_one_above_the_image() {
+    // The spacer ends where the page does, so the margin that collapses
+    // through the wrapper to the image is the one a break cuts, whichever of
+    // the two carries it.
+    let spacer = "<div style='height:592px'></div>";
+    let image =
+        |style: &str| format!("{IMAGE} style='display:block;width:300px;height:590px;{style}'>");
+    let on_wrapper = format!(
+        "{spacer}<div style='width:340px;margin-top:30px'>{}</div>",
+        image("")
+    );
+    let on_image = format!(
+        "{spacer}<div style='width:340px'>{}</div>",
+        image("margin-top:30px")
+    );
+    let on_both = format!(
+        "{spacer}<div style='width:340px;margin-top:30px'>{}</div>",
+        image("margin-top:20px")
+    );
+    let expected = image_extents(&on_image);
+    assert_eq!(expected, [None, Some((0, 590))], "{on_image}");
+    assert_eq!(image_extents(&on_wrapper), expected, "{on_wrapper}");
+    assert_eq!(image_extents(&on_both), expected, "{on_both}");
+}
+
+#[test]
+fn a_wrapper_moves_with_an_image_taller_than_the_page() {
+    // The image is cut into pages from the top of the second, and the wrapper
+    // that it begins starts there with it.
+    let body = format!("<div id=o style='width:300px'>{}</div>", block_image(750));
+    assert_eq!(
+        extents_of("o", &body),
+        [None, Some((0, 600)), Some((0, 150))],
+        "{body}"
+    );
+}
+
+#[test]
+fn an_image_that_does_not_fit_below_the_padding_takes_only_the_wrappers_that_start_with_it() {
+    // The image fills the page it moves to, so the padded wrapper cannot
+    // land it below its padding there: it moves with the wrapper that starts
+    // where it does, and the padded one stays.
+    let body = format!(
+        "<div id=o style='width:340px;padding:16px'>\
+         <div id=w style='width:300px'>{}</div></div>",
+        block_image(590)
+    );
+    assert_eq!(
+        extents_of("w", &body),
+        [None, Some((0, 590)), None],
+        "{body}"
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 590)), None], "{body}");
+    // The padded wrapper stays where it starts, and grows to hold what moved.
+    assert_eq!(extents_of("o", &body)[0], Some((8, 600)), "{body}");
+}

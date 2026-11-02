@@ -116,6 +116,8 @@ fn a_box_moves_only_when_the_next_page_can_hold_it_without_the_edges() {
             flow_y: 40.0,
             margin_top: 0.0,
             trailing_margin: 0.0,
+            holder_lead: 0.0,
+            holder_margin_top: 0.0,
             page_start: 0.0,
             page_end: 100.0,
             next_page_step,

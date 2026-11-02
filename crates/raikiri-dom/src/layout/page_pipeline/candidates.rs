@@ -1237,7 +1237,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !is_float
                             && !flex_item_candidate
                             && !grid_item_candidate)
-                            .then(|| leading_holder(document, cascade, body_id, node_id))
+                            .then(|| leading_holder(document, cascade, body_id, node_id, true).0)
                             .filter(|&holder| holder != node_id);
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {
