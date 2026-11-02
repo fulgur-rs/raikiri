@@ -481,9 +481,15 @@ fn block_border_box_end(
         .and_then(|root| root.lines.as_ref())
         .map(|lines| top + edges_top + lines.shifted_height() + edges_bottom)
         .unwrap_or(f32::NEG_INFINITY);
+    // A box that lays out vertical lines on its own axes keeps its physical
+    // height in its vertical size mapping; its `height` is the horizontal
+    // mapping, the block size. A vertical box in a horizontal flow is read
+    // by the former. A transposed cascade has no such mapping left.
+    let physical_height = super::bridge::vertical_logical_size(cascade, flow_root)
+        .map_or(&computed.height, |size| &size.height);
     // A definite height, even zero, fixes the border box; content
     // overflowing it is measured on its own.
-    if let Some(height) = used(&computed.height) {
+    if let Some(height) = used(physical_height) {
         let height = used(&computed.max_height).map_or(height, |max| height.min(max));
         return border_box_end(height.max(min_height)).max(generated_end);
     }

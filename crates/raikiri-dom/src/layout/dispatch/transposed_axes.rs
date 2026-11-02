@@ -123,12 +123,21 @@ pub(super) fn transpose_output_to_physical(
 /// Convert a child's physical-axis output to the transposed axes used by its
 /// vertical block parent. In `vertical-rl`, the physical block axis is
 /// reversed, while the physical inline axis is not.
+///
+/// A leaf measured on physical axes says its margins can collapse through when
+/// its physical height is empty. On the parent's transposed axes that height
+/// is the inline extent, and the block extent, the physical width, decides
+/// instead: a box of no height whose width is set does not collapse through.
+/// The flag only matters when the caller shares the block formatting context;
+/// otherwise the conversion drops it. A box with an inline extent and no block
+/// extent keeps the answer of the physical axes.
 pub(super) fn transpose_child_output_to_vertical(
     mut output: LayoutOutput,
     right_to_left: bool,
     reverse_extent: f32,
     preserve_margin_collapse: bool,
 ) -> LayoutOutput {
+    output.margins_can_collapse_through &= output.size.width == 0.0;
     let oof_positioning_area = output.oof_positioning_area.map(|area| OofPositioningArea {
         size: swap(area.size),
         offset: Point {

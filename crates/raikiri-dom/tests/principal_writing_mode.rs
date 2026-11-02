@@ -490,3 +490,64 @@ fn the_body_flow_decides_the_page_direction_when_the_root_declares_another() {
         TOWARDS_THE_RIGHT,
     );
 }
+
+/// A vertical body whose `contain` keeps its writing mode from becoming the
+/// root's is an orthogonal flow under the horizontal root: its width is the
+/// block extent of its content and its height, the inline size, is that of
+/// the content too. An empty child with a `block-size` has no inline extent,
+/// so its margins do not collapse through it and it still takes its width.
+#[test]
+fn a_vertical_body_that_does_not_propagate_takes_the_block_extent_of_its_content() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        check(
+            &format!(
+                "<html><body id=b style=\"writing-mode:{mode};contain:layout\">\
+                 <div id=d style=\"background:green;block-size:20px\"></div></body>"
+            ),
+            &[("b", (8.0, 8.0, 20.0, 0.0)), ("d", (8.0, 8.0, 20.0, 0.0))],
+        );
+    }
+}
+
+/// The same flow below a horizontal body, without the `contain` the body
+/// needs to keep its mode to itself.
+#[test]
+fn a_vertical_block_in_a_horizontal_body_takes_the_block_extent_of_its_content() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        check(
+            &format!(
+                "<div id=b style=\"writing-mode:{mode}\">\
+                 <div id=d style=\"background:green;block-size:20px\"></div></div>"
+            ),
+            &[("b", (8.0, 8.0, 20.0, 0.0)), ("d", (8.0, 8.0, 20.0, 0.0))],
+        );
+    }
+}
+
+/// The inline extent is the largest one of the children, which stretch to
+/// it; the block extents add up from the block start, which `vertical-rl`
+/// takes from the right.
+#[test]
+fn an_orthogonal_flow_sizes_to_the_largest_inline_extent_of_its_children() {
+    for (mode, d, e) in [
+        (
+            "vertical-lr",
+            (8.0, 8.0, 20.0, 50.0),
+            (28.0, 8.0, 15.0, 50.0),
+        ),
+        (
+            "vertical-rl",
+            (23.0, 8.0, 20.0, 50.0),
+            (8.0, 8.0, 15.0, 50.0),
+        ),
+    ] {
+        check(
+            &format!(
+                "<html><body id=b style=\"writing-mode:{mode};contain:layout\">\
+                 <div id=d style=\"block-size:20px;inline-size:50px\"></div>\
+                 <div id=e style=\"block-size:15px\"></div></body>"
+            ),
+            &[("b", (8.0, 8.0, 35.0, 50.0)), ("d", d), ("e", e)],
+        );
+    }
+}
