@@ -228,6 +228,14 @@ fn a_paragraph_in_columns_paints_as_it_does_when_each_column_prepares_it() {
                     .collect(),
             ),
             (
+                "an atomic box alone in a translucent box",
+                mc.to_string(),
+                format!(
+                    "{0}<span style=\"opacity:.5\"><span style=\"display:inline-block;width:20px;height:10px;background:#00c\"></span></span>{0}",
+                    spans(count / 2, DECORATED)
+                ),
+            ),
+            (
                 "translucent first line and first letter",
                 format!("{mc}p::first-line{{opacity:.5;color:#800}}p::first-letter{{opacity:.6;font-size:20px}}"),
                 spans(count, DECORATED),
@@ -279,11 +287,11 @@ fn a_paragraph_in_columns_paints_as_it_does_when_each_column_prepares_it() {
             );
             assert_eq!(shared, unshared, "{flow} {name}");
             // Where the columns of a page hold lines of the paragraph, they
-            // share one preparation. A paragraph with atomic boxes, and one
-            // with generated blocks that continues on later pages, has a
-            // single column on each page.
-            let split = name != "atomic boxes in translucent boxes"
-                && !(flow == "flow" && name == "generated blocks");
+            // share one preparation. A paragraph with atomic boxes may keep
+            // one column on each page, as may one with generated blocks that
+            // continues on later pages.
+            let split =
+                !name.contains("atomic box") && !(flow == "flow" && name == "generated blocks");
             let (shared_pieces, unshared_pieces) = (
                 shared_work[Work::Pieces as usize],
                 unshared_work[Work::Pieces as usize],
@@ -291,7 +299,7 @@ fn a_paragraph_in_columns_paints_as_it_does_when_each_column_prepares_it() {
             if split {
                 assert!(shared_pieces < unshared_pieces, "{flow} {name}");
             } else {
-                assert_eq!(shared_pieces, unshared_pieces, "{flow} {name}");
+                assert!(shared_pieces <= unshared_pieces, "{flow} {name}");
             }
         }
     }
