@@ -76,7 +76,7 @@ fn outside_png_marker_has_one_cached_payload_in_its_owner_opacity_group() {
     assert_eq!(images.len(), 1);
     let image = &images[0];
     assert_eq!(image.url.as_str(), "https://markers.test/marker.png");
-    assert_eq!(image.rect, PaintRect::new(8.0, 0.0, 8.0, 4.0));
+    assert_eq!(image.rect, PaintRect::new(8.0, 12.0, 8.0, 4.0));
     assert_eq!(image.clip.rect, image.rect);
     assert_eq!(image.clip_owner, page.dom().parent(image.node));
     assert!(Arc::ptr_eq(&image.pixels, &pixels.0));
@@ -210,7 +210,7 @@ fn outside_image_precedes_the_owner_clip_and_empty_items_keep_it() {
     };
     assert_eq!(
         page.raster_marker(owner, &pixels).unwrap().rect,
-        PaintRect::new(8.0, 0.0, 8.0, 4.0)
+        PaintRect::new(8.0, 12.0, 8.0, 4.0)
     );
 }
 
@@ -337,7 +337,7 @@ fn marker_payload_respects_pixel_admission_and_rejects_malformed_sources() {
 #[test]
 fn repeated_header_markers_keep_the_header_origin_and_stop_after_the_table() {
     let pixels = Pixels::new();
-    for (position, x, y) in [("outside", 8.0, 0.0), ("inside", 20.0, 4.0)] {
+    for (position, x, y) in [("outside", 8.0, 4.0), ("inside", 20.0, 4.0)] {
         // The 10px header fits the existing quarter-page repeat limit.
         let document = lay_out(
             "<table><thead><tr><th><ul><li>A</li></ul></th></tr></thead><tbody><tr><td>B</td></tr><tr><td>C</td></tr></tbody></table><div style='height:70px'></div>",
@@ -404,7 +404,7 @@ fn marker_payload_rejects_zero_em_and_overflowing_natural_rectangles() {
 fn translated_png_markers_move_with_their_item_text() {
     let pixels = Pixels::new();
     for (css, expected) in [
-        ("", PaintRect::new(13.0, 3.0, 8.0, 4.0)),
+        ("", PaintRect::new(13.0, 15.0, 8.0, 4.0)),
         (
             "li{list-style-position:inside}",
             PaintRect::new(25.0, 15.0, 8.0, 4.0),
@@ -461,5 +461,29 @@ fn an_inside_marker_on_a_line_taller_than_the_page_is_on_every_page_of_its_line(
             .filter(|event| matches!(event, PaintEvent::MarkerImage(_)))
             .count();
         assert_eq!(markers, 1, "page {number}");
+    }
+}
+
+#[test]
+fn outside_image_events_follow_the_first_line_page_and_baseline() {
+    let pixels = Pixels::new();
+    for (prefix, selected_page, top) in [(65, 0, 82.0), (85, 1, 17.0)] {
+        let document = lay_out(
+            &format!("<ul><li><div style='height:{prefix}px'></div>z</li></ul>"),
+            "@page{size:100px 100px;margin:0}body{font:20px/30px Ahem}",
+            &pixels,
+        );
+        let mut count = 0;
+        for page in document.pages() {
+            for event in page.paint_order_for_text_runs(&page.text_runs()) {
+                if let PaintEvent::MarkerImage(owner) = event {
+                    let image = page.raster_marker(owner, &pixels).unwrap();
+                    assert_eq!(page.index(), selected_page);
+                    assert_eq!(image.rect.y, top);
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(count, 1);
     }
 }

@@ -1579,6 +1579,12 @@ fn paint_list_marker_with_snapshots(
         computed,
         pixel_source,
     ) {
+        let paint_y =
+            match document.list_marker_image_top(node_id, (page_flow.0, page_flow.2), paint_y) {
+                Some(Some(top)) => top,
+                Some(None) => return,
+                None => paint_y,
+            };
         let transform = list_marker_image_transform(
             document,
             node_id,

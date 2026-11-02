@@ -854,13 +854,22 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = self.geometry;
         let scene = &mut *self.scene;
-        // A generated list marker belongs to the first principal
-        // fragment; inherited ancestor fragment state is unrelated.
+        // Prepared outside images follow the page of their first line;
+        // other markers belong to the first principal fragment, regardless
+        // of inherited ancestor fragment state.
         if !paints_as_absolute_continuation
             && cv.display == DisplayValue::ListItem
-            && fragment_id.is_none_or(|id| {
-                layout_fragments[id].node_id != node_id || layout_fragments[id].fragment_index == 0
-            })
+            && (document
+                .list_marker_image_top(
+                    node_id,
+                    (content_origin_y, inside_fixed || fixed_in_viewport),
+                    paint_y,
+                )
+                .is_some_and(|top| top.is_some())
+                || fragment_id.is_none_or(|id| {
+                    layout_fragments[id].node_id != node_id
+                        || layout_fragments[id].fragment_index == 0
+                }))
         {
             // An empty list item still owns a generated marker.
             // Its principal box has zero width/height, which the

@@ -47,7 +47,7 @@ pub(crate) struct PageProjection {
     opacity_layers: Vec<usize>,
     /// Standalone marker text shaped once, shared by every page placement.
     markers: BTreeMap<usize, text_runs::MarkerText>,
-    image_markers: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
+    image_markers: image_markers::PreparedMarkers,
     generated_images: generated_images::GeneratedImages,
     generated_boxes: generated_boxes::GeneratedBoxes,
     /// The line pieces of the inline elements split by a translucent
@@ -138,12 +138,45 @@ impl Document {
         let rect = *self
             .page_projection
             .image_markers
+            .pages
             .get(&page_index)?
             .get(&owner)?;
         Some((
             self.list_marker_image_url(usize::try_from(owner.0).ok()?)?,
             rect,
         ))
+    }
+
+    /// Prepared top of an outside image marker for the built-in painter.
+    ///
+    /// `None` means no prepared standalone image. `Some(None)` suppresses
+    /// this page's image; `Some(Some(top))` supplies its aligned top. The
+    /// supplied top is the item's painted border edge and `page` contains
+    /// its flow origin and whether its contents repeat on every page.
+    #[doc(hidden)]
+    pub fn list_marker_image_top(
+        &self,
+        owner: usize,
+        page: (f32, bool),
+        top: f32,
+    ) -> Option<Option<f32>> {
+        let (origin, repeated) = page;
+        let repeated = repeated
+            || matches!(
+                self.table_objects.headers.shift(owner, origin),
+                Some(Some(_))
+            );
+        self.page_projection
+            .image_markers
+            .anchors
+            .get(&owner)
+            .map(|anchor| {
+                (repeated
+                    || anchor
+                        .page_origin
+                        .is_none_or(|selected| (selected - origin).abs() < 0.001))
+                .then_some(top + anchor.offset_y)
+            })
     }
 
     /// Where an outside text marker is drawn, for the painter.

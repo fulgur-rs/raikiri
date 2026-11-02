@@ -229,7 +229,7 @@ pub(super) fn prepare_markers(
 /// that fills the first page. An item without such a line, one placed more than
 /// once, as in columns, and a flow that runs across the page (`flow` is `None`)
 /// keep the marker on the item's first page.
-fn marker_page(
+pub(super) fn marker_page(
     flow_center: Option<f32>,
     flow: Option<&FlowPages<'_>>,
     first: Option<(u32, f32)>,
@@ -1055,11 +1055,13 @@ pub(super) fn omission(
 /// `owner`'s first formatted line, from its border edge, where pagination
 /// draws it.
 #[derive(Clone, Copy, Debug)]
-struct FirstLine {
-    baseline: f32,
+pub(super) struct FirstLine {
+    pub(super) baseline: f32,
+    /// Whether the selected line metrics can align an image along physical Y.
+    pub(super) horizontal: bool,
     /// The middle of the line box, which decides its page. A table row has
     /// no line box of its own, so its baseline stands in.
-    center: f32,
+    pub(super) center: f32,
 }
 
 /// Finds `owner`'s first formatted line.
@@ -1072,7 +1074,11 @@ struct FirstLine {
 /// flex container orders its items itself, so its first line is the first
 /// baseline its layout recorded; a grid container takes the line of an item
 /// in its first row.
-fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
+pub(super) fn first_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+) -> Option<FirstLine> {
     // `float` does not apply to flex items (CSS Flexbox 1 §3), so a flex
     // container's items are checked without it.
     let laid_out = |id: usize| {
@@ -1100,6 +1106,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         return node.table_first_baseline.map(|baseline| FirstLine {
             baseline,
             center: baseline,
+            horizontal: !node.used_writing_mode.is_vertical(),
         });
     }
     if node.formatting_context == FormattingContext::Grid {
@@ -1112,7 +1119,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         // line has the baseline; when none matches, the baseline stands
         // in.
         let baseline = node.flex_first_baseline?;
-        let center = node
+        let (center, horizontal) = node
             .layout_children()
             .iter()
             .filter(|&&child| laid_out(child))
@@ -1120,10 +1127,15 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 let line = first_line(document, cascade, child)?;
                 let top = document.nodes[child].layout.location.y
                     - layout_applied_relative_offset_y(document, cascade, child);
-                ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
+                ((top + line.baseline - baseline).abs() < 0.01)
+                    .then_some((top + line.center, line.horizontal))
             })
-            .unwrap_or(baseline);
-        return Some(FirstLine { baseline, center });
+            .unwrap_or((baseline, false));
+        return Some(FirstLine {
+            baseline,
+            center,
+            horizontal: horizontal && !node.used_writing_mode.is_vertical(),
+        });
     }
     let own_lines = node
         .ifc
@@ -1153,6 +1165,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             return Some(FirstLine {
                 baseline: y + line.baseline,
                 center: y + line.center,
+                horizontal: line.horizontal,
             });
         }
     }
@@ -1166,6 +1179,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             + line.block_offset()
             + line.baseline(shodo::geometry::BaselineKind::Alphabetic),
         center: top + line.block_offset() + line.block_size() / 2.0,
+        horizontal: line.writing_mode() == WritingMode::HorizontalTb,
     })
 }
 
@@ -1228,11 +1242,13 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
             FirstLine {
                 baseline: top + line.baseline,
                 center: top + line.center,
+                horizontal: line.horizontal && !vertical,
             }
         }
         None => FirstLine {
             baseline: top + bottom,
             center: top + bottom,
+            horizontal: false,
         },
     })
 }
