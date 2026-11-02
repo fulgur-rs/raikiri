@@ -15,7 +15,10 @@
 //! height it is offered: the one the parent passes down, else the parent's
 //! definite height, else the page area's. A vertical paragraph root with a
 //! width of its own, a float, or an item of a row flex container is not
-//! stretched by the parent, yet fits the same height ([`with_page_room`]).
+//! stretched by the parent, yet fits the same height ([`with_page_room`]). A
+//! vertical item of a horizontal grid that is asked for the width it gives a
+//! column fits the content height of the grid, or no height when the grid has
+//! none.
 
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
@@ -69,6 +72,19 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
     if inputs.available_space.height != AvailableSpace::MaxContent {
         return inputs.available_space.height;
     }
+    page_room(tree, idx, inputs, inputs.parent_size.height)
+}
+
+/// The room of the margin box of the orthogonal flow `idx` along its inline
+/// axis: `definite` when the parent has a definite height, else the height of
+/// the page area, less the vertical margins of the box where it does not take
+/// them off itself.
+fn page_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+    definite: Option<f32>,
+) -> AvailableSpace {
     let node = &tree.nodes[idx];
     let takes_margins_off_itself =
         !node.is_ifc_root() && !node.display().is_flex_or_grid_container();
@@ -87,9 +103,7 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
         margin.top + margin.bottom
     };
     // Without a page area there is no room to fit the lines in.
-    inputs
-        .parent_size
-        .height
+    definite
         .or_else(|| crate::layout::ifc::boxes::page_area_height(tree))
         .map_or(AvailableSpace::MaxContent, |room| {
             AvailableSpace::Definite((room - margin).max(0.0))
@@ -132,8 +146,52 @@ pub(super) fn with_page_room(
 ) -> LayoutInput {
     if is_vertical_box_in_horizontal_flow(tree, idx) {
         inputs.available_space.height = offered_height(tree, idx, &inputs);
+    } else if let Some(room) = grid_item_room(tree, idx, &inputs) {
+        inputs.available_space.height = room;
     }
     inputs
+}
+
+/// The height that the vertical item `idx` of a horizontal grid fits its lines
+/// in, when `inputs` ask for the width it contributes to a column.
+///
+/// Taffy sizes the columns before the rows, and offers the item a `min-content`
+/// or `max-content` height meanwhile, which would break its lines at the
+/// smallest height. The room to fit them in is the content height of the grid
+/// when that is definite, as for an item of a row flex container, and no limit
+/// when it is not: the rows grow to the lines of the item. A request for the
+/// height is the very inline size that is measured, and keeps its intrinsic
+/// space, as does a layout in rows the grid has settled.
+fn grid_item_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+) -> Option<AvailableSpace> {
+    use super::vertical_oof::used_writing_mode;
+    if inputs.axis != RequestedAxis::Horizontal
+        || inputs.known_dimensions.height.is_some()
+        || matches!(inputs.available_space.height, AvailableSpace::Definite(_))
+        || tree.nodes[idx].layout_position() == Position::Absolute
+        || !used_writing_mode(tree, idx).is_vertical()
+    {
+        return None;
+    }
+    let grid = tree.taffy_parent_of(idx)?;
+    if tree.nodes[grid].formatting_context != FormattingContext::Grid
+        || used_writing_mode(tree, grid).is_vertical()
+    {
+        return None;
+    }
+    let &(_, height) = tree
+        .context
+        .grid_inner_heights
+        .iter()
+        .rev()
+        .find(|&&(owner, _)| owner == grid)?;
+    Some(match height {
+        Some(height) => page_room(tree, idx, inputs, Some(height)),
+        None => AvailableSpace::MaxContent,
+    })
 }
 
 /// Lay out `node_id` with its content-based width in place of the width
