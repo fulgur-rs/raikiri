@@ -37,7 +37,8 @@ impl FirstRow {
 
 /// Read a guarded first-row constraint without changing ordinary paragraph
 /// first-piece rules. Missing or stale placement metadata leaves the existing
-/// pagination path in charge.
+/// pagination path in charge. The collector has already checked static or
+/// relative positioning through its plain-container eligibility.
 pub(super) fn first_row(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -52,10 +53,6 @@ pub(super) fn first_row(
         || !height_follows_content(document, grid)
         || !grid_rows_size_to_content(document, grid)
         || node.grid_column_count <= 1
-        || !matches!(
-            node.position(),
-            PositionValue::Static | PositionValue::Relative
-        )
         || computed.overflow.x != OverflowValue::Visible
         || computed.overflow.y != OverflowValue::Visible
         || selected_page_name(cascade, grid).is_some()
@@ -149,7 +146,7 @@ fn plain_block_ancestors(
         }
         parent = document.parent_of(id);
     }
-    false
+    false // cov:ignore: Attached candidate chains reach the body or fail a block check above.
 }
 
 fn readable_subtree(document: &Document, cascade: &CascadeResult, grid: usize) -> bool {

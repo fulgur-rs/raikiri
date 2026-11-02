@@ -706,3 +706,85 @@ fn an_avoid_item_aligned_late_in_a_tall_row_still_moves_the_first_row_once() {
     assert_eq!(result.grid, 100.0);
     assert_eq!(result.items[0], 100.0);
 }
+
+#[test]
+fn native_leading_gaps_and_mixed_atomic_blocks_keep_the_existing_pagination_path() {
+    use crate::layout::context::LayoutSession;
+    use crate::layout::layout_single_page;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    for leading_gap in [true, false] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0;width:100px;font-family:Ahem;font-size:10px;line-height:10px"));
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Some(if leading_gap {
+                "display:grid;grid-template-columns:1fr 1fr;row-gap:10px"
+            } else {
+                "display:grid;grid-template-columns:1fr 1fr"
+            }),
+        );
+        let first = doc.append_element(
+            Some(grid),
+            "div",
+            Some(if leading_gap {
+                "display:block;height:10px;grid-row:2;grid-column:1"
+            } else {
+                "display:block;height:10px"
+            }),
+        );
+        doc.append_text(first, "A");
+        let second = doc.append_element(
+            Some(grid),
+            "div",
+            Some(if leading_gap {
+                "display:block;height:50px;break-inside:avoid;grid-row:2;grid-column:2"
+            } else {
+                "display:block;height:50px"
+            }),
+        );
+        if leading_gap {
+            doc.append_text(second, "B");
+        } else {
+            doc.append_element(Some(second), "div", Some("display:block;height:10px"));
+            let atomic = doc.append_element(
+                Some(second),
+                "span",
+                Some("display:inline-block;height:50px"),
+            );
+            doc.append_text(atomic, "B");
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        crate::layout::test_support::with_ahem(&mut doc);
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_single_page(&mut doc, &cascade, page).expect("layout");
+        let tree = LayoutSession::resumed(&mut doc, &cascade);
+        assert_eq!(tree.nodes[grid].grid_item_rows.len(), 2);
+        if leading_gap {
+            assert_eq!(tree.nodes[grid].grid_item_rows[0].block_start, 10.0);
+            assert_eq!(
+                tree.nodes[grid].layout.padding.top + tree.nodes[grid].layout.border.top,
+                0.0
+            );
+        } else {
+            // The atomic line is real, but a block before it makes this a
+            // mixed paragraph whose fragmentation stays on the existing path.
+            assert!(
+                super::super::unplaced_line(&tree, &cascade, second)
+                    .is_some_and(|line| line.atomic)
+            );
+        }
+        assert!(
+            super::super::grid_rows::first_row(&tree, &cascade, body, grid).is_none(),
+            "leading gap: {leading_gap}"
+        );
+    }
+}
