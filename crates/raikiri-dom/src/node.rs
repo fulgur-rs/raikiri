@@ -456,6 +456,15 @@ impl FormattingContext {
     }
 }
 
+/// One in-flow item's resolved grid row range and area start on layout axes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GridItemRow {
+    pub(crate) item: usize,
+    pub(crate) start: u16,
+    pub(crate) end: u16,
+    pub(crate) block_start: f32,
+}
+
 /// Arena node implemented with a NodeData tagged union.
 ///
 /// Kind-independent fields needed by paint, cascade, and layout (children and
@@ -655,6 +664,9 @@ pub struct Node {
     pub(crate) order_modified_children: Box<[usize]>,
     /// Taffy's resolved grid row start for each in-flow child, in source-view order.
     pub(crate) grid_item_row_starts: Box<[(usize, u16)]>,
+    /// Resolved row spans and area starts, recorded and invalidated together
+    /// with the row-start projection for pagination.
+    pub(crate) grid_item_rows: Box<[GridItemRow]>,
     /// Resolved grid column count from Taffy's detailed layout information.
     pub(crate) grid_column_count: usize,
     /// Taffy's resolved grid column start for each in-flow child, written
@@ -843,6 +855,7 @@ impl Node {
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
+            grid_item_rows: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
             grid_item_areas: Box::new([]),

@@ -1686,3 +1686,35 @@ fn page_calc_margin_sanitization_and_comparison_overflow_keep_geometry_finite() 
         None
     );
 }
+
+#[test]
+fn resolved_grid_row_ranges_are_discarded_when_order_or_tree_changes() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    for reorder in [true, false] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:grid;grid-template-columns:50px 50px"),
+        );
+        let first = doc.append_element(Some(grid), "div", Some("height:10px"));
+        doc.append_element(Some(grid), "div", Some("height:20px"));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout");
+        assert_eq!(doc.nodes[grid].grid_item_rows.len(), 2);
+        if reorder {
+            // A new bridge writes order before rebuilding its child view.
+            doc.nodes[first].order = 1;
+        } else {
+            doc.append_element(Some(grid), "div", Some("height:30px"));
+        }
+        refresh_order_modified_children(&mut doc);
+        assert!(doc.nodes[grid].grid_item_rows.is_empty());
+        assert!(doc.nodes[grid].grid_item_row_starts.is_empty());
+    }
+}

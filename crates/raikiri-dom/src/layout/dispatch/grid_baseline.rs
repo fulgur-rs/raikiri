@@ -51,6 +51,7 @@ pub(crate) fn aligns_by_baseline(
 /// Item placement and baseline membership from one native grid report.
 pub(crate) struct RecordedItems {
     pub(crate) rows: Box<[(usize, u16)]>,
+    pub(crate) row_areas: Box<[crate::node::GridItemRow]>,
     pub(crate) columns: Box<[(usize, u16)]>,
     pub(crate) excluded: Box<[usize]>,
     pub(crate) areas: Box<[(usize, Size<f32>)]>,
@@ -93,6 +94,20 @@ pub(crate) fn recorded_items(
     let rows = RowSizing::of(&tree.physical_style(parent), info.row_counts());
     let vertical = super::grid_oof::right_to_left(tree, parent).is_some();
     RecordedItems {
+        row_areas: children
+            .iter()
+            .zip(info.items())
+            .enumerate()
+            .filter_map(|(index, (&item, lines))| {
+                let (block_start, _) = info.item_block_range(index)?;
+                Some(crate::node::GridItemRow {
+                    item,
+                    start: lines.row_start,
+                    end: lines.row_end,
+                    block_start,
+                })
+            })
+            .collect(),
         rows: children
             .iter()
             .zip(info.items())

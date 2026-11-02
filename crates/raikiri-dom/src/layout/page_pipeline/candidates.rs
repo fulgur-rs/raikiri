@@ -83,6 +83,7 @@ pub(super) struct ElementContext {
     /// The box moves to the next page when that crosses a page edge, so that
     /// the edges do not stay behind alone (see [`super::leading_edges_move`]).
     pub(super) leading_piece_end: Option<f32>,
+    pub(super) first_grid_row: Option<super::grid_rows::FirstRow>,
     /// For a plain block with padding or border above a box that has no line:
     /// how far below the border-box top the first piece of its content ends.
     /// The box moves to the next page when that crosses a page edge, whether
@@ -177,6 +178,11 @@ impl BoxContext {
     pub(super) fn is_flex_item(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.is_flex_item)
+    }
+
+    pub(super) fn first_grid_row(self) -> Option<super::grid_rows::FirstRow> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.first_grid_row)
     }
 
     pub(super) fn is_grid_item(self) -> bool {
@@ -1209,6 +1215,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // items would be left alone at the foot of a page, because
                 // the first piece of its content does not fit after them,
                 // moves to the next page whole.
+                let first_grid_row = (in_flow_container && !is_body && free_to_break_before)
+                    .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
+                    .flatten();
                 let leading_piece = (in_flow_container
                     && !is_body
                     && free_to_break_before
@@ -1243,7 +1252,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || lone_tail.is_some()
                     || run_tail_base
                     || (avoided_unit.is_some() && !direct_body_child)
-                    || (leading_piece.is_some() && !direct_body_child);
+                    || (leading_piece.is_some() && !direct_body_child)
+                    || (first_grid_row.is_some() && !direct_body_child);
                 // A forced break and a page name change the pages wherever the
                 // box sits, even past the edge of a clipping ancestor.
                 let sets_page_flow = deferred_named_break_after
@@ -1283,6 +1293,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
+                let first_grid_row =
+                    first_grid_row.filter(|_| direct_body_child || can_move_nested);
                 let leading_piece = leading_piece.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
@@ -1349,6 +1361,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || run_tail_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
+                        || first_grid_row.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -1400,6 +1413,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 },
                                 avoided_unit,
                                 leading_piece_end: leading_piece,
+                                first_grid_row,
                                 leading_block_piece_end: leading_block_piece,
                                 run_tail_edges: if run_tail_candidate {
                                     frame.closing_edges
