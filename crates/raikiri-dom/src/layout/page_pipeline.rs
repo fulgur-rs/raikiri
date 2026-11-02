@@ -4937,15 +4937,19 @@ impl AvoidedBreaks {
         let repeated_header_height = table_headers.repeated_height_before(node_id);
         let repeated_footer_height = table_headers.repeated_height_after(node_id);
         let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
+        // The last row of a table moves to the next page with the edges that
+        // close the table when they do not fit after it.
+        let item_tail = item_tail_move(candidate, fit);
         let table_row = candidate.context.is_table_row()
-            && table_row_moves(
-                flow_y,
-                height + repeated_footer_height,
-                table_row_lead + height + repeated_header_height + repeated_footer_height,
-                page_start,
-                page_end,
-                next_page_step,
-            );
+            && (item_tail
+                || table_row_moves(
+                    flow_y,
+                    height + repeated_footer_height,
+                    table_row_lead + height + repeated_header_height + repeated_footer_height,
+                    page_start,
+                    page_end,
+                    next_page_step,
+                ));
         let row_group_lead = self
             .row_groups
             .get(&node_id)
@@ -4968,7 +4972,8 @@ impl AvoidedBreaks {
                 next_page_step,
             )
         };
-        let flex_item = candidate.context.is_flex_item() && !flex_item_is_last && item_overflow();
+        let flex_item = candidate.context.is_flex_item()
+            && (item_tail || (!flex_item_is_last && item_overflow()));
         let grid_item = candidate.context.is_grid_item() && item_overflow();
         BoxOverflow {
             page,
@@ -6726,7 +6731,21 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
 /// even when it is avoided. The box must end within its own page, and the next
 /// page must hold it.
 fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
-    let edges = candidate.context.run_tail_edges();
+    tail_edges_move(candidate.context.run_tail_edges(), candidate, fit)
+}
+
+/// Whether the last item of a flex container that stacks its items, or the
+/// last row of a table, moves to the next page with the `item_tail_edges` that
+/// close the container, so that those edges do not break away from it: the
+/// break between items or rows is the better one (see [`tail_edges_move`]).
+fn item_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+    tail_edges_move(candidate.context.item_tail_edges(), candidate, fit)
+}
+
+/// Whether a box that ends within its page moves to the next page because the
+/// `edges` that follow it do not fit there, when the next page can hold it and
+/// it does not start its own page.
+fn tail_edges_move(edges: f32, candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let BoxFit {
         flow_y,
         margin_top,
@@ -7217,6 +7236,23 @@ fn has_mandatory_break_inside(
     false
 }
 
+/// Whether the flex container, grid or table `node_id` can be judged by its
+/// children: generated boxes are not among them, and a box inside that forces
+/// a page break or starts a named page breaks the page there whichever page
+/// the container starts.
+fn container_can_be_judged(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let node = &document.nodes[node_id];
+    is_plain_container_box(document, node_id)
+        && node.multicol.is_none()
+        && !node.has_before_or_after_content
+        && !is_floating_box_for_pagination(document, cascade, node_id)
+        && !has_mandatory_break_inside(document, cascade, node_id)
+}
+
 /// Whether the flex container, grid or table `node_id` moves whole to the next
 /// page when the closing edges of the blocks around it do not fit after it, as
 /// browsers do: the break before it is the one that keeps those edges from
@@ -7239,14 +7275,7 @@ fn container_moves_whole(
     has_named_pages: bool,
 ) -> bool {
     let node = &document.nodes[node_id];
-    // Generated boxes are not among the children, so the container cannot be
-    // judged.
-    if !is_plain_container_box(document, node_id)
-        || node.multicol.is_some()
-        || node.has_before_or_after_content
-        || is_floating_box_for_pagination(document, cascade, node_id)
-        || has_mandatory_break_inside(document, cascade, node_id)
-    {
+    if !container_can_be_judged(document, cascade, node_id) {
         return false;
     }
     match node.display() {
@@ -7300,6 +7329,140 @@ fn container_moves_whole(
         }
         _ => true,
     }
+}
+
+/// The last item of the flex container `node_id` that stacks its items in a
+/// column, or the last row of the table `node_id`, when the page breaks
+/// between its items or rows rather than moving the container whole (see
+/// [`container_moves_whole`]) and that item or row is a box the page cannot
+/// break inside.
+///
+/// The closing edges of the container, and of the blocks it ends, follow that
+/// box. Browsers send it to the next page with them when they do not fit after
+/// it, and the container stays where it is with the items before it. A table
+/// with a header or footer group, a caption below its rows or boxes that are
+/// no rows, and a flex container that wraps its items, are left to the rules
+/// for those.
+fn container_item_tail(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    has_named_pages: bool,
+) -> Option<usize> {
+    let node = &document.nodes[node_id];
+    // A grid moves whole, so only flex containers and tables are left.
+    if !matches!(node.display(), DisplayValue::Flex | DisplayValue::Table)
+        || !container_can_be_judged(document, cascade, node_id)
+        || avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        || container_moves_whole(document, cascade, node_id, has_named_pages)
+    {
+        return None;
+    }
+    match node.display() {
+        DisplayValue::Flex => {
+            let computed = &cascade.computed[node_id];
+            if !matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+            ) || computed.flex_wrap != FlexWrapValue::NoWrap
+            {
+                return None;
+            }
+            let items: Vec<usize> = pagination_child_order(document, cascade, node_id)
+                .into_iter()
+                .filter(|&child| is_in_flow_flex_child_for_pagination(document, node_id, child))
+                .collect();
+            let (&last, before) = items.split_last()?;
+            let item = &document.nodes[last];
+            (item.kind() == NodeKind::Element
+                && matches!(item.position(), PositionValue::Static)
+                && !item.used_writing_mode.is_vertical()
+                && breaks_only_around(document, cascade, last, has_named_pages)
+                && !break_between_is_avoided(
+                    document,
+                    cascade,
+                    &before[before.len().saturating_sub(1)..],
+                    &[last],
+                ))
+            .then_some(last)
+        }
+        _ => {
+            // A cell that spans rows ties the rows it spans together, and the
+            // table keeps its layout geometry when rows move (see
+            // `follow_moved_rows`).
+            if super::table::row_moves::has_row_spanning_cell(document, node_id) {
+                return None;
+            }
+            let elements = |parent: usize| {
+                document
+                    .children_through_contents(parent)
+                    .into_iter()
+                    .filter(|&child| document.nodes[child].kind() == NodeKind::Element)
+                    .filter(|&child| document.nodes[child].display() != DisplayValue::None)
+            };
+            if document.anonymous_table_cells(node_id).next().is_some() {
+                return None;
+            }
+            // Each row with the group that holds it, if any.
+            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+            for child in elements(node_id) {
+                match document.nodes[child].display() {
+                    DisplayValue::TableRow => rows.push((child, None)),
+                    DisplayValue::TableRowGroup => {
+                        if document.anonymous_table_cells(child).next().is_some() {
+                            return None;
+                        }
+                        // A box in the group that is no row is not a candidate
+                        // for the edges, so a table that ends with one has no
+                        // last row to move.
+                        rows.extend(elements(child).map(|row| (row, Some(child))));
+                    }
+                    DisplayValue::TableCaption
+                        if cascade.computed[child].caption_side
+                            == raikiri_style::property::CaptionSideValue::Top => {}
+                    _ => return None,
+                }
+            }
+            let (&(last, group), before) = rows.split_last()?;
+            // The boxes that start the last row's side of the break and end
+            // the other side of it: a group is one of them where the break is
+            // the group's own edge.
+            let mut next = vec![last];
+            let mut previous = Vec::new();
+            if let Some(group) = group {
+                // Browsers move a group that avoids breaks inside it whole
+                // with the edges, which is not done here.
+                if avoids_page_break_inside(cascade.computed[group].break_inside)
+                    && before.iter().any(|&(_, held)| held == Some(group))
+                {
+                    return None;
+                }
+                if before.last().is_none_or(|&(_, held)| held != Some(group)) {
+                    next.push(group);
+                }
+            }
+            if let Some(&(row, held)) = before.last() {
+                previous.push(row);
+                previous.extend(held.filter(|&held| group != Some(held)));
+            }
+            (!break_between_is_avoided(document, cascade, &previous, &next)).then_some(last)
+        }
+    }
+}
+
+/// Whether a `break-after` of one of the boxes `previous` or a `break-before`
+/// of one of the boxes `next` avoids the page break between the two sides.
+fn break_between_is_avoided(
+    document: &Document,
+    cascade: &CascadeResult,
+    previous: &[usize],
+    next: &[usize],
+) -> bool {
+    next.iter()
+        .any(|&next| page_edge_constraint(document, cascade, next, true).1)
+        || previous
+            .iter()
+            .any(|&previous| page_edge_constraint(document, cascade, previous, false).1)
 }
 
 /// Whether `line_count` lines are too few for any break between them to leave
