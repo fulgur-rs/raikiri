@@ -697,6 +697,15 @@ impl LayoutSession<'_> {
     /// its item `node`, with the box style `style`, to while the item's main
     /// size is measured.
     ///
+    /// Whether the main axis of the flex container that `node` is an item of
+    /// is the horizontal one, or `None` if `node` is no flex item.
+    pub(crate) fn flex_main_axis_is_width(&self, node: usize) -> Option<bool> {
+        let container = self
+            .taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)?;
+        Some(self.physical_style(container).flex_direction_is_row())
+    }
+
     /// A container that wraps its items onto more than one line does not take
     /// the cross size it stretches an item with an `auto` cross size to as
     /// definite then, so that size gives the item no main size through a ratio.
