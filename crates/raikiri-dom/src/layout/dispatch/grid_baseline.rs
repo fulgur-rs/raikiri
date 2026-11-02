@@ -1,10 +1,9 @@
 //! The first baseline of a grid container.
 //!
 //! A grid container takes its first baseline from an item in its first row
-//! (CSS Grid 1 §11.5). Taffy hands over that item's bottom edge unless the
-//! item shares a baseline with another one in its row, so the baseline is
-//! replaced here, once the grid algorithm has placed the items, by the one of
-//! the first line the item itself holds.
+//! (CSS Grid 1 §11.5). Normalize the native result using the selected item's
+//! exported first baseline, grid order, and relative positioning offset.
+//! Final layout and isolated row measurement use the same correction.
 // spec: https://www.w3.org/TR/css-grid-1/#grid-baselines
 
 use super::axis_adapter::synthesized_baseline;
@@ -13,7 +12,9 @@ use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{LayoutOutput, RunMode};
 use crate::layout::style_views::ReadRole;
+use crate::layout::taffy_adapter::{GridInfo, RowSizing};
 use crate::node::Node;
+use raikiri_layout_geometry::{BoxLayout, Size};
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{AlignItemsKeyword, Position};
 use std::collections::HashSet;
@@ -47,6 +48,84 @@ pub(crate) fn aligns_by_baseline(
     align.is_some_and(|align| align.keyword == AlignItemsKeyword::Baseline) && !auto_block_margin
 }
 
+/// Item placement and baseline membership from one native grid report.
+pub(crate) struct RecordedItems {
+    pub(crate) rows: Box<[(usize, u16)]>,
+    pub(crate) columns: Box<[(usize, u16)]>,
+    pub(crate) excluded: Box<[usize]>,
+    pub(crate) areas: Box<[(usize, Size<f32>)]>,
+}
+
+struct ItemView<'a> {
+    rows: &'a [(usize, u16)],
+    columns: &'a [(usize, u16)],
+    excluded: &'a [usize],
+    areas: &'a [(usize, Size<f32>)],
+}
+
+impl<'a> ItemView<'a> {
+    fn of(node: &'a Node) -> Self {
+        Self {
+            rows: &node.grid_item_row_starts,
+            columns: &node.grid_item_column_starts,
+            excluded: &node.grid_items_without_baseline,
+            areas: &node.grid_item_areas,
+        }
+    }
+}
+
+/// Read item placement and percentage-dependent baseline exclusions without
+/// publishing the report into the document's pagination metadata.
+pub(crate) fn recorded_items(
+    tree: &LayoutSession<'_>,
+    parent: usize,
+    info: &GridInfo,
+) -> RecordedItems {
+    let children = tree
+        .child_ids(parent.into())
+        .map(usize::from)
+        .filter(|&child| {
+            tree.nodes[child].layout_display() != raikiri_layout_style::values::Display::None
+                && tree.nodes[child].layout_position() != Position::Absolute
+        })
+        .collect::<Vec<_>>();
+    debug_assert_eq!(children.len(), info.items().len());
+    let rows = RowSizing::of(&tree.physical_style(parent), info.row_counts());
+    let vertical = super::grid_oof::right_to_left(tree, parent).is_some();
+    RecordedItems {
+        rows: children
+            .iter()
+            .zip(info.items())
+            .map(|(&child, item)| (child, item.row_start))
+            .collect(),
+        columns: children
+            .iter()
+            .zip(info.items())
+            .map(|(&child, item)| (child, item.column_start))
+            .collect(),
+        excluded: children
+            .iter()
+            .zip(info.items())
+            .filter(|&(&child, item)| {
+                let span = usize::from(item.row_start.saturating_sub(1))
+                    ..usize::from(item.row_end.saturating_sub(1));
+                let size = tree.physical_style(child).size();
+                (if vertical { size.width } else { size.height }).uses_percentage()
+                    && rows.any_sized_by_content_or_free_space(span)
+            })
+            .map(|(&child, _)| child)
+            .collect(),
+        areas: children
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &child)| {
+                info.item_area_size(index)
+                    .map(|area| (child, if vertical { area.transpose() } else { area }))
+            })
+            .collect(),
+    }
+}
+
 /// The item of the grid container `node` that gives it its first baseline.
 ///
 /// Among the items in the first row that holds any, in grid order (by column,
@@ -61,8 +140,16 @@ pub(crate) fn first_baseline_item(
     is_item: impl Fn(usize) -> bool,
     aligns_by_baseline: impl Fn(usize) -> bool,
 ) -> Option<usize> {
-    let first_row = node
-        .grid_item_row_starts
+    first_baseline_in(&ItemView::of(node), is_item, aligns_by_baseline)
+}
+
+fn first_baseline_in(
+    items: &ItemView<'_>,
+    is_item: impl Fn(usize) -> bool,
+    aligns_by_baseline: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    let first_row = items
+        .rows
         .iter()
         .filter(|&&(item, _)| is_item(item))
         .map(|&(_, row)| row)
@@ -70,14 +157,11 @@ pub(crate) fn first_baseline_item(
     // The columns are recorded together with the rows, for the same children
     // in the same order, which follows the children Taffy laid out: in
     // order-modified document order, with `display: contents` flattened.
-    debug_assert_eq!(
-        node.grid_item_row_starts.len(),
-        node.grid_item_column_starts.len()
-    );
-    let mut first_row_items = node
-        .grid_item_row_starts
+    debug_assert_eq!(items.rows.len(), items.columns.len());
+    let mut first_row_items = items
+        .rows
         .iter()
-        .zip(node.grid_item_column_starts.iter())
+        .zip(items.columns.iter())
         .filter(|&(&(item, row), _)| row == first_row && is_item(item))
         .map(|(&(item, _), &(_, column))| (column, item))
         .collect::<Vec<_>>();
@@ -85,9 +169,9 @@ pub(crate) fn first_baseline_item(
     first_row_items.sort_by_key(|&(column, _)| column);
     // Build membership once, rather than scanning every exclusion for each
     // baseline candidate. The empty exclusion list needs no bucket storage.
-    let excluded: HashSet<_> = node.grid_items_without_baseline.iter().copied().collect();
+    let excluded: HashSet<_> = items.excluded.iter().copied().collect();
     #[cfg(test)]
-    tests::record_insertions(node.grid_items_without_baseline.len());
+    tests::record_insertions(items.excluded.len());
     first_row_items
         .iter()
         .map(|&(_, item)| item)
@@ -120,33 +204,78 @@ pub(super) fn with_first_baseline(
     idx: usize,
     vertical: bool,
     run_mode: RunMode,
-    mut output: LayoutOutput,
+    output: LayoutOutput,
 ) -> LayoutOutput {
-    // Layout containment, or a container without items, leaves it without.
-    if run_mode != RunMode::PerformLayout || output.baselines.first.is_none() {
+    if run_mode != RunMode::PerformLayout {
+        return output;
+    }
+    correct_baseline(
+        tree,
+        idx,
+        vertical,
+        output,
+        ItemView::of(&tree.nodes[idx]),
+        |item| {
+            Some((
+                tree.nodes[item].layout,
+                tree.nodes[item].exported_first_baseline,
+            ))
+        },
+    )
+}
+
+/// Correct a measured horizontal grid's baseline from locally captured
+/// placement and child results, using the same selection as final layout.
+pub(crate) fn with_measured_first_baseline(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    output: LayoutOutput,
+    info: &GridInfo,
+    child: impl Fn(usize) -> Option<(BoxLayout, Option<f32>)>,
+) -> LayoutOutput {
+    let items = recorded_items(tree, idx, info);
+    let view = ItemView {
+        rows: &items.rows,
+        columns: &items.columns,
+        excluded: &items.excluded,
+        areas: &items.areas,
+    };
+    correct_baseline(tree, idx, false, output, view, child)
+}
+
+fn correct_baseline(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    vertical: bool,
+    mut output: LayoutOutput,
+    items: ItemView<'_>,
+    child: impl Fn(usize) -> Option<(BoxLayout, Option<f32>)>,
+) -> LayoutOutput {
+    // Preserve intentional suppression by containment and empty containers.
+    if output.baselines.first.is_none() {
         return output;
     }
     let container = tree.physical_style(idx);
-    let aligns =
-        |child: usize| aligns_by_baseline(&container, &tree.physical_style(child), vertical);
-    // The container moves an item that forms a baseline-sharing group of its
-    // own after the algorithm has run, which the baseline has not seen: the
-    // algorithm's stays.
-    let item = first_baseline_item(&tree.nodes[idx], |_| true, aligns)
+    let aligns = |item| aligns_by_baseline(&container, &tree.physical_style(item), vertical);
+    let item = first_baseline_in(&items, |_| true, aligns)
         .filter(|&item| !tree.nodes[item].opposed_baseline_group);
-    if let Some(item) = item {
-        let node = &tree.nodes[item];
-        let height = node.layout.size.height;
-        let baseline = node.exported_first_baseline.unwrap_or_else(|| {
-            // The line-under edge of a box on horizontal axes is its bottom,
-            // whatever its writing mode.
+    if let Some(item) = item
+        && let Some((layout, exported)) = child(item)
+    {
+        let height = layout.size.height;
+        let baseline = exported.unwrap_or_else(|| {
             if vertical {
                 synthesized_baseline(tree, idx, height)
             } else {
                 height
             }
         });
-        let top = node.layout.location.y - relative_block_offset(tree, idx, item, vertical);
+        let basis = items
+            .areas
+            .iter()
+            .find(|&&(held, _)| held == item)
+            .map(|&(_, area)| if vertical { area.width } else { area.height });
+        let top = layout.location.y - relative_block_offset(tree, item, basis);
         output.baselines.first = Some(top + baseline);
     }
     output
@@ -156,7 +285,7 @@ pub(super) fn with_first_baseline(
 /// along the block axis for being positioned relatively: `top` wins over
 /// `bottom` on the axes the algorithm runs on, and a percentage refers to the
 /// grid area of the item.
-fn relative_block_offset(tree: &LayoutSession<'_>, idx: usize, item: usize, vertical: bool) -> f32 {
+fn relative_block_offset(tree: &LayoutSession<'_>, item: usize, basis: Option<f32>) -> f32 {
     // A relative offset that layout leaves to the painter is not in the
     // location.
     if tree.physical_style(item).position() != Position::Relative
@@ -164,12 +293,6 @@ fn relative_block_offset(tree: &LayoutSession<'_>, idx: usize, item: usize, vert
     {
         return 0.0;
     }
-    // The areas are on physical axes.
-    let basis = tree.nodes[idx]
-        .grid_item_areas
-        .iter()
-        .find(|&&(child, _)| child == item)
-        .map(|&(_, area)| if vertical { area.width } else { area.height });
     let inset = tree.query_style(item, ReadRole::GridItem).inset();
     let (start, end) = (inset.top.resolve(basis), inset.bottom.resolve(basis));
     start.or(end.map(|end| -end)).unwrap_or(0.0)
