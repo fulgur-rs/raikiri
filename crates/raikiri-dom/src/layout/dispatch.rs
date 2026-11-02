@@ -1058,6 +1058,7 @@ impl LayoutSession<'_> {
             let idx = usize::from(node_id);
             let inputs = with_fit_content_room(tree, idx, inputs);
             let inputs = with_column_flex_keyword_room(tree, idx, inputs);
+            let inputs = with_keyword_width_contribution(tree, idx, inputs);
             let inputs = with_stretch_cross_size(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
             // Size containment may give the box a width the request did not
@@ -3854,6 +3855,50 @@ fn with_column_flex_keyword_room(
     .filter(|_| tree.in_column_flex_container(idx));
     if let Some(room) = room {
         inputs.available_space.width = room;
+    }
+    inputs
+}
+
+/// Answer a request for the min-content or max-content size of a box whose
+/// `width` is a `min-content` or `max-content` keyword with the size the
+/// keyword stands for.
+///
+/// The contribution of such a box to the intrinsic size of its parent is its
+/// own preferred size, whichever of the two the parent asks for (CSS Sizing 3
+/// section 5.2): a `max-content` box that a `max-width` limits adds that limit
+/// to a parent measured at its min-content width, not the width of its longest
+/// word. The box is measured at the width the keyword names; its own
+/// `min-width` and `max-width` bound it afterwards. A box in a vertical writing
+/// mode, or one whose parent is, is left alone: its physical width is a block
+/// size, not the inline size the parent measures.
+fn with_keyword_width_contribution(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    // A measure of the content (`ContentSize`) is not a contribution: Taffy
+    // measures an item at its min-content width that way to find its automatic
+    // minimum size, which the keyword width does not change. The table engine
+    // resolves the keyword width of a cell against the intrinsic widths of the
+    // cell itself.
+    if inputs.known_dimensions.width.is_some()
+        || inputs.sizing_mode != SizingMode::InherentSize
+        || tree.nodes[idx].display() == raikiri_style::property::DisplayValue::TableCell
+        || tree.has_vertical_writing_mode(idx)
+        || tree
+            .taffy_parent_of(idx)
+            .is_some_and(|parent| tree.has_vertical_writing_mode(parent))
+        || !matches!(
+            inputs.available_space.width,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
+    {
+        return inputs;
+    }
+    match tree.physical_style(idx).size().width.expand() {
+        ExpandedDimension::MinContent => inputs.available_space.width = AvailableSpace::MinContent,
+        ExpandedDimension::MaxContent => inputs.available_space.width = AvailableSpace::MaxContent,
+        _ => {}
     }
     inputs
 }
