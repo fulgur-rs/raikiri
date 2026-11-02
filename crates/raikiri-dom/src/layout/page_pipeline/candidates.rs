@@ -12,9 +12,9 @@ use super::{
     first_owned_text_line_top, height_follows_content, in_inset_out_of_flow_subtree,
     is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
-    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
+    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
@@ -96,6 +96,11 @@ pub(super) struct ElementContext {
     /// page, only when that first box starts its page (see
     /// [`super::closing_edges_move`]).
     pub(super) lone_run_head_offset: Option<f32>,
+    /// How far below the end of the box that the closing edges follow the
+    /// floats of the blocks they close reach: a float that crosses a page edge
+    /// has a break to take of its own, and the box stays; one that does not
+    /// moves along with the box (see [`super::closing_edges_move`]).
+    pub(super) closing_edges_float_reach: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -215,6 +220,11 @@ impl BoxContext {
     pub(super) fn lone_run_head_offset(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.lone_run_head_offset)
+    }
+
+    pub(super) fn closing_edges_float_reach(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.closing_edges_float_reach)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -480,6 +490,10 @@ struct CandidateFrame<'name> {
     /// box before it: the run runs from this box on, with a break that is not
     /// avoided before it. It is tracked only where the document avoids breaks.
     tie_head: Option<usize>,
+    /// The lowest margin-box bottom, in source coordinates, of the floats of
+    /// the blocks that `closing_edges` counts, or negative infinity when they
+    /// have none. They are read only where `closing_edges` follows the node.
+    float_bottom: f32,
 }
 
 /// The last item of a flex container that stacks its items, or the last row of
@@ -537,6 +551,7 @@ impl CandidateFrame<'_> {
             run_tail: false,
             item_tail: None,
             tie_head: None,
+            float_bottom: f32::NEG_INFINITY,
         }
     }
 }
@@ -809,6 +824,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.run_tail = false;
                         child_frame.item_tail = None;
                         child_frame.tie_head = None;
+                        child_frame.float_bottom = f32::NEG_INFINITY;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -1106,17 +1122,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && frame.previous_box.is_some()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
                 .then(|| {
-                    lone_box_tail(
+                    lone_box_with_floats(
                         document,
                         cascade,
                         body_id,
                         node_id,
                         frame.closing_edges > 0.0,
+                        true,
                     )
                 })
                 .flatten()
-                .filter(|&tail| {
-                    tail + frame.closing_edges > 0.001
+                .filter(|lone| {
+                    lone.tail + frame.closing_edges > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
                         && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
@@ -1192,7 +1209,24 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
-                    .map(|tail| tail.max(0.0));
+                    .map(|lone| lone.tail.max(0.0));
+                // How far the floats beside the box of such a block, and those
+                // of the blocks it ends, reach below the box.
+                let closing_edges_float_reach = if let Some(lone) =
+                    lone_tail.filter(|_| can_move_nested)
+                {
+                    let box_end = candidate_raw_y + node.layout.size.height - lone.tail.max(0.0);
+                    lone.float_reach
+                        .max((frame.float_bottom - box_end).max(0.0))
+                } else if closing_edges_candidate || run_tail_candidate {
+                    let span = match frame.tie {
+                        AvoidTie::RunStart { span } => span,
+                        _ => 0.0,
+                    };
+                    (frame.float_bottom - (candidate_raw_y + candidate_height + span)).max(0.0)
+                } else {
+                    0.0
+                };
                 // The edges also follow the lines of a paragraph that breaks
                 // between them. With no box before it in the block that the
                 // edges close, the page cannot break before the paragraph at
@@ -1299,6 +1333,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     }),
                                 lone_run_head_offset: tie_offset
                                     .filter(|_| !break_before_available()),
+                                closing_edges_float_reach,
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1409,7 +1444,30 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 let last_in_flow = flow_flags
                     .iter()
-                    .rposition(|&(in_flow, floated)| in_flow.is_some() || floated);
+                    .rposition(|&(in_flow, _)| in_flow.is_some());
+                // The lowest margin-box bottom of the floats of this block and
+                // of the blocks it ends, which reaches below the last box when
+                // the edges that follow it would break away from it: a float
+                // that crosses a page edge keeps the box where it is.
+                let floats_bottom = flow_flags
+                    .iter()
+                    .zip(child_order.iter().copied())
+                    .filter(|&(&(_, floated), _)| floated)
+                    .map(|(_, child_id)| {
+                        let layout = &document.nodes[child_id].layout;
+                        pagination_child_parent_y(document, node_id, child_id, raw_y)
+                            + layout.location.y
+                            + layout.size.height
+                            + layout.margin.bottom
+                    })
+                    .fold(
+                        if inherited_edges > 0.0 {
+                            frame.float_bottom
+                        } else {
+                            f32::NEG_INFINITY
+                        },
+                        f32::max,
+                    );
                 // The margin below the last box sits between it and the padding
                 // and border of this block, unless it collapses through that
                 // block (when it has neither) or through the box itself (when
@@ -1620,6 +1678,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             run_tail,
                             item_tail: child_item_tail,
                             tie_head: child_tied.then_some(run_head).flatten(),
+                            float_bottom: if child_closing_edges > 0.0 {
+                                floats_bottom
+                            } else {
+                                f32::NEG_INFINITY
+                            },
                         },
                     )?;
                 }

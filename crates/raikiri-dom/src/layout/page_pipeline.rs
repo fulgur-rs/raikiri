@@ -6932,6 +6932,7 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let edges = candidate.context.closing_edges();
     let inside = candidate.context.closing_edges_inside();
     let span = candidate.context.closing_edges_span();
+    let reach = candidate.context.closing_edges_float_reach();
     let BoxFit {
         flow_y,
         margin_top,
@@ -6942,8 +6943,8 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     } = *fit;
     let box_end = flow_y + candidate.height + span;
     edges + inside > 0.0
-        && box_end - inside <= page_end + 0.001
-        && candidate.height + span - inside <= next_page_step + 0.001
+        && box_end - inside + reach <= page_end + 0.001
+        && candidate.height + span - inside + reach <= next_page_step + 0.001
         && candidate
             .context
             .lone_run_head_offset()
@@ -6963,7 +6964,12 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
 /// even when it is avoided. The box must end within its own page, and the next
 /// page must hold it.
 fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
-    tail_edges_move(candidate.context.run_tail_edges(), candidate, fit)
+    tail_edges_move(
+        candidate.context.run_tail_edges(),
+        candidate.context.closing_edges_float_reach(),
+        candidate,
+        fit,
+    )
 }
 
 /// Whether the last item of a flex container that stacks its items, or the
@@ -6971,13 +6977,14 @@ fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
 /// close the container, so that those edges do not break away from it: the
 /// break between items or rows is the better one (see [`tail_edges_move`]).
 fn item_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
-    tail_edges_move(candidate.context.item_tail_edges(), candidate, fit)
+    tail_edges_move(candidate.context.item_tail_edges(), 0.0, candidate, fit)
 }
 
 /// Whether a box that ends within its page moves to the next page because the
 /// `edges` that follow it do not fit there, when the next page can hold it and
-/// it does not start its own page.
-fn tail_edges_move(edges: f32, candidate: &PageCandidate, fit: &BoxFit) -> bool {
+/// it does not start its own page. The floats that reach `float_reach` below
+/// the box must end within the page too, or they keep the box where it is.
+fn tail_edges_move(edges: f32, float_reach: f32, candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let BoxFit {
         flow_y,
         margin_top,
@@ -6987,8 +6994,8 @@ fn tail_edges_move(edges: f32, candidate: &PageCandidate, fit: &BoxFit) -> bool 
         ..
     } = *fit;
     edges > 0.0
-        && flow_y + candidate.height <= page_end + 0.001
-        && candidate.height <= next_page_step + 0.001
+        && flow_y + candidate.height + float_reach <= page_end + 0.001
+        && candidate.height + float_reach <= next_page_step + 0.001
         && avoided_box_moves(
             flow_y,
             margin_top,
@@ -7066,9 +7073,44 @@ fn lone_box_tail(
     node_id: usize,
     ancestor_edges_follow: bool,
 ) -> Option<f32> {
+    lone_box_with_floats(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        ancestor_edges_follow,
+        false,
+    )
+    .map(|lone| lone.tail)
+}
+
+/// A block that holds one box (see [`lone_box_tail`]).
+#[derive(Clone, Copy)]
+struct LoneBox {
+    /// The block size at the end of the block that follows its box.
+    tail: f32,
+    /// How far below the box the floats beside it reach, or zero.
+    float_reach: f32,
+}
+
+/// [`lone_box_tail`], along with how far the floats beside the box reach below
+/// it. A float that reaches into the padding or border below the content, or
+/// past the block, is accepted when `floats_may_reach` is set, so long as it
+/// starts within the block: the page edge it reaches is for the caller to
+/// weigh.
+fn lone_box_with_floats(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    ancestor_edges_follow: bool,
+    floats_may_reach: bool,
+) -> Option<LoneBox> {
     let mut current = node_id;
     // Where the box ends, from the top of `node_id`.
     let mut content_end = 0.0;
+    // The lowest margin-box bottom of the floats beside the box.
+    let mut float_bottom = f32::NEG_INFINITY;
     loop {
         let node = &document.nodes[current];
         // Generated boxes are not among the children, and the columns of a
@@ -7112,9 +7154,12 @@ fn lone_box_tail(
         for &child in &node.children {
             if is_floating_box_for_pagination(document, cascade, child) {
                 // A float beside the box moves along with the block.
-                if !float_within_box(document, node_id, child) {
+                let accepted = float_within_box(document, node_id, child)
+                    || (floats_may_reach && float_starts_within_box(document, node_id, child));
+                if !accepted {
                     return None;
                 }
+                float_bottom = float_bottom.max(float_extent(document, child).1);
                 continue;
             }
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
@@ -7149,7 +7194,10 @@ fn lone_box_tail(
         }
     }
     content_end += document.nodes[current].layout.size.height;
-    Some(document.nodes[node_id].layout.size.height - content_end)
+    Some(LoneBox {
+        tail: document.nodes[node_id].layout.size.height - content_end,
+        float_reach: (float_bottom - (current_abs_y(document, node_id) + content_end)).max(0.0),
+    })
 }
 
 /// Whether `node_id` is a block box that stacks in the normal flow of a
@@ -7405,14 +7453,28 @@ fn closing_edges_line_move(
 /// content does not: it is no place to break at. A float that reaches into the
 /// padding or border below the content, or past the box, is not.
 fn float_within_box(document: &Document, unit: usize, float: usize) -> bool {
-    let layout = &document.nodes[float].layout;
-    let top = current_abs_y(document, float) - layout.margin.top;
-    let bottom = current_abs_y(document, float) + layout.size.height + layout.margin.bottom;
+    let (_, bottom) = float_extent(document, float);
     let unit_layout = &document.nodes[unit].layout;
-    let unit_top = current_abs_y(document, unit);
-    let content_bottom =
-        unit_top + unit_layout.size.height - unit_layout.padding.bottom - unit_layout.border.bottom;
-    top >= unit_top - 0.001 && bottom <= content_bottom + 0.001
+    let content_bottom = current_abs_y(document, unit) + unit_layout.size.height
+        - unit_layout.padding.bottom
+        - unit_layout.border.bottom;
+    float_starts_within_box(document, unit, float) && bottom <= content_bottom + 0.001
+}
+
+/// Whether the float `float` starts at or below the top of the box `unit`
+/// that holds it, margins included.
+fn float_starts_within_box(document: &Document, unit: usize, float: usize) -> bool {
+    float_extent(document, float).0 >= current_abs_y(document, unit) - 0.001
+}
+
+/// The top and bottom of the margin box of the float `float`.
+fn float_extent(document: &Document, float: usize) -> (f32, f32) {
+    let layout = &document.nodes[float].layout;
+    let y = current_abs_y(document, float);
+    (
+        y - layout.margin.top,
+        y + layout.size.height + layout.margin.bottom,
+    )
 }
 
 /// Whether `display` is that of a flex container, a grid or a table laid out
