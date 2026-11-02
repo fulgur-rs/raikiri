@@ -62,9 +62,8 @@ fn vertices(transform: Affine, path: &BezPath) -> Vec<Point> {
         .collect()
 }
 
-/// The vertices of the shapes the painter fills and of the clips it pushes
-/// on `page`.
-fn painted(page: &Page<'_>, page_count: u32) -> (Vec<Vec<Point>>, Vec<Vec<Point>>) {
+/// Record the native paint of `page`.
+fn native_scene(page: &Page<'_>, page_count: u32) -> Scene {
     let (document, cascade, page_box, origin) = page.paint_inputs();
     let mut scene = Scene::new();
     paint_single_page_with_origin_and_page(
@@ -78,6 +77,12 @@ fn painted(page: &Page<'_>, page_count: u32) -> (Vec<Vec<Point>>, Vec<Vec<Point>
         page.index() % 2 == 1,
     )
     .expect("paint");
+    scene
+}
+
+/// The vertices of native fills and clips on `page`.
+fn painted(page: &Page<'_>, page_count: u32) -> (Vec<Vec<Point>>, Vec<Vec<Point>>) {
+    let scene = native_scene(page, page_count);
     let mut fills = Vec::new();
     let mut clips = Vec::new();
     for command in &scene.commands {
@@ -473,3 +478,6 @@ fn blockified_table_columns_take_their_transform() {
         recorded(body, css),
     );
 }
+
+#[path = "paint_transform/pseudo_tests.rs"]
+mod pseudo_tests;
