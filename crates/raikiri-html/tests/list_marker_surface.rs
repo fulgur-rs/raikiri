@@ -486,17 +486,23 @@ fn an_outside_marker_follows_a_taller_first_line() {
 }
 
 #[test]
-fn a_marker_stays_on_its_first_page_when_the_first_line_moves_on() {
-    // The item's top padding pushes its first line onto the second page.
-    // The marker still belongs to the first page and stays inside it.
+fn a_marker_goes_to_the_page_of_its_first_line_when_the_line_moves_on() {
+    // The item's top padding pushes its first line onto the second page, and
+    // the marker, which sits on that line, goes with it (Chromium prints the
+    // marker and the line together at the top of the second page).
     let document = lay_out("<ol><li style=\"padding-top:95px\">A</li></ol>", "");
-    let page = document.page(0).unwrap();
-    let marker = page
-        .text_runs()
-        .into_iter()
-        .find(|run| run.text.trim_end() == "1.")
-        .expect("the marker on the first page");
-    assert!(marker.origin.1 <= 100.0, "{:?}", marker.origin);
+    assert!(
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .all(|run| !matches!(run.text.trim_end(), "1." | "A"))
+    );
+    assert_eq!(
+        run_baseline(&document, 1, "1."),
+        run_baseline(&document, 1, "A")
+    );
 }
 
 #[test]
@@ -533,14 +539,17 @@ fn run_baseline(document: &DocumentLayout, index: u32, text: &str) -> f32 {
 }
 
 #[test]
-fn an_empty_first_block_child_gives_the_item_no_first_line() {
-    // CSS Pseudo 4 §2.1.1: the first formatted line comes from the first
-    // in-flow block child only, so the later block does not supply it.
+fn an_empty_first_block_child_does_not_hide_the_block_after_it() {
+    // A block with no line of its own is passed over, so the next block holds
+    // the item's first line, as Chromium places the marker.
     let document = lay_out(
         "<ol><li><div></div><div style=\"padding-top:20px\">C</div></li></ol>",
         "",
     );
-    assert!(run_baseline(&document, 0, "1.") < run_baseline(&document, 0, "C"));
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "C")
+    );
 }
 
 #[test]
@@ -641,18 +650,22 @@ fn a_marker_moves_with_its_line_that_does_not_fit_the_page_below_content() {
 }
 
 #[test]
-fn a_marker_stays_on_its_page_when_the_middle_of_its_line_moves_on() {
+fn a_marker_goes_with_its_line_when_the_middle_of_the_line_moves_on() {
     // The first line's middle falls past the page edge, so the line goes to
-    // the next page even though the marker's top is still on this one.
+    // the next page even though its top is still on this one, and the marker
+    // goes with it.
     let document = lay_out("<ol><li style=\"padding-top:92px\">A</li></ol>", "");
-    assert!(run_baseline(&document, 0, "1.") <= 100.0);
     assert!(
         document
             .page(0)
             .unwrap()
             .text_runs()
             .iter()
-            .all(|run| run.text.trim_end() != "A")
+            .all(|run| !matches!(run.text.trim_end(), "1." | "A"))
+    );
+    assert_eq!(
+        run_baseline(&document, 1, "1."),
+        run_baseline(&document, 1, "A")
     );
 }
 

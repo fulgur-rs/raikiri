@@ -6871,6 +6871,13 @@ fn unbreakable_box_moves(
 /// moves with the `closing_edges_span` of block size that the rest of the run
 /// takes below it, so that the run keeps together (see
 /// [`avoid_chain_before_last_box`]).
+///
+/// A block that holds one box may be tied by an avoided break to the box before
+/// it. The run of boxes those breaks tie cannot be kept together once its first
+/// box starts its page and the block still does not fit after it, so the
+/// avoided break gives way and the page breaks before the block, as browsers
+/// do. While the first box sits further down the page, the run moves as a
+/// whole instead, and the block does not move on its own.
 fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let edges = candidate.context.closing_edges();
     let inside = candidate.context.closing_edges_inside();
@@ -6887,6 +6894,10 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     edges + inside > 0.0
         && box_end - inside <= page_end + 0.001
         && candidate.height + span - inside <= next_page_step + 0.001
+        && candidate
+            .context
+            .lone_run_head_offset()
+            .is_none_or(|offset| flow_y - offset <= page_start + 0.001)
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
 
@@ -7437,8 +7448,10 @@ fn container_can_be_judged(
 /// header or footer group or more than one row, break between them and are left
 /// to the rules for those. A column of one item stacks it in block flow, so that
 /// item has to be as unbreakable as a block (see [`breaks_only_around`]). A grid
-/// whose rows end exactly at the page end breaks before its last row instead,
-/// which is not done.
+/// whose rows end exactly at the page end moves whole as well, not only its
+/// last row: browsers break before the grid, as they do for one that ends
+/// earlier. A grid that runs past the page end breaks between its rows like any
+/// other box.
 fn container_moves_whole(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,

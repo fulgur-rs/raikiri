@@ -147,3 +147,66 @@ fn a_block_that_only_avoids_a_break_inside_it_stays_where_its_margin_starts_the_
         "{avoiding}"
     );
 }
+
+/// An image `height` tall with a 30px margin above and below it.
+fn margined_image(height: u32, extra: &str) -> String {
+    format!("{IMAGE} style='display:block;width:300px;height:{height}px;margin:30px 0;{extra}'>")
+}
+
+#[test]
+fn a_margin_kept_after_a_forced_break_moves_an_image_that_crosses_the_page_end_on() {
+    // A forced break keeps the margin above the box after it, so the image
+    // does not start its page: one that fits below the margin stays, one that
+    // crosses the page end moves to the page after, where the margin is cut.
+    let forced = "<div style='height:100px;break-after:page'></div>";
+    let after = |height| image_extents(&format!("{forced}{}", margined_image(height, "")));
+    assert_eq!(after(500), [None, Some((30, 530))]);
+    assert_eq!(after(570), [None, Some((30, 600))]);
+    assert_eq!(after(575), [None, None, Some((0, 575))]);
+    assert_eq!(after(750), [None, None, Some((0, 600)), Some((0, 150))]);
+}
+
+#[test]
+fn a_forced_break_leaves_an_image_that_starts_its_page_or_floats_where_it_is() {
+    let forced = "<div style='height:100px;break-after:page'></div>";
+    // Without a margin the image starts its page and is cut there.
+    assert_eq!(
+        image_extents(&format!(
+            "{forced}{IMAGE} style='display:block;width:300px;height:750px'>"
+        )),
+        [None, Some((0, 600)), Some((0, 150))]
+    );
+    // A float is cut at its margin like any other box that crosses the edge.
+    assert_eq!(
+        image_extents(&format!("{forced}{}", margined_image(575, "float:left"))),
+        [None, Some((30, 600)), Some((0, 5))]
+    );
+}
+
+#[test]
+fn a_forced_break_before_an_image_moves_it_on_the_same_way() {
+    let spacer = "<div style='height:100px'></div>";
+    // On the image itself.
+    assert_eq!(
+        image_extents(&format!(
+            "{spacer}{}",
+            margined_image(575, "break-before:page")
+        )),
+        [None, None, Some((0, 575))]
+    );
+    // In a wrapper, after a forced break inside it or before the image.
+    assert_eq!(
+        image_extents(&format!(
+            "<div><div style='height:100px;break-after:page'></div>{}</div>",
+            margined_image(575, "")
+        )),
+        [None, None, Some((0, 575))]
+    );
+    assert_eq!(
+        image_extents(&format!(
+            "{spacer}<div>{}</div>",
+            margined_image(575, "break-before:page")
+        )),
+        [None, None, Some((0, 575))]
+    );
+}
