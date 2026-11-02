@@ -7,7 +7,8 @@
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with no margin on the body. The
-//! tables carry no padding, border or spacing of their own.
+//! tables carry no spacing, and their cells no padding, unless a case says
+//! otherwise.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -626,4 +627,117 @@ fn a_narrow_table_sits_beside_the_float_with_a_right_float() {
             (0.0, 0.0, 200.0, 25.0),
         ],
     );
+}
+
+/// With no float in the way, a table is as wide as its columns make it and
+/// the limits on its width allow. Each case is the markup of the table `k`
+/// and the border boxes of `k`, of the container `o` and of the block that
+/// follows it.
+#[test]
+fn a_table_with_no_float_around_keeps_the_width_its_columns_give_it() {
+    const CASES: &[(&str, Rect, Rect, Rect)] = &[
+        (
+            "<table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (0.0, 0.0, 50.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;margin:0 auto\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (75.0, 0.0, 50.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;margin-left:30px\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (30.0, 0.0, 50.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;margin-left:auto\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (150.0, 0.0, 50.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;min-width:120px\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (0.0, 0.0, 120.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;width:50%\"><tr><td style=\"padding:0;height:10px\"></td></tr></table>",
+            (0.0, 0.0, 100.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<div dir=rtl style=\"width:200px\"><table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table></div>",
+            (150.0, 0.0, 50.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;box-sizing:border-box;width:100px;border:5px solid\"><tr><td style=\"padding:0;height:10px\"></td></tr></table>",
+            (0.0, 0.0, 100.0, 20.0),
+            (0.0, 0.0, 200.0, 25.0),
+            (0.0, 20.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;table-layout:fixed;width:150px\"><tr><td style=\"padding:0;height:10px\"></td></tr></table>",
+            (0.0, 0.0, 150.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;margin:0 auto;width:50px\"><tr><td style=\"padding:0;height:10px\"></td></tr></table>",
+            (75.0, 0.0, 50.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0\"><div style=\"width:300px;height:10px\"></div></td></tr></table>",
+            (0.0, 0.0, 300.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-collapse:collapse;border:4px solid;margin:0 auto\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (71.0, 0.0, 58.0, 18.0),
+            (0.0, 0.0, 200.0, 23.0),
+            (0.0, 18.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;margin:0 auto\"><tr><td style=\"padding:0;width:50px;height:10px\"></td><td style=\"padding:0;width:70px\"></td></tr></table>",
+            (40.0, 0.0, 120.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-collapse:collapse;font:20px/1 Ahem;overflow-wrap:anywhere;max-width:0\"><tr><td style=\"padding:0\">XXXX</td></tr></table>",
+            (0.0, 0.0, 20.0, 80.0),
+            (0.0, 0.0, 200.0, 85.0),
+            (0.0, 80.0, 200.0, 5.0),
+        ),
+        (
+            "<div id=k style=\"display:table;margin:0 auto\"><div style=\"width:60px;height:10px\"></div></div>",
+            (70.0, 0.0, 60.0, 10.0),
+            (0.0, 0.0, 200.0, 15.0),
+            (0.0, 10.0, 200.0, 5.0),
+        ),
+        (
+            "<table id=k style=\"border-spacing:0;margin:5px 20px 7px 30px\"><tr><td style=\"padding:0;width:50px;height:10px\"></td></tr></table>",
+            (30.0, 5.0, 50.0, 10.0),
+            (0.0, 5.0, 200.0, 22.0),
+            (0.0, 22.0, 200.0, 5.0),
+        ),
+    ];
+    for &(element, k, o, after) in CASES {
+        let body = format!(
+            "<div id=o style=\"width:200px\">{element}\
+             <div id=after style=\"height:5px\"></div></div>"
+        );
+        compare(&body, &[("k", k), ("o", o), ("after", after)]);
+    }
 }
