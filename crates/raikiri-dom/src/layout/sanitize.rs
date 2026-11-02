@@ -546,7 +546,29 @@ impl LayoutSession<'_> {
     /// that shift or scale an already stored layout in place (page breaking,
     /// out-of-flow placement, table cell offsets) write the field directly.
     pub(crate) fn store_layout(&mut self, idx: usize, layout: &BoxLayout) {
-        let sanitized = sanitize_taffy_layout(layout, &mut self.context.layout_warnings);
+        let mut layout = *layout;
+        if self.nodes[idx].formatting_context == crate::node::FormattingContext::Table
+            && let Some(edges) = self
+                .context
+                .table_cache
+                .centered_block_edges(idx, self.layout_cache_context.publication_epoch())
+        {
+            // The library supplied authored borders; the native table has
+            // resolved the used outer halves, including cell/table conflicts.
+            if self
+                .context
+                .transposed_blocks
+                .last()
+                .is_some_and(|frame| frame.has_child(idx))
+            {
+                layout.border.left = edges.start;
+                layout.border.right = edges.end;
+            } else {
+                layout.border.top = edges.start;
+                layout.border.bottom = edges.end;
+            }
+        }
+        let sanitized = sanitize_taffy_layout(&layout, &mut self.context.layout_warnings);
         self.nodes[idx].layout = sanitized;
         // The rows an anonymous table wraps are DOM children of its parent,
         // so they move with the table.

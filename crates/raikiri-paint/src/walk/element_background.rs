@@ -104,14 +104,24 @@ impl Edges {
             ((abs_x + width) as f64).round(),
             ((abs_y + height) as f64).round(),
         );
+        let used_border =
+            slice
+                .env
+                .border_insets
+                .unwrap_or_else(|| raikiri_layout_geometry::Edges {
+                    left: border.left.width().px(),
+                    top: border.top.width().px(),
+                    right: border.right.width().px(),
+                    bottom: border.bottom.width().px(),
+                });
         Self {
             border_box: (bx0, by0, bx1, by1),
             radius_reference: (bx1 - bx0, by1 - by0),
             border: (
-                border.left.width().px() as f64,
-                border.top.width().px() as f64,
-                border.right.width().px() as f64,
-                border.bottom.width().px() as f64,
+                used_border.left as f64,
+                used_border.top as f64,
+                used_border.right as f64,
+                used_border.bottom as f64,
             ),
             padding: (
                 padding.left as f64,

@@ -151,8 +151,8 @@ const BORDERED: &str = "border:2px solid black";
 
 #[test]
 fn collapsed_rows_join_the_lines_on_either_side_in_the_collapsing_model() {
-    // Adjoining rows overlap by the 2px line between them; a run of
-    // collapsed rows leaves one line between the rows around it.
+    // Chromium's logical rows meet at the border center; removing rows
+    // leaves the full height of each remaining track.
     let (doc, _, cells) = collapsing_table(&[
         (ROW, BORDERED),
         (COLLAPSED, BORDERED),
@@ -162,14 +162,13 @@ fn collapsed_rows_join_the_lines_on_either_side_in_the_collapsing_model() {
     assert_eq!(cell_box(&doc, cells[1]).1, 0.0);
     assert_eq!(
         cell_box(&doc, cells[3]).0 - cell_box(&doc, cells[0]).0,
-        18.0
+        20.0
     );
 }
 
 #[test]
 fn the_rows_around_a_collapsed_run_share_their_resolved_line() {
-    // Once the collapsed row is gone, the first row's 4px bottom border wins
-    // the line it shares with the last row, which absorbs it.
+    // The 4px painted line does not overlap the logical row tracks.
     let (doc, _, cells) = collapsing_table(&[
         (ROW, "border-bottom:4px solid black"),
         (COLLAPSED, "border-top:1px solid black"),
@@ -177,7 +176,7 @@ fn the_rows_around_a_collapsed_run_share_their_resolved_line() {
     ]);
     assert_eq!(
         cell_box(&doc, cells[2]).0 - cell_box(&doc, cells[0]).0,
-        16.0
+        20.0
     );
 }
 
@@ -271,7 +270,7 @@ fn the_first_row_carries_the_table_baseline_even_when_it_collapses() {
 }
 
 #[test]
-fn collapsed_end_rows_leave_the_outer_edge_to_the_rows_that_remain() {
+fn collapsed_end_rows_retain_the_original_outer_half_border() {
     let (single, single_table, _) = collapsing_table(&[(ROW, "")]);
     let single_height = single.nodes[single_table].layout.size.height;
     for rows in [
@@ -280,13 +279,14 @@ fn collapsed_end_rows_leave_the_outer_edge_to_the_rows_that_remain() {
     ] {
         let (doc, table, _) = collapsing_table(&rows);
         assert_eq!(
-            doc.nodes[table].layout.size.height, single_height,
+            doc.nodes[table].layout.size.height,
+            single_height + 5.0,
             "{rows:?}"
         );
     }
-    // With no row left, only the table's own borders remain.
+    // Chromium keeps both outer halves even when every row collapses.
     let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
-    assert_eq!(doc.nodes[table].layout.size.height, 0.0);
+    assert_eq!(doc.nodes[table].layout.size.height, 10.0);
 }
 
 #[test]
@@ -301,9 +301,8 @@ fn a_table_whose_rows_all_collapse_keeps_outer_spacing() {
 }
 
 #[test]
-fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
-    // The collapsed row's wide bottom border would win the line between the
-    // rows; once it is gone the second row's top border meets the table's.
+fn the_row_after_a_collapsed_first_row_retains_the_pre_collapse_winning_line() {
+    // Chromium retains the resolved 10px line after removing the first row.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
@@ -330,7 +329,7 @@ fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     let top = doc.nodes[cells[1]].collapsed_border().unwrap().top;
-    assert_eq!(top.width(), ComputedLength(4.0));
+    assert_eq!(top.width(), ComputedLength(10.0));
 }
 
 #[test]
@@ -393,11 +392,11 @@ fn a_row_inside_a_contents_wrapper_collapses_with_its_row_group() {
 }
 
 #[test]
-fn a_table_whose_rows_all_collapse_shows_only_its_own_border() {
-    // No cell shows, so no cell border meets the table's on any side.
+fn a_table_whose_rows_all_collapse_keeps_its_outer_half_borders() {
+    // No cell paints, but both original outer halves remain in the size.
     let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
     let layout = doc.nodes[table].layout;
-    assert_eq!((layout.size.width, layout.size.height), (20.0, 0.0));
+    assert_eq!((layout.size.width, layout.size.height), (20.0, 10.0));
 }
 
 #[test]

@@ -8583,3 +8583,103 @@ fn programmatic_fixed_comparison_insets_resolve_against_the_page_area() {
         Some((20.0, 1048.0))
     );
 }
+
+#[test]
+fn collapsed_block_borders_keep_full_paint_width_outside_the_logical_cell() {
+    let rgba = paint_ahem_page(
+        "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tr style='visibility:collapse'><td style='padding:0;width:100px;height:40px;border:2px solid black;border-bottom:10px solid black'></td></tr><tr><td style='padding:0;width:100px;height:20px;border:2px solid black;vertical-align:top;background:red'><div style='height:1px;background:lime'></div></td></tr><tr><td style='padding:0;width:100px;height:10px;border:2px solid black;background:red'></td></tr></table></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+    for y in 0..6 {
+        assert_eq!(pixel(20, y), &[0, 0, 0]);
+    }
+    assert_eq!(pixel(20, 6), &[0, 255, 0]);
+    assert_eq!(pixel(20, 7), &[255, 0, 0]);
+    assert_eq!(pixel(20, 26), &[0, 0, 0]);
+    assert_eq!(pixel(20, 28), &[255, 0, 0]);
+    assert_eq!(pixel(20, 40), &[255, 255, 255]);
+}
+
+#[test]
+fn a_centered_border_is_not_covered_by_its_content_box_background() {
+    let rgba = paint_ahem_page(
+        "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tr><td style='padding:0;width:20px;height:10px;border:4px solid red;background:red;background-clip:content-box'></td></tr></table></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+    assert_eq!(pixel(10, 0), &[255, 0, 0]);
+    for y in [4, 5, 12, 13] {
+        assert_eq!(pixel(10, y), &[255, 0, 0]);
+    }
+    assert_eq!(pixel(10, 17), &[255, 0, 0]);
+    assert_eq!(pixel(10, 18), &[255, 255, 255]);
+}
+
+#[test]
+fn an_anonymous_cell_centers_its_block_border_without_moving_its_text() {
+    let rgba = paint_ahem_page(
+        "<!doctype html><html><body style='margin:0'><div style='display:table;border-collapse:collapse;font:10px/10px Ahem;color:black'><div style='display:table-row;border:4px solid red'>a</div></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+    assert_eq!(pixel(9, 2), &[255, 0, 0]);
+    assert_eq!(pixel(9, 5), &[0, 0, 0]);
+    assert_eq!(pixel(9, 16), &[255, 0, 0]);
+}
+
+#[test]
+fn a_centered_cell_border_can_reach_the_page_before_its_logical_box() {
+    let rgba = paint_ahem_page(
+        "<!doctype html><html><body style='margin:0'><table style='position:absolute;top:98px;left:0;border-collapse:collapse'><tr><td style='padding:0;width:40px;height:10px;border:4px solid red'></td></tr></table></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+    assert_eq!(pixel(20, 97), &[255, 255, 255]);
+    assert_eq!(pixel(20, 98), &[255, 0, 0]);
+    assert_eq!(pixel(20, 99), &[255, 0, 0]);
+}
+
+#[test]
+fn an_anonymous_cell_border_can_reach_the_page_before_its_logical_box() {
+    let rgba = paint_ahem_page(
+        "<!doctype html><html><body style='margin:0'><div style='position:absolute;top:98px;left:0;display:table;border-collapse:collapse;font:10px/10px Ahem'><div style='display:table-row;border:4px solid red'>a</div></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+    assert_eq!(pixel(9, 97), &[255, 255, 255]);
+    assert_eq!(pixel(9, 98), &[255, 0, 0]);
+    assert_eq!(pixel(9, 99), &[255, 0, 0]);
+}
+
+#[test]
+fn centered_cells_use_used_border_insets_for_background_clipping_and_origin() {
+    for (clip, first, last) in [("padding-box", 4, 17), ("content-box", 6, 15)] {
+        let rgba = paint_ahem_page(
+            &format!(
+                "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tr><td style='width:40px;height:10px;padding:2px;border:4px solid black;background:red;background-clip:{clip}'></td></tr></table></body></html>"
+            ),
+            square_page(100.0),
+            0,
+        );
+        let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+        assert_eq!(pixel(20, first), &[255, 0, 0]);
+        assert_eq!(pixel(20, last), &[255, 0, 0]);
+        assert_eq!(pixel(20, 0), &[0, 0, 0]);
+        assert_eq!(pixel(20, 21), &[0, 0, 0]);
+    }
+    let rgba = paint_ahem_page(
+        "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tr><td style='width:40px;height:10px;padding:2px;border:4px solid black;background-image:linear-gradient(lime,lime);background-size:100% 2px;background-repeat:no-repeat;background-origin:padding-box;background-clip:padding-box'></td></tr></table></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..3];
+    assert_eq!(pixel(20, 4), &[0, 255, 0]);
+    assert_eq!(pixel(20, 5), &[0, 255, 0]);
+    assert_eq!(pixel(20, 6), &[255, 255, 255]);
+}
