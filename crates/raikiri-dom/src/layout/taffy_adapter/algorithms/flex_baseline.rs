@@ -110,6 +110,7 @@ impl LayoutPartialTree for Replay<'_, '_> {
     where
         Self: 'a;
 
+    // cov:ignore: Required by LayoutPartialTree; direct flex replay reads its specialized container style instead.
     fn get_core_container_style(&self, node: taffy::NodeId) -> Self::CoreContainerStyle<'_> {
         self.tree.get_core_container_style(node)
     }

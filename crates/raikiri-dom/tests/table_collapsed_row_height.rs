@@ -512,7 +512,11 @@ fn cross_axis_stretched_tables_give_up_the_collapsed_rows_share() {
 
 #[test]
 fn stretch_without_collapsed_rows_and_main_axis_flex_sizes_are_preserved() {
-    for parent in ["display:flex;height:100px", "display:grid;height:100px"] {
+    for parent in [
+        "display:flex;height:100px",
+        "display:grid;height:100px",
+        "display:flex;flex-wrap:wrap-reverse;height:100px",
+    ] {
         check(
             parent,
             &format!(
@@ -759,6 +763,81 @@ fn nested_reversed_flex_and_scroll_tables_keep_their_baseline() {
                 )
             ),
             &[("f", 8.0, 100.0), ("t", 74.66, 33.34)],
+        );
+    }
+}
+
+#[test]
+fn vertical_flex_cross_start_follows_direction_and_wrap_reversal() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        for (direction, wrap, top) in [
+            ("ltr", "nowrap", 8.0),
+            ("ltr", "wrap-reverse", 74.66),
+            ("rtl", "nowrap", 74.66),
+            ("rtl", "wrap-reverse", 8.0),
+        ] {
+            check(
+                &format!("{mode}; {direction}; {wrap}"),
+                &format!(
+                    "<div style='display:flex;writing-mode:{mode};direction:{direction};flex-direction:column;flex-wrap:{wrap};width:100px;height:100px'>{}</div>",
+                    table(
+                        "writing-mode:horizontal-tb",
+                        &[row(1, 40, true), row(2, 20, false)]
+                    )
+                ),
+                &[("t", top, 33.34), ("r2", top, 33.34)],
+            );
+        }
+    }
+}
+
+#[test]
+fn an_intrinsic_row_taller_than_the_offer_is_not_shrunk() {
+    check(
+        "oversized row",
+        &format!(
+            "<div style='display:grid;height:100px'>{}</div>",
+            table("", &[row(1, 40, true), row(2, 200, false)])
+        ),
+        &[("t", 8.0, 200.0), ("r2", 8.0, 200.0)],
+    );
+    check(
+        "hidden row",
+        &format!(
+            "<div style='display:grid;height:100px'><table id=t>{}<tr style='display:none'><td style='height:999px'></td></tr>{}</table></div>",
+            row(1, 40, true),
+            row(2, 20, false)
+        ),
+        &[("t", 8.0, 33.34), ("r2", 8.0, 33.34)],
+    );
+}
+
+#[test]
+fn scroll_padding_and_relative_offsets_survive_stretch_correction() {
+    for display in ["grid", "flex"] {
+        for direction in ["ltr", "rtl"] {
+            let top = if display == "grid" { 13.0 } else { 79.66 };
+            check(
+                &format!("{display}; {direction}"),
+                &format!(
+                    "<div style='display:{display};direction:{direction};overflow:auto;padding:5px;height:100px;flex-wrap:wrap-reverse'>{}</div>",
+                    table("", &[row(1, 40, true), row(2, 20, false)])
+                ),
+                &[("t", top, 33.34)],
+            );
+        }
+    }
+    for (inset, top) in [("top:5px", 79.66), ("bottom:5px", 69.66), ("", 74.66)] {
+        check(
+            inset,
+            &format!(
+                "<div id=f style='display:inline-flex;flex-wrap:wrap-reverse;width:100px;height:100px'>{}<div style='display:none'></div></div><span id=s style='display:inline-block;width:1px;height:0'></span>",
+                table(
+                    &format!("position:relative;{inset}"),
+                    &[row(1, 40, true), row(2, 20, false)]
+                )
+            ),
+            &[("f", 8.0, 100.0), ("t", top, 33.34), ("s", 74.66, 0.0)],
         );
     }
 }

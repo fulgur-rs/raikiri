@@ -24,7 +24,7 @@ pub(in crate::layout) struct Capture {
 #[derive(Debug, Clone, Copy)]
 struct Measured {
     size: Size<f32>,
-    offered: Size<Option<f32>>,
+    offered: Size<f32>,
 }
 
 pub(super) fn record(
@@ -64,7 +64,11 @@ pub(super) fn record(
             idx,
             Measured {
                 size: output.size,
-                offered: inputs.known_dimensions,
+                // Without an assignment there is no stretch delta to undo.
+                offered: Size {
+                    width: inputs.known_dimensions.width.unwrap_or(output.size.width),
+                    height: inputs.known_dimensions.height.unwrap_or(output.size.height),
+                },
             },
         );
     }
@@ -224,12 +228,10 @@ fn normalize_flex(
         if !crate::layout::table::item_owns_height(tree, child) {
             continue;
         }
-        let Some(offered) = (if row {
+        let offered = if row {
             measured.offered.height
         } else {
             measured.offered.width
-        }) else {
-            continue;
         };
         let actual = if row {
             measured.size.height
@@ -267,17 +269,17 @@ fn normalize_flex(
     }
     if row && output.baselines.first.is_some() && !shifts.is_empty() {
         let moved: Vec<_> = shifts.iter().map(|&(child, _)| child).collect();
-        if let Some(calls) = calls {
-            match flex_baseline_source(tree, NodeId::from(idx), inputs, calls, &moved) {
-                Ok(Some(source)) => {
-                    if let Some((_, shift)) = shifts.iter().find(|&&(child, _)| child == source) {
-                        output.baselines.first =
-                            output.baselines.first.map(|baseline| baseline + shift.y);
-                    }
-                }
-                Ok(None) => {}
-                Err(message) => tree.context.table_layout_error = Some(message.to_owned()),
+        let calls = calls.expect("reversed row table layout records its callbacks");
+        match flex_baseline_source(tree, NodeId::from(idx), inputs, calls, &moved) {
+            Ok(Some(source)) => {
+                let (_, shift) = shifts
+                    .iter()
+                    .find(|&&(child, _)| child == source)
+                    .expect("replay only identifies a moved item");
+                output.baselines.first = output.baselines.first.map(|baseline| baseline + shift.y);
             }
+            Ok(None) => {}
+            Err(message) => tree.context.table_layout_error = Some(message.to_owned()),
         }
     }
     for (child, layout) in layouts {
@@ -285,6 +287,9 @@ fn normalize_flex(
     }
     finish(tree, idx, inputs, &items, &shifts, output);
 }
+
+#[cfg(test)]
+mod tests;
 fn finish(
     tree: &mut LayoutSession<'_>,
     idx: usize,
