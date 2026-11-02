@@ -1042,14 +1042,16 @@ fn a_heading_in_a_wrapper_stays_before_a_table_that_does_not_start_with_its_firs
 #[test]
 fn a_heading_in_a_wrapper_that_is_not_a_plain_block_is_left_as_before() {
     // The items of a row flex container sit side by side: no heading there
-    // ties to the box after it.
+    // ties to the box after it. In a block wrapper at 80 the heading would go
+    // to the next page with a paragraph of which two lines do not fit after
+    // it; beside the paragraph the two lines fit.
     let (mut heading, mut paragraph_id) = (0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
-        block(doc, body, "display:block;height:85px");
+        block(doc, body, "display:block;height:80px");
         let wrapper = block(doc, body, "display:flex");
         heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
         paragraph_id = paragraph(doc, wrapper, "", 6);
     });
-    assert_eq!(page_flow_y(&doc, heading), 85.0);
+    assert_eq!(page_flow_y(&doc, heading), 80.0);
     let _ = paragraph_id;
 }
