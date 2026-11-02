@@ -758,6 +758,19 @@ fn run_boxes_segment(
     let mut assumed_height = 0.0_f32;
     let mut retries = 0;
     let mut beside = false;
+    // The floats met at the start of the line being laid out, one after the
+    // other. Each narrows the space of the line, and the engine keeps what it
+    // scanned of the line only for the space it scanned it in, so a line that
+    // starts with many floats would be scanned and indexed once for every one
+    // of them. Once more than `HELD_AFTER_START_FLOATS` of them have been met,
+    // the engine is asked about the space it was asked about before: the
+    // floats are met just the same, as nothing of the line comes before them.
+    // The space that decides where they go stays the real one, and the line is
+    // asked for again in the real space before it is taken.
+    let mut start_floats = 0;
+    let mut held_space: Option<LineSpace> = None;
+    #[cfg(test)]
+    let mut previous_start: Option<f32> = None;
     // Top of the lowest float this paragraph has placed, from its content
     // box: a later float may not be placed above it (CSS 2.1 9.5.1 rule 5).
     let mut ceiling = f32::NEG_INFINITY;
@@ -819,6 +832,16 @@ fn run_boxes_segment(
             assumed_height,
         );
         let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
+        let asked = held_space.take().unwrap_or(space);
+        // The engine scans a line again when the start of the space it is
+        // asked about moves.
+        #[cfg(test)]
+        {
+            if previous_start.is_some_and(|start| start != asked.inline_start) {
+                tests::ASKED_START_CHANGES.with(|count| count.set(count.get() + 1));
+            }
+            previous_start = Some(asked.inline_start);
+        }
         // The lines of a generated block take its own alignment and indent.
         // Its content is part of the paragraph's text, so its lines keep the
         // paragraph's base direction.
@@ -827,7 +850,7 @@ fn run_boxes_segment(
             |open| open.line_options(lines.len()),
         );
         let line_options = with_group_align(line_options, &options);
-        let mut constraint = line_constraint(root, width, space, open_block.is_some());
+        let mut constraint = line_constraint(root, width, asked, open_block.is_some());
         constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
@@ -842,6 +865,11 @@ fn run_boxes_segment(
             )
         });
         let Some(result) = result else { break };
+        // What the engine says about a space the floats have narrowed since
+        // holds only for a float at the start of the line.
+        if asked != space && !matches!(result, LineResult::FloatEncountered { .. }) {
+            continue;
+        }
         match result {
             LineResult::FloatEncountered {
                 node,
@@ -850,6 +878,11 @@ fn run_boxes_segment(
                 ..
             } => {
                 let node = node.0 as usize;
+                let indent = line_indent(&line_options, first_line, after_forced);
+                let starts_line = inline_position <= indent + 0.01;
+                if asked != space && !starts_line {
+                    continue;
+                }
                 cursor = Some(float_cursor);
                 // A withdrawal rewinds the cursor, so a float that already
                 // waits for the next line can be met again.
@@ -889,8 +922,6 @@ fn run_boxes_segment(
                 // beside it there (CSS 2.1 9.5.1 rules 6 and 8). The floats
                 // already met on this line come before it in the source and
                 // have no content before them either, so they are final too.
-                let indent = line_indent(&line_options, first_line, after_forced);
-                let starts_line = inline_position <= indent + 0.01;
                 if (!fits || below)
                     && starts_line
                     && deferred.is_empty()
@@ -922,9 +953,14 @@ fn run_boxes_segment(
                 } else {
                     float.late = !starts_line;
                     tentative.push(float);
+                    start_floats = if starts_line { start_floats + 1 } else { 0 };
+                    if start_floats > HELD_AFTER_START_FLOATS {
+                        held_space = Some(asked);
+                    }
                 }
             }
             LineResult::Line(line) => {
+                start_floats = 0;
                 // Placing a float moved its anchor to a later line: take the
                 // last such float back and lay the line out again without it.
                 // A displaced float that already waits for the next line
@@ -1476,6 +1512,12 @@ fn positioned_inline_ancestor(
 /// How many times one line is moved down past floats before it is accepted
 /// where it is.
 const MAX_LINE_MOVES: usize = 64;
+
+/// How many floats at the start of a line are met in the space each one
+/// narrows, before the engine is asked about the same space for the floats
+/// that follow: a few floats cost as many scans of the line, and many floats
+/// would cost a scan each.
+const HELD_AFTER_START_FLOATS: usize = 4;
 
 /// Whether a float with `clear` is moved below a float on the `side`.
 fn clears(clear: Clear, side: FloatDirection) -> bool {
