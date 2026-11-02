@@ -3186,6 +3186,36 @@ fn the_margin_below_the_last_item_is_no_edge_without_padding_or_border() {
     assert_eq!(ys[1..], [70.0, 80.0]);
 }
 
+/// A grid of `rows` rows of 10px in the card of [`card_with_edges`], whose
+/// content ends at 70. Returns the grid, then each row.
+fn grid_of_rows(doc: &mut Document, card: usize, rows: usize) -> Vec<usize> {
+    let grid = block(doc, card, "display:grid;grid-template-columns:50px");
+    let mut ids = vec![grid];
+    ids.extend((0..rows).map(|_| block(doc, grid, "display:block;height:10px")));
+    ids
+}
+
+#[test]
+fn a_grid_that_ends_at_the_page_end_moves_whole_with_the_edges() {
+    // Three rows fill the page to its end and the padding below them does not
+    // fit. Chromium sends the whole grid to the next page, as it does one that
+    // ends earlier, and does not break before its last row.
+    let (ys, height) = card_with_edges(30, |doc, card| grid_of_rows(doc, card, 3));
+    assert_eq!(ys, vec![100.0, 100.0, 110.0, 120.0]);
+    assert_eq!(height, 160.0);
+    let (ys, _) = card_with_edges(30, |doc, card| grid_of_rows(doc, card, 2));
+    assert_eq!(ys, vec![100.0, 100.0, 110.0]);
+}
+
+#[test]
+fn a_grid_that_runs_past_the_page_end_breaks_between_its_rows() {
+    // The last of four rows does not fit the page, so the page breaks before
+    // it and the padding follows it.
+    let (ys, height) = card_with_edges(30, |doc, card| grid_of_rows(doc, card, 4));
+    assert_eq!(ys, vec![70.0, 70.0, 80.0, 90.0, 100.0]);
+    assert_eq!(height, 140.0);
+}
+
 #[test]
 fn a_container_alone_in_its_card_moves_whole_with_the_edges() {
     // No box in the card is there to break from before the container: the
