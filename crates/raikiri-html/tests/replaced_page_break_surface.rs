@@ -300,3 +300,115 @@ fn a_wrapper_with_something_before_the_image_stays_on_the_page_and_continues_aft
     );
     assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
 }
+
+#[test]
+fn a_clipping_wrapper_with_a_height_moves_to_the_next_page_with_the_image_that_starts_it() {
+    // The clipping gives the wrapper a height of its own, but the image is
+    // not cut at the page end any more than in a wrapper that grows: the page
+    // breaks before both.
+    let spacer = "<div style='height:300px'></div>";
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    for (wrapper_style, wrapper_extent, trailer_extent) in [
+        ("height:400px;overflow:hidden", (0, 400), (400, 450)),
+        ("height:500px;overflow:hidden", (0, 500), (500, 550)),
+        ("height:400px;overflow:clip", (0, 400), (400, 450)),
+        ("height:400px;overflow-x:hidden", (0, 400), (400, 450)),
+        ("overflow:hidden", (0, 400), (400, 450)),
+    ] {
+        let body = format!(
+            "{spacer}<div id=o style='width:300px;{wrapper_style}'>{}</div>{trailer}",
+            block_image(400)
+        );
+        assert_eq!(
+            extents_of("o", &body),
+            [None, Some(wrapper_extent)],
+            "{body}"
+        );
+        assert_eq!(
+            extents_of("t", &body),
+            [None, Some(trailer_extent)],
+            "{body}"
+        );
+        assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+    }
+}
+
+#[test]
+fn clipping_wrappers_nested_around_an_image_move_with_it() {
+    let spacer = "<div style='height:300px'></div>";
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    for (wrapper, wrapper_extent, trailer_extent) in [
+        (
+            format!(
+                "<div id=o style='width:300px;height:450px;overflow:hidden'>\
+                 <div style='height:420px'>{}</div></div>",
+                block_image(400)
+            ),
+            (0, 450),
+            (450, 500),
+        ),
+        (
+            format!(
+                "<div id=o style='width:300px;height:450px;overflow:hidden'>\
+                 <div style='height:420px;overflow:hidden'>{}</div></div>",
+                block_image(400)
+            ),
+            (0, 450),
+            (450, 500),
+        ),
+    ] {
+        let body = format!("{spacer}{wrapper}{trailer}");
+        assert_eq!(
+            extents_of("o", &body),
+            [None, Some(wrapper_extent)],
+            "{body}"
+        );
+        assert_eq!(
+            extents_of("t", &body),
+            [None, Some(trailer_extent)],
+            "{body}"
+        );
+        assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+    }
+}
+
+#[test]
+fn a_clipping_wrapper_that_moves_continues_on_the_page_after_with_what_follows_the_image() {
+    let spacer = "<div style='height:300px'></div>";
+    let body = format!(
+        "{spacer}<div id=o style='width:300px;height:700px;overflow:hidden'>{}\
+         <div style='height:100px'></div></div>\
+         <div id=t style='width:100px;height:50px'></div>",
+        block_image(400)
+    );
+    assert_eq!(
+        extents_of("o", &body),
+        [None, Some((0, 600)), Some((0, 100))],
+        "{body}"
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400)), None], "{body}");
+    assert_eq!(
+        extents_of("t", &body),
+        [None, None, Some((100, 150))],
+        "{body}"
+    );
+}
+
+#[test]
+fn an_image_that_the_clipping_wrapper_cuts_short_moves_only_when_the_wrapper_crosses_the_page_end()
+{
+    let trailer = "<div id=t style='width:100px;height:50px'></div>";
+    let wrapper = format!(
+        "<div id=o style='width:300px;height:200px;overflow:hidden'>{}</div>{trailer}",
+        block_image(400)
+    );
+    // The 200px that show end above the page end: the image is cut by the
+    // wrapper there and nothing moves.
+    let body = format!("<div style='height:300px'></div>{wrapper}");
+    assert_eq!(extents_of("o", &body), [Some((308, 508))], "{body}");
+    assert_eq!(extents_of("t", &body), [Some((508, 558))], "{body}");
+    // They cross it, so the wrapper goes to the next page whole.
+    let body = format!("<div style='height:480px'></div>{wrapper}");
+    assert_eq!(extents_of("o", &body), [None, Some((0, 200))], "{body}");
+    assert_eq!(extents_of("t", &body), [None, Some((200, 250))], "{body}");
+}
