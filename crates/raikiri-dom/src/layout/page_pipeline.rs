@@ -7000,6 +7000,27 @@ fn first_piece_end(
     if boxes.is_empty() {
         return None;
     }
+    // The top line of a flex container cannot be cut where an item that
+    // starts at its top and that no break goes through is still running, so
+    // the container moves whole. Its first piece ends where the last of the
+    // first pieces of those items does, not the first. An item that starts
+    // lower is pushed on alone instead (those on the lines below, among
+    // them), and one that can be cut anywhere or is not understood here adds
+    // no bound of its own.
+    if lays_out_in_flex_rows(document, cascade, node_id) {
+        let layout = node.layout;
+        let content_top = layout.border.top + layout.padding.top;
+        return boxes
+            .iter()
+            .filter_map(|&child| {
+                // The page breaks before the relative offset moves the box.
+                let top = normal_flow_y(document, cascade, body_id, child);
+                (top <= content_top + 0.001).then_some(top)?;
+                let piece = first_piece_end(document, cascade, body_id, child, depth + 1)?;
+                Some(top + piece)
+            })
+            .reduce(f32::max);
+    }
     let examined = if stacks_every_box { boxes.len() } else { 1 };
     let mut least = f32::INFINITY;
     for &child in &boxes[..examined] {
@@ -7011,9 +7032,21 @@ fn first_piece_end(
     least.is_finite().then_some(least)
 }
 
+/// Whether `node_id` is a flex container that lays its items out in rows
+/// across the page.
+fn lays_out_in_flex_rows(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    document.nodes[node_id].display() == DisplayValue::Flex
+        && matches!(
+            cascade.computed[node_id].flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        )
+}
+
 /// How far below the border-box top of the flex container or grid `node_id`
 /// the first piece of its content ends, when it has padding or border above
-/// its items (see [`first_piece_end`]).
+/// its items, or lays them out in rows (see [`first_piece_end`]). Such a
+/// container moves whole with its first piece even where nothing is above it,
+/// as the items of its top line all begin at its top.
 fn leading_piece_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -7021,9 +7054,10 @@ fn leading_piece_end(
     node_id: usize,
 ) -> Option<f32> {
     let layout = &document.nodes[node_id].layout;
-    (layout.border.top + layout.padding.top > 0.0)
-        .then(|| first_piece_end(document, cascade, body_id, node_id, 0))
-        .flatten()
+    (layout.border.top + layout.padding.top > 0.0
+        || lays_out_in_flex_rows(document, cascade, node_id))
+    .then(|| first_piece_end(document, cascade, body_id, node_id, 0))
+    .flatten()
 }
 
 /// Whether a box with padding or border above its content moves to the next
