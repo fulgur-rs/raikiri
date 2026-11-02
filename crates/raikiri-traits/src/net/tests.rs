@@ -163,6 +163,9 @@ fn a_post_redirected_with_301_302_or_303_becomes_a_get_without_its_body() {
     request
         .headers
         .push(("CONTENT-ENCODING".to_owned(), "gzip".to_owned()));
+    request
+        .headers
+        .push(("Transfer-Encoding".to_owned(), "chunked".to_owned()));
     for status in [301, 302, 303] {
         let next = redirected(&request, "https://example.test/b", status).unwrap();
         assert_eq!(next.method, Method::Get, "{status}");

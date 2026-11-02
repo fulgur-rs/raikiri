@@ -243,8 +243,10 @@ fn is_credential_header(name: &str) -> bool {
         .any(|credential| name.eq_ignore_ascii_case(credential))
 }
 
-/// Whether `name` is a header that describes a request body, which a redirect
-/// that drops the body drops too.
+/// Whether `name` is a header that describes a request body or the framing of
+/// one, which a redirect that drops the body drops too: a bodyless `GET` that
+/// still announces `Transfer-Encoding: chunked` is rejected by providers that
+/// derive a body from it.
 fn is_body_header(name: &str) -> bool {
     [
         "content-encoding",
@@ -252,6 +254,7 @@ fn is_body_header(name: &str) -> bool {
         "content-length",
         "content-location",
         "content-type",
+        "transfer-encoding",
     ]
     .iter()
     .any(|header| name.eq_ignore_ascii_case(header))
