@@ -551,3 +551,30 @@ fn an_orthogonal_flow_sizes_to_the_largest_inline_extent_of_its_children() {
         );
     }
 }
+
+#[test]
+fn an_empty_vertical_leaf_with_inline_size_collapses_through() {
+    check(
+        "<div id=b style='writing-mode:vertical-lr'>         <div id=a style='block-size:10px;margin-right:20px'></div>         <div id=m style='inline-size:50px;block-size:0;margin-left:30px;margin-right:5px'></div>         <div id=c style='block-size:10px;margin-left:10px'></div></div>",
+        &[
+            ("b", (8.0, 8.0, 50.0, 50.0)),
+            ("c", (48.0, 8.0, 10.0, 50.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_clamped_empty_vertical_leaf_collapses_at_zero_used_block_size() {
+    // Chromium uses the zero block size after clamping. The parent passes
+    // that size as a known dimension, overriding the positive preferred size.
+    check(
+        "<div id=b style='writing-mode:vertical-lr'>         <div style='block-size:10px;margin-right:20px'></div>         <div style='inline-size:50px;block-size:20px;max-block-size:0;margin-left:30px;margin-right:5px'></div>         <div id=c style='block-size:10px;margin-left:10px'></div></div>",
+        &[
+            ("b", (8.0, 8.0, 50.0, 50.0)),
+            ("c", (48.0, 8.0, 10.0, 50.0)),
+        ],
+    );
+}
+
+#[path = "principal_writing_mode/empty_leaf_tests.rs"]
+mod empty_leaf_tests;
