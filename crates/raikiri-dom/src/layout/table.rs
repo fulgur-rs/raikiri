@@ -1063,17 +1063,24 @@ fn compute_table_layout_checked(
         // content box, so it is part of the extents the tracks share but not of
         // `padding_border_size`. Collapse zeroes `border_spacing`.
         // Match Chromium and Blitz: empty-cells hides paint, not row geometry.
-        // This intentionally differs from CSS 2.2 section 17.6.1.1's empty-row
-        // rule. Only visibility:collapse removes a row's height and spacing.
-        let row_gaps: Vec<_> = collapsed_rows
-            .iter()
-            .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
-            .collect();
-        // The gaps around the rows that `hidden` leaves visible: one more than
-        // the rows.
-        let row_spacing = |hidden: &[bool]| {
-            border_spacing.1 * (hidden.iter().filter(|hidden| !**hidden).count() as f32 + 1.0)
-        };
+        // Each group keeps one closing gap, even if every row collapses.
+        // Inside the group only visible rows are spaced apart. Put that gap
+        // immediately before the next visible row, so collapsed row boxes
+        // stay at the preceding row's bottom rather than below the gap.
+        let groups = row_groups(doc, table_idx, &grid);
+        let mut row_gaps = vec![0.0; collapsed_rows.len()];
+        for group in &groups {
+            let mut seen_visible = false;
+            for row in group.rows.clone() {
+                if !collapsed_rows[row] {
+                    if seen_visible {
+                        row_gaps[row - 1] = border_spacing.1;
+                    }
+                    seen_visible = true;
+                }
+            }
+            row_gaps[group.rows.end - 1] = border_spacing.1;
+        }
         let specified_width = stated_table_width(table_size.width, &inputs);
         let fixed_columns_collapse = columns_collapse
             && table_layout == TableLayoutValue::Fixed
@@ -1092,12 +1099,9 @@ fn compute_table_layout_checked(
             } else {
                 border_spacing.0 * (shown_columns as f32 + 1.0)
             },
-            // With every row collapsed nothing remains to space apart.
-            height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
-                0.0
-            } else {
-                row_spacing(collapsed_rows)
-            },
+            // The top gap and each group's closing gap survive even when
+            // every row collapses.
+            height: border_spacing.1 + row_gaps.iter().sum::<f32>(),
         };
         let distrib_insets = Size {
             width: padding_border_size.width - overlap_w + spacing.width,
@@ -1124,7 +1128,8 @@ fn compute_table_layout_checked(
             .map(|&collapsed| collapsed && !collapsed_rows_share)
             .collect();
         let sharing_insets_height = if collapsed_rows_share {
-            padding_border_size.height - overlap_h + row_spacing(&sharing_hidden_rows)
+            padding_border_size.height - overlap_h
+                + border_spacing.1 * (grid.rows.len() as f32 + 1.0)
         } else {
             distrib_insets.height
         };
@@ -1632,7 +1637,7 @@ fn compute_table_layout_checked(
                 &sharing_hidden_rows,
                 &authored,
                 &percents,
-                &row_groups(doc, table_idx, &grid),
+                &groups,
                 border_spacing.1,
                 target,
             );
