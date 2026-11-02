@@ -82,6 +82,12 @@ pub(super) struct ElementContext {
     /// The box moves to the next page when that crosses a page edge, so that
     /// the edges do not stay behind alone (see [`super::leading_edges_move`]).
     pub(super) leading_piece_end: Option<f32>,
+    /// For a plain block with padding or border above a box that has no line:
+    /// how far below the border-box top the first piece of its content ends.
+    /// The box moves to the next page when that crosses a page edge, whether
+    /// or not the next page can hold the piece (see
+    /// [`super::leading_edges_move`]).
+    pub(super) leading_block_piece_end: Option<f32>,
     /// For the last box of a run of boxes tied by avoided breaks that ends its
     /// block: the block size of the bottom padding and border that follow it.
     /// The box moves to the next page with them when the run is as far on as
@@ -210,6 +216,11 @@ impl BoxContext {
     pub(super) fn leading_piece_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.leading_piece_end)
+    }
+
+    pub(super) fn leading_block_piece_end(self) -> Option<f32> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.leading_block_piece_end)
     }
 
     pub(super) fn run_tail_edges(self) -> f32 {
@@ -1198,20 +1209,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     )
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
-                    .flatten()
-                    .or_else(|| {
-                        // A plain block with padding or border above a box
-                        // that has no line: a lone box that avoids breaks
-                        // inside it, say.
-                        (in_flow_block
-                            && !is_body
-                            && free_to_break_before
-                            && !document.context.pagination_on_transposed_axes)
-                            .then(|| {
-                                lineless_leading_piece_end(document, cascade, body_id, node_id)
-                            })
-                            .flatten()
-                    });
+                    .flatten();
+                // A plain block with padding or border above a box that has
+                // no line: a lone box that avoids breaks inside it, say.
+                let leading_block_piece = (leading_piece.is_none()
+                    && in_flow_block
+                    && !is_body
+                    && free_to_break_before
+                    && !document.context.pagination_on_transposed_axes)
+                    .then(|| lineless_leading_piece_end(document, cascade, body_id, node_id))
+                    .flatten();
                 // The last box of such a run goes to the next page with the
                 // edges that follow it when the run has moved as far on as it
                 // goes (the first box starts its page) and they still do not
@@ -1377,6 +1384,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 },
                                 avoided_unit,
                                 leading_piece_end: leading_piece,
+                                leading_block_piece_end: leading_block_piece,
                                 run_tail_edges: if run_tail_candidate {
                                     frame.closing_edges
                                 } else {

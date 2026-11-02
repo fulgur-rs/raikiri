@@ -867,9 +867,26 @@ fn a_block_with_padding_stays_with_a_box_that_avoids_breaks_and_fits() {
 }
 
 #[test]
-fn a_block_with_padding_stays_when_the_next_page_cannot_hold_the_box() {
+fn a_block_with_padding_moves_whole_with_an_avoid_box_taller_than_the_page() {
+    // The box is cut on the page it lands on whichever way the break goes, so
+    // the break still goes before the block rather than between its padding
+    // and the box. The box then stays below the padding and splits there.
     let tall = "height:120px;break-inside:avoid";
-    assert_eq!(wrapped_after(90, &[PADDED], tall)[0], 90.0);
+    assert_eq!(wrapped_after(90, &[PADDED], tall), [100.0, 106.0]);
+    // One that fits a page but not the space below the padding.
+    let nearly = "height:96px;break-inside:avoid";
+    assert_eq!(wrapped_after(90, &[PADDED], nearly), [100.0, 106.0]);
+    // Outer blocks that begin where the padded one does move with it.
+    assert_eq!(
+        wrapped_after(90, &["", PADDED], tall),
+        [100.0, 100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_margin_above_the_box_adds_to_the_offset_below_the_padding_of_a_moved_block() {
+    let tall = "height:120px;break-inside:avoid;margin-top:10px";
+    assert_eq!(wrapped_after(90, &[PADDED], tall), [100.0, 116.0]);
 }
 
 #[test]

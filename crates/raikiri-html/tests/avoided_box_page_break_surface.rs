@@ -145,6 +145,62 @@ fn a_child_taller_than_a_page_starts_the_next_one_and_takes_its_parent() {
 }
 
 #[test]
+fn a_top_edge_on_the_parent_does_not_keep_it_on_the_page_the_child_leaves() {
+    // The page breaks before the parent rather than between its edge and the
+    // child. The child stays below the edge on the next page and splits there
+    // when it is taller than the room that is left.
+    for parent in ["padding-top:20px", "border-top:20px solid"] {
+        let body = avoiding_child(parent, 700);
+        assert_eq!(
+            extents(&body, "o"),
+            [None, Some((0, 600)), Some((0, 120))],
+            "{parent}"
+        );
+        assert_eq!(
+            extents(&body, "i"),
+            [None, Some((20, 600)), Some((0, 120))],
+            "{parent}"
+        );
+    }
+    // A child that fits a page but not the room below the edge splits too.
+    let body = avoiding_child("padding-top:200px", 500);
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 100))]);
+    assert_eq!(
+        extents(&body, "i"),
+        [None, Some((200, 600)), Some((0, 100))]
+    );
+    // One that fits below the edge is not cut.
+    let body = avoiding_child("padding-top:20px", 500);
+    assert_eq!(extents(&body, "o"), [None, Some((0, 520))]);
+    assert_eq!(extents(&body, "i"), [None, Some((20, 520))]);
+    // Nor is one that fits where it is.
+    let body = avoiding_child("padding-top:20px", 250);
+    assert_eq!(extents(&body, "o"), [Some((308, 578))]);
+    assert_eq!(extents(&body, "i"), [Some((328, 578))]);
+}
+
+#[test]
+fn the_offset_of_the_child_below_the_top_edge_of_its_moved_parent_adds_up() {
+    // A margin above the child stays between the edge and the child.
+    let body = avoiding_child("padding-top:20px", 700)
+        .replace("break-inside:avoid", "break-inside:avoid;margin-top:10px");
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 130))]);
+    assert_eq!(extents(&body, "i"), [None, Some((30, 600)), Some((0, 130))]);
+    // So does the edge of a wrapper between them.
+    let body = format!(
+        "{SPACER}<div id=o style='width:300px;padding-top:20px'>\
+         <div style='padding-top:10px'>\
+         <div id=i style='height:700px;break-inside:avoid'></div></div></div>"
+    );
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 130))]);
+    assert_eq!(extents(&body, "i"), [None, Some((30, 600)), Some((0, 130))]);
+    // An edge below the child is no reason to keep the parent in place.
+    let body = avoiding_child("padding:20px 0 30px", 700);
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 150))]);
+    assert_eq!(extents(&body, "i"), [None, Some((20, 600)), Some((0, 120))]);
+}
+
+#[test]
 fn the_sizes_of_the_parent_do_not_stop_it_from_moving() {
     // A min-height shows below the child, a fixed height or a max-height
     // shorter than the child lets the child overflow, and a clip cuts at the
