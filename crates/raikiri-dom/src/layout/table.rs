@@ -1063,14 +1063,22 @@ fn compute_table_layout_checked(
         // content box, so it is part of the extents the tracks share but not of
         // `padding_border_size`. Collapse zeroes `border_spacing`.
         // Match Chromium and Blitz: empty-cells hides paint, not row geometry.
-        // A collapsed row loses its following gap inside a group, but the
-        // last row of a group keeps that gap even when the whole group hides.
+        // Each group keeps one closing gap, even if every row collapses.
+        // Inside the group only visible rows are spaced apart. Put that gap
+        // immediately before the next visible row, so collapsed row boxes
+        // stay at the preceding row's bottom rather than below the gap.
         let groups = row_groups(doc, table_idx, &grid);
-        let mut row_gaps: Vec<_> = collapsed_rows
-            .iter()
-            .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
-            .collect();
+        let mut row_gaps = vec![0.0; collapsed_rows.len()];
         for group in &groups {
+            let mut seen_visible = false;
+            for row in group.rows.clone() {
+                if !collapsed_rows[row] {
+                    if seen_visible {
+                        row_gaps[row - 1] = border_spacing.1;
+                    }
+                    seen_visible = true;
+                }
+            }
             row_gaps[group.rows.end - 1] = border_spacing.1;
         }
         let specified_width = stated_table_width(table_size.width, &inputs);

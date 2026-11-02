@@ -491,3 +491,19 @@ fn a_collapsed_group_keeps_only_its_last_gap() {
     assert!((cell_box(&doc, cell).1 - 20.952381).abs() < 0.01);
     assert!((doc.nodes[table].layout.size.height - 32.95238).abs() < 0.01);
 }
+
+#[test]
+fn a_collapsed_trailing_row_replaces_the_last_visible_rows_closing_gap() {
+    for rows in [&[ROW, COLLAPSED][..], &[ROW, COLLAPSED, COLLAPSED][..]] {
+        let fixture = fixture(SEPARATE, GROUP, rows, Some(rows.len() as u32));
+        let doc = &fixture.doc;
+        let group = doc.nodes[fixture.rows[0]].parent.unwrap();
+        let table = doc.nodes[group].parent.unwrap();
+        // Chromium: one visible 20px row and two outer 10px gaps.
+        assert_eq!(doc.nodes[table].layout.size.height, 40.0);
+        assert_eq!(cell_box(doc, fixture.cells[1]), (10.0, 20.0));
+        for &cell in &fixture.cells[2..] {
+            assert_eq!(cell_box(doc, cell), (30.0, 0.0));
+        }
+    }
+}
