@@ -16920,9 +16920,9 @@ fn a_box_that_begins_plain_blocks_takes_them_to_the_next_page() {
     // edge, so both start the page with it.
     let (doc, cascade, [body, outer, middle, first, _]) =
         nested_holder_document("display:block", "display:block;height:50px", None);
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), outer);
-    assert_eq!(leading_holder(&doc, &cascade, body, middle, 0.0), outer);
-    assert_eq!(leading_holder(&doc, &cascade, body, outer, 0.0), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, first), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, middle), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, outer), outer);
 }
 
 #[test]
@@ -16932,7 +16932,7 @@ fn a_wrapper_without_a_box_of_its_own_is_passed_on_the_way_to_the_holder() {
     let (doc, cascade, [body, outer, middle, first, _]) =
         nested_holder_document("display:block", "display:contents", None);
     assert!(doc.layout_ancestors(first).any(|id| id == middle));
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, first), outer);
 }
 
 #[test]
@@ -16943,12 +16943,12 @@ fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
         "display:block",
         Some("display:block;height:5px"),
     );
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), middle);
+    assert_eq!(leading_holder(&doc, &cascade, body, first), middle);
     // Padding above the box is the place of the padded wrapper: the walk
     // stops below it.
     let (doc, cascade, [body, _, middle, first, _]) =
         nested_holder_document("display:block;padding-top:4px", "display:block", None);
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), middle);
+    assert_eq!(leading_holder(&doc, &cascade, body, first), middle);
     // So does a wrapper that is not a plain block, or that floats.
     for outer_css in [
         "display:flex;flex-direction:column",
@@ -16958,7 +16958,7 @@ fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
         let (doc, cascade, [body, _, middle, first, _]) =
             nested_holder_document(outer_css, "display:block", None);
         assert_eq!(
-            leading_holder(&doc, &cascade, body, first, 0.0),
+            leading_holder(&doc, &cascade, body, first),
             middle,
             "{outer_css}"
         );
@@ -16980,7 +16980,7 @@ fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height(
         named_flex_context: None,
         ifc_root: None,
     };
-    let holder = leading_holder(&doc, &cascade, body, first, 0.0);
+    let holder = leading_holder(&doc, &cascade, body, first);
     assert_eq!(holder, outer);
     let mut shifts = SubtreeShifts::default();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
@@ -20165,6 +20165,84 @@ fn a_replaced_block_that_fits_the_page_exactly_stays() {
         &[],
     );
     assert_eq!(ys, [0.0]);
+}
+
+/// `div(60px)`, a wrapper with the given style that holds an `img` 60px
+/// tall, `div(10px)` on 100px pages: the page-flow y of the wrapper, the image
+/// and the last box.
+fn clipped_wrapper_with_image(wrapper_css: &str, image_height: u32) -> Vec<f32> {
+    paginated_flow_ys(
+        |doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:60px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("display:block;width:100px;{wrapper_css}")),
+            );
+            let image = doc.append_element(
+                Some(wrapper),
+                "img",
+                Some(&format!(
+                    "display:block;width:100px;height:{image_height}px"
+                )),
+            );
+            let after = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:10px"),
+            );
+            vec![wrapper, image, after]
+        },
+        &[],
+    )
+}
+
+#[test]
+fn a_clipping_wrapper_with_a_height_moves_with_the_image_that_begins_it() {
+    // The image would be cut at the page end and the wrapper clips it to a
+    // height of its own, so it is the wrapper that goes to the next page, and
+    // the image with it.
+    for wrapper_css in [
+        "height:60px;overflow:hidden",
+        "height:60px;overflow:clip",
+        "height:60px;overflow-y:hidden",
+        "max-height:60px;overflow:hidden",
+    ] {
+        assert_eq!(
+            clipped_wrapper_with_image(wrapper_css, 60),
+            [100.0, 100.0, 160.0],
+            "{wrapper_css}"
+        );
+    }
+    // The wrapper keeps the height it has on the next page.
+    assert_eq!(
+        clipped_wrapper_with_image("height:80px;overflow:hidden", 60),
+        [100.0, 100.0, 180.0]
+    );
+    // One that grows with the image moved before this.
+    assert_eq!(
+        clipped_wrapper_with_image("overflow:hidden", 60),
+        [100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn an_image_clipped_by_its_wrapper_to_the_page_stays_with_the_wrapper() {
+    // The 120px image shows 30px of itself, and they end above the page end.
+    assert_eq!(
+        clipped_wrapper_with_image("height:30px;overflow:hidden", 120),
+        [60.0, 60.0, 90.0]
+    );
+    // The wrapper crosses the page end, and the part of the image that shows
+    // moves with it.
+    assert_eq!(
+        clipped_wrapper_with_image("height:60px;overflow:hidden", 120),
+        [100.0, 100.0, 160.0]
+    );
 }
 
 #[test]

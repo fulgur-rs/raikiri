@@ -1062,13 +1062,7 @@ impl PaginationState {
                 && !candidate.context.is_float_descendant()
                 && !candidate.context.is_out_of_flow_descendant()
             {
-                leading_holder(
-                    document,
-                    cascade,
-                    body_id,
-                    node_id,
-                    page_origins.origin(fit_page),
-                )
+                leading_holder(document, cascade, body_id, node_id)
             } else {
                 node_id
             };

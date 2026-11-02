@@ -12,8 +12,8 @@ use super::{
     closing_edges_of, container_item_tail, first_owned_text_line_top, height_follows_content,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    leading_holder, leading_piece_end, lone_box_with_floats, moves_later_siblings,
+    nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
@@ -1215,9 +1215,31 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || run_tail_base
                     || (avoided_unit.is_some() && !direct_body_child)
                     || (leading_piece.is_some() && !direct_body_child);
+                // A forced break and a page name change the pages wherever the
+                // box sits, even past the edge of a clipping ancestor.
+                let sets_page_flow = deferred_named_break_after
+                    || own_page_name.is_some()
+                    || page_break_is_forced(document, node_id, computed.break_before)
+                    || box_forces_break_after(document, cascade, node_id, computed.break_after);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
-                        candidate_ancestor_constraints(document, cascade, node_id, body_id)
+                        // A replaced box that no break goes through and that
+                        // begins the plain blocks around it takes them to the
+                        // next page with it, so a clipping ancestor among them
+                        // with a height of its own does not keep it from
+                        // moving. The conditions are those under which
+                        // `open_page_for_box` moves the holder.
+                        let holder = (unbreakable_box
+                            && !sets_page_flow
+                            && !after_forced_break
+                            && !inside_float
+                            && !out_of_flow_subtree
+                            && !is_float
+                            && !flex_item_candidate
+                            && !grid_item_candidate)
+                            .then(|| leading_holder(document, cascade, body_id, node_id))
+                            .filter(|&holder| holder != node_id);
+                        candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {
                         (false, false)
                     };
@@ -1278,12 +1300,6 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     0.0
                 };
-                // A forced break and a page name change the pages wherever the
-                // box sits, even past the edge of a clipping ancestor.
-                let sets_page_flow = deferred_named_break_after
-                    || own_page_name.is_some()
-                    || page_break_is_forced(document, node_id, computed.break_before)
-                    || box_forces_break_after(document, cascade, node_id, computed.break_after);
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
@@ -1449,8 +1465,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .then(|| container_item_tail(document, cascade, node_id, self.has_named_pages))
                     .flatten()
                     .filter(|_| {
-                        let (side_by_side, bounded) =
-                            candidate_ancestor_constraints(document, cascade, node_id, body_id);
+                        let (side_by_side, bounded) = candidate_ancestor_constraints(
+                            document, cascade, node_id, body_id, None,
+                        );
                         !side_by_side && !bounded
                     })
                     .map(|item| ItemTail {

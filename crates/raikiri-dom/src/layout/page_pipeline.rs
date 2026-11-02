@@ -5208,14 +5208,20 @@ fn first_box_ancestor_at_start(
 /// the padding and border of a block that starts below the page start move
 /// with a paragraph: an ancestor with a top edge is the place of a padded
 /// wrapper that stops this walk instead.
+///
+/// Every ancestor the walk passes is a plain block of the normal flow that is
+/// not a multicol container, so none of them lays its children out side by
+/// side.
 fn leading_holder(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-    page_start: f32,
 ) -> usize {
-    let outermost = first_box_ancestor_at_start(document, cascade, node_id, body_id, page_start);
+    // No page starts above an ancestor with a top edge, so none is taken: the
+    // holder does not depend on the page the box falls on, and is the same
+    // when the candidates are collected and when the box moves.
+    let outermost = first_box_ancestor_at_start(document, cascade, node_id, body_id, f32::INFINITY);
     if outermost == node_id || has_unusual_coordinates(document, node_id) {
         return node_id;
     }
@@ -5228,13 +5234,10 @@ fn leading_holder(
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
-        let layout = &document.nodes[ancestor].layout;
         if !is_plain_block_box(document, ancestor)
             || document.nodes[ancestor].is_multicol_container()
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, ancestor)
-            || layout.border.top != 0.0
-            || layout.padding.top != 0.0
             || (current_abs_y(document, ancestor) - top).abs() > 0.01
         {
             break;
@@ -10872,15 +10875,29 @@ fn grid_rows_size_to_content(document: &super::context::LayoutSession<'_>, grid:
 
 /// Find both ancestor conditions that prevent moving a nested candidate with one walk.
 /// The body can make siblings side by side, but its own clipping is not bounded here.
+///
+/// `holder` is the ancestor that moves with the candidate (see
+/// [`leading_holder`]), if there is one. It and the ancestors between it and
+/// the candidate move whole, so they need not hold the candidate where it
+/// was: only the ancestors above the holder count.
 fn candidate_ancestor_constraints(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     body_id: usize,
+    holder: Option<usize>,
 ) -> (bool, bool) {
     let mut side_by_side = false;
     let mut bounded_clipping = false;
+    // A holder that is not among the ancestors takes none of them along.
+    let holder = holder.filter(|&holder| document.ancestors(node_id).any(|id| id == holder));
+    let mut moves_whole = holder.is_some();
     for id in document.ancestors(node_id) {
+        let moves_with_candidate = moves_whole;
+        moves_whole &= Some(id) != holder;
+        if moves_with_candidate {
+            continue;
+        }
         if id != body_id && !bounded_clipping {
             let computed = &cascade.computed[id];
             bounded_clipping = !matches!(computed.overflow.y, OverflowValue::Visible)
