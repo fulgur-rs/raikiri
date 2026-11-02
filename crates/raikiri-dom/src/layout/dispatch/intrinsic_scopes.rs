@@ -124,10 +124,12 @@ struct AutomaticMinimumInputs {
 
 /// The padding and border of the item `style` across its width, when its sizes
 /// are those of its content box, and zero when they are those of its border box.
-fn horizontal_content_edges(style: &LayoutStyleView<'_>) -> f32 {
+/// A percentage padding is of `basis`, the width of the containing block, and
+/// counts as zero where the probe has not got one.
+fn horizontal_content_edges(style: &LayoutStyleView<'_>, basis: Option<f32>) -> f32 {
     if style.box_sizing() == BoxSizing::ContentBox {
-        let padding = style.padding().resolve_or_zero(None);
-        let border = style.border().resolve_or_zero(None);
+        let padding = style.padding().resolve_or_zero(basis);
+        let border = style.border().resolve_or_zero(basis);
         padding.left + padding.right + border.left + border.right
     } else {
         0.0
@@ -181,7 +183,7 @@ fn height_before_width(
             crate::layout::resolve_length_percentage_auto(length, Some(room))
                 .map(|bound| bound + outer)
         };
-        (room - margins_sum(margin.top, margin.bottom))
+        (room - margins_sum(margin.top, margin.bottom, None))
             .min(bound(style.max_size().height).unwrap_or(f32::INFINITY))
             .max(bound(style.min_size().height).unwrap_or(0.0))
             .max(edges)
@@ -189,11 +191,12 @@ fn height_before_width(
 }
 
 /// The sum of two opposite margins of the item, where an `auto` margin and a
-/// percentage of a size the probe has not got count as zero.
-fn margins_sum(start: LengthPercentageAuto, end: LengthPercentageAuto) -> f32 {
+/// percentage of a size the probe has not got count as zero. A percentage margin
+/// is of `basis`, the width of the containing block.
+fn margins_sum(start: LengthPercentageAuto, end: LengthPercentageAuto, basis: Option<f32>) -> f32 {
     [start, end]
         .into_iter()
-        .map(|margin| crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0))
+        .map(|margin| crate::layout::resolve_length_percentage_auto(margin, basis).unwrap_or(0.0))
         .sum()
 }
 
@@ -330,7 +333,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                 continue;
             }
             let height = height_before_width(&style, cross_room, single_line, container_align);
-            let edges = horizontal_content_edges(&style);
+            let edges = horizontal_content_edges(&style, None);
             let stated = crate::layout::resolve_dimension(style.size().width, None);
             let finite_basis = crate::layout::resolve_dimension(style.flex_basis(), None)
                 .filter(|basis| basis.is_finite());
@@ -394,7 +397,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             // bounds nothing, and is no margin either.
             let min_length = crate::layout::resolve_length_percentage_auto(min, None);
             let max_length = crate::layout::resolve_length_percentage_auto(max, None);
-            let margins = margins_sum(margin.left, margin.right);
+            let margins = margins_sum(margin.left, margin.right, None);
             let (cannot_shrink, cannot_grow) =
                 (style.flex_shrink() == 0.0, style.flex_grow() == 0.0);
             let preferred = stated.or(keyword_width);
@@ -528,10 +531,11 @@ pub(super) fn with_flex_item_basis_bounds<R>(
 
 /// The padding and border of the item `style` across its height, when its sizes
 /// are those of its content box, and zero when they are those of its border box.
-fn vertical_content_edges(style: &LayoutStyleView<'_>) -> f32 {
+/// A percentage padding is of `basis`, the width of the containing block.
+fn vertical_content_edges(style: &LayoutStyleView<'_>, basis: Option<f32>) -> f32 {
     if style.box_sizing() == BoxSizing::ContentBox {
-        let padding = style.padding().resolve_or_zero(None);
-        let border = style.border().resolve_or_zero(None);
+        let padding = style.padding().resolve_or_zero(basis);
+        let border = style.border().resolve_or_zero(basis);
         padding.top + padding.bottom + border.top + border.bottom
     } else {
         0.0
@@ -601,9 +605,12 @@ pub(super) fn with_column_item_content_height<R>(
                     style.align_self().unwrap_or(container_align).keyword,
                     AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
                 );
-            let across = horizontal_content_edges(&style);
+            let across = horizontal_content_edges(&style, Some(inner_width));
             let width = if stretched {
-                Some((inner_width - margins_sum(margin.left, margin.right)).max(0.0))
+                Some(
+                    (inner_width - margins_sum(margin.left, margin.right, Some(inner_width)))
+                        .max(0.0),
+                )
             } else {
                 crate::layout::resolve_dimension(style.size().width, Some(inner_width))
                     .map(|width| width + across)
@@ -630,7 +637,7 @@ pub(super) fn with_column_item_content_height<R>(
                 .map_or(width, |max| width.min(max))
                 .max(min.unwrap_or(0.0))
                 .max(across);
-            let edges = vertical_content_edges(&style);
+            let edges = vertical_content_edges(&style, Some(inner_width));
             let content = (tree
                 .compute_child_layout(child, content_height_probe(width, inner_width))
                 .size
@@ -711,7 +718,7 @@ pub(super) fn wrapping_min_content_width(
             continue;
         }
         let margin = style.margin();
-        let margins = margins_sum(margin.left, margin.right);
+        let margins = margins_sum(margin.left, margin.right, None);
         let height = height_before_width(&style, cross_room, false, container_align);
         let contribution = tree
             .compute_child_layout(child, min_content_probe(SizingMode::InherentSize, height))

@@ -10,7 +10,8 @@
 //! its flex base size alone. An item of a column container whose flex base size
 //! is a length is as tall as that size, within its minimum height, whatever
 //! `height` it states; its content is measured at the width its `width`,
-//! `min-width` and `max-width` give it.
+//! `min-width`, `max-width` and margins give it, with its percentage padding
+//! and margins taken of the width of the container.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
@@ -320,4 +321,25 @@ cases! {
     column_floated_container_item_with_a_max_width_keeps_a_stated_height_below_its_content:
         r#"<div id=o style="float:left;display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;max-width:40px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
         [("a", (8.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_item_with_percentage_margins_keeps_a_stated_height_below_its_content_at_its_narrower_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;margin-left:40%;margin-right:40%;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (88.0, 28.0, 40.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_item_with_20_percent_margins_keeps_a_stated_height_below_its_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;margin-left:20%;margin-right:20%;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (48.0, 28.0, 120.0, 20.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 40.0))];
+    column_item_with_percentage_margins_and_a_taller_stated_height_is_as_tall_as_its_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:50px;margin-left:20%;margin-right:20%;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (48.0, 28.0, 120.0, 26.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 46.0))];
+    column_item_with_a_percentage_and_a_length_margin_is_as_tall_as_its_content_at_its_width:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;margin-left:20%;margin-right:10px;padding:2px 3px;border:1px solid">ccc ddd eeee</div></div>"# =>
+        [("a", (48.0, 28.0, 150.0, 16.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 36.0))];
+    column_content_box_item_with_a_percentage_vertical_padding_is_as_tall_as_its_padded_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;box-sizing:content-box;padding:5% 0;border:0">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 200.0, 30.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 50.0))];
+    column_content_box_item_with_a_percentage_vertical_padding_and_a_taller_stated_height_is_as_tall_as_its_padded_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:50px;box-sizing:content-box;padding:5% 0;border:0">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 200.0, 30.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 50.0))];
+    column_content_box_item_with_a_percentage_padding_on_every_side_is_as_tall_as_its_padded_content:
+        r#"<div id=o style="display:flex;flex-direction:column;width:200px"><div id=b style="height:20px">b</div><div id=a style="flex:1 1 0;height:20px;box-sizing:content-box;padding:5%;border:0">ccc ddd eeee</div></div>"# =>
+        [("a", (8.0, 28.0, 200.0, 30.0)), ("b", (8.0, 8.0, 200.0, 20.0)), ("o", (8.0, 8.0, 200.0, 50.0))];
 }
