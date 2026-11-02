@@ -45,13 +45,18 @@ pub trait NetworkProvider: Send + Sync {
     /// allow-list, redirect hop count, ...) drives `fetch_one_hop` itself
     /// instead of using this method, since by the time this method returns
     /// every hop has already been requested.
+    ///
+    /// Each redirect is turned into the next request by
+    /// `Request::redirected`: a redirect that leaves the origin
+    /// does not carry the credentials, and one that would downgrade `https`
+    /// to `http` or replay a body to another origin is refused.
     fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
         let mut current = request;
         for _ in 0..=MAX_AUTO_REDIRECT_HOPS {
             match self.fetch_one_hop(current.clone())? {
                 FetchOutcome::Body(resource) => return Ok(resource),
-                FetchOutcome::Redirect { location, .. } => {
-                    current.url = location;
+                FetchOutcome::Redirect { location, status } => {
+                    current = current.redirected(location, status)?;
                 }
             }
         }
@@ -101,6 +106,12 @@ pub struct Request {
     /// Content-Type header (for POST bodies).
     pub content_type: Option<String>,
     /// Additional headers (`Accept`, `Referer`, custom, etc.).
+    ///
+    /// When a redirect leaves the request's origin, `Authorization`,
+    /// `Proxy-Authorization`, `Cookie` and `Cookie2` are not sent on to the
+    /// target (see `Request::redirected`). Any other header is, so a caller
+    /// that attaches another kind of credential should drive
+    /// [`NetworkProvider::fetch_one_hop`] itself and decide per hop.
     pub headers: HeaderMap,
     /// Request body.
     pub body: Body,
@@ -153,6 +164,97 @@ impl Request {
         self.signal = signal;
         self
     }
+
+    /// The request to send to `location` after a redirect with `status` from
+    /// this one, which every loop that follows redirects uses so that none of
+    /// them carries more to the next hop than it should.
+    ///
+    /// It follows the "HTTP-redirect fetch" steps of the Fetch Standard where
+    /// they protect what the request holds, and refuses what they leave to the
+    /// caller:
+    ///
+    /// - A `POST` redirected with 301 or 302, and any method but `GET`
+    ///   redirected with 303, becomes a `GET` without a body, `Content-Type` or
+    ///   other header that describes the body.
+    /// - When `location` has another origin (scheme, host or port), the
+    ///   credential headers named on [`Request::headers`] are dropped, whatever
+    ///   the case of their names. A `GET` sends no body, so one left on it is
+    ///   dropped there too.
+    /// - A redirect from `https` to `http` is refused.
+    /// - A body that a 307 or 308 would replay to another origin is refused;
+    ///   the Fetch Standard sends it.
+    ///
+    /// A URL without a host (`file:`, `data:`) has an opaque origin, so a
+    /// redirect to or from one always counts as leaving the origin.
+    ///
+    /// A redirect that stays on the origin keeps the method, headers and body
+    /// (307 and 308) as they were.
+    #[doc(hidden)]
+    pub fn redirected(&self, location: Url, status: u16) -> Result<Request, NetworkError> {
+        if self.url.scheme() == "https" && location.scheme() == "http" {
+            return Err(NetworkError::Other(
+                "refused a redirect that downgrades https to http".to_owned(),
+            ));
+        }
+        let mut next = self.clone();
+        let becomes_get = match status {
+            301 | 302 => next.method == Method::Post,
+            303 => next.method != Method::Get,
+            _ => false,
+        };
+        if becomes_get {
+            next.method = Method::Get;
+        }
+        let leaves_origin = !same_origin(&self.url, &location);
+        if becomes_get || (leaves_origin && next.method == Method::Get) {
+            next.body = Body::Empty;
+            next.content_type = None;
+            next.headers
+                .retain(|(name, _)| !is_body_header(name.as_str()));
+        }
+        if leaves_origin {
+            next.headers
+                .retain(|(name, _)| !is_credential_header(name.as_str()));
+            if !matches!(next.body, Body::Empty) {
+                return Err(NetworkError::Other(
+                    "refused to replay a request body to another origin".to_owned(),
+                ));
+            }
+        }
+        next.url = location;
+        Ok(next)
+    }
+}
+
+/// Whether `a` and `b` share an origin: the same scheme, host and port. A URL
+/// without a host has an opaque origin, which no other URL shares.
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.has_host()
+        && a.scheme() == b.scheme()
+        && a.host() == b.host()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// Whether `name` is a header that a redirect to another origin must not
+/// carry: the ones that hold a credential for the origin it came from.
+fn is_credential_header(name: &str) -> bool {
+    ["authorization", "proxy-authorization", "cookie", "cookie2"]
+        .iter()
+        .any(|credential| name.eq_ignore_ascii_case(credential))
+}
+
+/// Whether `name` is a header that describes a request body, which a redirect
+/// that drops the body drops too.
+fn is_body_header(name: &str) -> bool {
+    [
+        "content-encoding",
+        "content-language",
+        "content-length",
+        "content-location",
+        "content-type",
+    ]
+    .iter()
+    .any(|header| name.eq_ignore_ascii_case(header))
 }
 
 /// Successful fetch response.

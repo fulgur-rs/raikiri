@@ -178,6 +178,158 @@ fn explicit_redirect_policy_preserves_limits_and_callback_hop_numbers() {
     }
 }
 
+/// Redirects the first request to `location` with `status` and answers the
+/// second with a body, keeping the requests it was sent.
+struct CredentialRedirectProbe {
+    location: &'static str,
+    status: u16,
+    requests: Mutex<Vec<Request>>,
+}
+
+impl CredentialRedirectProbe {
+    fn new(location: &'static str, status: u16) -> Self {
+        Self {
+            location,
+            status,
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl NetworkProvider for CredentialRedirectProbe {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        let mut requests = self.requests.lock().unwrap();
+        requests.push(request.clone());
+        if requests.len() == 1 {
+            return Ok(FetchOutcome::Redirect {
+                location: Url::parse(self.location).unwrap(),
+                status: self.status,
+            });
+        }
+        Ok(FetchOutcome::Body(FetchedResource::new(
+            b"body".as_slice().into(),
+            request.url,
+        )))
+    }
+}
+
+fn credentialed_request() -> Request {
+    Request::new(
+        Url::parse("https://origin.test/style.css").unwrap(),
+        ResourceKind::ExternalStylesheet,
+    )
+    .headers(vec![
+        ("Authorization".to_owned(), "Bearer secret".to_owned()),
+        ("Cookie".to_owned(), "session=1".to_owned()),
+        ("Accept".to_owned(), "text/css".to_owned()),
+    ])
+}
+
+fn fetch_with_credentials(
+    provider: &CredentialRedirectProbe,
+    policy: Option<&dyn ResourcePolicy>,
+    request: Request,
+) -> Result<FetchedResource, NetworkError> {
+    ResourceNetworkProvider {
+        inner: provider,
+        policy,
+        limits: ResourceLimits::default(),
+        budget: Arc::new(Mutex::new(0)),
+    }
+    .fetch(request)
+}
+
+#[test]
+fn a_redirect_to_another_origin_does_not_carry_the_credentials_of_the_request() {
+    let provider = CredentialRedirectProbe::new("https://elsewhere.test/style.css", 302);
+    fetch_with_credentials(&provider, None, credentialed_request()).unwrap();
+    let requests = provider.requests.lock().unwrap();
+    let names = |request: &Request| -> Vec<String> {
+        request
+            .headers
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect()
+    };
+    assert_eq!(names(&requests[0]), ["Authorization", "Cookie", "Accept"]);
+    assert_eq!(names(&requests[1]), ["Accept"]);
+}
+
+#[test]
+fn a_redirect_within_the_origin_keeps_the_credentials_of_the_request() {
+    let provider = CredentialRedirectProbe::new("https://origin.test/other.css", 302);
+    fetch_with_credentials(&provider, None, credentialed_request()).unwrap();
+    assert_eq!(provider.requests.lock().unwrap()[1].headers.len(), 3);
+}
+
+/// Runs a redirect that the fetch loop must refuse and returns the violation
+/// it raised, after checking that nothing was requested past the first hop and
+/// that `policy` was never asked about the refused target.
+fn refused_redirect(
+    location: &'static str,
+    status: u16,
+    request: Request,
+) -> (Box<raikiri_traits::PolicyViolation>, Vec<u32>) {
+    let provider = CredentialRedirectProbe::new(location, status);
+    let policy = RedirectProbePolicy {
+        limit: 10,
+        seen: Mutex::new(Vec::new()),
+    };
+    let error = fetch_with_credentials(&provider, Some(&policy), request).unwrap_err();
+    let NetworkError::PolicyViolation(violation) = error else {
+        panic!("expected a policy violation, got {error:?}");
+    };
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    let seen = policy.seen.lock().unwrap().clone();
+    (violation, seen)
+}
+
+#[test]
+fn a_redirect_that_downgrades_https_is_refused_before_it_is_requested() {
+    let (violation, asked) =
+        refused_redirect("http://origin.test/style.css", 302, credentialed_request());
+    assert!(matches!(
+        violation.violation_type,
+        ViolationType::RedirectDenied
+    ));
+    assert_eq!(violation.url.as_str(), "http://origin.test/style.css");
+    assert!(
+        violation.details.contains("downgrades https to http"),
+        "{}",
+        violation.details
+    );
+    assert!(asked.is_empty(), "the policy was asked about {asked:?}");
+}
+
+#[test]
+fn a_request_body_is_not_replayed_to_another_origin() {
+    let post = credentialed_request()
+        .method(raikiri_traits::Method::Post)
+        .body(raikiri_traits::Body::Bytes(b"a=1".as_slice().into()));
+    let (violation, asked) = refused_redirect("https://elsewhere.test/style.css", 307, post);
+    assert!(matches!(
+        violation.violation_type,
+        ViolationType::RedirectDenied
+    ));
+    assert!(
+        violation.details.contains("replay a request body"),
+        "{}",
+        violation.details
+    );
+    assert!(asked.is_empty(), "the policy was asked about {asked:?}");
+}
+
+#[test]
+fn a_policy_less_refusal_is_a_redirect_denial_too() {
+    let provider = CredentialRedirectProbe::new("http://origin.test/style.css", 301);
+    let error = fetch_with_credentials(&provider, None, credentialed_request()).unwrap_err();
+    assert!(matches!(
+        error,
+        NetworkError::PolicyViolation(violation)
+            if matches!(violation.violation_type, ViolationType::RedirectDenied)
+    ));
+}
+
 const TWO_COLOR_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000"/><rect x="1" width="1" height="1" fill="#00ff00"/></svg>"##;
 
 #[derive(Default)]
