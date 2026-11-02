@@ -3514,9 +3514,13 @@ pub(crate) fn flex_layout(
         inputs,
         |tree, node_id, inputs| {
             let inputs = with_ratio_width(tree, node_id, inputs, flex_layout_sized);
-            let inputs = with_fit_content_width(tree, node_id, inputs);
+            let horizontal = block_right_to_left(tree, usize::from(node_id)).is_none();
+            // The `auto` width of a box that no parent stretches is its
+            // `fit-content` one only where `width` is its inline size.
+            let inputs =
+                with_fit_content_width(tree, node_id, inputs, horizontal, flex_layout_sized);
             let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
-            if block_right_to_left(tree, usize::from(node_id)).is_none() {
+            if horizontal {
                 return laid_out_with_ratio_height(tree, node_id, inputs, flex_layout_sized);
             }
             // A settled physical width must not be capped again by a height
@@ -3978,11 +3982,14 @@ fn with_stretch_cross_size(
     inputs
 }
 
-/// Whether the width of the flex container `idx` is the `fit-content` one: the
-/// keyword, `fit-content(<length-percentage>)`, or the `auto` width of an
-/// absolutely positioned box, which shrinks to fit (CSS Positioned Layout 3
-/// section 5.1.1) unless its insets state the width.
-fn has_fit_content_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+/// Whether the width of the flex or grid container `idx` is the `fit-content`
+/// one: the keyword, `fit-content(<length-percentage>)`, or the `auto` width of
+/// an absolutely positioned box, which shrinks to fit (CSS Positioned Layout 3
+/// section 5.1.1) unless its insets state the width. `auto_fits` also counts an
+/// `auto` width that no parent stretched: the width of a grid item or a flex item
+/// that is not stretched, which is the `fit-content` one as well (CSS Box
+/// Alignment 3 section 6.2).
+fn has_fit_content_width(tree: &LayoutSession<'_>, idx: usize, auto_fits: bool) -> bool {
     let width = tree.physical_style(idx).size().width;
     matches!(
         width.expand(),
@@ -3990,27 +3997,34 @@ fn has_fit_content_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
             | ExpandedDimension::FitContentPx(_)
             | ExpandedDimension::FitContentPercent(_)
             | ExpandedDimension::FitContentCalc(_)
-    ) || (width.is_auto() && tree.nodes[idx].layout_position() == Position::Absolute)
+    ) || (width.is_auto() && (auto_fits || tree.nodes[idx].layout_position() == Position::Absolute))
 }
 
-/// Give a flex container with a `fit-content` width (see
+/// Give a flex or grid container with a `fit-content` width (see
 /// [`has_fit_content_width`]), or a `fit-content(<length-percentage>)` one whose
 /// limit [`with_fit_content_room`] made the room, the width CSS Sizing 3 §3.1.1
 /// defines for it: the room offered, but at least its min-content and at most
-/// its max-content width.
+/// its max-content width. `sized` is the layout of the container once its width
+/// is settled; it measures the container at those widths.
 ///
 /// Taffy's flexbox algorithm reads the keyword as `max-content`. It sizes the
 /// container that shrinks to fit by the flex base sizes of its items, which a
-/// `max-width` of an item, a flex basis of `0` or the room does not bound.
+/// `max-width` of an item, a flex basis of `0` or the room does not bound. Its
+/// grid algorithm does the same with the tracks: it sizes the flexible ones by
+/// the largest max-content contribution of their items, whatever the room is,
+/// where the width of the box is a definite length to share among them.
 fn with_fit_content_width(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     mut inputs: LayoutInput,
+    auto_fits: bool,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutInput {
     let AvailableSpace::Definite(room) = inputs.available_space.width else {
         return inputs;
     };
-    if inputs.known_dimensions.width.is_some() || !has_fit_content_width(tree, usize::from(node_id))
+    if inputs.known_dimensions.width.is_some()
+        || !has_fit_content_width(tree, usize::from(node_id), auto_fits)
     {
         return inputs;
     }
@@ -4021,11 +4035,9 @@ fn with_fit_content_width(
         probe.run_mode = RunMode::ComputeSize;
         probe.axis = RequestedAxis::Horizontal;
         probe.available_space.width = space;
-        without_container_ratio(tree, node_id, |tree| {
-            flex_layout_sized(tree, node_id, probe)
-        })
-        .size
-        .width
+        without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
+            .size
+            .width
     };
     // A container whose items fit the room is as wide as they are, whatever
     // they need at their least.
@@ -4166,8 +4178,16 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
         |tree, node_id, inputs| {
             let idx = usize::from(node_id);
             let inputs = with_ratio_width(tree, node_id, inputs, grid_layout_sized);
+            let horizontal = grid_oof::right_to_left(tree, idx).is_none();
+            // Where `width` is the block size of the grid, `fit-content` does
+            // not apply to it.
+            let inputs = if horizontal {
+                with_fit_content_width(tree, node_id, inputs, true, grid_layout_sized)
+            } else {
+                inputs
+            };
             let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
-            if grid_oof::right_to_left(tree, idx).is_none() {
+            if horizontal {
                 return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
             }
             if ratio_dimensions_are_settled(tree, node_id, &inputs) {
