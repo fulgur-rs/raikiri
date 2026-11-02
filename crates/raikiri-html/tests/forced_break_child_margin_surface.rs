@@ -138,3 +138,86 @@ fn a_sibling_after_the_box_follows_the_margin_of_its_first_child() {
     ));
     assert_eq!(next, [(1, 0.0, 35.0)]);
 }
+
+#[test]
+fn the_margins_after_an_empty_first_child_join_the_margin_above_the_box() {
+    // An empty child lets its margins collapse through it, so the margin of
+    // the box after it meets the top edge of the parent too, and the largest
+    // margin of them all stays above the parent.
+    let after = |empty: &str, next: &str| {
+        lines(&format!(
+            "{BREAK}<div><div style='height:0;{empty}'></div>\
+             <div style='height:20px;{next}'>X</div></div>"
+        ))
+    };
+    assert_eq!(
+        after("margin-top:10px", "margin-top:50px"),
+        [(1, 0.0, 55.0)]
+    );
+    // The margin on the far side of the empty child collapses in as well.
+    assert_eq!(
+        after("margin:10px 0 40px", "margin-top:20px"),
+        [(1, 0.0, 45.0)]
+    );
+    // A negative margin is added to the largest positive one.
+    assert_eq!(
+        after("margin-top:-10px", "margin-top:50px"),
+        [(1, 0.0, 45.0)]
+    );
+    // Through several empty children.
+    let chain = lines(&format!(
+        "{BREAK}<div><div style='height:0;margin-top:10px'></div>\
+         <div style='height:0;margin:20px 0 15px'></div>\
+         <div style='height:20px;margin-top:5px'>X</div></div>"
+    ));
+    assert_eq!(chain, [(1, 0.0, 25.0)]);
+    // And through two levels of parents.
+    let deep = lines(&format!(
+        "{BREAK}<div><div><div style='height:0;margin-top:10px'></div>\
+         <div style='height:20px;margin-top:50px'>X</div></div></div>"
+    ));
+    assert_eq!(deep, [(1, 0.0, 55.0)]);
+}
+
+#[test]
+fn the_margins_of_the_boxes_inside_an_empty_first_child_join_in_too() {
+    // The empty child holds an empty box, and every margin of the two of
+    // them meets the margin of the box after them.
+    let inside = |inner: &str| {
+        lines(&format!(
+            "{BREAK}<div><div style='margin-top:10px'>\
+             <div style='{inner}'></div></div>\
+             <div style='height:20px;margin-top:50px'>X</div></div>"
+        ))
+    };
+    assert_eq!(inside("margin-top:30px"), [(1, 0.0, 55.0)]);
+    assert_eq!(inside("margin-top:70px"), [(1, 0.0, 75.0)]);
+    // The block-end margin of the inner box collapses through it as well.
+    assert_eq!(inside("margin-bottom:60px"), [(1, 0.0, 65.0)]);
+    assert_eq!(inside("margin-top:-30px"), [(1, 0.0, 25.0)]);
+    // Padding on the inner box keeps the empty child from collapsing
+    // through, so the margin after it sits below.
+    let padded = lines(&format!(
+        "{BREAK}<div><div style='margin-top:10px'>\
+         <div style='margin-top:20px;padding-top:1px'></div></div>\
+         <div style='height:20px;margin-top:40px'>X</div></div>"
+    ));
+    assert_eq!(padded, [(1, 0.0, 66.0)]);
+}
+
+#[test]
+fn the_margins_after_a_child_that_does_not_collapse_through_stay_inside() {
+    // The padding keeps the child from being empty, so the margin of the box
+    // after it sits below it.
+    let padded = lines(&format!(
+        "{BREAK}<div><div style='height:0;padding-top:1px;margin-top:10px'></div>\
+         <div style='height:20px;margin-top:50px'>X</div></div>"
+    ));
+    assert_eq!(padded, [(1, 0.0, 66.0)]);
+    // Text after the empty child is a line of the parent, with no margin of
+    // its own.
+    let text = lines(&format!(
+        "{BREAK}<div><div style='height:0;margin-top:10px'></div>X</div>"
+    ));
+    assert_eq!(text, [(1, 0.0, 15.0)]);
+}
