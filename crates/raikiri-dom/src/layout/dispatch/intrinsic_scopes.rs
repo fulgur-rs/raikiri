@@ -122,6 +122,18 @@ struct AutomaticMinimumInputs {
     across: f32,
 }
 
+/// The padding and border of the item `style` across its width, when its sizes
+/// are those of its content box, and zero when they are those of its border box.
+fn horizontal_content_edges(style: &LayoutStyleView<'_>) -> f32 {
+    if style.box_sizing() == BoxSizing::ContentBox {
+        let padding = style.padding().resolve_or_zero(None);
+        let border = style.border().resolve_or_zero(None);
+        padding.left + padding.right + border.left + border.right
+    } else {
+        0.0
+    }
+}
+
 /// The border-box height the item `style` of a row flex container has before
 /// its width is measured, if it has one. That is the height it states, a
 /// percentage of the definite inner height `room` of the container, or the
@@ -211,6 +223,21 @@ fn min_content_probe(sizing_mode: SizingMode, height: Option<f32>) -> LayoutInpu
     }
 }
 
+/// The inputs that ask a flex item for its content width under `request`, the
+/// min-content or max-content width the container is asked for, measured with
+/// the border-box `height` it has before its width is measured, if it has one.
+/// The width a `ContentSize` measure gives is the one Taffy takes as the
+/// contribution of the item.
+fn content_probe(request: AvailableSpace, height: Option<f32>) -> LayoutInput {
+    LayoutInput {
+        available_space: Size {
+            width: request,
+            height: AvailableSpace::MaxContent,
+        },
+        ..min_content_probe(SizingMode::ContentSize, height)
+    }
+}
+
 /// The automatic minimum size of the item `child` of a row flex container, as
 /// the value of a `min-width` of the item's own: the smaller of its min-content
 /// size and the width it states, within its `max-width` (CSS Flexbox 1 section
@@ -264,11 +291,21 @@ fn automatic_minimum_width(
 /// margins counted in, so the margins are counted in the upper bound as well
 /// and survive it.
 ///
+/// An item whose `width` is a `min-content` or `max-content` keyword states
+/// the width the keyword stands for as far as the contribution goes, and has
+/// it installed as a length. A scroll container whose flex base size is a
+/// length is given the contribution Taffy would find for a box that does not
+/// scroll, as its width, minimum width and maximum width together: Taffy
+/// takes the flex base size of a scroll container as its contribution, and
+/// `request` is the min-content or max-content width that the container is
+/// asked for, which the content of the item is measured at.
+///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
 pub(super) fn with_flex_item_basis_bounds<R>(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     cross_room: Option<f32>,
+    request: AvailableSpace,
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
     tree.sync_layout_cache_mutations();
@@ -292,36 +329,55 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             {
                 continue;
             }
-            let Some(basis) = crate::layout::resolve_dimension(style.flex_basis(), None)
-                .filter(|basis| basis.is_finite())
-            else {
-                let keyword = style.flex_basis().is_auto()
-                    && matches!(style.size().width.expand(), ExpandedDimension::MaxContent);
-                if keyword {
-                    let edges = if style.box_sizing() == BoxSizing::ContentBox {
-                        let padding = style.padding().resolve_or_zero(None);
-                        let border = style.border().resolve_or_zero(None);
-                        padding.left + padding.right + border.left + border.right
-                    } else {
-                        0.0
-                    };
-                    let height =
-                        height_before_width(&style, cross_room, single_line, container_align);
-                    // Taffy measures an item whose `width` is a keyword at its
-                    // min-content size for the min-content width of the
-                    // container, and so leaves the keyword out of what the item
-                    // contributes. An item that states the width the keyword
-                    // stands for, within its `min-width` and `max-width`,
-                    // contributes that width.
+            let height = height_before_width(&style, cross_room, single_line, container_align);
+            let edges = horizontal_content_edges(&style);
+            let stated = crate::layout::resolve_dimension(style.size().width, None);
+            let finite_basis = crate::layout::resolve_dimension(style.flex_basis(), None)
+                .filter(|basis| basis.is_finite());
+            // An item whose `width` is a `min-content` or `max-content` keyword
+            // contributes the width the keyword stands for, within its
+            // `min-width` and `max-width` (CSS Sizing 3 section 5.2). Taffy does
+            // not see the keyword: it measures the item as if its width were
+            // `auto`, at the min-content size for the min-content width of the
+            // container and at the max-content size for the max-content width,
+            // so the keyword is replaced by the width it stands for, as a
+            // length.
+            let keyword = matches!(
+                style.size().width.expand(),
+                ExpandedDimension::MinContent | ExpandedDimension::MaxContent
+            );
+            // Taffy gives a scroll container its flex base size as its
+            // contribution, whatever its content and its `flex-grow` and
+            // `flex-shrink` are, where a box that does not scroll contributes
+            // its content within the bounds of the flex base size. A scroll
+            // container with a flex base size of a length is measured here
+            // instead, at the width of the container's request.
+            let scrolls = finite_basis.is_some() && is_scroll_container(style.overflow());
+            let keyword_width = keyword.then(|| {
+                let width = tree
+                    .compute_child_layout(
+                        child,
+                        min_content_probe(SizingMode::InherentSize, height),
+                    )
+                    .size
+                    .width;
+                (width - edges).max(0.0)
+            });
+            let scroll_content =
+                (scrolls && stated.is_none() && keyword_width.is_none()).then(|| {
                     let width = tree
-                        .compute_child_layout(
-                            child,
-                            min_content_probe(SizingMode::InherentSize, height),
-                        )
+                        .compute_child_layout(child, content_probe(request, height))
                         .size
                         .width;
-                    let entry = O::length(P::Width, L::Px((width - edges).max(0.0)), true)
-                        .expect("physical keyword width");
+                    (width - edges).max(0.0)
+                });
+            let style = tree.physical_style(child_idx);
+            let Some(basis) = finite_basis else {
+                if style.flex_basis().is_auto()
+                    && let Some(width) = keyword_width
+                {
+                    let entry =
+                        O::length(P::Width, L::Px(width), true).expect("physical keyword width");
                     let key = tree
                         .nodes
                         .box_key(child_idx)
@@ -332,11 +388,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                 }
                 continue;
             };
-            let (width, min, max) = (
-                style.size().width,
-                style.min_size().width,
-                style.max_size().width,
-            );
+            let (min, max) = (style.min_size().width, style.max_size().width);
             let margin = style.margin();
             // A percentage of the container's width, which the probe has not got,
             // bounds nothing, and is no margin either.
@@ -345,20 +397,53 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             let margins = margins_sum(margin.left, margin.right);
             let (cannot_shrink, cannot_grow) =
                 (style.flex_shrink() == 0.0, style.flex_grow() == 0.0);
-            let preferred = crate::layout::resolve_dimension(width, None);
+            let preferred = stated.or(keyword_width);
             let automatic_minimum = min.is_auto().then(|| AutomaticMinimumInputs {
                 scrolls: is_scroll_container(style.overflow()),
                 specified: preferred,
                 maximum: max_length,
-                height: height_before_width(&style, cross_room, single_line, container_align),
-                across: if style.box_sizing() == BoxSizing::ContentBox {
-                    let padding = style.padding().resolve_or_zero(None);
-                    let border = style.border().resolve_or_zero(None);
-                    padding.left + padding.right + border.left + border.right
-                } else {
-                    0.0
-                },
+                height,
+                across: edges,
             });
+            if scrolls {
+                // The flex base size floors the contribution of an item that
+                // cannot shrink and caps that of an item that cannot grow, and
+                // then the bounds of the item itself clamp it, the minimum over
+                // the maximum. A scroll container has no automatic minimum.
+                let content = preferred.or(scroll_content).unwrap_or(0.0);
+                let floored = if cannot_shrink {
+                    content.max(basis)
+                } else {
+                    content
+                };
+                let capped = if cannot_grow {
+                    floored.min(basis)
+                } else {
+                    floored
+                };
+                let capped = max_length.map_or(capped, |max| capped.min(max));
+                let width = min_length.map_or(capped, |min| capped.max(min));
+                let key = tree
+                    .nodes
+                    .box_key(child_idx)
+                    .expect("flex child has a box key");
+                // Taffy takes the width of an item as its contribution once its
+                // minimum and maximum width agree on it.
+                let mut entries = Vec::new();
+                if cannot_shrink {
+                    entries.push((key, O::flex_shrink(1.0)));
+                }
+                for property in [P::Width, P::MinWidth, P::MaxWidth] {
+                    entries.push((
+                        key,
+                        O::length(property, L::Px(width), true).expect("physical pinned width"),
+                    ));
+                }
+                let cache = tree.take_layout_cache(child_idx);
+                saved.push((child_idx, cache));
+                tree.push_local_overrides(entries);
+                continue;
+            }
             // The flex base size floors the contribution, and then the item's own
             // bounds clamp it, the minimum over the maximum.
             let new_min = cannot_shrink.then(|| {
@@ -382,7 +467,10 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                             floored
                         }
                     });
-            let new_width = bounded_width.map(Dimension::length);
+            // The keyword width is what the item states, and Taffy does not see
+            // it: it is installed as the width of the item however the flex base
+            // size bounds it.
+            let new_width = bounded_width.or(keyword_width).map(Dimension::length);
             let width_lowered = matches!(
                 (bounded_width, preferred),
                 (Some(bounded), Some(stated)) if bounded < stated
@@ -436,6 +524,141 @@ pub(super) fn with_flex_item_basis_bounds<R>(
         }
         layout(tree)
     })
+}
+
+/// The padding and border of the item `style` across its height, when its sizes
+/// are those of its content box, and zero when they are those of its border box.
+fn vertical_content_edges(style: &LayoutStyleView<'_>) -> f32 {
+    if style.box_sizing() == BoxSizing::ContentBox {
+        let padding = style.padding().resolve_or_zero(None);
+        let border = style.border().resolve_or_zero(None);
+        padding.top + padding.bottom + border.top + border.bottom
+    } else {
+        0.0
+    }
+}
+
+/// Run `layout`, a layout of the column flex container `node_id` of one line,
+/// whose height follows its items and whose inner width is `inner_width`, with
+/// the `height` of each item that is taller than its content left out.
+///
+/// An item whose flex base size is a length is as tall as that size, within its
+/// minimum height; its `height` only caps the automatic minimum height. The
+/// contribution of the item to the height of the container is then its content
+/// height when that is above the flex base size, though the `height` it states
+/// is more. Taffy takes the stated `height` as the contribution, so an item
+/// that states a height above its content and a smaller flex base size has the
+/// `height` replaced by `auto` while the container finds its height. Its
+/// content height is above the automatic minimum height there, whatever the
+/// `height` caps it at, and that is all the `height` was for.
+///
+/// An item that scrolls has no automatic minimum height and Taffy takes its
+/// flex base size as its contribution; an item the container does not give a
+/// width of its own is left alone, as the height of its content follows from
+/// the width it gets.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
+pub(super) fn with_column_item_content_height<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inner_width: Option<f32>,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    tree.sync_layout_cache_mutations();
+    let container = tree.physical_style(usize::from(node_id));
+    let Some(inner_width) =
+        inner_width.filter(|_| !container.flex_direction_is_row() && !container.flex_wraps())
+    else {
+        return layout(tree);
+    };
+    let container_align = container.align_items();
+    let children: Vec<NodeId> = tree.child_ids(node_id).collect();
+    with_saved_probe_caches(tree, children.len(), |tree, saved| {
+        for child in children {
+            let child_idx = usize::from(child);
+            let style = tree.physical_style(child_idx);
+            if style.box_generation_mode() == BoxGenerationMode::None
+                || style.position() == Position::Absolute
+                || is_scroll_container(style.overflow())
+            {
+                continue;
+            }
+            let (Some(basis), Some(stated)) = (
+                crate::layout::resolve_dimension(style.flex_basis(), None)
+                    .filter(|basis| basis.is_finite()),
+                crate::layout::resolve_dimension(style.size().height, None),
+            ) else {
+                continue;
+            };
+            if stated <= basis {
+                continue;
+            }
+            let margin = style.margin();
+            let stretched = style.size().width.is_auto()
+                && !margin.left.is_auto()
+                && !margin.right.is_auto()
+                && matches!(
+                    style.align_self().unwrap_or(container_align).keyword,
+                    AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+                );
+            let across = horizontal_content_edges(&style);
+            let width = if stretched {
+                Some((inner_width - margins_sum(margin.left, margin.right)).max(0.0))
+            } else {
+                crate::layout::resolve_dimension(style.size().width, Some(inner_width))
+                    .map(|width| width + across)
+            };
+            let Some(width) = width else {
+                continue;
+            };
+            let edges = vertical_content_edges(&style);
+            let content = (tree
+                .compute_child_layout(child, content_height_probe(width, inner_width))
+                .size
+                .height
+                - edges)
+                .max(0.0);
+            if stated <= content {
+                continue;
+            }
+            let key = tree
+                .nodes
+                .box_key(child_idx)
+                .expect("flex child has a box key");
+            let entry = O::length(P::Height, L::Auto, false).expect("physical automatic height");
+            let cache = tree.take_layout_cache(child_idx);
+            saved.push((child_idx, cache));
+            tree.push_local_overrides(vec![(key, entry)]);
+        }
+        layout(tree)
+    })
+}
+
+/// The inputs that ask a flex item for its height at the border-box `width` the
+/// container gives it, whatever height it states.
+fn content_height_probe(width: f32, inner_width: f32) -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::ContentSize,
+        axis: RequestedAxis::Vertical,
+        known_dimensions: Size {
+            width: Some(width),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(inner_width),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(width),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    }
 }
 
 /// The width, less the padding and border of the container, of the row flex
