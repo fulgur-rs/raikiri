@@ -1882,12 +1882,7 @@ fn compute_table_layout_checked(
         let first_row_cells = || grid.cells.iter().filter(|cell| cell.row == 0);
         let first_row_baseline = first_row_cells()
             .filter(|cell| {
-                cell.baseline_from_flow
-                    && cell_baseline_aligned(
-                        doc.ifc_layout_node(cell.node_id)
-                            .expect("table cell layout view")
-                            .table_vertical_align,
-                    )
+                cell.baseline_from_flow && cell_contributes_horizontal_baseline(doc, cell.node_id)
             })
             .map(|cell| cell.baseline)
             .reduce(f32::max)
@@ -3927,11 +3922,17 @@ fn row_groups(doc: &LayoutSession<'_>, table_idx: usize, grid: &TableGrid) -> Ve
     groups.into_iter().map(|(_, group)| group).collect()
 }
 
-fn cell_baseline_aligned(align: VerticalAlign) -> bool {
-    !matches!(
-        align,
-        VerticalAlign::Top | VerticalAlign::Middle | VerticalAlign::Bottom
-    )
+// An explicit vertical cell supplies no baseline for physical row heights.
+// An anonymous cell can be owned by a row, whose writing mode alone does not
+// justify excluding its content baseline. Keep its existing participation.
+fn cell_contributes_horizontal_baseline(doc: &Document, cell: usize) -> bool {
+    (doc.is_anonymous_cell(cell) || !table_writing_mode(doc, cell).is_vertical())
+        && !matches!(
+            doc.ifc_layout_node(cell)
+                .expect("table cell layout view")
+                .table_vertical_align,
+            VerticalAlign::Top | VerticalAlign::Middle | VerticalAlign::Bottom
+        )
 }
 
 // Baselines are relative to the border edge; a cell without a line uses
@@ -4039,13 +4040,7 @@ fn resolve_row_heights(
         if end_row - start > 1 {
             // The first spanned row must contain the cell's baseline
             // before the remaining span height is distributed (CSS 2.2 17.5.3).
-            if cell.baseline_from_flow
-                && cell_baseline_aligned(
-                    doc.ifc_layout_node(cell.node_id)
-                        .expect("table cell layout view")
-                        .table_vertical_align,
-                )
-            {
+            if cell.baseline_from_flow && cell_contributes_horizontal_baseline(doc, cell.node_id) {
                 row_heights[start] = row_heights[start].max(cell.baseline);
             }
             spanning.push((start..end_row, h));
@@ -4075,13 +4070,7 @@ fn resolve_row_heights(
     // cell: the maximum ascent and descent need not belong to the same cell.
     let mut row_baselines = vec![0.0f32; grid.rows.len()];
     for cell in &grid.cells {
-        if cell.baseline_from_flow
-            && cell_baseline_aligned(
-                doc.ifc_layout_node(cell.node_id)
-                    .expect("table cell layout view")
-                    .table_vertical_align,
-            )
-        {
+        if cell.baseline_from_flow && cell_contributes_horizontal_baseline(doc, cell.node_id) {
             let row = cell.row as usize;
             row_baselines[row] = row_baselines[row].max(cell.baseline);
         }
@@ -4089,11 +4078,7 @@ fn resolve_row_heights(
     for cell in &grid.cells {
         if cell.row_span == 1
             && cell.baseline_from_flow
-            && cell_baseline_aligned(
-                doc.ifc_layout_node(cell.node_id)
-                    .expect("table cell layout view")
-                    .table_vertical_align,
-            )
+            && cell_contributes_horizontal_baseline(doc, cell.node_id)
         {
             let row = cell.row as usize;
             row_heights[row] =
@@ -4402,11 +4387,7 @@ fn place_cells(
         let row = cell.row as usize;
         if !collapsed_rows[row]
             && cell.baseline_from_flow
-            && cell_baseline_aligned(
-                doc.ifc_layout_node(cell.node_id)
-                    .expect("table cell layout view")
-                    .table_vertical_align,
-            )
+            && cell_contributes_horizontal_baseline(doc, cell.node_id)
         {
             row_baselines[row] = row_baselines[row].max(cell.baseline);
         }
