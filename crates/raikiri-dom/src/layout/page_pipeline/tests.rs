@@ -4573,21 +4573,17 @@ fn only_the_floats_before_a_box_among_its_siblings_are_listed() {
     assert!(preceding_float_extents(&doc, &cascade, root).is_empty());
     // A direct child lists the floats before it, and a float lists the ones
     // before it only.
-    let extent = |doc: &Document, id: usize| {
-        let layout = &doc.nodes[id].layout;
-        (
-            layout.location.y - layout.margin.top,
-            layout.location.y + layout.size.height + layout.margin.bottom,
-        )
-    };
     assert_eq!(
         preceding_float_extents(&doc, &cascade, beside),
-        [extent(&doc, first), extent(&doc, later)]
+        [
+            float_outer_extent(&doc, first),
+            float_outer_extent(&doc, later)
+        ]
     );
     assert!(preceding_float_extents(&doc, &cascade, first).is_empty());
     assert_eq!(
         preceding_float_extents(&doc, &cascade, later),
-        [extent(&doc, first)]
+        [float_outer_extent(&doc, first)]
     );
 }
 

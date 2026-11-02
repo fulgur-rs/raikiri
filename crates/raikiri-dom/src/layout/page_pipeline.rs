@@ -5854,18 +5854,25 @@ fn preceding_float_extents(
         .unwrap_or(0);
     siblings[..position]
         .iter()
+        // A footnote is placed on a page of its own and takes no room from
+        // the lines.
         .filter(|&&sibling| {
             is_floating_box_for_pagination(document, cascade, sibling)
+                && float_side_index(cascade.computed[sibling].float).is_some()
                 && document.layout_parent_of(sibling) == Some(parent)
         })
-        .map(|&float| {
-            let layout = &document.nodes[float].layout;
-            (
-                layout.location.y - layout.margin.top,
-                layout.location.y + layout.size.height + layout.margin.bottom,
-            )
-        })
+        .map(|&float| float_outer_extent(document, float))
         .collect()
+}
+
+/// The block-axis extent `(top, bottom)` of the margin box of the float `id`,
+/// in the coordinates of its parent.
+fn float_outer_extent(document: &Document, id: usize) -> (f32, f32) {
+    let layout = &document.nodes[id].layout;
+    (
+        layout.location.y - layout.margin.top,
+        layout.location.y + layout.size.height + layout.margin.bottom,
+    )
 }
 
 /// Whether moving the box `id`, whose border box starts at `top`, down by
