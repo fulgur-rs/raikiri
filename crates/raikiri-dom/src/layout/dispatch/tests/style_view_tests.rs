@@ -1,4 +1,4 @@
-use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
+use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, RunMode};
 use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
 use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
@@ -68,15 +68,20 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
         tree.style_view(child).max_size(),
         tree.style_view(child).flex_shrink(),
     );
-    let result: Result<(), ()> =
-        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), None, |tree| {
+    let result: Result<(), ()> = super::super::with_flex_item_basis_bounds(
+        &mut tree,
+        NodeId::from(parent),
+        None,
+        AvailableSpace::MaxContent,
+        |tree| {
             let view = tree.style_view(child);
             assert_eq!(view.size().width, Dimension::length(20.0));
             assert_eq!(view.min_size().width, LengthPercentageAuto::length(20.0));
             assert_eq!(view.max_size(), original.2);
             assert_eq!(view.flex_shrink(), 1.0);
             Err(())
-        });
+        },
+    );
     assert!(result.is_err());
     let restored = |tree: &LayoutSession<'_>| {
         (
@@ -88,9 +93,13 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
     };
     assert_eq!(restored(&tree), original);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), None, |_| {
-            panic!("flex bound unwind")
-        });
+        super::super::with_flex_item_basis_bounds(
+            &mut tree,
+            NodeId::from(parent),
+            None,
+            AvailableSpace::MaxContent,
+            |_| panic!("flex bound unwind"),
+        );
     }));
     assert!(panic.is_err());
     assert_eq!(restored(&tree), original);
