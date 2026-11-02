@@ -7437,8 +7437,10 @@ fn container_can_be_judged(
 /// header or footer group or more than one row, break between them and are left
 /// to the rules for those. A column of one item stacks it in block flow, so that
 /// item has to be as unbreakable as a block (see [`breaks_only_around`]). A grid
-/// whose rows end exactly at the page end breaks before its last row instead,
-/// which is not done.
+/// whose rows end exactly at the page end moves whole as well, not only its
+/// last row: browsers break before the grid, as they do for one that ends
+/// earlier. A grid that runs past the page end breaks between its rows like any
+/// other box.
 fn container_moves_whole(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
