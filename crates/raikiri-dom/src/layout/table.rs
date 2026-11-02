@@ -1439,7 +1439,41 @@ fn compute_table_layout_checked(
                 })
                 .collect()
         } else {
-            resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
+            let widths = resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width);
+            // A table that shrinks to fit is held to its `max-width`, but not
+            // below the min-content width of its columns, whatever room it is
+            // measured in: the max-content width a parent adds to its own
+            // intrinsic size, or the room of a line. The clamp on the used
+            // width below leaves a table alone that the room made narrower
+            // than its content, so the columns are shared out again in the
+            // room the limit leaves, which they fill no further than their
+            // min-content widths allow. A table that a caller sizes, or that
+            // states a width, is cut to the limit by that width instead.
+            let outer =
+                widths.iter().sum::<f32>() - overlap_w + spacing.width + padding_border_size.width;
+            let capped_room = max_w_outer.filter(|&maximum| {
+                outer > maximum
+                    && !vertical_writing
+                    && specified_width.is_none()
+                    && inputs.known_dimensions.width.is_none()
+                    && !matches!(inputs.available_space.width, AvailableSpace::MinContent)
+            });
+            match capped_room {
+                Some(maximum) => {
+                    let capped = ColumnPass {
+                        inputs: LayoutInput {
+                            available_space: Size {
+                                width: AvailableSpace::Definite(maximum),
+                                height: pass.inputs.available_space.height,
+                            },
+                            ..pass.inputs
+                        },
+                        ..pass
+                    };
+                    resolve_table_columns(doc, &mut grid, &capped, distrib_insets.width)
+                }
+                None => widths,
+            }
         };
 
         if !fixed_columns_collapse {
