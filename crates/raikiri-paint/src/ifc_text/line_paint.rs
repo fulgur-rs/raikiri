@@ -2,7 +2,7 @@
 //! the boxes beside the lines, the inline boxes on them, and the paint they
 //! go into.
 
-use super::typographic::{self, BackgroundSlice, Paragraph, TypographicPaint};
+use super::typographic::{self, BackgroundSlice, GroupShape, Paragraph, TypographicPaint};
 use super::{
     IfcPosition, draw_custom_highlights, line_rect, piece_fixed_viewport, transform_applies,
 };
@@ -19,6 +19,7 @@ use raikiri_style::CascadeResult;
 use shodo::geometry::WritingMode;
 use shodo::hit::LineLayout;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 #[cfg(test)]
 mod tests;
@@ -193,7 +194,15 @@ pub(super) struct LineGroups {
     pub(super) rest: TypographicPaint,
 }
 
-impl LineGroups {
+/// The groups of a paragraph's lines, as far as they are the same whichever
+/// of the lines are painted.
+pub(super) struct LineShapes {
+    /// The groups of a translucent `::first-line`, with its opacity.
+    first_line: Option<(Rc<GroupShape>, f32)>,
+    rest: Rc<GroupShape>,
+}
+
+impl LineShapes {
     pub(super) fn new(
         paragraph: Paragraph<'_>,
         root_node: &Node,
@@ -215,10 +224,7 @@ impl LineGroups {
         let first_line = first_line_opacity.map(|opacity| {
             let mut pieces = pieces_by_line.first().cloned().unwrap_or_default();
             pieces.extend(blocks.iter().map(|(piece, _)| *piece).filter(on_first_line));
-            (
-                TypographicPaint::new(paragraph, root_node, &pieces),
-                opacity,
-            )
+            (GroupShape::of(paragraph, root_node, &pieces), opacity)
         });
         // One set of groups serves every other line, so an element or
         // pseudo-element split over lines composites its complete paint at
@@ -235,10 +241,23 @@ impl LineGroups {
                 .map(|(piece, _)| *piece)
                 .filter(|piece| !on_first_line(piece)),
         );
-        let rest = TypographicPaint::new(paragraph, root_node, &rest_pieces);
+        let rest = GroupShape::of(paragraph, root_node, &rest_pieces);
         Self { first_line, rest }
     }
 
+    /// The empty paint of the paragraph's lines.
+    pub(super) fn paint(&self) -> LineGroups {
+        LineGroups {
+            first_line: self
+                .first_line
+                .as_ref()
+                .map(|(shape, opacity)| (TypographicPaint::on(shape), *opacity)),
+            rest: TypographicPaint::on(&self.rest),
+        }
+    }
+}
+
+impl LineGroups {
     /// The paint that line `line_index`, and a box on it, goes into.
     pub(super) fn for_line(&mut self, line_index: usize) -> &mut TypographicPaint {
         match self.first_line.as_mut() {
@@ -263,7 +282,7 @@ pub(super) struct LinePaint<'a, 'r> {
     /// How far pagination moved each line along the block axis.
     pub(super) shifts: &'r [f32],
     pub(super) root_node: &'a Node,
-    pub(super) pieces: PiecesByLine,
+    pub(super) pieces: Rc<PiecesByLine>,
     /// The nodes of the block-level boxes, which paint beside the lines
     /// rather than on them.
     pub(super) block_nodes: HashSet<usize>,
