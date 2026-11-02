@@ -5892,7 +5892,7 @@ fn generated_box_separates(
 /// Only the collapsed margin is truncated, not clearance or other space in
 /// the gap.
 fn collapsed_margin_start(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     previous: usize,
     node_id: usize,
@@ -5905,18 +5905,28 @@ fn collapsed_margin_start(
 }
 
 /// The largest positive margin among the block-start (`start`) or block-end
-/// margin of `id` and the margins of its first or last in-flow child that
-/// adjoin it, which all collapse into one (CSS 2 §8.3.1).
-fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, start: bool) -> f32 {
+/// margin of `id` and the margins of its first or last in-flow children that
+/// adjoin it (see [`adjoining_margin_extremes`]), which all collapse into one
+/// (CSS 2 §8.3.1).
+fn adjoining_margin(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+    start: bool,
+) -> f32 {
     adjoining_margin_extremes(document, cascade, id, start).0
 }
 
 /// The largest positive margin and the most negative one (zero when there is
 /// none) among the block-start (`start`) or block-end margin of `id` and the
-/// margins of its first or last in-flow child that adjoin it. Their sum is the
-/// one margin they collapse into (CSS 2 §8.3.1).
+/// margins of its first or last in-flow child that adjoin it. When that child
+/// is empty and its margins collapse through it, the margins of the next box
+/// inward adjoin the edge too (the boxes after it at the block start, the
+/// boxes before it at the block end), and so on until a box that does not
+/// collapse through. Their sum is the one margin they collapse into (CSS 2
+/// §8.3.1).
 fn adjoining_margin_extremes(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     id: usize,
     start: bool,
@@ -5940,27 +5950,77 @@ fn adjoining_margin_extremes(
     for &child in document.nodes[id].children.iter().rev() {
         push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
     }
-    let child = if start { boxes.last() } else { boxes.first() };
-    let Some(&child) = child else {
-        return own;
-    };
-    let child_layout = &document.nodes[child].layout;
-    // The child's margin adjoins only when its border box touches this box's
-    // content edge, which a used height or a line before it would prevent.
-    let touches = if start {
-        child_layout.location.y <= 0.001
-    } else {
-        child_layout.location.y + child_layout.size.height >= layout.size.height - 0.001
-    };
-    if document.nodes[child].kind() == NodeKind::Element
-        && !document.nodes[child].display().is_inline_level()
-        && touches
-    {
-        let (positive, negative) = adjoining_margin_extremes(document, cascade, child, start);
-        (own.0.max(positive), own.1.min(negative))
-    } else {
-        own
+    // The boxes in the order the edge meets them: `boxes` runs from the last
+    // in-flow box to the first.
+    if start {
+        boxes.reverse();
     }
+    let (mut positive, mut negative) = own;
+    for (index, child) in boxes.into_iter().enumerate() {
+        let child_layout = &document.nodes[child].layout;
+        // The child's margin adjoins only when its border box touches this
+        // box's content edge, which a used height or a line before it would
+        // prevent.
+        let touches = if start {
+            child_layout.location.y <= 0.001
+        } else {
+            child_layout.location.y + child_layout.size.height >= layout.size.height - 0.001
+        };
+        // A box that clears a float may have been put below it, which keeps
+        // its margin from adjoining this edge once an earlier box is there.
+        let clears = cascade.computed[child].clear != ClearValue::None;
+        if document.nodes[child].kind() != NodeKind::Element
+            || document.nodes[child].display().is_inline_level()
+            || !touches
+            || (index > 0 && clears)
+        {
+            break;
+        }
+        // An empty box lets its margins collapse through it, so all of them,
+        // and those of the boxes inside it, meet the margin of the box after
+        // it, which adjoins this edge too.
+        if !clears && collapses_through(document, cascade, child, child_layout.size.height) {
+            let (child_positive, child_negative) =
+                empty_box_margin_extremes(document, cascade, child);
+            positive = positive.max(child_positive);
+            negative = negative.min(child_negative);
+            continue;
+        }
+        let (child_positive, child_negative) =
+            adjoining_margin_extremes(document, cascade, child, start);
+        positive = positive.max(child_positive);
+        negative = negative.min(child_negative);
+        break;
+    }
+    (positive, negative)
+}
+
+/// The largest positive margin and the most negative one (zero when there is
+/// none) among the block-start and block-end margins of `id`, a box that
+/// [`collapses_through`], and of the boxes inside it, which are empty as well:
+/// they all collapse into one margin.
+fn empty_box_margin_extremes(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+) -> (f32, f32) {
+    let margin = document.nodes[id].layout.margin;
+    let mut positive = margin.top.max(margin.bottom).max(0.0);
+    let mut negative = margin.top.min(margin.bottom).min(0.0);
+    let mut boxes = Vec::new();
+    for &child in &document.nodes[id].children {
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+    }
+    // Text and inline-level boxes make no margin of their own here.
+    for child in boxes.into_iter().filter(|&child| {
+        document.nodes[child].kind() == NodeKind::Element
+            && !document.nodes[child].display().is_inline_level()
+    }) {
+        let (child_positive, child_negative) = empty_box_margin_extremes(document, cascade, child);
+        positive = positive.max(child_positive);
+        negative = negative.min(child_negative);
+    }
+    (positive, negative)
 }
 
 /// The outer block extents `(top, bottom)` of the floats that come before `id`
@@ -6094,9 +6154,14 @@ fn lines_keep_their_room(
 }
 
 /// How much the margins of the first in-flow children of `id` that adjoin its
-/// block-start margin change the margin it keeps at a forced break: the one
-/// margin they collapse into, less the margin of `id` itself.
-fn collapsed_start_margin_gain(document: &Document, cascade: &CascadeResult, id: usize) -> f32 {
+/// block-start margin, the boxes after an empty first child among them, change
+/// the margin it keeps at a forced break: the one margin they collapse into,
+/// less the margin of `id` itself.
+fn collapsed_start_margin_gain(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+) -> f32 {
     let (positive, negative) = adjoining_margin_extremes(document, cascade, id, true);
     positive + negative - document.nodes[id].layout.margin.top
 }
@@ -7120,6 +7185,94 @@ fn leading_piece_end(
     .flatten()
 }
 
+/// The extent given to a box with nothing to keep together, which the page
+/// can be cut through anywhere: just enough for a box that begins at the page
+/// end to count as running past it.
+const CUT_ANYWHERE_PIECE: f32 = 0.01;
+
+/// How far below the border-box top of the plain block `node_id` the first
+/// piece of its content ends, when padding or border sit above that content,
+/// on `node_id` or on a box it begins, and the first boxes inside it, down to
+/// the one that decides, hold no line to keep with those edges. A box that
+/// avoids breaks inside it or that no break goes through ends where it does,
+/// and an empty box can be cut anywhere, so it only counts when it begins past
+/// the page end (see [`first_piece_end`]). Lines are left to the rules for
+/// lines, and a box with no edges above it to the rules for boxes that avoid
+/// a break.
+fn lineless_leading_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    lineless_piece_end(document, cascade, body_id, node_id, 0)
+        .filter(|&(_, has_edges)| has_edges)
+        .map(|(end, _)| end)
+}
+
+/// The end of the first piece of the plain block `node_id` that holds no line,
+/// from its border-box top, and whether padding or border sit above the
+/// content that decides it (see [`lineless_leading_piece_end`]).
+fn lineless_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    depth: usize,
+) -> Option<(f32, bool)> {
+    if depth > FIRST_PIECE_DEPTH
+        || !is_plain_block_box(document, node_id)
+        || document.nodes[node_id].is_multicol_container()
+        || document.nodes[node_id].has_before_or_after_content
+        || is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        return None;
+    }
+    let node = &document.nodes[node_id];
+    // A forced break before a box inside takes the page break there: moving
+    // the block would only push that break on to one more page.
+    if depth > 0 && page_break_is_forced(document, node_id, cascade.computed[node_id].break_before)
+    {
+        return None;
+    }
+    // The box the walk starts at is judged by the rules of its own.
+    if depth > 0 {
+        if is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false) {
+            return Some((node.layout.size.height, false));
+        }
+        if avoids_page_break_inside(cascade.computed[node_id].break_inside) {
+            // A box that forces a break inside it splits there instead.
+            return (!has_mandatory_break_inside(document, cascade, node_id))
+                .then_some((node.layout.size.height, false));
+        }
+    }
+    if node.is_ifc_root() {
+        return None;
+    }
+    let mut first = None;
+    for &child in &node.children {
+        if is_floating_box_for_pagination(document, cascade, child) {
+            return None;
+        }
+        let mut boxes = Vec::new();
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        if let Some(&box_id) = boxes.last() {
+            first = Some(box_id);
+            break;
+        }
+    }
+    let Some(child) = first else {
+        // Nothing to keep together inside the box.
+        return (depth > 0).then_some((CUT_ANYWHERE_PIECE, false));
+    };
+    // The page breaks before the relative offset moves the box.
+    let top = normal_flow_y(document, cascade, body_id, child);
+    let (end, child_has_edges) = lineless_piece_end(document, cascade, body_id, child, depth + 1)?;
+    let layout = &node.layout;
+    let has_edges = child_has_edges || layout.border.top + layout.padding.top > 0.0;
+    Some((top + end, has_edges))
+}
+
 /// Whether a box with padding or border above its content moves to the next
 /// page, so that those edges do not stay behind alone: the box starts on the
 /// page, but the first piece of its content (see [`first_piece_end`], which
@@ -7809,7 +7962,7 @@ fn is_plain_container_box(document: &Document, node_id: usize) -> bool {
 /// Whether a box below `node_id` forces a page break or starts a named page, so
 /// that the page breaks inside `node_id` where that box asks it to.
 fn has_mandatory_break_inside(
-    document: &super::context::LayoutSession<'_>,
+    document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {

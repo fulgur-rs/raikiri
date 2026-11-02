@@ -12,10 +12,10 @@ use super::{
     closing_edges_of, container_item_tail, first_owned_text_line_top, height_follows_content,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_holder, leading_piece_end, lone_box_with_floats, moves_later_siblings,
-    nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
+    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -1198,7 +1198,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     )
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
-                    .flatten();
+                    .flatten()
+                    .or_else(|| {
+                        // A plain block with padding or border above a box
+                        // that has no line: a lone box that avoids breaks
+                        // inside it, say.
+                        (in_flow_block
+                            && !is_body
+                            && free_to_break_before
+                            && !document.context.pagination_on_transposed_axes)
+                            .then(|| {
+                                lineless_leading_piece_end(document, cascade, body_id, node_id)
+                            })
+                            .flatten()
+                    });
                 // The last box of such a run goes to the next page with the
                 // edges that follow it when the run has moved as far on as it
                 // goes (the first box starts its page) and they still do not
