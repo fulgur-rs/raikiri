@@ -5,7 +5,7 @@ use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
     ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
     FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix,
-    LineBreakMove, LineMove, MarginBreak, MarginTruncation, PageBox, PageCandidate,
+    LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, PageBox, PageCandidate,
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
     PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
@@ -17,8 +17,9 @@ use super::{
     forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, lead_below_ancestor, leading_edges_move,
-    line_block_parent, lines_between_blocks, lines_can_shift_between_blocks,
-    lines_can_shift_inside, make_room_for_table_header, margin_box_starts_page, materialize_y,
+    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
+    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
+    make_room_for_table_header, margin_box_starts_page, materialize_y,
     move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
@@ -1114,6 +1115,23 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Whether the lines of the paragraph `block_id` move down inside it, to
+    /// the next page, rather than the paragraph moving as a unit: it is its own
+    /// inline layout root, has no earlier split pending, and can shift its
+    /// lines.
+    fn lines_can_move(
+        &self,
+        document: &LayoutSession<'_>,
+        cascade: &CascadeResult,
+        blocks: &LineBlocks,
+        block_id: usize,
+    ) -> bool {
+        blocks.paragraph_root == Some(block_id)
+            && self.deferred_shifts.line_splits.is_empty()
+            && (lines_can_shift_inside(document, cascade, block_id)
+                || lines_can_shift_above_blocks(document, cascade, block_id))
+    }
+
     /// Pushes the fixed-height block whose first line would straddle the end
     /// of the page `text` is on to the next page as a unit. This matches
     /// normal block fragmentation for monolithic content while leaving
@@ -1143,6 +1161,7 @@ impl PaginationState {
         if let Some((block_id, nested)) = blocks.block
             && self.checked_paragraphs.block_text.insert(block_id)
             && has_fixed_height(document, block_id)
+            && !self.lines_can_move(document, cascade, blocks, block_id)
         {
             let block_height = document.nodes[block_id].layout.size.height;
             let block_effective_y = block_effective_y(
@@ -1231,12 +1250,7 @@ impl PaginationState {
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
-            // Lines move down inside the paragraph only when it is its own
-            // inline layout root, has no earlier split pending, and can shift
-            // its lines.
-            let lines_can_move = blocks.paragraph_root == Some(block_id)
-                && self.deferred_shifts.line_splits.is_empty()
-                && lines_can_shift_inside(document, block_id);
+            let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id);
             // The break that keeps the last lines with the padding and border
             // that close the boxes around the paragraph, on `page`.
             let closing_edges_break = |page: u32, effective_y: f32| {
@@ -1299,6 +1313,12 @@ impl PaginationState {
             } else {
                 0.0
             };
+            // A box that keeps its height ends where it ends, wherever its
+            // lines go: its edges follow the lines only while they all fit
+            // the page, before any of them moves.
+            let edges_follow_moved_lines = !lines_can_move
+                || own_closing_edges <= 0.0
+                || lines_move_grows_box(document, block_id);
             let mut page = self.current_page;
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
@@ -1306,6 +1326,9 @@ impl PaginationState {
             loop {
                 let page_start = page_origins.origin(page);
                 let page_step = page_origins.step_at(page);
+                let lines_fit = line_metrics.last().is_some_and(|(_, bottom)| {
+                    text.effective_y + bottom <= page_start + page_step + 0.001
+                });
                 let mut line_fit = ParagraphLineFit::measure(
                     &line_metrics,
                     text.effective_y,
@@ -1313,7 +1336,11 @@ impl PaginationState {
                     page_start + page_step,
                     cascade.computed[block_id].orphans,
                     cascade.computed[block_id].widows,
-                    own_closing_edges,
+                    if edges_follow_moved_lines || lines_fit {
+                        own_closing_edges
+                    } else {
+                        0.0
+                    },
                 );
                 // The block is measured from where it is now.
                 let block_effective_y = block_effective_y(
@@ -1546,7 +1573,7 @@ impl PaginationState {
             for (line, shift, move_page) in moves {
                 reach_page(control, move_page)?;
                 let line = run.start + line;
-                move_paragraph_lines(
+                let growth = move_paragraph_lines(
                     document,
                     cascade,
                     body_id,
@@ -1565,9 +1592,13 @@ impl PaginationState {
                 } else if reaches_line(text_lines.get(node_id), line) {
                     text.height += shift;
                 }
-                self.deferred_shifts
-                    .line_splits
-                    .push((root, line, shift, move_page));
+                self.deferred_shifts.line_splits.push(LineSplit {
+                    root,
+                    first_moved: line,
+                    shift,
+                    growth,
+                    page: move_page,
+                });
             }
             if !repeat {
                 break;
@@ -1607,7 +1638,7 @@ impl PaginationState {
         } = *env;
         for (line, shift, page) in moves {
             reach_page(control, page)?;
-            move_paragraph_lines(
+            let growth = move_paragraph_lines(
                 document,
                 cascade,
                 body_id,
@@ -1623,9 +1654,13 @@ impl PaginationState {
             if reaches_line(text_lines.get(candidate.node_id), line) {
                 text.height += shift;
             }
-            self.deferred_shifts
-                .line_splits
-                .push((block_id, line, shift, page));
+            self.deferred_shifts.line_splits.push(LineSplit {
+                root: block_id,
+                first_moved: line,
+                shift,
+                growth,
+                page,
+            });
         }
         Ok(())
     }
@@ -1802,15 +1837,25 @@ impl PaginationState {
         // own position.
         let in_flow = !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant();
-        if let Some(page) = self.deferred_shifts.apply_reached(
+        let reached_page = self.deferred_shifts.apply_reached(
             document,
             text_lines,
             node_id,
             candidate.ifc_root,
+            self.current_page,
             &mut self.flow_shift,
-        ) && in_flow
+        );
+        if let Some(page) = reached_page
+            && in_flow
         {
             self.current_page = self.current_page.max(page);
+        }
+        // A box that kept its height ends on an earlier page than its moved
+        // lines, and the flow goes on from there, never from before the page
+        // it was on when it reached them.
+        if in_flow && let Some(floor) = self.deferred_shifts.page_floor.take() {
+            let box_end_page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
+            self.current_page = self.current_page.min(floor.max(box_end_page));
         }
         if let Some(page) = self
             .subtree_shifts
