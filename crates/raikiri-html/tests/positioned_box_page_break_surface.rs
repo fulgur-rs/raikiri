@@ -292,6 +292,24 @@ fn a_box_in_a_fixed_box_stays_with_the_page_the_fixed_box_repeats_on() {
 }
 
 #[test]
+fn a_last_line_of_an_atomic_inline_breaks_like_a_line_of_text() {
+    // Three lines of text and, on the fourth, an inline-block that no text
+    // owns: it crosses the page end from 90px, so it starts the next page.
+    let content =
+        "Y<br>Y<br>Y<br><span style='display:inline-block;width:20px;height:20px'></span>";
+    // The inline-block is the box 20px tall; those of the box around it are
+    // not.
+    let inline_blocks: Vec<_> = boxes_20px_wide(&positioned("top:0", content))
+        .into_iter()
+        .filter(|&(_, _, height)| (height - 20.0).abs() < 0.01)
+        .collect();
+    assert_eq!(inline_blocks.len(), 1, "{inline_blocks:?}");
+    let (page, top, _) = inline_blocks[0];
+    assert_eq!(page, 1, "{inline_blocks:?}");
+    assert!((0.0..30.0).contains(&top), "{inline_blocks:?}");
+}
+
+#[test]
 fn a_box_with_blocks_among_its_lines_is_left_to_the_blocks() {
     // The blocks would stay behind when the lines of the box move, so these
     // lines are not moved on their own: all three are printed, and none lands

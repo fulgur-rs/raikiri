@@ -3947,7 +3947,7 @@ fn paginate_flow(
     let roots = candidates::FlowRoots::new(document, body_id);
     let mut candidates = Vec::new();
     let mut text_lines = TextLineIndex::default();
-    CandidateCollector::new(
+    let mut collector = CandidateCollector::new(
         document,
         cascade,
         roots,
@@ -3955,8 +3955,9 @@ fn paginate_flow(
         &mut candidates,
         &mut text_lines,
         control,
-    )
-    .collect_flow(root_flow_offset)?;
+    );
+    collector.collect_flow(root_flow_offset)?;
+    let clip_edges = collector.into_clip_edges();
     let table_headers = HeaderRepeats::prepare(
         document,
         cascade,
@@ -4032,7 +4033,7 @@ fn paginate_flow(
             break;
         }
     }
-    if let Err(halt) = state.keep_positioned_lines(document, &env) {
+    if let Err(halt) = state.keep_positioned_lines(document, &env, &clip_edges) {
         halt.finish()?;
     }
 

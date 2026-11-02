@@ -21,6 +21,11 @@ use super::{
 };
 use std::collections::HashMap;
 
+/// How much of the content of an absolutely positioned box that starts past
+/// the edge of the clip that contains it is kept, in px: the box is hidden
+/// whole, but the page it starts on stays.
+const HIDDEN_BOX_SLIVER: f32 = 1.0;
+
 #[derive(Clone, Copy, Default)]
 pub(super) struct CandidateFlowContext {
     pub(super) is_float_descendant: bool,
@@ -449,6 +454,11 @@ struct CandidateFrame<'name> {
     /// ancestor does. A text or box starting at or past it is never visible,
     /// so it takes no part in pagination.
     clip_end: f32,
+    /// What `clip_end` is for an absolutely positioned child: the edge past
+    /// which the clips of its containing block and of the ancestors above
+    /// that hide it, or infinity when none does. The clips of the boxes
+    /// between the child and its containing block do not reach it.
+    absolute_clip_end: f32,
     /// The block size of the bottom padding and border of the ancestors that
     /// end with the node: it is the last box in the flow of each of them, and
     /// their heights follow their content.
@@ -541,6 +551,7 @@ impl CandidateFrame<'_> {
             inside_float: false,
             inside_out_of_flow: false,
             clip_end: f32::INFINITY,
+            absolute_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
             lone_in_edges: true,
@@ -610,6 +621,9 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     page_step: f32,
     out: &'a mut Vec<PageCandidate>,
     text_lines: &'a mut TextLineIndex,
+    /// For the paragraphs whose text a clip cuts, by paragraph root: the edge
+    /// of the clip, in the coordinates of the candidates.
+    clip_edges: HashMap<usize, f32>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
     has_named_pages: bool,
@@ -640,6 +654,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             page_step,
             out,
             text_lines,
+            clip_edges: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
             has_named_pages,
@@ -670,6 +685,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// starts in the page flow.
     pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
         self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))
+    }
+
+    /// The edges of the clips that cut the text of the paragraphs collected,
+    /// by paragraph root, in the coordinates of the candidates.
+    pub(super) fn into_clip_edges(self) -> HashMap<usize, f32> {
+        self.clip_edges
     }
 
     #[inline(never)]
@@ -776,6 +797,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             None,
                         ),
                     };
+                    if let Some((root, _)) = ifc_root
+                        && frame.clip_end.is_finite()
+                    {
+                        let edge = self.clip_edges.entry(root).or_insert(frame.clip_end);
+                        *edge = edge.min(frame.clip_end);
+                    }
                     // Past a clipping ancestor's edge the text paints nowhere
                     // and gives the flow no page; a text running over the edge
                     // occupies only the part above it.
@@ -1356,27 +1383,40 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         node_id,
                         document.context.pagination_on_transposed_axes,
                     );
-                // An absolutely positioned box is clipped by an ancestor only
-                // when that ancestor is its containing block. The walk does not
-                // track containing blocks, so such a box starts afresh. A
+                // An absolutely positioned box is clipped by its containing
+                // block and the ancestors above it, not by the boxes between
+                // them. One that starts past the edge of such a clip is hidden
+                // whole, but still starts the page it is on: it keeps the first
+                // sliver of its content. A fixed box is not clipped here. A
                 // document paginated on transposed axes is not measured at
                 // all: the overflow that clips its flow is not the one on y.
                 let clip_end = if document.context.pagination_on_transposed_axes {
                     f32::INFINITY
                 } else {
-                    let inherited = if matches!(
-                        document.nodes[node_id].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    ) {
-                        f32::INFINITY
-                    } else {
-                        frame.clip_end
+                    let inherited = match document.nodes[node_id].position() {
+                        PositionValue::Absolute if raw_y < frame.absolute_clip_end => {
+                            frame.absolute_clip_end
+                        }
+                        PositionValue::Absolute if frame.absolute_clip_end.is_finite() => {
+                            let layout = &document.nodes[node_id].layout;
+                            raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER
+                        }
+                        PositionValue::Absolute | PositionValue::Fixed => f32::INFINITY,
+                        _ => frame.clip_end,
                     };
                     if !is_body && super::element_clips_overflow(document, cascade, node_id) {
                         inherited.min(super::clip_block_end(document, cascade, node_id, raw_y))
                     } else {
                         inherited
                     }
+                };
+                let absolute_clip_end = if clip_end != frame.absolute_clip_end
+                    && crate::layout::fixed::establishes_absolute_containing_block(
+                        document, node_id, computed,
+                    ) {
+                    clip_end
+                } else {
+                    frame.absolute_clip_end
                 };
                 let child_order = pagination_child_order(document, cascade, node_id);
                 // The closing edges of this block, and of the blocks that it
@@ -1672,6 +1712,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
                             clip_end,
+                            absolute_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
                             lone_in_edges: (!child_box_before || child_tied_to_start)
