@@ -6,11 +6,11 @@ use super::super::context::LayoutSession;
 use super::{
     AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, UnplacedBlockLine, avoid_chain_before_last_box, avoided_run_head,
-    box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
-    candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
-    first_owned_text_line_top, height_follows_content, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination,
+    PositionValue, TextLineIndex, UnplacedBlockLine, accumulated_relative_offset_y,
+    avoid_chain_before_last_box, avoided_run_head, box_forces_break_after, box_is_unbreakable,
+    boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
+    closing_edges_of, container_item_tail, first_owned_text_line_top, height_follows_content,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
     normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
@@ -1211,22 +1211,26 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .filter(|_| can_move_nested)
                     .map(|lone| lone.tail.max(0.0));
                 // How far the floats beside the box of such a block, and those
-                // of the blocks it ends, reach below the box.
-                let closing_edges_float_reach = if let Some(lone) =
-                    lone_tail.filter(|_| can_move_nested)
-                {
-                    let box_end = candidate_raw_y + node.layout.size.height - lone.tail.max(0.0);
-                    lone.float_reach
-                        .max((frame.float_bottom - box_end).max(0.0))
-                } else if closing_edges_candidate || run_tail_candidate {
-                    let span = match frame.tie {
-                        AvoidTie::RunStart { span } => span,
-                        _ => 0.0,
+                // of the blocks it ends, reach below the box. Both ends are
+                // measured at their normal-flow positions, as the page fit is.
+                let closing_edges_float_reach =
+                    if let Some(lone) = lone_tail.filter(|_| can_move_nested) {
+                        let box_end = candidate_raw_y + node.layout.size.height
+                            - lone.tail.max(0.0)
+                            - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                        lone.float_reach
+                            .max((frame.float_bottom - box_end).max(0.0))
+                    } else if closing_edges_candidate || run_tail_candidate {
+                        let span = match frame.tie {
+                            AvoidTie::RunStart { span } => span,
+                            _ => 0.0,
+                        };
+                        let box_end = candidate_raw_y + candidate_height + span
+                            - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                        (frame.float_bottom - box_end).max(0.0)
+                    } else {
+                        0.0
                     };
-                    (frame.float_bottom - (candidate_raw_y + candidate_height + span)).max(0.0)
-                } else {
-                    0.0
-                };
                 // The edges also follow the lines of a paragraph that breaks
                 // between them. With no box before it in the block that the
                 // edges close, the page cannot break before the paragraph at
@@ -1459,6 +1463,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             + layout.location.y
                             + layout.size.height
                             + layout.margin.bottom
+                            - accumulated_relative_offset_y(document, cascade, body_id, child_id)
                     })
                     .fold(
                         if inherited_edges > 0.0 {

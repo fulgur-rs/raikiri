@@ -7159,7 +7159,12 @@ fn lone_box_with_floats(
                 if !accepted {
                     return None;
                 }
-                float_bottom = float_bottom.max(float_extent(document, child).1);
+                // The blocks between the one that holds the box and the float
+                // may be offset, while `content_end` is at normal-flow
+                // positions.
+                let offset_below = accumulated_relative_offset_y(document, cascade, body_id, child)
+                    - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                float_bottom = float_bottom.max(float_extent(document, child).1 - offset_below);
                 continue;
             }
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);

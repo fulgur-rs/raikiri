@@ -3512,6 +3512,137 @@ fn a_float_before_the_last_box_stays_behind_unless_it_crosses_the_page_end() {
 }
 
 #[test]
+fn a_relative_offset_of_the_last_box_does_not_change_how_far_a_float_reaches() {
+    // The box moves by its normal-flow position, 70 to 90, whatever its
+    // offset: a float that ends at the page end at the latest goes along, a
+    // float 1px over keeps it, offset up or down.
+    for (top, float_height, moves) in [
+        (-7, 30, true),
+        (7, 30, true),
+        (-7, 31, false),
+        (7, 31, false),
+    ] {
+        let ys = card_boxes(|doc, card| {
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            let last = block(
+                doc,
+                card,
+                &format!("display:block;height:20px;position:relative;top:{top}px"),
+            );
+            vec![float, last]
+        });
+        let start = if moves { 100.0 } else { 70.0 };
+        assert_eq!(ys, [70.0, start + top as f32], "{top} {float_height}");
+    }
+}
+
+#[test]
+fn a_float_after_the_last_box_of_an_offset_block_counts_from_the_normal_flow_position() {
+    // The wrapper that holds the last box is offset, the float is not (it is
+    // the card's): both ends are measured without the offset.
+    for (top, float_height, moves) in [
+        (-7, 10, true),
+        (7, 10, true),
+        (-7, 11, false),
+        (7, 11, false),
+    ] {
+        let ys = card_boxes(|doc, card| {
+            let wrapper = block(
+                doc,
+                card,
+                &format!("display:block;position:relative;top:{top}px"),
+            );
+            let last = block(doc, wrapper, "display:block;height:20px");
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            vec![last, float]
+        });
+        // The float in the card follows the box only to the position the
+        // card's own flow gives it, which is not under test here.
+        let start = if moves { 100.0 } else { 70.0 };
+        assert_eq!(ys[0], start + top as f32, "{top} {float_height}");
+    }
+}
+
+#[test]
+fn a_float_in_an_offset_block_that_holds_the_one_box_counts_from_the_normal_flow_position() {
+    // The block that holds the box, and the float beside it, are offset; the
+    // block they sit in is not. The box ends at 90 and the float at 100 in the
+    // flow, or at 101.
+    for (top, float_height, moves) in [
+        (-7, 10, true),
+        (7, 10, true),
+        (-7, 11, false),
+        (7, 11, false),
+    ] {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                let inner = block(
+                    doc,
+                    parent,
+                    &format!("display:block;position:relative;top:{top}px"),
+                );
+                block(doc, inner, "display:block;height:30px");
+                block(
+                    doc,
+                    inner,
+                    &format!("float:left;width:10px;height:{float_height}px"),
+                );
+            }),
+            if moves { 100.0 } else { 60.0 },
+            "{top} {float_height}"
+        );
+    }
+}
+
+#[test]
+fn a_float_of_an_offset_card_counts_from_the_normal_flow_position_of_the_box_in_it() {
+    // The card and the wrapper that holds its last box are offset by different
+    // amounts. The float is the card's, so it carries the card's offset only.
+    for (card_top, wrapper_top, float_height, moves) in [
+        (5, -7, 10, true),
+        (-5, 7, 10, true),
+        (5, -7, 11, false),
+        (-5, 7, 11, false),
+    ] {
+        let mut last = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let card = block(
+                doc,
+                body,
+                &format!("display:block;padding-bottom:30px;position:relative;top:{card_top}px"),
+            );
+            block(doc, card, "display:block;height:40px");
+            block(doc, card, "display:block;height:30px");
+            let wrapper = block(
+                doc,
+                card,
+                &format!("display:block;position:relative;top:{wrapper_top}px"),
+            );
+            last = block(doc, wrapper, "display:block;height:20px");
+            block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+        });
+        let start = if moves { 100.0 } else { 70.0 };
+        assert_eq!(
+            page_flow_y(&doc, last),
+            start + (card_top + wrapper_top) as f32,
+            "{card_top} {wrapper_top} {float_height}"
+        );
+    }
+}
+
+#[test]
 fn a_float_between_the_boxes_of_a_tied_run_moves_with_it() {
     // The float between the second box and the card does not cut the run the
     // boxes make with the card, which moves as a whole.
