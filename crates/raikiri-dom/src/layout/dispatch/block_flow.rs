@@ -29,7 +29,8 @@ pub(crate) use sizing::Metrics;
 /// table, a replaced box and a form control do not: their border boxes keep
 /// clear of the margin boxes of the floats in the context they sit in (CSS 2.1
 /// §9.5).
-fn shares_context(style: &Style) -> bool {
+/// The physical leaf metadata probe uses this same eligibility rule.
+pub(super) fn shares_context(style: &Style) -> bool {
     style.is_block()
         && !style.item_is_table
         && !style.item_is_replaced
@@ -509,9 +510,10 @@ fn layout_context(
     let collapse_start = shares_context(style)
         && inputs.vertical_margins_are_collapsible.start
         && metrics.inset.top == 0.0;
-    let collapse_end = shares_context(style)
+    let adjoining_end = shares_context(style)
         && inputs.vertical_margins_are_collapsible.end
-        && metrics.inset.bottom == 0.0
+        && metrics.inset.bottom == 0.0;
+    let collapse_end = adjoining_end
         && matches!(
             style.size.height.expand(),
             ExpandedDimension::Auto | ExpandedDimension::Stretch
@@ -610,8 +612,10 @@ fn layout_context(
         } else {
             CollapsibleMarginSet::ZERO
         },
+        // A zero used height can collapse through even when its explicit
+        // height prevents the last child's margin escaping the bottom edge.
         margins_can_collapse_through: collapse_start
-            && collapse_end
+            && adjoining_end
             && flow.through
             && height == 0.0
             && !metrics.min.height.is_some_and(|min| min > 0.0),
