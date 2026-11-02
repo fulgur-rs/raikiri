@@ -8133,7 +8133,7 @@ fn follows_line_of_paragraph(
                 // A box out of the flow with no insets along the block axis
                 // keeps the static position of its anchor, on a line. Lines
                 // only move when every such box is one that
-                // [`out_of_flow_follow`] puts on its line, so its text goes
+                // `out_of_flow_follow` puts on its line, so its text goes
                 // with that line.
                 || document
                     .oof_coordinates
