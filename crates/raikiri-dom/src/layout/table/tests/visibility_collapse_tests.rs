@@ -219,8 +219,10 @@ fn an_anonymous_row_collapses_with_its_row_group() {
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     assert_eq!(cell_box(&doc, cells[0]).1, 0.0);
-    // Only the second group's row and its two spacings remain.
-    assert_eq!(doc.nodes[table].layout.size.height, 40.0);
+    // Chromium keeps the collapsed group's closing gap as well as both
+    // gaps around the visible row.
+    assert_eq!(doc.nodes[table].layout.size.height, 50.0);
+    assert_eq!(cell_box(&doc, cells[1]), (20.0, 20.0));
 }
 
 /// A separated table whose rows take `rows` styles, each holding one Ahem cell
@@ -288,11 +290,11 @@ fn collapsed_end_rows_leave_the_outer_edge_to_the_rows_that_remain() {
 }
 
 #[test]
-fn a_table_whose_rows_all_collapse_keeps_no_spacing() {
+fn a_table_whose_rows_all_collapse_keeps_outer_spacing() {
     let fixture = fixture(SEPARATE, GROUP, &[COLLAPSED, COLLAPSED], None);
     let group = fixture.doc.nodes[fixture.rows[0]].parent.unwrap();
     let table = fixture.doc.nodes[group].parent.unwrap();
-    assert_eq!(fixture.doc.nodes[table].layout.size.height, 0.0);
+    assert_eq!(fixture.doc.nodes[table].layout.size.height, 20.0);
     // Its first row is collapsed, with no extent for the empty cell's baseline
     // to sit below, so the baseline is the spacing above that row.
     assert_eq!(fixture.doc.nodes[table].table_first_baseline, Some(10.0));
@@ -396,4 +398,96 @@ fn a_table_whose_rows_all_collapse_shows_only_its_own_border() {
     let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
     let layout = doc.nodes[table].layout;
     assert_eq!((layout.size.width, layout.size.height), (20.0, 0.0));
+}
+
+#[test]
+fn a_collapsed_group_ending_row_keeps_its_gap() {
+    // Chromium measurements from RAIKIRI-1352: the collapsed header keeps
+    // its trailing gap without changing how the rows share the stated height.
+    for (groups, expected_height, expected_rows) in [
+        (
+            [
+                "table-header-group",
+                "table-row-group",
+                "table-footer-group",
+            ],
+            70.0,
+            [(8.0, 44.0), (56.0, 10.0)],
+        ),
+        (["table-row-group"; 3], 58.0, [(8.0, 28.0), (40.0, 14.0)]),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        let table = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:table;height:100px;border-spacing:4px"),
+        );
+        let mut cells = Vec::new();
+        for (index, (group_display, height)) in groups.into_iter().zip([30, 20, 10]).enumerate() {
+            let group = doc.append_element(
+                Some(table),
+                "div",
+                Some(&format!("display:{group_display}")),
+            );
+            let row = doc.append_element(
+                Some(group),
+                "div",
+                Some(if index == 0 { COLLAPSED } else { ROW }),
+            );
+            cells.push(doc.append_element(
+                Some(row),
+                "div",
+                Some(&format!(
+                    "display:table-cell;width:20px;height:{height}px;padding:0"
+                )),
+            ));
+        }
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+        assert_eq!(doc.nodes[table].layout.size.height, expected_height);
+        assert_eq!(cell_box(&doc, cells[1]), expected_rows[0]);
+        assert_eq!(cell_box(&doc, cells[2]), expected_rows[1]);
+    }
+}
+
+#[test]
+fn a_collapsed_group_keeps_only_its_last_gap() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:table;height:100px;border-spacing:4px"),
+    );
+    let hidden = doc.append_element(
+        Some(table),
+        "div",
+        Some("display:table-row-group;visibility:collapse"),
+    );
+    for _ in 0..2 {
+        let row = doc.append_element(Some(hidden), "div", Some("display:table-row;height:30px"));
+        doc.append_element(
+            Some(row),
+            "div",
+            Some("display:table-cell;width:20px;height:20px;padding:0"),
+        );
+    }
+    let shown = doc.append_element(Some(table), "div", Some(GROUP));
+    let row = doc.append_element(Some(shown), "div", Some(ROW));
+    let cell = doc.append_element(
+        Some(row),
+        "div",
+        Some("display:table-cell;width:20px;height:20px;padding:0"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    // Chromium: body margin 8 plus two 4px gaps puts the cell at y=16.
+    assert_eq!(cell_box(&doc, cell).0, 8.0);
+    assert!((cell_box(&doc, cell).1 - 20.952381).abs() < 0.01);
+    assert!((doc.nodes[table].layout.size.height - 32.95238).abs() < 0.01);
 }
