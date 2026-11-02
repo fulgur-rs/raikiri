@@ -1074,13 +1074,15 @@ fn an_avoided_break_before_a_float_leaves_the_box_before_it_as_the_last_one() {
 }
 
 #[test]
-fn a_float_between_the_tied_boxes_leaves_them_alone() {
-    // The float is a flow of its own and has rules of its own.
-    let mut last = 0;
+fn a_float_between_the_tied_boxes_goes_with_them() {
+    // The float lies in a flow of its own and does not cut the run the boxes
+    // make: the second and last box move to the next page together, and the
+    // padding of the parent with them.
+    let (mut second, mut last) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         let parent = block(doc, body, "display:block;padding-bottom:30px");
         block(doc, parent, "display:block;height:40px");
-        block(doc, parent, "display:block;height:30px;break-after:avoid");
+        second = block(doc, parent, "display:block;height:30px;break-after:avoid");
         block(
             doc,
             parent,
@@ -1088,7 +1090,8 @@ fn a_float_between_the_tied_boxes_leaves_them_alone() {
         );
         last = block(doc, parent, "display:block;height:20px");
     });
-    assert_eq!(page_flow_y(&doc, last), 70.0);
+    assert_eq!(page_flow_y(&doc, second), 100.0);
+    assert_eq!(page_flow_y(&doc, last), 130.0);
 }
 
 #[test]
@@ -3701,4 +3704,135 @@ fn a_float_after_an_inner_block_of_boxes_counts_for_the_last_box_in_it() {
         });
         assert_eq!(ys, [if moves { 100.0 } else { 80.0 }], "{float_height}");
     }
+}
+
+/// `body > div(padding-bottom:15px) > [A 30, B 30, middle, C 35]` on 100px
+/// pages, where `ties` is the CSS of B and C that avoids the break between
+/// them, and `middle` adds what sits between B and C. Returns the page-flow y
+/// of A, B and C.
+fn chain_with_float(
+    (b_css, c_css): (&str, &str),
+    middle: impl FnOnce(&mut Document, usize),
+) -> [f32; 3] {
+    let (mut ids, mut card) = ([0; 3], 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, "display:block;padding-bottom:15px");
+        ids[0] = block(doc, card, "display:block;height:30px");
+        ids[1] = block(doc, card, &format!("display:block;height:30px;{b_css}"));
+        middle(doc, card);
+        ids[2] = block(doc, card, &format!("display:block;height:35px;{c_css}"));
+    });
+    ids.map(|id| page_flow_y(&doc, id))
+}
+
+const TIED_AFTER: (&str, &str) = ("break-after:avoid", "");
+const TIED_BEFORE: (&str, &str) = ("", "break-before:avoid");
+
+#[test]
+fn a_float_between_the_boxes_of_a_tied_chain_does_not_cut_it() {
+    // The chain of B and C moves with the padding below it, and the floats
+    // with it, however the break between them is avoided. A float that ends at
+    // the page end at the latest goes along; one that crosses it keeps the
+    // chain where it is.
+    for ties in [TIED_AFTER, TIED_BEFORE] {
+        for (floats, moves) in [
+            (&[10][..], true),
+            (&[10, 12][..], true),
+            (&[40][..], true),
+            (&[41][..], false),
+            (&[10, 60][..], false),
+        ] {
+            let ys = chain_with_float(ties, |doc, card| {
+                for height in floats {
+                    block(
+                        doc,
+                        card,
+                        &format!("float:left;width:10px;height:{height}px"),
+                    );
+                }
+            });
+            let expected = if moves {
+                [0.0, 100.0, 130.0]
+            } else {
+                [0.0, 30.0, 60.0]
+            };
+            assert_eq!(ys, expected, "{ties:?} {floats:?}");
+        }
+    }
+}
+
+#[test]
+fn a_float_of_several_lines_between_the_boxes_of_a_chain_does_not_cut_it() {
+    // The float has places to break at inside it, which the boxes of the run
+    // do not: it is no box of the run and is not asked to move whole.
+    let mut ys = [0; 3];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let card = block(doc, body, "display:block;padding-bottom:15px");
+        ys[0] = block(doc, card, "display:block;height:30px");
+        ys[1] = block(doc, card, "display:block;height:30px;break-after:avoid");
+        let float = block(
+            doc,
+            card,
+            "float:left;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(float, ["aaa"; 3].join(" "));
+        ys[2] = block(doc, card, "display:block;height:35px");
+    });
+    assert_eq!(ys.map(|id| page_flow_y(&doc, id)), [0.0, 100.0, 130.0]);
+}
+
+#[test]
+fn a_float_before_a_chain_that_starts_the_block_leaves_it_as_it_was() {
+    // The first box is tied to the one after it, and starts the block: the
+    // page breaks before the second box, whether a float comes first or not.
+    for leading_float in [false, true] {
+        let (mut first, mut second) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let card = block(doc, body, "display:block;padding-bottom:15px");
+            if leading_float {
+                block(doc, card, "float:left;width:10px;height:10px");
+            }
+            first = block(doc, card, "display:block;height:50px;break-after:avoid");
+            second = block(doc, card, "display:block;height:40px");
+        });
+        assert_eq!(
+            [page_flow_y(&doc, first), page_flow_y(&doc, second)],
+            [0.0, 100.0],
+            "{leading_float}"
+        );
+    }
+}
+
+#[test]
+fn a_float_among_the_boxes_of_a_chain_in_an_inner_block_does_not_cut_it() {
+    // The wrapper that holds the chain ends the card: the chain moves with the
+    // padding of the card below the wrapper.
+    let mut ys = [0; 3];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let card = block(doc, body, "display:block;padding-bottom:15px");
+        let wrapper = block(doc, card, "display:block");
+        ys[0] = block(doc, wrapper, "display:block;height:30px");
+        ys[1] = block(doc, wrapper, "display:block;height:30px;break-after:avoid");
+        block(doc, wrapper, "float:left;width:10px;height:10px");
+        ys[2] = block(doc, wrapper, "display:block;height:35px");
+    });
+    assert_eq!(ys.map(|id| page_flow_y(&doc, id)), [0.0, 100.0, 130.0]);
+}
+
+#[test]
+fn floats_in_every_gap_of_a_chain_of_three_do_not_cut_it() {
+    let mut ys = [0; 4];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let card = block(doc, body, "display:block;padding-bottom:15px");
+        ys[0] = block(doc, card, "display:block;height:20px");
+        ys[1] = block(doc, card, "display:block;height:30px;break-after:avoid");
+        block(doc, card, "float:left;width:10px;height:5px");
+        ys[2] = block(doc, card, "display:block;height:25px;break-after:avoid");
+        block(doc, card, "float:left;width:10px;height:5px");
+        ys[3] = block(doc, card, "display:block;height:20px");
+    });
+    assert_eq!(
+        ys.map(|id| page_flow_y(&doc, id)),
+        [0.0, 100.0, 130.0, 155.0]
+    );
 }
