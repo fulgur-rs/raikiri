@@ -4377,6 +4377,9 @@ fn grid_layout_sized(
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     let right_to_left = grid_oof::right_to_left(tree, idx);
+    tree.context
+        .grid_inner_heights
+        .push((idx, parent_size.height));
     let mut output = content_limits::with_grid_item_content_limits(
         tree,
         node_id,
@@ -4417,6 +4420,7 @@ fn grid_layout_sized(
             }
         },
     );
+    tree.context.grid_inner_heights.pop();
     let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);

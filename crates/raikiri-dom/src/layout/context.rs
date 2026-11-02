@@ -37,6 +37,11 @@ pub(crate) struct LayoutContext {
     pub(crate) transposed_frame_serial: u64,
     pub(crate) transposed_blocks: Vec<crate::layout::dispatch::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
+    /// The height of the content box of each grid container being laid out,
+    /// innermost last, where its own `height` or its parent makes it definite.
+    /// A grid does not hand it to its items while it sizes the columns, as its
+    /// rows are not yet known then (see `with_page_room`).
+    pub(crate) grid_inner_heights: Vec<(usize, Option<f32>)>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
