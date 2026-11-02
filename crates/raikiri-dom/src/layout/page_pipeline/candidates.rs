@@ -9,13 +9,14 @@ use super::{
     PositionValue, TextLineIndex, UnplacedBlockLine, accumulated_relative_offset_y,
     avoid_chain_before_last_box, avoided_run_head, box_forces_break_after, box_is_unbreakable,
     boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
-    closing_edges_of, container_item_tail, first_owned_text_line_top, height_follows_content,
-    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
-    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
-    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
-    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    closing_edges_of, container_item_tail, first_owned_text_line_top, has_mandatory_break_inside,
+    height_follows_content, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
+    is_plain_block_box, is_plain_container_box, leading_holder, leading_piece_end,
+    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
+    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -1052,12 +1053,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .then(|| unplaced_line(document, cascade, node_id))
                     .flatten();
                 let unbreakable_box = box_is_unbreakable(document, node_id);
-                let avoids_break = matches!(
+                let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid
                         | raikiri_style::property::BreakInside::AvoidPage
-                ) || unplaced_line.is_some()
-                    || unbreakable_box;
+                );
+                let avoids_break = avoids_by_property || unplaced_line.is_some() || unbreakable_box;
                 let clears_float = !inline_level
                     && is_block_flow_box
                     && [FloatValue::Left, FloatValue::Right]
@@ -1139,7 +1140,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || (closing_edges_shape
                             && node.is_ifc_root()
                             && paragraph_lines_keep_together(document, cascade, node_id)));
-                let closing_edges_base = closing_edges_shape && unbreakable;
+                // A box that asks to avoid a break inside it has nothing to
+                // break at either: it moves to the next page with the edges
+                // that would break away from it, so that the page breaks
+                // between boxes rather than inside it or before the edges. A
+                // box that forces a break inside it splits there instead.
+                let closing_edges_base = closing_edges_shape
+                    && (unbreakable
+                        || (avoids_by_property
+                            && !has_mandatory_break_inside(document, cascade, node_id)));
                 // How far below the first box of the run that avoided breaks
                 // tie the node to its top sits, so that the avoided break
                 // before it can give way when that box starts its page.
@@ -1309,10 +1318,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // next page for them has no such break there: its box ends up
                 // at the top of that page, and its lines split when the edges
                 // still run past the page end.
+                //
+                // A paragraph that asks to avoid a break inside it takes part
+                // too: it moves whole with the edges when they fit a page
+                // together, and its lines split only when they cannot (see
+                // `keep_lines_together`). A line that no text places, or a
+                // box that no break goes through, never splits.
                 let lines_closing_edges = if lines_shape
                     && can_move_nested
                     && (!unbreakable || frame.lone_in_edges || closing_edges_shape)
-                    && !avoids_break
+                    && unplaced_line.is_none()
+                    && !unbreakable_box
                     && node.is_ifc_root()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. })
                 {

@@ -18,17 +18,16 @@ use super::{
     forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
-    lead_below_ancestor, leading_edges_move, leading_holder, leading_space_between,
-    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
-    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
-    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
-    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, run_tail_move,
-    shift_paragraph_lines, shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line,
-    text_changes_page_name, text_sets_page_name,
+    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
+    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, lines_move_grows_box, make_room_for_table_header,
+    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
+    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
+    positioned_text_start_y, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, run_tail_move, shift_paragraph_lines, shift_text_candidate,
+    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -961,16 +960,11 @@ impl PaginationState {
             && !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant()
         {
-            let (ancestor, lead) = leading_holder(document, cascade, body_id, node_id, true);
-            // Only the padding and border of those blocks and the margins
-            // between them lie above the box: anything else before it is a
-            // place to break at. And they begin on the page the box does;
-            // blocks that began on an earlier one have left it.
-            (ancestor != node_id
-                && lead > 0.0
-                && lead <= leading_space_between(document, cascade, node_id, ancestor) + 0.01
-                && effective_y - relative_offset - lead >= fit_page_start - 0.001)
-                .then(|| (lead, document.nodes[ancestor].layout.margin.top))
+            // The blocks begin on the page the box does; blocks that began on
+            // an earlier one have left it.
+            lead_below_edges(document, cascade, body_id, node_id)
+                .filter(|&(_, lead)| effective_y - relative_offset - lead >= fit_page_start - 0.001)
+                .map(|(ancestor, lead)| (lead, document.nodes[ancestor].layout.margin.top))
         } else {
             None
         };
@@ -1451,10 +1445,50 @@ impl PaginationState {
             let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id);
             // The break that keeps the last lines with the padding and border
             // that close the boxes around the paragraph, on `page`.
+            let closing_edges = candidate.context.lines_closing_edges();
+            // A paragraph that avoids a break inside it moves whole with the
+            // edges when they fit a page together, along with the blocks it
+            // begins (a padding above it goes with it, when those blocks start
+            // on this page). Only when they cannot, the page breaks between
+            // its lines rather than between its last line and the edges. A box
+            // taller than its lines, with a height of its own, say, has the
+            // edges after the box and not after the lines: it is left whole.
+            let avoided_whole = closing_edges > 0.0
+                && box_avoids_page_break_inside(
+                    document,
+                    block_id,
+                    cascade.computed[block_id].break_inside,
+                )
+                && {
+                    let layout = &document.nodes[block_id].layout;
+                    let own_edges = layout.padding.bottom + layout.border.bottom;
+                    let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
+                    let content =
+                        layout.size.height - own_edges - layout.padding.top - layout.border.top;
+                    let block_top = block_effective_y(
+                        document,
+                        block_id,
+                        candidate.raw_y,
+                        text.effective_y,
+                        root_flow_offset,
+                        self.flow_shift,
+                    );
+                    let page_start = page_origins.origin(self.current_page);
+                    let lead = lead_below_edges(document, cascade, body_id, block_id)
+                        .map(|(_, lead)| lead)
+                        .filter(|lead| block_top - lead >= page_start - 0.001)
+                        .unwrap_or(0.0);
+                    (content - lines).abs() > 0.5
+                        || lead + layout.border.top + layout.padding.top + lines + closing_edges
+                            <= page_origins.step_at(self.current_page) + 0.001
+                };
             let closing_edges_break = |page: u32, effective_y: f32| {
+                if avoided_whole {
+                    return None;
+                }
                 closing_edges_line_move(
                     &line_metrics,
-                    candidate.context.lines_closing_edges(),
+                    closing_edges,
                     effective_y,
                     page,
                     cascade.computed[block_id].orphans.max(1) as usize,

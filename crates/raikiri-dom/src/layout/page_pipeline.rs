@@ -5462,6 +5462,27 @@ fn leading_space_between(
     total
 }
 
+/// The outermost box that `node_id` begins, and how far below the top of that
+/// box `node_id` starts: `Some((holder, lead))`. Only the border and padding
+/// of the boxes between them, and the margins between those, may lie above
+/// `node_id` (see [`leading_holder`] and [`leading_space_between`]; a hundredth of
+/// a pixel absorbs the rounding of the two). The result is `None` when
+/// `node_id` begins no such box, or when anything else lies before it: the
+/// walk of `leading_holder` cannot see what an anonymous block holds, and that
+/// is a place to break at.
+fn lead_below_edges(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<(usize, f32)> {
+    let (holder, lead) = leading_holder(document, cascade, body_id, node_id, true);
+    (holder != node_id
+        && lead > 0.0
+        && lead <= leading_space_between(document, cascade, node_id, holder) + 0.01)
+        .then_some((holder, lead))
+}
+
 /// Whether the position of `node_id` does not follow its layout parent's in
 /// the block flow: it is placed out of flow, or by an inline formatting
 /// context.

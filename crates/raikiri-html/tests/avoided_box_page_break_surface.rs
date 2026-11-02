@@ -263,6 +263,118 @@ fn a_percentage_margin_below_the_top_edge_is_resolved_against_the_parent() {
     );
 }
 
+/// A parent `o` with the style `parent` after a spacer, holding a paragraph
+/// `i` of `lines` lines that avoids a break inside it.
+fn avoiding_paragraph(parent: &str, own: &str, lines: usize) -> String {
+    format!(
+        "{SPACER}<div id=o style='width:300px;{parent}'>\
+         <p id=i style='margin:0;break-inside:avoid;{own}'>{}</p></div>",
+        vec!["L"; lines].join("<br>")
+    )
+}
+
+#[test]
+fn an_avoiding_paragraph_that_fits_a_page_without_the_edges_below_it_gives_up_its_last_lines() {
+    // The paragraph moves to the next page, where its 58 lines fit the page
+    // but the padding below them does not. The page breaks between its lines
+    // rather than between the last line and the padding, so the padding is
+    // not left alone: the last two lines go on with it. The first fragment
+    // runs to the page end.
+    for parent in ["padding-bottom:30px", "border-bottom:30px solid"] {
+        let body = avoiding_paragraph(parent, "", 58);
+        assert_eq!(
+            extents(&body, "o"),
+            [None, Some((0, 600)), Some((0, 50))],
+            "{parent}"
+        );
+        assert_eq!(
+            extents(&body, "i"),
+            [None, Some((0, 600)), Some((0, 20))],
+            "{parent}"
+        );
+    }
+    // The edges of the paragraph itself, and of two blocks around it.
+    let body = avoiding_paragraph("", "padding-bottom:30px", 58);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 600)), Some((0, 50))]);
+    let body = format!(
+        "{SPACER}<div id=o style='width:300px;padding-bottom:10px'>\
+         <div style='padding-bottom:20px'><p id=i style='margin:0;break-inside:avoid'>{}</p>\
+         </div></div>",
+        vec!["L"; 58].join("<br>")
+    );
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 50))]);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 600)), Some((0, 20))]);
+    // A padding above the paragraph goes with it to the next page.
+    let body = avoiding_paragraph("padding:20px 0 30px", "", 58);
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 50))]);
+    assert_eq!(extents(&body, "i"), [None, Some((20, 600)), Some((0, 20))]);
+    // One more line gives up the same two.
+    let body = avoiding_paragraph("padding-bottom:30px", "", 59);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 600)), Some((0, 20))]);
+}
+
+#[test]
+fn an_avoiding_paragraph_stays_whole_where_the_edges_fit_a_page_with_it() {
+    // Together they fit the next page, so they move there as a whole.
+    let body = avoiding_paragraph("padding-bottom:30px", "", 30);
+    assert_eq!(extents(&body, "o"), [None, Some((0, 330))]);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 300))]);
+    // Exactly a page.
+    let body = avoiding_paragraph("padding-bottom:30px", "", 57);
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600))]);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 570))]);
+    // Without edges below it, the paragraph is not cut.
+    let body = avoiding_paragraph("", "", 58);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 580))]);
+}
+
+/// A parent `o` with the style `parent` that holds a spacer of `before` tall
+/// and then the box `i`, which avoids a break inside it.
+fn avoiding_box_after(parent: &str, before: u32, inner: &str) -> String {
+    format!(
+        "<div id=o style='width:300px;{parent}'><div style='height:{before}px'></div>\
+         <div id=i style='break-inside:avoid'>{inner}</div></div>"
+    )
+}
+
+#[test]
+fn an_avoiding_box_after_another_box_goes_to_the_next_page_when_the_edges_run_past_it() {
+    // The box fits its page and the padding below it does not, so the page
+    // breaks before the box, not between the box and the padding, and not
+    // inside the box. Box and padding fill the next page exactly.
+    let lines = |count: usize| vec!["L"; count].join("<br>");
+    let body = avoiding_box_after("padding-bottom:30px", 10, &lines(57));
+    assert_eq!(extents(&body, "o"), [Some((8, 600)), Some((0, 600))]);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 570))]);
+    // The same box when it does not fit a page together with the padding:
+    // it goes to the next page and gives up its last lines there.
+    let body = avoiding_box_after("padding-bottom:30px", 10, &lines(58));
+    assert_eq!(
+        extents(&body, "o"),
+        [Some((8, 600)), Some((0, 600)), Some((0, 50))]
+    );
+    assert_eq!(extents(&body, "i"), [None, Some((0, 600)), Some((0, 20))]);
+    // A box made of blocks keeps them together the same way.
+    let body = avoiding_box_after(
+        "padding-bottom:30px",
+        300,
+        "<div style='height:200px'></div><div style='height:90px'></div>",
+    );
+    assert_eq!(extents(&body, "o"), [Some((8, 600)), Some((0, 320))]);
+    assert_eq!(extents(&body, "i"), [None, Some((0, 290))]);
+    // A box taller than a page is no better off on the next page, but the
+    // page still breaks before it; its last lines go on with the padding.
+    let body = avoiding_box_after("padding-bottom:30px", 10, &lines(65));
+    assert_eq!(
+        extents(&body, "o"),
+        [Some((8, 600)), Some((0, 600)), Some((0, 80))]
+    );
+    assert_eq!(extents(&body, "i"), [None, Some((0, 600)), Some((0, 50))]);
+    // Without a padding below it, the box stays.
+    let body = avoiding_box_after("", 10, &lines(58));
+    assert_eq!(extents(&body, "i"), [Some((18, 598))]);
+}
+
 #[test]
 fn the_sizes_of_the_parent_do_not_stop_it_from_moving() {
     // A min-height shows below the child, a fixed height or a max-height

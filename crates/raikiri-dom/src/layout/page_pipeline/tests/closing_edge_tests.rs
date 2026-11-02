@@ -1490,9 +1490,11 @@ fn the_last_lines_that_widows_keep_together_move_with_the_edges() {
     assert_eq!(closed_paragraph(6, "orphans:1;widows:3"), (10.0, 170.0));
     assert_eq!(closed_paragraph(3, "orphans:1;widows:1"), (40.0, 150.0));
     assert_eq!(closed_paragraph(2, "orphans:1;widows:1"), (50.0, 150.0));
-    // A paragraph that avoids breaks inside keeps all its lines.
+    // A paragraph that avoids breaks inside keeps all its lines, so the box
+    // before it is the one the page breaks from: it moves whole with the
+    // padding, which fit a page together (60 + 40).
     for avoid in ["break-inside:avoid", "break-inside:avoid-page"] {
-        assert_eq!(closed_paragraph(6, avoid), (10.0, 110.0), "{avoid}");
+        assert_eq!(closed_paragraph(6, avoid), (100.0, 200.0), "{avoid}");
     }
 }
 
@@ -3160,7 +3162,7 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
     // the edges when nothing keeps the items together or makes the last one
     // something else than a box to move.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 19] = [
+    let shapes: [(&str, Shape); 17] = [
         ("avoided break before the last item", |doc, card| {
             let ids = flex_column_of(doc, card, 1, "");
             vec![
@@ -3299,28 +3301,56 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
                 vec![ids[0], ids[1], ids[2]]
             },
         ),
-        // Browsers send the whole container on with the edges; it is left
-        // where the flow puts it.
-        ("flex column that avoids breaks inside", |doc, card| {
-            let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
-            vec![ids[0], ids[1], ids[2]]
-        }),
-        ("table that avoids breaks inside", |doc, card| {
-            let table = block(
-                doc,
-                card,
-                "display:table;border-spacing:0;break-inside:avoid",
-            );
-            let first = block(doc, table, "display:table-row");
-            block(doc, first, "display:table-cell;padding:0;height:10px");
-            let row = block(doc, table, "display:table-row");
-            block(doc, row, "display:table-cell;padding:0;height:10px");
-            vec![table, first, row]
-        }),
     ];
     for (label, build) in shapes {
         let (ys, _) = card_with_edges(30, build);
         assert!(ys[2] < 100.0, "{label}: {ys:?}");
+    }
+}
+
+#[test]
+fn a_container_that_avoids_breaks_inside_moves_whole_with_the_edges() {
+    // Nothing may break between its items, so the page breaks before the
+    // container, and the items go on with it rather than one of them alone.
+    let (ys, height) = card_with_edges(30, |doc, card| {
+        let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
+        vec![ids[0], ids[1], ids[2]]
+    });
+    assert_eq!(ys, [100.0, 100.0, 110.0]);
+    assert_eq!(height, 150.0);
+    let (ys, height) = card_with_edges(30, |doc, card| {
+        let table = block(
+            doc,
+            card,
+            "display:table;border-spacing:0;break-inside:avoid",
+        );
+        let first = block(doc, table, "display:table-row");
+        block(doc, first, "display:table-cell;padding:0;height:10px");
+        let row = block(doc, table, "display:table-row");
+        block(doc, row, "display:table-cell;padding:0;height:10px");
+        vec![table, first, row]
+    });
+    assert_eq!(ys, [100.0, 100.0, 110.0]);
+    assert_eq!(height, 150.0);
+}
+
+#[test]
+fn an_avoiding_box_with_a_forced_break_inside_stays_where_the_break_splits_it() {
+    // `break-inside` does not stop a forced break, so the box is split there
+    // wherever it sits: moving it whole first would only add a page.
+    for column in [true, false] {
+        let (ys, _) = card_with_edges(30, |doc, card| {
+            let display = if column {
+                "display:flex;flex-direction:column;"
+            } else {
+                "display:block;"
+            };
+            let outer = block(doc, card, &format!("{display}break-inside:avoid"));
+            let first = block(doc, outer, "display:block;height:10px");
+            let second = block(doc, outer, "display:block;height:10px;break-before:page");
+            vec![outer, first, second]
+        });
+        assert_eq!(ys, [70.0, 70.0, 100.0], "column: {column}");
     }
 }
 
@@ -3940,4 +3970,125 @@ fn a_chain_that_ends_in_a_stacked_flex_or_table_breaks_between_its_last_items() 
         }),
         [0.0, 30.0, 60.0, 100.0]
     );
+}
+
+/// `body > div(parent_css) > [div(before px), p(paragraph_css)]` where the
+/// paragraph is `lines` lines of 10px Ahem text, 30px wide, on 100px pages.
+/// Returns the page-flow y of the paragraph, its height and the height of the
+/// div.
+fn paragraph_in(
+    parent_css: &str,
+    before: u32,
+    paragraph_css: &str,
+    lines: usize,
+) -> (f32, f32, f32) {
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        parent = block(doc, body, &format!("display:block;{parent_css}"));
+        block(doc, parent, &format!("display:block;height:{before}px"));
+        paragraph = block(
+            doc,
+            parent,
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
+        );
+        doc.append_text(paragraph, vec!["aaa"; lines].join(" "));
+    });
+    assert!(doc.nodes[paragraph].is_ifc_root());
+    (
+        page_flow_y(&doc, paragraph),
+        doc.nodes[paragraph].layout.size.height,
+        doc.nodes[parent].layout.size.height,
+    )
+}
+
+#[test]
+fn an_avoiding_paragraph_after_a_box_moves_whole_with_the_edges_that_would_break_away() {
+    // The paragraph ends at 80 and the 30px of padding below it run past the
+    // page end. Nothing may break inside the paragraph, so the page breaks
+    // before it, and the padding is not left alone.
+    for avoid in ["break-inside:avoid", "break-inside:avoid-page"] {
+        assert_eq!(
+            paragraph_in("padding-bottom:30px", 10, avoid, 7),
+            (100.0, 70.0, 200.0),
+            "{avoid}"
+        );
+    }
+    // The edges of a block between it and the parent count too: 20px of
+    // padding below the paragraph still fit the page, the 10px of the parent
+    // do not.
+    let mut paragraph = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:10px");
+        block(doc, parent, "display:block;height:10px");
+        let wrapper = block(doc, parent, "display:block;padding-bottom:20px");
+        paragraph = block(
+            doc,
+            wrapper,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;\
+             break-inside:avoid",
+        );
+        doc.append_text(paragraph, ["aaa"; 7].join(" "));
+    });
+    assert_eq!(page_flow_y(&doc, paragraph), 100.0);
+    // Without `break-inside` the page breaks between its lines instead.
+    assert_eq!(
+        paragraph_in("padding-bottom:30px", 10, "", 7),
+        (10.0, 110.0, 150.0)
+    );
+    // Without edges below it, it stays where it is.
+    assert_eq!(
+        paragraph_in("", 10, "break-inside:avoid", 9),
+        (10.0, 90.0, 100.0)
+    );
+}
+
+#[test]
+fn an_avoiding_paragraph_that_cannot_fit_a_page_with_the_edges_gives_up_its_last_lines() {
+    // The paragraph and 30px of padding are more than a page together, so no
+    // page holds both. The paragraph still goes to the next page, where it
+    // fits, and its last two lines go on with the padding: a break between
+    // lines beats one between the last line and the padding.
+    for lines in [8, 9] {
+        assert_eq!(
+            paragraph_in("padding-bottom:30px", 10, "break-inside:avoid", lines),
+            (100.0, 120.0, 250.0),
+            "{lines} lines"
+        );
+    }
+    // Where the paragraph starts its page there is no better break.
+    assert_eq!(
+        paragraph_in("padding-bottom:30px", 0, "break-inside:avoid", 9),
+        (0.0, 120.0, 150.0)
+    );
+    // The same with the edges of the paragraph itself.
+    assert_eq!(
+        paragraph_in("", 0, "break-inside:avoid;padding-bottom:30px", 8),
+        (0.0, 150.0, 150.0)
+    );
+}
+
+#[test]
+fn an_avoiding_paragraph_with_a_height_of_its_own_moves_whole_with_the_edges() {
+    // The edges follow the box, not its lines: its 80px end at 90, and the
+    // padding below does not fit. No page break goes between the lines, so
+    // the box goes to the next page whole, as Chromium prints it.
+    for height in ["height:80px", "min-height:80px"] {
+        let (y, box_height, _) = paragraph_in(
+            "padding-bottom:30px",
+            10,
+            &format!("break-inside:avoid;{height}"),
+            3,
+        );
+        assert_eq!((y, box_height), (100.0, 80.0), "{height}");
+    }
+    // Where box and edges fit a page, nothing moves.
+    let (y, box_height, parent_height) = paragraph_in(
+        "padding-bottom:30px",
+        10,
+        "break-inside:avoid;height:60px",
+        3,
+    );
+    assert_eq!((y, box_height, parent_height), (10.0, 60.0, 100.0));
 }
