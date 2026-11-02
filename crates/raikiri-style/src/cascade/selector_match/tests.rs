@@ -11,6 +11,7 @@ mod class_index_tests;
 mod direction_cache_tests;
 mod filtered_nth_tests;
 mod has_cache_tests;
+mod has_path_tests;
 mod later_sibling_tests;
 mod namespace_tests;
 
