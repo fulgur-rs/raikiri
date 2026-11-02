@@ -218,6 +218,11 @@ fn the_margins_of_the_wrappers_between_the_parent_and_the_child_add_to_the_offse
         ("margin-top:10px", "margin-top:4px", 30),
         ("margin-top:10px;padding-top:5px", "", 35),
         ("margin-top:10px;border-top:5px solid", "", 35),
+        // A block that establishes a formatting context keeps the margin of
+        // its first child inside it, apart from its own.
+        ("margin-top:10px;display:flow-root", "margin-top:15px", 45),
+        ("margin-top:10px;overflow:hidden", "margin-top:15px", 45),
+        ("margin-top:10px;display:flow-root", "", 30),
     ] {
         let body = wrapped(wrapper, child);
         let name = format!("wrapper {wrapper:?} child {child:?}");
@@ -240,6 +245,22 @@ fn the_margins_of_the_wrappers_between_the_parent_and_the_child_add_to_the_offse
     );
     assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 140))]);
     assert_eq!(extents(&body, "i"), [None, Some((40, 600)), Some((0, 140))]);
+}
+
+#[test]
+fn a_percentage_margin_below_the_top_edge_is_resolved_against_the_parent() {
+    // The parent is wider than the page, so the 5% of its width (CSS 2
+    // section 8.3) is more than 5% of the page. Following that rule rather
+    // than a Chromium print, which scales a page that wide to fit.
+    let body = format!(
+        "{SPACER}<div id=o style='width:1600px;padding-top:20px'>\
+         <div id=i style='height:700px;break-inside:avoid;margin-top:5%'></div></div>"
+    );
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 200))]);
+    assert_eq!(
+        extents(&body, "i"),
+        [None, Some((100, 600)), Some((0, 200))]
+    );
 }
 
 #[test]

@@ -968,22 +968,9 @@ impl PaginationState {
             // blocks that began on an earlier one have left it.
             (ancestor != node_id
                 && lead > 0.0
-                && lead
-                    <= leading_space_between(
-                        document,
-                        cascade,
-                        node_id,
-                        ancestor,
-                        own_margin_top,
-                        content_width,
-                    ) + 0.01
+                && lead <= leading_space_between(document, cascade, node_id, ancestor) + 0.01
                 && effective_y - relative_offset - lead >= fit_page_start - 0.001)
-                .then(|| {
-                    (
-                        lead,
-                        break_margins(document, cascade, ancestor, content_width).0,
-                    )
-                })
+                .then(|| (lead, document.nodes[ancestor].layout.margin.top))
         } else {
             None
         };

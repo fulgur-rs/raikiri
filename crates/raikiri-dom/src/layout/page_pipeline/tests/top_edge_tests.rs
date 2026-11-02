@@ -906,6 +906,22 @@ fn a_margin_above_the_box_adds_to_the_offset_below_the_padding_of_a_moved_block(
         wrapped_after(90, &[PADDED, "margin-top:10px;padding-top:5px"], tall),
         [100.0, 116.0, 121.0]
     );
+    // A block that establishes a formatting context keeps the margin of the
+    // box inside it apart from its own.
+    for wrapper in [
+        "display:flow-root;margin-top:10px",
+        "overflow:hidden;margin-top:10px",
+    ] {
+        assert_eq!(
+            wrapped_after(
+                90,
+                &[PADDED, wrapper],
+                "height:120px;break-inside:avoid;margin-top:15px"
+            ),
+            [100.0, 116.0, 131.0],
+            "{wrapper}"
+        );
+    }
     // A wrapper that generates no box keeps no margin or edge of its own.
     let ys = wrapped_after(90, &[PADDED, "display:contents;margin-top:10px"], tall);
     assert_eq!([ys[0], ys[2]], [100.0, 106.0]);
