@@ -77,11 +77,23 @@ impl ResourceNetworkProvider<'_> {
         loop {
             match self.inner.fetch_one_hop(current.clone())? {
                 FetchOutcome::Body(fetched) => return Ok(fetched),
-                FetchOutcome::Redirect { location, .. } => {
+                FetchOutcome::Redirect { location, status } => {
+                    // Ask for the next request first, so that policy is only
+                    // consulted about a target that would really be requested.
+                    let next = current
+                        .redirected(location.clone(), status)
+                        .map_err(|error| {
+                            Self::violation(
+                                request,
+                                &location,
+                                ViolationType::RedirectDenied,
+                                error.to_string(),
+                            )
+                        })?;
                     self.check_redirect(request, &current.url, &location, hop)?;
                     hop += 1;
                     self.check_url_policy(request, &location)?;
-                    current.url = location;
+                    current = next;
                 }
                 // cov:ignore: `FetchOutcome` is `#[non_exhaustive]`; this
                 // crate cannot construct a third variant to exercise this

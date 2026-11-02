@@ -29,6 +29,7 @@ pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
 mod options_tests;
 mod page_name_storage_tests;
+mod page_start_tests;
 mod paged_spanning_tests;
 mod sibling_adjacency_tests;
 mod source_walk_tests;
@@ -16942,9 +16943,9 @@ fn a_box_that_begins_plain_blocks_takes_them_to_the_next_page() {
     // edge, so both start the page with it.
     let (doc, cascade, [body, outer, middle, first, _]) =
         nested_holder_document("display:block", "display:block;height:50px", None);
-    assert_eq!(leading_holder(&doc, &cascade, body, first), outer);
-    assert_eq!(leading_holder(&doc, &cascade, body, middle), outer);
-    assert_eq!(leading_holder(&doc, &cascade, body, outer), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, true).0, outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, middle, true).0, outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, outer, true).0, outer);
 }
 
 #[test]
@@ -16954,23 +16955,54 @@ fn a_wrapper_without_a_box_of_its_own_is_passed_on_the_way_to_the_holder() {
     let (doc, cascade, [body, outer, middle, first, _]) =
         nested_holder_document("display:block", "display:contents", None);
     assert!(doc.layout_ancestors(first).any(|id| id == middle));
-    assert_eq!(leading_holder(&doc, &cascade, body, first), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, true).0, outer);
 }
 
 #[test]
-fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
+fn a_box_takes_the_padding_border_and_margin_that_blocks_keep_above_it() {
+    // The wrapper starts the page with the box, which lands below the edges
+    // and the margin that sit between them.
+    let (doc, cascade, [body, outer, _, first, _]) =
+        nested_holder_document("display:block;padding-top:4px", "display:block", None);
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 4.0)
+    );
+    let (doc, cascade, [body, outer, _, first, _]) = nested_holder_document(
+        "display:block;border-top:3px solid",
+        "display:block;padding-top:5px",
+        None,
+    );
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 8.0)
+    );
+    // A block that contains the margins of the one it begins keeps the margin
+    // inside it.
+    let (doc, cascade, [body, outer, _, first, _]) =
+        nested_holder_document("display:flow-root", "display:block;margin-top:7px", None);
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 7.0)
+    );
+    // A margin that collapses through the wrapper is above it.
+    let (doc, cascade, [body, outer, _, first, _]) =
+        nested_holder_document("display:block", "display:block;margin-top:7px", None);
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 0.0)
+    );
+}
+
+#[test]
+fn a_box_does_not_take_blocks_that_render_before_it_or_cannot_move_whole() {
     // A sibling before the wrapper stays on this page with the outer wrapper.
     let (doc, cascade, [body, _, middle, first, _]) = nested_holder_document(
         "display:block",
         "display:block",
         Some("display:block;height:5px"),
     );
-    assert_eq!(leading_holder(&doc, &cascade, body, first), middle);
-    // Padding above the box is the place of the padded wrapper: the walk
-    // stops below it.
-    let (doc, cascade, [body, _, middle, first, _]) =
-        nested_holder_document("display:block;padding-top:4px", "display:block", None);
-    assert_eq!(leading_holder(&doc, &cascade, body, first), middle);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, true).0, middle);
     // So does a wrapper that is not a plain block, or that floats.
     for outer_css in [
         "display:flex;flex-direction:column",
@@ -16980,11 +17012,35 @@ fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
         let (doc, cascade, [body, _, middle, first, _]) =
             nested_holder_document(outer_css, "display:block", None);
         assert_eq!(
-            leading_holder(&doc, &cascade, body, first),
+            leading_holder(&doc, &cascade, body, first, true).0,
             middle,
             "{outer_css}"
         );
     }
+}
+
+#[test]
+fn a_box_placed_out_of_flow_is_held_by_no_block_but_itself() {
+    // Its place does not follow the blocks around it, so they are not moved
+    // with it.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let outer = doc.append_element(Some(body), "div", Some("display:block;position:relative"));
+    let placed = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;position:absolute;top:0;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    assert!(has_unusual_coordinates(&doc, placed));
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, placed, true),
+        (placed, 0.0)
+    );
 }
 
 #[test]
@@ -17002,7 +17058,7 @@ fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height(
         named_flex_context: None,
         ifc_root: None,
     };
-    let holder = leading_holder(&doc, &cascade, body, first);
+    let holder = leading_holder(&doc, &cascade, body, first, true).0;
     assert_eq!(holder, outer);
     let mut shifts = SubtreeShifts::default();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
@@ -17170,6 +17226,8 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
         flow_y: 80.0,
         margin_top: 0.0,
         trailing_margin: 0.0,
+        holder_lead: 0.0,
+        holder_margin_top: 0.0,
         page_start: 0.0,
         page_end: 100.0,
         next_page_step: 100.0,
@@ -18225,6 +18283,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         collapses_with_previous_block: false,
         pending_break_applies: false,
         keeps_continuation_margin: false,
+        holder: None,
     }
 }
 
@@ -19395,6 +19454,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         collapses_with_previous_block: true,
         pending_break_applies: forced,
         keeps_continuation_margin: false,
+        holder: None,
     }
 }
 
@@ -20196,6 +20256,12 @@ fn a_replaced_block_that_fits_the_page_exactly_stays() {
 /// tall, `div(10px)` on 100px pages: the page-flow y of the wrapper, the image
 /// and the last box.
 fn clipped_wrapper_with_image(wrapper_css: &str, image_height: u32) -> Vec<f32> {
+    wrapper_with_image(wrapper_css, &format!("height:{image_height}px"))
+}
+
+/// Like [`clipped_wrapper_with_image`], with the style of the image given
+/// whole.
+fn wrapper_with_image(wrapper_css: &str, image_css: &str) -> Vec<f32> {
     paginated_flow_ys(
         |doc, body| {
             doc.append_element(
@@ -20211,9 +20277,7 @@ fn clipped_wrapper_with_image(wrapper_css: &str, image_height: u32) -> Vec<f32> 
             let image = doc.append_element(
                 Some(wrapper),
                 "img",
-                Some(&format!(
-                    "display:block;width:100px;height:{image_height}px"
-                )),
+                Some(&format!("display:block;width:100px;{image_css}")),
             );
             let after = doc.append_element(
                 Some(body),
@@ -20252,6 +20316,54 @@ fn a_clipping_wrapper_with_a_height_moves_with_the_image_that_begins_it() {
     assert_eq!(
         clipped_wrapper_with_image("overflow:hidden", 60),
         [100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_wrapper_moves_with_the_image_that_begins_it_below_a_padding_or_border() {
+    // The image lands below the top edge of the wrapper, which starts the
+    // page: the wrapper from 100, the image below its padding.
+    for wrapper_css in [
+        "padding-top:10px",
+        "border-top:6px solid;padding-top:4px",
+        "height:80px;padding-top:10px;overflow:hidden",
+    ] {
+        // The box sizing of the wrapper is its content box here.
+        let after = if wrapper_css.starts_with("height") {
+            190.0
+        } else {
+            170.0
+        };
+        assert_eq!(
+            clipped_wrapper_with_image(wrapper_css, 60),
+            [100.0, 110.0, after],
+            "{wrapper_css}"
+        );
+    }
+    // A margin that the wrapper keeps inside it counts the same.
+    assert_eq!(
+        wrapper_with_image("overflow:hidden", "height:60px;margin-top:10px"),
+        [100.0, 110.0, 170.0]
+    );
+    // One that collapses through the wrapper is cut by the break.
+    assert_eq!(
+        wrapper_with_image("", "height:60px;margin-top:10px"),
+        [100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_wrapper_with_a_top_edge_stays_where_the_image_below_it_does_not_fit_the_next_page() {
+    // The image would not fit below the edge of the wrapper on the next page
+    // either, so the wrapper is not worth moving: the image alone does.
+    assert_eq!(
+        clipped_wrapper_with_image("padding-top:30px", 80),
+        [60.0, 100.0, 180.0]
+    );
+    // One that fits moves with the wrapper.
+    assert_eq!(
+        clipped_wrapper_with_image("padding-top:30px", 60),
+        [100.0, 130.0, 190.0]
     );
 }
 

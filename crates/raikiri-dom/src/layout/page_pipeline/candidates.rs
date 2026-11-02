@@ -1024,7 +1024,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // follow it. Tables and flex containers keep their own
                 // item-level candidates.
                 let is_block_flow_box = is_block_level_flow_box(document.nodes[node_id].display());
-                // The one line of generated text or of atomic inlines of a
+                // The one generated, glyphless or atomic-inline line of a
                 // block is placed by no text candidate, so the block moves
                 // whole instead. Content placed by the rules of a float, an
                 // out-of-flow box, or a flex, grid or table keeps them, and
@@ -1250,7 +1250,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !is_float
                             && !flex_item_candidate
                             && !grid_item_candidate)
-                            .then(|| leading_holder(document, cascade, body_id, node_id))
+                            .then(|| leading_holder(document, cascade, body_id, node_id, true).0)
                             .filter(|&holder| holder != node_id);
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {

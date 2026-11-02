@@ -106,14 +106,17 @@ pub(crate) struct UnplacedLine {
     /// The line, in the root's content box.
     pub(crate) line: IfcTextLine,
     /// Whether the line holds atomic inlines and no text, as opposed to
-    /// generated text.
+    /// generated text or a glyphless line.
     pub(crate) atomic: bool,
+    /// Whether the line has neither generated text nor atomic inlines.
+    pub(crate) glyphless: bool,
 }
 
 /// The line of the paragraph rooted at `root` when the paragraph is a single
 /// line that no text node places: the line of an empty list item holding only
 /// its inside marker, of `::before` or `::after` text alone, or of atomic
-/// inlines alone, such as an image.
+/// inlines alone, such as an image. A positive glyphless line, from a `br`
+/// or an empty outside-marker list item, needs the same placement.
 ///
 /// Pagination places the lines of a paragraph through the text nodes that own
 /// them, and generated text and atomic inlines belong to none, so a line like
@@ -145,7 +148,12 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<Unplac
         && line
             .fragments()
             .any(|fragment| matches!(fragment, Fragment::Atomic(_)));
-    if !has_generated_text && !atomic {
+    let glyphless = !has_generated_text && !atomic;
+    let block_size = line.block_size();
+    // A generated block can leave one shodo line but extra block content.
+    if glyphless
+        && (!block_size.is_finite() || block_size <= 0.0 || !lines.placed_blocks.is_empty())
+    {
         return None;
     }
     let top = lines.line_top(0);
@@ -153,9 +161,10 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<Unplac
         line: IfcTextLine {
             line: 0,
             top,
-            bottom: top + line.block_size(),
+            bottom: top + block_size,
         },
         atomic,
+        glyphless,
     })
 }
 

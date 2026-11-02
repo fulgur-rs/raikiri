@@ -9,12 +9,13 @@ use super::{
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
     PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
-    block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
-    box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
-    collapsed_start_margin_gain, collapses_through, collapses_with_previous_block,
-    content_overflow_end, current_abs_y, first_box_ancestor_at_start, first_line_judged_height,
-    first_owned_line_height, fits_decorated_paper, flex_line_paragraph, follows_flow_content,
-    forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
+    begins_page_below_leading_edges, block_effective_y, block_fits_page_step,
+    box_changes_page_name, box_occupies_column, box_sets_page_name, break_margins,
+    closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain, collapses_through,
+    collapses_with_previous_block, content_overflow_end, current_abs_y,
+    first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
+    fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
+    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
     lead_below_ancestor, leading_edges_move, leading_holder, line_block_parent,
@@ -180,6 +181,10 @@ pub(super) struct BoxBreak {
     /// earlier layout made forced: the margin above the box is kept, as at a
     /// forced break.
     pub(super) keeps_continuation_margin: bool,
+    /// The ancestor that moves to the next page with this box when it would
+    /// cross the page edge, and how far below the top of that ancestor the
+    /// box starts (see [`leading_holder`]). `None` when the box moves alone.
+    pub(super) holder: Option<(usize, f32)>,
 }
 
 impl BoxBreak {
@@ -910,14 +915,51 @@ impl PaginationState {
             .filter(|&page| page > self.current_page && self.reach.flow_max >= page)
             .unwrap_or(self.current_page);
         let fit_page_start = page_origins.origin(fit_page);
+        let next_page_step = page_origins.step_at(fit_page.saturating_add(1));
+        // A box that no page break goes through and that begins the plain
+        // blocks around it takes them to the next page, rather than leaving
+        // their start on this one. The padding, border and margin they keep
+        // above it go with them, so it has to fit the next page below those.
+        // Only a box that starts on the page and runs past its end moves, so
+        // the walk over its ancestors is left to those.
+        let holder = if candidate.context.is_unbreakable()
+            && !keeps_margin_at_break
+            && effective_y - relative_offset + height + trailing_margin
+                > fit_page_start + page_origins.step_at(fit_page)
+            && is_block_flow_box(document, cascade, candidate)
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant()
+        {
+            Some(leading_holder(document, cascade, body_id, node_id, true)).filter(
+                |&(holder, lead)| {
+                    holder != node_id && (lead <= 0.0 || lead + height <= next_page_step + 0.001)
+                },
+            )
+        } else {
+            None
+        };
+        // Where the holder has no room above the box of its own, its margin
+        // collapses with the margin of the box, and the larger of the two is
+        // what a break cuts.
+        let (holder_lead, holder_margin_top) =
+            holder.map_or((0.0, margin_top), |(holder, lead)| {
+                let holder_margin = break_margins(document, cascade, holder, content_width).0;
+                if lead > 0.0 {
+                    (lead, holder_margin)
+                } else {
+                    (lead, holder_margin.max(margin_top))
+                }
+            });
         let fit = BoxFit {
             effective_y,
             flow_y: effective_y - relative_offset,
             margin_top,
             trailing_margin,
+            holder_lead,
+            holder_margin_top,
             page_start: fit_page_start,
             page_end: fit_page_start + page_origins.step_at(fit_page),
-            next_page_step: page_origins.step_at(fit_page.saturating_add(1)),
+            next_page_step,
         };
         let mut overflow = avoided_breaks.measure(
             document,
@@ -935,12 +977,14 @@ impl PaginationState {
         // page. The forced break sits before the box's margin box, so the
         // test uses its block-start margin edge.
         let forced_break_at_page_start = forced_before
-            && margin_box_starts_page(
+            && (margin_box_starts_page(
                 page_origins,
                 effective_y - margin_top.max(0.0),
                 self.current_page,
                 page_start,
-            );
+            ) || begins_page_below_leading_edges(
+                document, cascade, body_id, node_id, page_start,
+            ));
 
         // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
         // truncated, while a forced break keeps the block-start margin of the
@@ -960,6 +1004,7 @@ impl PaginationState {
             pending_break_applies,
             keeps_continuation_margin: continuation_offset
                 .is_some_and(|offset| (offset - margin_top).abs() <= CONTINUATION_MARGIN_TOLERANCE),
+            holder,
         };
         let position = BoxPosition {
             effective_y,
@@ -1001,6 +1046,25 @@ impl PaginationState {
             ..
         } = *page_break;
         let node_id = candidate.node_id;
+        // A box that no page break goes through, or that avoids one inside
+        // it, and that begins the plain blocks around it takes them to the
+        // next page, rather than leaving their start on this one: they start
+        // the page, and the box lands below the padding, border and margin
+        // they keep above it where `begin_box` found room for it there. Else
+        // the blocks that start where the box does move with it.
+        let (holder, holder_lead) = if (overflow.unbreakable || overflow.moved_for_avoided_break)
+            && !forced_transition
+            && is_block_flow_box(document, cascade, candidate)
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant()
+        {
+            page_break
+                .holder
+                .filter(|_| overflow.unbreakable)
+                .unwrap_or_else(|| leading_holder(document, cascade, body_id, node_id, false))
+        } else {
+            (node_id, 0.0)
+        };
         // Content kept on its page as monolithic (see `monolithic_paper_fit`)
         // has not opened a later page.
         let natural_page = page_origins.transition_natural_page(
@@ -1044,7 +1108,7 @@ impl PaginationState {
         // `underflow-from-next-page` case from CSS Break.
         let landing = TransitionLanding::new(
             page_origins.origin(target_page),
-            position.effective_y,
+            position.effective_y - holder_lead,
             margin_top,
             relative_offset,
             lands_after_forced_break,
@@ -1053,19 +1117,6 @@ impl PaginationState {
         let row_flex_break_before =
             forced_before && in_row_flex_container(document, cascade, node_id);
         if landing.is_finite() {
-            // A box that no page break goes through, or that avoids one inside
-            // it, and that begins the plain blocks around it takes them to the
-            // next page, rather than leaving their start on this one.
-            let holder = if (overflow.unbreakable || overflow.moved_for_avoided_break)
-                && !forced_transition
-                && is_block_flow_box(document, cascade, candidate)
-                && !candidate.context.is_float_descendant()
-                && !candidate.context.is_out_of_flow_descendant()
-            {
-                leading_holder(document, cascade, body_id, node_id)
-            } else {
-                node_id
-            };
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -1108,7 +1159,7 @@ impl PaginationState {
                     page_overflow: overflow.page || margin_pushes_box_on,
                     forced_transition: lands_after_forced_break,
                     delta: landing.node_delta,
-                    target_y: landing.target_y,
+                    target_y: landing.target_y + holder_lead,
                     relative_offset,
                     flow_page: entry.page_before_candidate,
                     height: candidate.height,

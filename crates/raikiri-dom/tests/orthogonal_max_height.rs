@@ -76,6 +76,27 @@ fn assert_boxes(body: &str, expected: &[(&str, [f32; 4])]) {
     }
 }
 
+/// Check that every `(id, [x, y, width])` of `expected` is laid out as given.
+/// A box that is taller than the page is cut at its bottom edge, so its height
+/// is left out.
+fn assert_origin_and_width(body: &str, expected: &[(&str, [f32; 3])]) {
+    let actual = boxes(body);
+    for &(id, want) in expected {
+        let got = actual
+            .iter()
+            .find(|(name, _)| name == id)
+            .unwrap_or_else(|| panic!("no fragment for #{id} in {body}"))
+            .1;
+        let got = [got[0], got[1], got[2]];
+        assert!(
+            got.iter()
+                .zip(want)
+                .all(|(got, want)| (got - want).abs() < 0.01),
+            "#{id} starts at and is as wide as {got:?}, expected {want:?} for {body}"
+        );
+    }
+}
+
 /// The container `#p` of `container_css`, 300px wide, with the vertical box
 /// `#o` of `tag` and `css` holding a hundred words.
 fn container(container_css: &str, tag: &str, css: &str) -> String {
@@ -214,6 +235,96 @@ fn the_margins_of_the_vertical_box_come_off_the_height_the_limit_leaves() {
             &[("o", [0.0, 10.0, 120.0, 280.0])],
         );
     }
+}
+
+#[test]
+fn a_border_box_max_height_with_a_percentage_padding_above_or_below_is_no_limit() {
+    // The percentage of the padding refers to the width of the wrapper, 400px:
+    // 40px. A browser cannot take it off the limit, so the limit is not
+    // applied, and the lines of `#o` break at the page height, five columns of
+    // 10px, below the padding.
+    for (container_css, tag, css, top) in [
+        ("padding:10% 0", "div", "", 40.0),
+        ("padding:10% 0", "span", "display:inline-block", 40.0),
+        ("padding:10% 0", "div", "float:left", 40.0),
+        (
+            "padding:10% 0;display:flex;align-self:flex-start",
+            "div",
+            "",
+            40.0,
+        ),
+        ("padding:calc(10% + 5px) 0", "div", "", 45.0),
+        ("padding:10% 0 0", "div", "", 40.0),
+        ("padding-top:10%", "div", "", 40.0),
+        ("padding:10% 0;position:absolute", "div", "", 80.0),
+    ] {
+        assert_origin_and_width(
+            &format!(
+                "<div style=\"width:400px\">{}</div>",
+                container(&format!("max-height:300px;{container_css}"), tag, css)
+            ),
+            &[("o", [0.0, top, 50.0])],
+        );
+    }
+    assert_origin_and_width(
+        &format!(
+            "<div style=\"width:400px\">{}</div>",
+            container("max-height:300px;padding:10% 0;border:5px solid", "div", "")
+        ),
+        &[("o", [5.0, 45.0, 50.0])],
+    );
+    // Whatever the padding comes to, also when it is nothing.
+    for container_css in ["padding:0 0 10%", "padding:0% 0"] {
+        assert_boxes(
+            &format!(
+                "<div style=\"width:400px\">{}</div>",
+                container(&format!("max-height:300px;{container_css}"), "div", "")
+            ),
+            &[
+                ("p", [0.0, 0.0, 300.0, 300.0]),
+                ("o", [0.0, 0.0, 50.0, 600.0]),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_percentage_padding_beside_the_box_or_in_a_content_box_limit_still_cuts_the_room() {
+    // A content-box limit is the content box already: 300px.
+    assert_boxes(
+        &format!(
+            "<div style=\"width:400px\">{}</div>",
+            container(
+                "box-sizing:content-box;max-height:300px;padding:10% 0",
+                "div",
+                ""
+            )
+        ),
+        &[
+            ("p", [0.0, 0.0, 300.0, 380.0]),
+            ("o", [0.0, 40.0, 100.0, 300.0]),
+        ],
+    );
+    // The percentages on the left and right do not take part in the height.
+    for (tag, css) in [("div", ""), ("span", "display:inline-block")] {
+        assert_boxes(
+            &format!(
+                "<div style=\"width:400px\">{}</div>",
+                container("max-height:300px;padding:10px 10%", tag, css)
+            ),
+            &[
+                ("p", [0.0, 0.0, 300.0, 300.0]),
+                ("o", [40.0, 10.0, 120.0, 280.0]),
+            ],
+        );
+    }
+    assert_boxes(
+        &format!(
+            "<div style=\"width:400px\">{}</div>",
+            container("max-height:300px;padding:0 10%", "div", "")
+        ),
+        &[("o", [40.0, 0.0, 100.0, 300.0])],
+    );
 }
 
 #[test]

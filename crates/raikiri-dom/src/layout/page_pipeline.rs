@@ -8,6 +8,7 @@ mod fragment_sources;
 mod leading_margins;
 mod line_ranges;
 mod link_events;
+mod page_start;
 mod pagination_state;
 mod sibling_adjacency;
 mod sibling_shifts;
@@ -21,6 +22,7 @@ use fragment_sources::{
     place_sources, restore_crossing_tops,
 };
 pub(crate) use link_events::page_fragment_events_from_pages;
+use page_start::begins_page_below_leading_edges;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
@@ -4854,6 +4856,11 @@ struct BoxFit {
     flow_y: f32,
     margin_top: f32,
     trailing_margin: f32,
+    /// How far below the top of the box that moves with it (see
+    /// [`leading_holder`]) the box starts, and that box's own block-start
+    /// margin. Zero and `margin_top` when the box moves alone.
+    holder_lead: f32,
+    holder_margin_top: f32,
     /// The flow positions at which the current page starts and ends.
     page_start: f32,
     page_end: f32,
@@ -4957,6 +4964,8 @@ impl AvoidedBreaks {
             flow_y,
             margin_top,
             trailing_margin,
+            holder_lead,
+            holder_margin_top,
             page_start,
             page_end,
             next_page_step,
@@ -4983,9 +4992,18 @@ impl AvoidedBreaks {
                 .map(|line| flow_y + line.end.min(height))
         };
         let unbreakable = unbreakable_end.is_some_and(|end| {
-            unbreakable_box_moves(flow_y, margin_top, end, page_start, page_end)
+            // The box moves with the blocks it begins, which start above it:
+            // the page is theirs to start.
+            unbreakable_box_moves(
+                flow_y - holder_lead,
+                holder_margin_top,
+                flow_y,
+                end,
+                page_start,
+                page_end,
+            )
         });
-        // A paragraph of one line of generated text is kept whole by its
+        // A paragraph of one generated or glyphless line is kept whole by its
         // line alone: the margin and padding after the line break across
         // the edge like those of a paragraph of text. A box shorter than the
         // line ends where the box does.
@@ -4995,7 +5013,12 @@ impl AvoidedBreaks {
             Some(page_box_end)
         } else {
             unplaced_line
-                .filter(|line| !line.atomic)
+                .filter(|line| {
+                    !line.atomic
+                        && line.glyphless_height.is_none_or(|line_height| {
+                            block_fits_page_step(line_height.min(height), next_page_step)
+                        })
+                })
                 .map(|line| flow_y + line.end.min(height))
         };
         let moves_for_avoided_end = avoided_end
@@ -5112,6 +5135,35 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
     y
 }
 
+/// Whether something that `parent` holds renders before `child`, or may be
+/// placed against `parent` later: a float beside a paragraph, a block, text,
+/// or an absolutely positioned box. It already sits on this page, so moving
+/// `parent` would take it along.
+fn renders_before_child(document: &Document, parent: usize, child: usize) -> bool {
+    let siblings = document.nodes[parent].layout_children();
+    let child_index = siblings.iter().position(|&sibling| sibling == child);
+    siblings.iter().enumerate().any(|(index, &sibling)| {
+        let node = &document.nodes[sibling];
+        let renders = match node.kind() {
+            NodeKind::Element => {
+                node.is_in_document()
+                    && !node.is_non_rendered_html_element()
+                    && document.nodes[sibling].display() != DisplayValue::None
+            }
+            _ => node
+                .text_content()
+                .is_some_and(|text| !text.trim().is_empty()),
+        };
+        renders
+            && (child_index.is_none_or(|child_index| index < child_index)
+                || node.kind() == NodeKind::Element
+                    && matches!(
+                        document.nodes[sibling].position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ))
+    })
+}
+
 /// The outermost box that `block` starts, together with the ancestors that
 /// render nothing before it: moving that box moves `block` without leaving the
 /// ancestors' starts behind on the earlier page.
@@ -5138,33 +5190,7 @@ fn first_box_ancestor_at_start(
         .layout_ancestors(block)
         .take_while(|&id| id != body_id)
     {
-        // Content before `child`, such as a float beside the paragraph,
-        // already sits on this page, and so may a later absolutely
-        // positioned box placed against the ancestor; moving the ancestor
-        // would take either along.
-        let siblings = document.nodes[parent].layout_children();
-        let child_index = siblings.iter().position(|&sibling| sibling == child);
-        let renders_before = siblings.iter().enumerate().any(|(index, &sibling)| {
-            let node = &document.nodes[sibling];
-            let renders = match node.kind() {
-                NodeKind::Element => {
-                    node.is_in_document()
-                        && !node.is_non_rendered_html_element()
-                        && document.nodes[sibling].display() != DisplayValue::None
-                }
-                _ => node
-                    .text_content()
-                    .is_some_and(|text| !text.trim().is_empty()),
-            };
-            renders
-                && (child_index.is_none_or(|child_index| index < child_index)
-                    || node.kind() == NodeKind::Element
-                        && matches!(
-                            document.nodes[sibling].position(),
-                            PositionValue::Absolute | PositionValue::Fixed
-                        ))
-        });
-        if renders_before {
+        if renders_before_child(document, parent, child) {
             break;
         }
         // Flow candidates follow their layout parents; carry the current top
@@ -5209,19 +5235,27 @@ fn first_box_ancestor_at_start(
 /// The outermost box that moves to the next page together with `node_id`, a
 /// box that no page break goes through or that avoids one inside it, when it
 /// is the first thing in the plain blocks around it: the ancestors that render
-/// nothing before it and have no top border or padding.
+/// nothing before it. And how far below the top of that box `node_id` starts,
+/// which is the padding, the border and the margin that its ancestors keep
+/// above it.
 ///
 /// A page does not break between such an ancestor's start and its first child
 /// (CSS Break 3 §4.1), so the ancestor starts the next page with the child
-/// rather than leaving its start, and a fixed height or a background, behind on
-/// this one. An ancestor that is not a plain block of the normal flow, that
-/// lays its children out in columns, or that is placed by an inline formatting
-/// context or out of flow, is left to the box alone; the walk stops below it.
+/// rather than leaving its start, and a fixed height, a background, a padding
+/// or a border, behind on this one. An ancestor that is not a plain block of
+/// the normal flow, that lays its children out in columns, or that is placed
+/// by an inline formatting context or out of flow, is left to the box alone;
+/// the walk stops below it.
 ///
-/// This narrows the walk of [`first_box_ancestor_at_start`], which also lets
-/// the padding and border of a block that starts below the page start move
-/// with a paragraph: an ancestor with a top edge is the place of a padded
-/// wrapper that stops this walk instead.
+/// With `edges` false the walk stops below the first ancestor that keeps
+/// something above the box, so the holder starts where the box does and the
+/// distance is zero. A caller that cannot land the box below such edges asks
+/// for this.
+///
+/// Where the box begins its ancestors does not depend on the page it falls on,
+/// so the holder is the same when the candidates are collected and when the
+/// box moves. Whether a holder that already starts its page is worth moving is
+/// for the caller to judge from its top.
 ///
 /// Every ancestor the walk passes is a plain block of the normal flow that is
 /// not a multicol container, so none of them lays its children out side by
@@ -5231,20 +5265,22 @@ fn leading_holder(
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-) -> usize {
-    // No page starts above an ancestor with a top edge, so none is taken: the
-    // holder does not depend on the page the box falls on, and is the same
-    // when the candidates are collected and when the box moves.
-    let outermost = first_box_ancestor_at_start(document, cascade, node_id, body_id, f32::INFINITY);
-    if outermost == node_id || has_unusual_coordinates(document, node_id) {
-        return node_id;
+    edges: bool,
+) -> (usize, f32) {
+    if has_unusual_coordinates(document, node_id) {
+        return (node_id, 0.0);
     }
     let top = current_abs_y(document, node_id);
     let mut holder = node_id;
+    let mut child = node_id;
     for ancestor in document
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
+        if renders_before_child(document, ancestor, child) {
+            break;
+        }
+        child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
@@ -5252,16 +5288,22 @@ fn leading_holder(
             || document.nodes[ancestor].is_multicol_container()
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, ancestor)
-            || (current_abs_y(document, ancestor) - top).abs() > 0.01
+            || if edges {
+                current_abs_y(document, ancestor) > top + 0.01
+            } else {
+                (current_abs_y(document, ancestor) - top).abs() > 0.01
+            }
         {
             break;
         }
         holder = ancestor;
-        if ancestor == outermost {
-            break;
-        }
     }
-    holder
+    let lead = if edges {
+        lead_below_ancestor(document, cascade, body_id, node_id, holder)
+    } else {
+        0.0
+    };
+    (holder, lead)
 }
 
 /// Whether the position of `node_id` does not follow its layout parent's in
@@ -6891,11 +6933,15 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
+    /// The glyphless line's block size, to avoid automatically moving a
+    /// line taller than the next page. Generated and atomic lines keep their
+    /// existing placement rules.
+    glyphless_height: Option<f32>,
 }
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
-/// that no text node places: generated text, or atomic inlines alone (see
-/// [`single_unplaced_line`]).
+/// that no text node places: generated text, a glyphless line, or atomic
+/// inlines alone (see [`single_unplaced_line`]).
 ///
 /// No text candidate moves such a line, so its block moves whole when the
 /// line would cross a page edge, as a line of text does. Only a horizontal
@@ -6922,6 +6968,9 @@ fn unplaced_line(
     Some(UnplacedBlockLine {
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
+        glyphless_height: unplaced
+            .glyphless
+            .then_some(unplaced.line.bottom - unplaced.line.top),
     })
 }
 
@@ -7220,8 +7269,9 @@ fn avoided_box_moves(
 /// the start of the first page, which leaves a box with a margin there to
 /// move on even when nothing precedes it.
 fn unbreakable_box_moves(
-    flow_y: f32,
+    top: f32,
     margin_top: f32,
+    flow_y: f32,
     box_end: f32,
     page_start: f32,
     page_end: f32,
@@ -7229,9 +7279,9 @@ fn unbreakable_box_moves(
     // The first page starts at the flow origin; a margin above the box is
     // cut by any break after it.
     let top = if page_start > 0.001 {
-        flow_y - margin_top.max(0.0)
+        top - margin_top.max(0.0)
     } else {
-        flow_y
+        top
     };
     top > page_start + 0.001
         && starts_on_page_and_runs_past_it(flow_y, box_end, page_start, page_end)
