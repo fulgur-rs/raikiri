@@ -17449,6 +17449,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         forced_before: false,
         margin_top: 30.0,
         collapses_with_previous_block: true,
+        run_end: None,
     };
 
     // The block moves up to the top of the page.
@@ -17503,6 +17504,115 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
     let found = truncation(&mut doc, &mut margins, &cascade, &clearing).unwrap();
     assert_eq!(found.delta, -20.0);
+}
+
+#[test]
+fn a_page_edge_cuts_the_margins_around_an_empty_box_where_the_next_box_starts() {
+    // `body > first, empty, next`: the margin of 30 below `first` collapses
+    // with the -10 above `next` through `empty`, so the run ends at 110, 10
+    // above where the empty box sits.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block = |doc: &mut Document, css: &str| doc.append_element(Some(body), "div", Some(css));
+    let first = block(&mut doc, "display:block;height:90px");
+    let empty = block(&mut doc, "display:block");
+    let clearing = block(&mut doc, "display:block;clear:both");
+    let next = block(&mut doc, "display:block;height:30px");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.nodes[first].layout.margin.bottom = 30.0;
+    doc.nodes[next].layout.margin.top = -10.0;
+    let origins = PageOrigins::new(&[], 100.0);
+    let mut margins = SiblingMargins::default();
+    margins.record_bottom(body, first, true, 90.0);
+    let end = |raw_y: f32| {
+        Some(MarginRunEnd {
+            node_id: next,
+            raw_y,
+            height: 30.0,
+        })
+    };
+    let at = MarginBreak {
+        node_id: empty,
+        raw_y: 120.0,
+        effective_y: 120.0,
+        natural_page: 1,
+        forced_before: false,
+        margin_top: 0.0,
+        collapses_with_previous_block: true,
+        run_end: end(110.0),
+    };
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+
+    // The next box lands at the top of the page, so the empty box moves up by
+    // as much as it does, not by the whole margin below `first`.
+    let found = margins
+        .truncation_at_break(&session, &cascade, &origins, &at)
+        .unwrap();
+    assert_eq!(found.delta, -10.0);
+    assert_eq!(found.underflow, None);
+    let (pulling, pulled) = margins.pulled_run_end(&session, &cascade, &at).unwrap();
+    assert_eq!((pulling.node_id, pulled), (next, 10.0));
+
+    // Without an end, or with one that is not above the empty box, the empty
+    // box is cut by its own margin.
+    for run_end in [None, end(120.0), end(125.0)] {
+        let alone = MarginBreak { run_end, ..at };
+        let found = margins
+            .truncation_at_break(&session, &cascade, &origins, &alone)
+            .unwrap();
+        assert_eq!(found.delta, -20.0);
+        assert!(margins.pulled_run_end(&session, &cascade, &alone).is_none());
+    }
+
+    // A box that clears floats, or whose margin does not collapse with the
+    // block before it, is cut by its own margin as well.
+    let clears = MarginBreak {
+        node_id: clearing,
+        ..at
+    };
+    assert!(
+        margins
+            .pulled_run_end(&session, &cascade, &clears)
+            .is_none()
+    );
+    let apart = MarginBreak {
+        collapses_with_previous_block: false,
+        ..at
+    };
+    assert!(margins.pulled_run_end(&session, &cascade, &apart).is_none());
+
+    // A forced break before the empty box keeps its margin as it is.
+    let forced = MarginBreak {
+        forced_before: true,
+        ..at
+    };
+    assert!(
+        margins
+            .pulled_run_end(&session, &cascade, &forced)
+            .is_none()
+    );
+    let found = margins
+        .truncation_at_break(&session, &cascade, &origins, &forced)
+        .unwrap();
+    assert_eq!(found.delta, -20.0);
+
+    // The page edge is outside the margins when the next box starts above the
+    // box before the empty one ends, or before the edge.
+    for raw_y in [80.0, 95.0] {
+        let outside = MarginBreak {
+            run_end: end(raw_y),
+            ..at
+        };
+        assert!(
+            margins
+                .truncation_at_break(&session, &cascade, &origins, &outside)
+                .is_none(),
+            "next box at {raw_y}"
+        );
+    }
 }
 
 #[test]

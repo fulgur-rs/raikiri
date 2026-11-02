@@ -4830,7 +4830,8 @@ fn boxes_are_tied(
 }
 
 /// The boxes of a flow that avoid a page break inside them or between them,
-/// found once from its candidates.
+/// and the runs of margins that pass through empty blocks, found once from its
+/// candidates.
 #[derive(Default)]
 struct AvoidedBreaks {
     /// The block end of each run of boxes joined by avoided breaks, keyed by
@@ -4843,6 +4844,96 @@ struct AvoidedBreaks {
     /// The block end and table lead of each avoided table row group, keyed
     /// by its first row (see [`avoided_row_groups`]).
     row_groups: HashMap<usize, (f32, f32)>,
+    /// The block that ends the run of margins around each empty block whose
+    /// margins collapse through it, keyed by the empty block (see
+    /// [`margin_run_ends`]).
+    margin_run_ends: HashMap<usize, MarginRunEnd>,
+}
+
+/// The block that ends the run of margins around each empty block of
+/// `candidates`, whose margins collapse through it: the next block among its
+/// siblings, which the empty block and every other empty block before it lead
+/// to. A negative margin on that block pulls its top above the empty block, so
+/// a page edge in the run is found from where that block starts.
+///
+/// A candidate that is a float, out of flow, text, a clearing block or a block
+/// that a forced break or a page name change reaches ends the search without a
+/// result, and so does a block that something other than empty blocks
+/// separates from the empty one, or that a forced break follows: the margin
+/// stays the empty block's own.
+fn margin_run_ends(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    candidates: &[PageCandidate],
+) -> HashMap<usize, MarginRunEnd> {
+    let tree = BoxTree::for_layout(document);
+    let mut adjacency = sibling_adjacency::SiblingAdjacency::default();
+    let joins_run = |candidate: &PageCandidate| {
+        let participates = participates_in_margin_adjacency(document, cascade, candidate);
+        collapses_with_previous_block(document, candidate, participates) && {
+            let computed = &cascade.computed[candidate.node_id];
+            matches!(computed.clear, raikiri_style::property::ClearValue::None)
+                && matches!(
+                    computed.break_before,
+                    BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::AvoidPage
+                )
+        }
+    };
+    let mut ends = HashMap::new();
+    // From the last candidate on, so that the end of the run an empty block
+    // leads to is known when the empty block before it asks.
+    for (index, candidate) in candidates.iter().enumerate().rev() {
+        let node_id = candidate.node_id;
+        if !joins_run(candidate)
+            || !collapses_through(document, cascade, node_id, candidate.height)
+            || !no_forced_break_inside_or_after(document, cascade, node_id)
+        {
+            continue;
+        }
+        // The empty block has no content, so what follows it and its empty
+        // descendants is the next block.
+        let Some(next) = candidates[index + 1..]
+            .iter()
+            .find(|next| !is_descendant_or_self(document, next.node_id, node_id))
+        else {
+            continue;
+        };
+        if !joins_run(next)
+            || next.page_name != candidate.page_name
+            || tree.parent(next.node_id, BoxParentScope::Document)
+                != tree.parent(node_id, BoxParentScope::Document)
+            || !adjacency.adjoins(document, cascade, next.node_id, node_id)
+        {
+            continue;
+        }
+        let end = ends.get(&next.node_id).copied().unwrap_or(MarginRunEnd {
+            node_id: next.node_id,
+            raw_y: next.raw_y,
+            height: next.height,
+        });
+        ends.insert(node_id, end);
+    }
+    ends
+}
+
+/// Whether no break is forced after `node_id` or after a box inside it: a
+/// forced break after the last box inside it comes after `node_id` as well.
+fn no_forced_break_inside_or_after(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut pending = vec![node_id];
+    while let Some(id) = pending.pop() {
+        if !matches!(
+            cascade.computed[id].break_after,
+            BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::AvoidPage
+        ) {
+            return false;
+        }
+        pending.extend(document.nodes[id].children.iter().copied());
+    }
+    true
 }
 
 /// Where a box and its page stand when the box is tested for moving to the
@@ -4937,11 +5028,19 @@ impl AvoidedBreaks {
             contents_box,
             content_width,
         );
+        let margin_run_ends = margin_run_ends(document, cascade, candidates);
         Self {
             run_ends,
             row_leads,
             row_groups,
+            margin_run_ends,
         }
+    }
+
+    /// The block that ends the run of margins around `node_id`, an empty block
+    /// whose margins collapse through it, if the run goes on to another block.
+    fn margin_run_end(&self, node_id: usize) -> Option<MarginRunEnd> {
+        self.margin_run_ends.get(&node_id).copied()
     }
 
     /// How the box of `candidate`, placed as `fit` says, moves to the next
@@ -9195,6 +9294,23 @@ struct MarginBreak {
     /// Whether the box's margin collapses with the margin of the block
     /// before it.
     collapses_with_previous_block: bool,
+    /// Where the margin the box sits in ends, when the box is empty and the
+    /// margin goes on to the box after it. While a negative margin there
+    /// pulls that box above this one (see `pulled_run_end`), the page edge is
+    /// found from where it starts, in place of `effective_y` and
+    /// `natural_page`.
+    run_end: Option<MarginRunEnd>,
+}
+
+/// The box that ends a run of margins, found for an empty box that the
+/// margins collapse through: the next block in the flow.
+#[derive(Clone, Copy)]
+struct MarginRunEnd {
+    node_id: usize,
+    /// The unpaginated top of the box.
+    raw_y: f32,
+    /// The block size of the box.
+    height: f32,
 }
 
 /// How a page edge truncates the margin above a box.
@@ -9234,9 +9350,25 @@ impl SiblingMargins {
             .break_taken_by_float
             .is_some_and(|source| is_descendant_or_self(document, source, previous));
         let forced_before = at.forced_before || taken_by_float;
-        let page_top = page_origins.origin(at.natural_page);
-        let previous_bottom = at.effective_y - gap;
         let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
+        // The page edge cuts the whole run of margins, which ends where the
+        // box after an empty box starts, so the run is judged from there; the
+        // empty box then moves by as much as the box after it, and so do the
+        // boxes that follow.
+        let pull = self.pulled_run_end(document, cascade, at);
+        let run_end = pull.map(|(end, _)| end);
+        let pulled = pull.map_or(0.0, |(_, pulled)| pulled);
+        let gap = gap - pulled;
+        if gap <= 0.0 {
+            return None;
+        }
+        let effective_y = at.effective_y - pulled;
+        let natural_page = run_end.map_or(at.natural_page, |end| {
+            page_origins.start_page(effective_y, end.height)
+        });
+        let margin_node = run_end.map_or(node_id, |end| end.node_id);
+        let page_top = page_origins.origin(natural_page);
+        let previous_bottom = effective_y - gap;
         // The float landed where the margin it was placed after collapsed
         // to, so the box after it may already sit at the top of the page,
         // above the margin that the break keeps. Moving the box down moves
@@ -9244,9 +9376,9 @@ impl SiblingMargins {
         // the box was, so the box moves only when every line keeps the room
         // the floats leave it.
         let lands_at_page_top = taken_by_float
-            && at.natural_page > 0
+            && natural_page > 0
             && at.margin_top > 0.0
-            && (at.effective_y - page_top).abs() <= 0.001
+            && (effective_y - page_top).abs() <= 0.001
             && lines_stay_put_when_moved(
                 document,
                 cascade,
@@ -9257,10 +9389,10 @@ impl SiblingMargins {
             );
         if !(lands_at_page_top
             || page_edge_falls_in_margin(
-                at.natural_page,
+                natural_page,
                 page_top,
                 previous_bottom,
-                at.effective_y,
+                effective_y,
                 follows_forced_break,
             ))
             // Only a margin between adjoining siblings is truncated; a box
@@ -9270,7 +9402,7 @@ impl SiblingMargins {
             return None;
         }
         let (target_top, target_y) = page_origins.truncated_margin_target(
-            at.natural_page,
+            natural_page,
             forced_before,
             at.margin_top,
             || {
@@ -9278,17 +9410,48 @@ impl SiblingMargins {
                     document,
                     cascade,
                     previous,
-                    node_id,
+                    margin_node,
                     previous_bottom,
-                    at.effective_y,
+                    effective_y,
                 )
             },
             follows_forced_break,
         );
         Some(MarginTruncation {
-            delta: target_y - at.effective_y,
+            delta: target_y - effective_y,
             underflow: (target_y < target_top).then_some(target_top - target_y),
         })
+    }
+
+    /// The block that ends the run of margins around the empty box `at`, with
+    /// how far a negative margin on it pulls its top above the empty box, if
+    /// it does. The empty box stands where that block starts: a page edge in
+    /// the run cuts it from there. A forced break before the empty box, or one
+    /// that reaches its margin, keeps the margin as it is.
+    fn pulled_run_end(
+        &self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        at: &MarginBreak,
+    ) -> Option<(MarginRunEnd, f32)> {
+        let end = at.run_end?;
+        let pulled = at.raw_y - end.raw_y;
+        if at.forced_before
+            || pulled <= 0.001
+            || !at.collapses_with_previous_block
+            || !matches!(
+                cascade.computed[at.node_id].clear,
+                raikiri_style::property::ClearValue::None
+            )
+        {
+            return None;
+        }
+        let (previous, _) = self.gap_after_previous(document, at.node_id, at.raw_y)?;
+        let taken_by_float = self
+            .break_taken_by_float
+            .is_some_and(|source| is_descendant_or_self(document, source, previous));
+        (!taken_by_float && !self.follows_forced_break(document, cascade, previous, at.node_id))
+            .then_some((end, pulled))
     }
 
     /// Whether a forced break reaches the margin above `node_id`, whose
