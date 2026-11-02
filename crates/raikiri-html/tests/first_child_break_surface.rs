@@ -20,9 +20,9 @@ const BREAK: &str = "<div style='break-after:page;height:30px'>a</div>";
 /// Two lines of two words.
 const CHILD: &str = "<div style='break-before:page'>XX XX XX XX</div>";
 
-/// The number of pages, and the page and top of every line of text but the
-/// lead-in `a`. A 20px glyph in a 30px line sits 5px below the line.
-fn pages(body: &str) -> (usize, Vec<(u32, f32)>) {
+/// The number of pages, and the page, left edge and top of every line of text
+/// but the lead-in `a`. A 20px glyph in a 30px line sits 5px below the line.
+fn pages(body: &str) -> (usize, Vec<(u32, f32, f32)>) {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -54,8 +54,7 @@ fn pages(body: &str) -> (usize, Vec<(u32, f32)>) {
         count += 1;
         for run in page.text_runs() {
             if run.text.trim_end() != "a" {
-                assert_eq!(run.origin.0, 0.0);
-                lines.push((index, run.origin.1 - ASCENT));
+                lines.push((index, run.origin.0, run.origin.1 - ASCENT));
             }
         }
     }
@@ -63,8 +62,8 @@ fn pages(body: &str) -> (usize, Vec<(u32, f32)>) {
 }
 
 /// The text of `CHILD` on the second page, its first line `top` down the page.
-fn on_second_page(top: f32) -> (usize, Vec<(u32, f32)>) {
-    (2, vec![(1, top), (1, top + 30.0)])
+fn on_second_page(top: f32) -> (usize, Vec<(u32, f32, f32)>) {
+    (2, vec![(1, 0.0, top), (1, 0.0, top + 30.0)])
 }
 
 #[test]
@@ -124,12 +123,15 @@ fn a_box_or_text_before_the_child_keeps_its_break() {
         let body = format!("{BREAK}<div style='padding-top:5px'>{before}{CHILD}</div>");
         assert_eq!(
             pages(&body),
-            (3, vec![(2, 5.0), (2, 35.0)]),
+            (3, vec![(2, 0.0, 5.0), (2, 0.0, 35.0)]),
             "before {before:?}"
         );
     }
     let body = format!("{BREAK}<div style='padding-top:5px'>b{CHILD}</div>");
-    assert_eq!(pages(&body), (3, vec![(1, 10.0), (2, 5.0), (2, 35.0)]));
+    assert_eq!(
+        pages(&body),
+        (3, vec![(1, 0.0, 10.0), (2, 0.0, 5.0), (2, 0.0, 35.0)])
+    );
 }
 
 #[test]
@@ -142,7 +144,36 @@ fn a_break_before_the_first_box_of_the_document_opens_no_page() {
         (format!("<div style='padding-top:5px'>{CHILD}</div>"), 10.0),
         (nested, 17.0),
     ] {
-        let expected = (1, vec![(0, top), (0, top + 30.0)]);
+        let expected = (1, vec![(0, 0.0, top), (0, 0.0, top + 30.0)]);
         assert_eq!(pages(&body), expected, "{body}");
     }
+}
+
+#[test]
+fn the_edges_of_the_block_stay_beside_the_float_that_started_the_page() {
+    // The float is 50px tall, so the first two 30px lines are beside it and
+    // the third is below it, if the page has room.
+    let float = "<div style='float:left;width:40px;height:50px'></div>";
+    for (wrapper, top) in [
+        ("", 5.0),
+        ("padding-top:5px", 10.0),
+        ("border-top:5px solid red", 10.0),
+        ("margin-top:10px", 15.0),
+    ] {
+        let body = format!("{BREAK}{float}<div style='{wrapper}'>{CHILD}</div>");
+        let expected = (
+            2,
+            vec![(1, 40.0, top), (1, 40.0, top + 30.0), (1, 0.0, top + 60.0)],
+        );
+        assert_eq!(pages(&body), expected, "wrapper {wrapper:?}");
+    }
+    // The third line does not fit the page below the edges, and starts the next.
+    let body = format!("{BREAK}{float}<div style='padding-top:5px;margin-top:10px'>{CHILD}</div>");
+    let expected = (3, vec![(1, 40.0, 20.0), (1, 40.0, 50.0), (2, 0.0, 5.0)]);
+    assert_eq!(pages(&body), expected);
+    let body = format!(
+        "{BREAK}{float}<div style='padding-top:5px'><div style='padding-top:7px'>{CHILD}</div></div>"
+    );
+    let expected = (3, vec![(1, 40.0, 17.0), (1, 40.0, 47.0), (2, 0.0, 5.0)]);
+    assert_eq!(pages(&body), expected);
 }
