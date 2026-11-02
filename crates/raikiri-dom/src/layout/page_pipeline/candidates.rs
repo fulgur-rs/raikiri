@@ -13,10 +13,11 @@ use super::{
     is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
-    pagination_child_order, pagination_child_parent_y, paragraph_lines_keep_together,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line,
+    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
+    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    takes_no_block_space, unplaced_line,
 };
 use std::collections::HashMap;
 
@@ -88,6 +89,13 @@ pub(super) struct ElementContext {
     /// the item. The box moves to the next page with them when they do not fit
     /// after it (see [`super::item_tail_move`]).
     pub(super) item_tail_edges: f32,
+    /// For a block that holds one box (see `closing_edges_inside`) and is tied
+    /// by an avoided break to the box before it: how far below the top of the
+    /// margin box of the first box of the tied run the block's border box
+    /// starts. The avoided break gives way, and the block moves to the next
+    /// page, only when that first box starts its page (see
+    /// [`super::closing_edges_move`]).
+    pub(super) lone_run_head_offset: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -202,6 +210,11 @@ impl BoxContext {
     pub(super) fn item_tail_edges(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.item_tail_edges)
+    }
+
+    pub(super) fn lone_run_head_offset(self) -> Option<f32> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.lone_run_head_offset)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -462,6 +475,11 @@ struct CandidateFrame<'name> {
     /// The last item of the flex container, or the last row of the table, that
     /// the node is in, when the edges that close the container follow it.
     item_tail: Option<ItemTail>,
+    /// The box that starts the run of boxes tied by avoided breaks among the
+    /// boxes of the node's parent, when an avoided break ties the node to the
+    /// box before it: the run runs from this box on, with a break that is not
+    /// avoided before it. It is tracked only where the document avoids breaks.
+    tie_head: Option<usize>,
 }
 
 /// The last item of a flex container that stacks its items, or the last row of
@@ -518,6 +536,7 @@ impl CandidateFrame<'_> {
             run_unit: None,
             run_tail: false,
             item_tail: None,
+            tie_head: None,
         }
     }
 }
@@ -789,6 +808,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.run_unit = None;
                         child_frame.run_tail = false;
                         child_frame.item_tail = None;
+                        child_frame.tie_head = None;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -1066,11 +1086,22 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && node.is_ifc_root()
                             && paragraph_lines_keep_together(document, cascade, node_id)));
                 let closing_edges_base = closing_edges_shape && unbreakable;
+                // How far below the first box of the run that avoided breaks
+                // tie the node to its top sits, so that the avoided break
+                // before it can give way when that box starts its page.
+                let tie_offset = frame.tie_head.map(|head| {
+                    normal_flow_y(document, cascade, body_id, node_id)
+                        - normal_flow_y(document, cascade, body_id, head)
+                        + document.nodes[head].layout.margin.top.max(0.0)
+                });
                 // A block that holds one box moves whole with the edges that
                 // would break away from it, its own and those of the blocks
                 // it ends: no box before the one in it is there to break from.
                 // A forced break at either end of the block, or a clipped
-                // part of it, is left to the rules for those.
+                // part of it, is left to the rules for those. Tied to the box
+                // before it, it is still a candidate: the run those boxes
+                // make is kept together only while its first box leaves the
+                // page room for it.
                 let lone_tail = (in_flow_block
                     && frame.previous_box.is_some()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
@@ -1087,7 +1118,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 .filter(|&tail| {
                     tail + frame.closing_edges > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
-                        && break_before_available()
+                        && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
                         && !page_edge_constraint(document, cascade, node_id, false).0
                 });
@@ -1266,6 +1297,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                             + tail.inherited)
                                             .max(0.0)
                                     }),
+                                lone_run_head_offset: tie_offset
+                                    .filter(|_| lone_box_candidate.is_some())
+                                    .filter(|_| !break_before_available()),
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1475,6 +1509,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // Whether avoided breaks tie each box so far to the one before
                 // it, from the first box on.
                 let mut tied_from_start = true;
+                // The child that starts the run of boxes tied by avoided
+                // breaks which the box before the next child ends.
+                let mut run_head = None;
                 let is_block = |id: usize| {
                     is_plain_block_box(document, id) || is_plain_container_box(document, id)
                 };
@@ -1513,6 +1550,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && last_in_flow == Some(index);
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
+                    let child_tied = self.finds_nested_runs
+                        && child_previous_box.is_some_and(|previous| {
+                            boxes_are_tied(document, cascade, previous, child_id)
+                        });
                     // A float between the boxes is no box in their flow, and
                     // text before the child is left to the rules for it.
                     let child_tied_to_start = tied_from_start
@@ -1527,6 +1568,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
                         previous_box = Some(last_box);
                         tied_from_start = !child_box_before || child_tied_to_start;
+                        if !child_tied {
+                            run_head = (last_box == child_id).then_some(child_id);
+                        }
                     }
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
@@ -1576,6 +1620,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             run_unit: run_units.get(index).copied().flatten(),
                             run_tail,
                             item_tail: child_item_tail,
+                            tie_head: child_tied.then_some(run_head).flatten(),
                         },
                     )?;
                 }

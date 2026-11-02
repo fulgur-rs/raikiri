@@ -285,42 +285,147 @@ fn a_block_that_holds_one_box_in_a_container_moves_after_the_box_before_it() {
     assert_eq!(page_flow_y(&doc, only), 100.0);
 }
 
+/// `body > [div(h, css)..., div(card_css; padding-bottom:{pad}px) > div(30px;
+/// only_css), div(10px)]` on 100px pages, with one lead box per entry of `lead`.
+/// Returns the page-flow y of each lead box, of the card, of its box and of the
+/// block after it.
+fn card_after_leads_tied(
+    lead: &[(u32, &str)],
+    pad: u32,
+    card_css: &str,
+    only_css: &str,
+) -> Vec<f32> {
+    let (mut ids, mut only, mut after) = (Vec::new(), 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        for &(height, css) in lead {
+            ids.push(block(
+                doc,
+                body,
+                &format!("display:block;height:{height}px;{css}"),
+            ));
+        }
+        let card = block(
+            doc,
+            body,
+            &format!("display:block;padding-bottom:{pad}px;{card_css}"),
+        );
+        ids.push(card);
+        only = block(doc, card, &format!("display:block;height:30px;{only_css}"));
+        after = block(doc, body, "display:block;height:10px");
+    });
+    ids.push(only);
+    ids.push(after);
+    ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
+}
+
 #[test]
-fn a_block_that_holds_one_box_stays_when_a_break_before_it_is_avoided() {
-    for (before_css, parent_css, only_css) in [
+fn a_block_that_holds_one_box_tied_to_the_box_before_it_goes_on_when_that_box_starts_its_page() {
+    // The box before it starts the page, so the avoided break cannot keep the
+    // two together: the box ends at 90, the padding below it does not fit, and
+    // the page breaks before the block, as browsers do.
+    for (lead_css, card_css, only_css) in [
         ("break-after:avoid", "", ""),
         ("", "break-before:avoid", ""),
         ("", "", "break-before:avoid"),
     ] {
-        let (mut parent, mut only) = (0, 0);
-        let (doc, _) = paged_body(|doc, body| {
-            block(
-                doc,
-                body,
-                &format!("display:block;height:60px;{before_css}"),
-            );
-            parent = block(
-                doc,
-                body,
-                &format!("display:block;padding-bottom:30px;{parent_css}"),
-            );
-            only = block(
-                doc,
-                parent,
-                &format!("display:block;height:30px;{only_css}"),
-            );
-        });
         assert_eq!(
-            page_flow_y(&doc, parent),
-            60.0,
-            "{before_css} {parent_css} {only_css}"
-        );
-        assert_eq!(
-            page_flow_y(&doc, only),
-            60.0,
-            "{before_css} {parent_css} {only_css}"
+            card_after_leads_tied(&[(60, lead_css)], 30, card_css, only_css),
+            [0.0, 100.0, 100.0, 160.0],
+            "{lead_css} {card_css} {only_css}"
         );
     }
+}
+
+#[test]
+fn a_block_tied_through_a_chain_of_boxes_to_the_box_that_starts_the_page_goes_on() {
+    // The chain of avoided breaks reaches back to the first box of the page.
+    assert_eq!(
+        card_after_leads_tied(
+            &[(10, "break-after:avoid"), (50, "break-after:avoid")],
+            30,
+            "",
+            ""
+        ),
+        [0.0, 10.0, 100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_block_tied_to_a_box_that_starts_its_page_after_a_break_goes_on() {
+    // The run starts the second page, below a box that fills the first.
+    assert_eq!(
+        card_after_leads_tied(&[(100, ""), (60, "break-after:avoid")], 30, "", ""),
+        [0.0, 100.0, 200.0, 200.0, 260.0]
+    );
+}
+
+#[test]
+fn a_block_tied_to_a_box_below_the_top_of_its_page_stays_with_the_run() {
+    // The run of the two boxes does not start the page, so it moves as a
+    // whole to the next page, where the block fits after the box.
+    assert_eq!(
+        card_after_leads_tied(&[(30, ""), (30, "break-after:avoid")], 30, "", ""),
+        [0.0, 100.0, 130.0, 130.0, 190.0]
+    );
+}
+
+#[test]
+fn a_block_tied_to_a_run_that_cannot_fit_a_page_keeps_its_place_below_the_page_top() {
+    // The run of the box and the block is taller than a page, so the page does
+    // not keep it together and the box stays where it is. That box is not at
+    // the top of the page, so the avoided break before the block holds, and
+    // the block stays with it. (Browsers move the box on to the next page
+    // too, which is not done.)
+    assert_eq!(
+        card_after_leads_tied(&[(10, ""), (50, "break-after:avoid")], 30, "", ""),
+        [0.0, 10.0, 60.0, 60.0, 120.0]
+    );
+}
+
+#[test]
+fn the_margin_above_the_first_box_of_the_run_counts_as_part_of_the_page_top() {
+    // The margin of the first box of the first page is kept, which leaves the
+    // box below the page top but its margin box at it.
+    assert_eq!(
+        card_after_leads_tied(&[(50, "margin-top:10px;break-after:avoid")], 30, "", ""),
+        [10.0, 100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_block_tied_to_the_box_before_it_in_a_wrapper_goes_on_with_the_wrapper_edges() {
+    // Both boxes are the children of a wrapper with padding of its own that
+    // the block ends: the wrapper starts the page and so does the box.
+    let (mut lead, mut card, mut only, mut after) = (0, 0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = block(doc, body, "display:block;padding-bottom:10px");
+        lead = block(doc, wrapper, "display:block;height:60px;break-after:avoid");
+        card = block(doc, wrapper, "display:block;padding-bottom:30px");
+        only = block(doc, card, "display:block;height:30px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, lead), 0.0);
+    assert_eq!(page_flow_y(&doc, card), 100.0);
+    assert_eq!(page_flow_y(&doc, only), 100.0);
+    assert_eq!(page_flow_y(&doc, after), 170.0);
+}
+
+#[test]
+fn a_block_tied_to_the_box_before_it_stays_when_it_would_gain_nothing() {
+    // The edges fit after the box.
+    assert_eq!(
+        card_after_leads_tied(&[(60, "break-after:avoid")], 10, "", ""),
+        [0.0, 60.0, 60.0, 100.0]
+    );
+    // The box does not fit the page: the page breaks inside it.
+    let (mut card, mut only) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px;break-after:avoid");
+        card = block(doc, body, "display:block;padding-bottom:30px");
+        only = block(doc, card, "display:block;height:50px");
+    });
+    assert_eq!(page_flow_y(&doc, card), 60.0);
+    assert_eq!(page_flow_y(&doc, only), 60.0);
 }
 
 /// The page count of a 60px block, a block with `padding` below the one box
