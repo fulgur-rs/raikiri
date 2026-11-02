@@ -7060,6 +7060,84 @@ fn leading_piece_end(
     .flatten()
 }
 
+/// The extent given to a box with nothing to keep together, which the page
+/// can be cut through anywhere: just enough for a box that begins at the page
+/// end to count as running past it.
+const CUT_ANYWHERE_PIECE: f32 = 0.01;
+
+/// How far below the border-box top of the plain block `node_id` the first
+/// piece of its content ends, when padding or border sit above that content,
+/// on `node_id` or on a box it begins, and the first boxes inside it, down to
+/// the one that decides, hold no line to keep with those edges. A box that
+/// avoids breaks inside it or that no break goes through ends where it does,
+/// and an empty box can be cut anywhere, so it only counts when it begins past
+/// the page end (see [`first_piece_end`]). Lines are left to the rules for
+/// lines, and a box with no edges above it to the rules for boxes that avoid
+/// a break.
+fn lineless_leading_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    lineless_piece_end(document, cascade, body_id, node_id, 0)
+        .filter(|&(_, has_edges)| has_edges)
+        .map(|(end, _)| end)
+}
+
+/// The end of the first piece of the plain block `node_id` that holds no line,
+/// from its border-box top, and whether padding or border sit above the
+/// content that decides it (see [`lineless_leading_piece_end`]).
+fn lineless_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    depth: usize,
+) -> Option<(f32, bool)> {
+    if depth > FIRST_PIECE_DEPTH
+        || !is_plain_block_box(document, node_id)
+        || document.nodes[node_id].is_multicol_container()
+        || document.nodes[node_id].has_before_or_after_content
+        || is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        return None;
+    }
+    let node = &document.nodes[node_id];
+    // The box the walk starts at is judged by the rules of its own.
+    if depth > 0
+        && (avoids_page_break_inside(cascade.computed[node_id].break_inside)
+            || is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false))
+    {
+        return Some((node.layout.size.height, false));
+    }
+    if node.is_ifc_root() {
+        return None;
+    }
+    let mut first = None;
+    for &child in &node.children {
+        if is_floating_box_for_pagination(document, cascade, child) {
+            return None;
+        }
+        let mut boxes = Vec::new();
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        if let Some(&box_id) = boxes.last() {
+            first = Some(box_id);
+            break;
+        }
+    }
+    let Some(child) = first else {
+        // Nothing to keep together inside the box.
+        return (depth > 0).then_some((CUT_ANYWHERE_PIECE, false));
+    };
+    // The page breaks before the relative offset moves the box.
+    let top = normal_flow_y(document, cascade, body_id, child);
+    let (end, child_has_edges) = lineless_piece_end(document, cascade, body_id, child, depth + 1)?;
+    let layout = &node.layout;
+    let has_edges = child_has_edges || layout.border.top + layout.padding.top > 0.0;
+    Some((top + end, has_edges))
+}
+
 /// Whether a box with padding or border above its content moves to the next
 /// page, so that those edges do not stay behind alone: the box starts on the
 /// page, but the first piece of its content (see [`first_piece_end`], which
