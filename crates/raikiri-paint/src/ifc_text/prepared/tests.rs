@@ -291,7 +291,7 @@ fn a_paragraph_in_columns_paints_as_it_does_when_each_column_prepares_it() {
             // one column on each page, as may one with generated blocks that
             // continues on later pages.
             let split =
-                !name.contains("atomic box") && !(flow == "flow" && name == "generated blocks");
+                !(name.contains("atomic box") || flow == "flow" && name == "generated blocks");
             let (shared_pieces, unshared_pieces) = (
                 shared_work[Work::Pieces as usize],
                 unshared_work[Work::Pieces as usize],
