@@ -286,7 +286,17 @@ fn item_metrics(
     content_box_ratio: bool,
     inputs: LayoutInput,
 ) -> Metrics {
-    let metrics = Metrics::resolve(style, width_stands_in, content_box_ratio, inputs);
+    let main_is_width = tree.flex_main_axis_is_width(usize::from(node));
+    let metrics = Metrics::resolve_flexed(
+        style,
+        width_stands_in,
+        content_box_ratio,
+        inputs,
+        Size {
+            width: main_is_width == Some(true),
+            height: main_is_width == Some(false),
+        },
+    );
     let known = inputs.known_dimensions;
     // Only a box with a ratio takes a size from the other axis, and a stretch
     // hint is the one size known while the other is not.
