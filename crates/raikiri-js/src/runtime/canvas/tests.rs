@@ -697,6 +697,16 @@ fn draw_image_skips_unavailable_images_and_rejects_broken_ones() {
         &mut rt,
         "try { ctx.drawImage(broken, 0, 0); false } catch (e) { e.name === 'InvalidStateError' }",
     );
+    for call in [
+        "ctx.drawImage(broken,0,0,0,0)",
+        "ctx.drawImage(broken,0,0,0,1,0,0,1,1)",
+        "ctx.drawImage(broken,0,0,1,1,99,99,1,1)",
+    ] {
+        ok(
+            &mut rt,
+            &format!("try{{{call};false}}catch(e){{e.name==='InvalidStateError'}}"),
+        );
+    }
     // A new request makes a loaded image unavailable until it finishes.
     rt.evaluate("img.src = 'missing.png'; ctx.drawImage(img, 0, 0);")
         .unwrap();
@@ -736,4 +746,165 @@ fn draw_image_draws_nothing_when_the_host_keeps_no_pixels() {
     let (mut rt, canvas) = draw_rt(false);
     rt.evaluate("ctx.drawImage(img, 0, 0);").unwrap();
     assert_eq!(pixels(rt, canvas), vec![vec![CLEAR; 4]; 4]);
+}
+
+#[test]
+fn self_draws_read_the_original_pixels_in_each_overlap_direction() {
+    const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    for (dx, dy, expected) in [
+        (
+            1,
+            0,
+            [
+                [RED, RED, GREEN, CLEAR],
+                [BLUE, BLUE, YELLOW, CLEAR],
+                [CLEAR; 4],
+                [CLEAR; 4],
+            ],
+        ),
+        (
+            -1,
+            0,
+            [
+                [GREEN, GREEN, CLEAR, CLEAR],
+                [YELLOW, YELLOW, CLEAR, CLEAR],
+                [CLEAR; 4],
+                [CLEAR; 4],
+            ],
+        ),
+        (
+            0,
+            1,
+            [
+                [RED, GREEN, CLEAR, CLEAR],
+                [RED, GREEN, CLEAR, CLEAR],
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [CLEAR; 4],
+            ],
+        ),
+        (
+            0,
+            -1,
+            [
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [CLEAR; 4],
+                [CLEAR; 4],
+            ],
+        ),
+    ] {
+        let (mut rt, canvas) = draw_rt(true);
+        rt.evaluate(&format!(
+            "ctx.drawImage(img,0,0);ctx.fillStyle='yellow';ctx.fillRect(1,1,1,1);ctx.drawImage(c,0,0,2,2,{dx},{dy},2,2);"
+        )).unwrap();
+        assert_eq!(pixels(rt, canvas), expected.map(Vec::from));
+    }
+}
+
+#[test]
+fn self_draw_patches_keep_raster_origins_source_clipping_and_negative_extents() {
+    const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    for (call, expected) in [
+        (
+            "ctx.drawImage(c,-Number.MAX_VALUE,0,-Number.MAX_VALUE,1,-1,0,4,1)",
+            [
+                [RED, RED, RED, CLEAR],
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [CLEAR; 4],
+                [CLEAR; 4],
+            ],
+        ),
+        (
+            "ctx.drawImage(c,1,1,1,1,2.7,2.7,1.7,1.7)",
+            [
+                [RED, GREEN, CLEAR, CLEAR],
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [CLEAR; 4],
+                [CLEAR, CLEAR, CLEAR, YELLOW],
+            ],
+        ),
+        (
+            "ctx.drawImage(c,2,2,-2,-2,4,4,-2,-2)",
+            [
+                [RED, GREEN, CLEAR, CLEAR],
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [CLEAR, CLEAR, RED, GREEN],
+                [CLEAR, CLEAR, BLUE, YELLOW],
+            ],
+        ),
+        (
+            "ctx.drawImage(c,-1,0,4,2,0,2,4,2)",
+            [
+                [RED, GREEN, CLEAR, CLEAR],
+                [BLUE, YELLOW, CLEAR, CLEAR],
+                [CLEAR, RED, GREEN, CLEAR],
+                [CLEAR, BLUE, YELLOW, CLEAR],
+            ],
+        ),
+    ] {
+        let (mut rt, canvas) = draw_rt(true);
+        rt.evaluate(&format!(
+            "ctx.drawImage(img,0,0);ctx.fillStyle='yellow';ctx.fillRect(1,1,1,1);{call};"
+        ))
+        .unwrap();
+        assert_eq!(pixels(rt, canvas), expected.map(Vec::from));
+    }
+}
+
+#[test]
+fn self_draws_with_no_sampled_row_or_column_leave_the_bitmap_unchanged() {
+    let (mut rt, canvas) = draw_rt(true);
+    rt.evaluate("ctx.fillStyle='red';ctx.fillRect(0,0,4,4);")
+        .unwrap();
+    for call in [
+        "ctx.drawImage(c,99,0,1,1,0,0,1,1)",
+        "ctx.drawImage(c,0,99,1,1,0,0,1,1)",
+        "ctx.drawImage(c,0,0,1,1,0.7,0,0.1,1)",
+        "ctx.drawImage(c,0,0,1,1,0,0.7,1,0.1)",
+    ] {
+        rt.evaluate(call).unwrap();
+    }
+    assert_eq!(pixels(rt, canvas), vec![vec![RED; 4]; 4]);
+}
+
+#[test]
+fn self_draws_preserve_external_snapshots_while_releasing_their_own_source_borrow() {
+    use super::super::webidl::with_state;
+    let (mut rt, canvas) = draw_rt(true);
+    rt.evaluate("ctx.drawImage(img,0,0);").unwrap();
+    let snapshot = with_state(rt.context_mut(), |s| {
+        s.host.document().canvas_bitmap_snapshot(canvas).unwrap()
+    })
+    .unwrap();
+    rt.evaluate("ctx.drawImage(c,0,0,1,1,3,3,1,1);").unwrap();
+    assert_eq!(&snapshot.rgba[60..64], &CLEAR);
+    assert_eq!(std::sync::Arc::strong_count(&snapshot), 1);
+    assert_eq!(pixels(rt, canvas)[3][3], RED);
+}
+
+#[test]
+fn draw_image_keeps_empty_huge_sources_and_destination_resource_limits_bounded() {
+    let (mut rt, canvas) = draw_rt(true);
+    ok(
+        &mut rt,
+        "var huge=document.createElement('canvas');huge.width=4294967295;huge.height=4294967295;ctx.drawImage(huge,0,0)===undefined",
+    );
+    ok(
+        &mut rt,
+        "c.width=4294967295;ctx.drawImage(c,0,0)===undefined && ctx.drawImage(img,0,0)===undefined",
+    );
+    let host = rt.into_host();
+    assert!(host.document().canvas_bitmap_ref(canvas).is_none());
+}
+
+#[test]
+fn draw_image_reads_resized_and_repainted_sources_after_argument_conversion() {
+    let (mut rt, canvas) = draw_rt(true);
+    ok(
+        &mut rt,
+        "var source=document.createElement('canvas');source.width=2;source.height=2;var src=source.getContext('2d');src.fillStyle='red';src.fillRect(0,0,2,2);ctx.drawImage(source,{valueOf(){source.width=1;source.height=1;src.fillStyle='blue';src.fillRect(0,0,1,1);return 0;}},0)===undefined",
+    );
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [BLUE, CLEAR, CLEAR, CLEAR]);
+    assert_eq!(rows[1], [CLEAR; 4]);
 }

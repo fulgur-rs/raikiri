@@ -8,6 +8,7 @@ use crate::runtime::{DomRuntime, RuntimeError};
 
 mod bulk_replace_tests;
 mod element_child_tests;
+mod empty_edit_tests;
 mod sibling_order_tests;
 mod substring_tests;
 mod tree_walker_tests;
@@ -164,6 +165,23 @@ fn character_data_edits_count_utf16_code_units() {
     rt.evaluate("var u = document.createTextNode('a'); u.appendData('\\uD83D'); u.insertData(0, '\\uDE00');")
         .unwrap();
     ok(&mut rt, "u.data === '\\uFFFDa\\uFFFD' && u.length === 3");
+}
+
+#[test]
+fn append_data_pairs_nothing_across_the_seam() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var t = document.createTextNode('a\u{1F600}'); t.appendData('\\uDE00'); \
+         var p = document.createTextNode('a'); p.appendData('\\uD83D\\uDE00'); \
+         var h = document.createTextNode('a'); h.appendData('\\uD83D'); h.appendData('\\uDE00'); \
+         var c = document.createComment('c'); c.appendData(''); c.appendData('d');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "t.data === 'a\u{1F600}\\uFFFD' && t.length === 4 && p.data === 'a\u{1F600}' && p.length === 3 \
+         && h.data === 'a\\uFFFD\\uFFFD' && c.data === 'cd'",
+    );
 }
 
 #[test]

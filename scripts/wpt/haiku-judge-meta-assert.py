@@ -31,6 +31,14 @@ Usage:
     # list the tests the judge can decide, for prepare-meta-assert-review --tests
     scripts/wpt/haiku-judge-meta-assert.py list-tests --path-prefix css/CSS2 --output judge-tests.txt
 
+    # calibrate: list match reftests, take their pixel outcome as ground
+    # truth, judge a sample of each outcome, and score the verdicts
+    scripts/wpt/haiku-judge-meta-assert.py list-tests --reftests --path-prefix css/CSS2 --output candidates.txt
+    run-baseline-report --baseline candidates.txt --output report.tsv
+    scripts/wpt/haiku-judge-meta-assert.py calibration-sample --report report.tsv \
+        --candidates candidates.txt --pass-from expectations/raikiri-baseline.txt --output judge-tests.txt
+    scripts/wpt/haiku-judge-meta-assert.py score --report report.tsv --review-dir target/meta-assert-review
+
     # write the exact prompt per row without calling the API
     scripts/wpt/haiku-judge-meta-assert.py dump-prompts --review-dir target/meta-assert-review
 """
@@ -441,6 +449,8 @@ def command_batch_collect(args) -> int:
 
 # Reftest links may leave the rel value unquoted.
 REFTEST_LINK_RE = re.compile(r"""rel\s*=\s*["']?(?:match|mismatch)\b""", re.I)
+MATCH_LINK_RE = re.compile(r"""rel\s*=\s*["']?match\b""", re.I)
+MISMATCH_LINK_RE = re.compile(r"""rel\s*=\s*["']?mismatch\b""", re.I)
 NON_TEST_RE = re.compile(r"(^|/)(support|reference)/|-ref\b|-notref\b")
 META_ASSERT_RE = re.compile(r"""<meta\b[^>]*\bname\s*=\s*["']?assert\b""", re.I)
 # Inline event handlers run script that the renderer never executes.
@@ -456,22 +466,39 @@ TEST_SUFFIXES = (".xht", ".xhtml", ".html", ".htm")
 # one screenshot. Mentions of scrollbars or a "scrolling mechanism" describe
 # what is painted, so they stay.
 SCROLL_ACTION_RE = re.compile(r"\bscroll(?:ed|ing)?\b(?!\s*(?:bar|mechanism))", re.I)
+# A condition that only asks for the absence of red is met by most broken
+# renderings too (calibration found pixel FAILs judged pass this way), so
+# such tests stay with human review.
+ABSENCE_ONLY_RE = re.compile(r"^(?:test )?passes? if (?:there is )?no red\b[\s.]*$", re.I)
 
 
-def is_judge_candidate(test_id: str, source: str) -> bool:
+def is_judge_candidate(test_id: str, source: str, reftest: bool = False) -> bool:
     """A test the judge can decide: a meta assert, no reference, nothing that
     needs script or unmapped server-absolute resources, and a pass condition
-    that `pass_condition` knows how to extract."""
+    that `pass_condition` knows how to extract.
+
+    With `reftest`, the test must instead have a `match` reference and no
+    `mismatch` one, so its pixel comparison gives a known outcome to
+    calibrate the judge against."""
     if NON_TEST_RE.search(test_id) or not META_ASSERT_RE.search(source):
         return False
-    if REFTEST_LINK_RE.search(source) or "<script" in source.lower():
+    if reftest:
+        if not MATCH_LINK_RE.search(source) or MISMATCH_LINK_RE.search(source):
+            return False
+    elif REFTEST_LINK_RE.search(source):
+        return False
+    if "<script" in source.lower():
         return False
     if EVENT_HANDLER_RE.search(source) or ROOT_RELATIVE_URL_RE.search(source):
         return False
     # Use the extractor itself, so a phrase it would not send (for example one
     # inside the meta assert) does not admit the test.
     condition = pass_condition(source)
-    return bool(condition) and not SCROLL_ACTION_RE.search(condition)
+    return (
+        bool(condition)
+        and not SCROLL_ACTION_RE.search(condition)
+        and not ABSENCE_ONLY_RE.match(condition)
+    )
 
 
 def command_list_tests(args) -> int:
@@ -480,11 +507,7 @@ def command_list_tests(args) -> int:
     # would only spend requests.
     excluded = set()
     for path in args.exclude:
-        excluded.update(
-            line.strip()
-            for line in path.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-        )
+        excluded.update(read_ids(path))
     ids = []
     for path in sorted((root / args.path_prefix.strip("/")).rglob("*")):
         if path.suffix not in TEST_SUFFIXES or not path.is_file():
@@ -498,10 +521,160 @@ def command_list_tests(args) -> int:
             # The renderer reads tests as UTF-8, so other encodings (the
             # character-encoding tests) cannot be rendered faithfully.
             continue
-        if is_judge_candidate(test_id, source):
+        if is_judge_candidate(test_id, source, reftest=args.reftests):
             ids.append(test_id)
     args.output.write_text("".join(f"{test_id}\n" for test_id in ids))
     print(f"{len(ids)} candidates")
+    return 0
+
+
+# Pixel outcomes from a `run-baseline-report` TSV. XPASS and XFAIL are the
+# same comparisons with a recorded expectation, so they count as PASS and
+# FAIL; ERROR has no outcome and is left out.
+REPORT_OUTCOMES = {"PASS": "PASS", "XPASS": "PASS", "FAIL": "FAIL", "XFAIL": "FAIL"}
+
+
+def read_report(path: Path) -> dict[str, str]:
+    """Map test id to PASS or FAIL. Variant ids (`?` or `#`) are skipped,
+    since the review renders the file without its variant."""
+    outcomes = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 2 or "?" in fields[0] or "#" in fields[0]:
+            continue
+        outcome = REPORT_OUTCOMES.get(fields[1].strip())
+        if outcome:
+            outcomes[fields[0]] = outcome
+    return outcomes
+
+
+def sample_order(test_id: str) -> str:
+    # A hash order is stable across runs, so a rerun picks the same tests and
+    # their verdicts come from the cache.
+    return hashlib.sha256(test_id.encode()).hexdigest()
+
+
+def read_ids(path: Path) -> set[str]:
+    return {
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
+def command_calibration_sample(args) -> int:
+    outcomes = read_report(args.report)
+    if args.candidates:
+        # The report also runs every recorded expected failure, most of which
+        # the judge cannot decide.
+        listed = read_ids(args.candidates)
+        outcomes = {t: o for t, o in outcomes.items() if t in listed}
+    if args.pass_from:
+        # A sweep PASS can be vacuous (test and reference equally wrong), so
+        # PASS ground truth is limited to tests a baseline already accepted.
+        accepted = read_ids(args.pass_from)
+        outcomes = {t: o for t, o in outcomes.items() if o == "FAIL" or t in accepted}
+    picked = []
+    for outcome in ("PASS", "FAIL"):
+        ids = sorted((t for t, o in outcomes.items() if o == outcome), key=sample_order)
+        chosen = ids[: args.per_outcome]
+        print(f"{outcome}: {len(chosen)} of {len(ids)}")
+        picked.extend(chosen)
+    args.output.write_text("".join(f"{test_id}\n" for test_id in sorted(picked)))
+    return 0
+
+
+def read_reviews(path: Path) -> dict[str, str]:
+    decisions = {}
+    with path.open(encoding="utf-8") as handle:
+        for raw in handle:
+            if raw.strip():
+                row = json.loads(raw)
+                decisions[row["test_id"]] = row["decision"]
+    return decisions
+
+
+DECISIONS = ("pass", "fail", "needs-human", "not-renderable")
+
+
+def score(outcomes: dict[str, str], decisions: dict[str, str]) -> dict:
+    """Cross the judge's decisions with the pixel outcomes.
+
+    The baseline only takes `pass` verdicts, so the numbers that matter are
+    how often a pixel FAIL is called pass (false-pass rate) and how many pass
+    verdicts are pixel PASS (pass precision)."""
+    matrix = {outcome: dict.fromkeys(DECISIONS, 0) for outcome in ("PASS", "FAIL")}
+    false_passes = []
+    for test_id, decision in sorted(decisions.items()):
+        outcome = outcomes.get(test_id)
+        if outcome is None or decision not in DECISIONS:
+            continue
+        matrix[outcome][decision] += 1
+        if outcome == "FAIL" and decision == "pass":
+            false_passes.append(test_id)
+
+    def ratio(numerator: int, denominator: int) -> float | None:
+        return numerator / denominator if denominator else None
+
+    fails = sum(matrix["FAIL"].values())
+    passes = sum(matrix["PASS"].values())
+    judged_pass = matrix["PASS"]["pass"] + matrix["FAIL"]["pass"]
+    return {
+        "matrix": matrix,
+        "false_pass_rate": ratio(matrix["FAIL"]["pass"], fails),
+        "pass_precision": ratio(matrix["PASS"]["pass"], judged_pass),
+        "pass_recall": ratio(matrix["PASS"]["pass"], passes),
+        "false_passes": false_passes,
+    }
+
+
+def format_score(result: dict, model: str) -> str:
+    def percent(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.1%}"
+
+    lines = [
+        f"## Judge calibration ({model})",
+        "",
+        "| pixel outcome | " + " | ".join(DECISIONS) + " |",
+        "| --- |" + " ---: |" * len(DECISIONS),
+    ]
+    for outcome, row in result["matrix"].items():
+        lines.append(f"| {outcome} | " + " | ".join(str(row[d]) for d in DECISIONS) + " |")
+    lines += [
+        "",
+        f"- false-pass rate (pass among pixel FAIL): {percent(result['false_pass_rate'])}",
+        f"- pass precision (pixel PASS among pass): {percent(result['pass_precision'])}",
+        f"- pass recall (pass among pixel PASS): {percent(result['pass_recall'])}",
+    ]
+    if result["false_passes"]:
+        lines += ["", "False passes:", ""]
+        lines += [f"- `{test_id}`" for test_id in result["false_passes"]]
+    return "\n".join(lines) + "\n"
+
+
+def suffix(test_id: str) -> str:
+    return Path(test_id).suffix.lstrip(".") or "(none)"
+
+
+def command_score(args) -> int:
+    outcomes = read_report(args.report)
+    decisions = read_reviews(args.review_dir / args.reviews)
+    result = score(outcomes, decisions)
+    result["model"] = args.model
+    # The baseline supplies most PASS rows as .html while the judged tests are
+    # mostly .xht, so the overall numbers can hide how the judge does on the
+    # file type it is actually used for.
+    result["by_suffix"] = {
+        kind: score(outcomes, {t: d for t, d in decisions.items() if suffix(t) == kind})
+        for kind in sorted({suffix(t) for t in decisions if t in outcomes})
+    }
+    (args.review_dir / "calibration.json").write_text(json.dumps(result, indent=1) + "\n")
+    print(format_score(result, args.model), end="")
+    for kind, part in result["by_suffix"].items():
+        print()
+        print(format_score(part, f"{args.model}, .{kind} only"), end="")
     return 0
 
 
@@ -553,9 +726,37 @@ def main() -> int:
         default=[],
         help="baseline file whose test ids are skipped (repeatable)",
     )
+    listing.add_argument(
+        "--reftests",
+        action="store_true",
+        help="list match reftests instead, to calibrate the judge against their pixel outcome",
+    )
+    sampling = sub.add_parser(
+        "calibration-sample", help="pick reftests with known PASS and FAIL outcomes"
+    )
+    sampling.add_argument("--report", type=Path, required=True, help="run-baseline-report TSV")
+    sampling.add_argument("--per-outcome", type=non_negative_int, default=100)
+    sampling.add_argument(
+        "--candidates",
+        type=Path,
+        help="list-tests --reftests output; report rows outside it are ignored",
+    )
+    sampling.add_argument(
+        "--pass-from",
+        type=Path,
+        help="baseline file; PASS rows outside it are not used as ground truth",
+    )
+    sampling.add_argument("--output", type=Path, default=Path("judge-tests.txt"))
+    scoring = sub.add_parser("score", help="compare verdicts with reftest pixel outcomes")
+    scoring.add_argument("--report", type=Path, required=True, help="run-baseline-report TSV")
+    scoring.add_argument("--review-dir", type=Path, default=Path("target/meta-assert-review"))
+    scoring.add_argument("--reviews", default="reviews.jsonl")
+    scoring.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args()
     handlers = {
         "list-tests": command_list_tests,
+        "calibration-sample": command_calibration_sample,
+        "score": command_score,
         "run": command_run,
         "batch-submit": command_batch_submit,
         "batch-collect": command_batch_collect,

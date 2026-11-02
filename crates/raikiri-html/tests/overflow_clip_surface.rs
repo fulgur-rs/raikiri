@@ -400,3 +400,54 @@ fn an_inline_block_clips_its_own_content() {
     );
     assert_eq!(result.page_count(), 1);
 }
+
+#[test]
+fn inline_svg_defaults_clip_the_viewport_and_author_styles_can_open_it() {
+    let body = "<svg id=box width=20 height=10><rect width=40 height=20 fill=red /></svg>";
+    let default = laid_out(body, "svg{display:block}");
+    let page = default.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().attr(f.node(), "id") == Some("box"))
+        .unwrap();
+    let values = page.computed(fragment.node()).unwrap();
+    assert_eq!(
+        values.overflow.x,
+        raikiri_style::property::OverflowValue::Hidden
+    );
+    assert_eq!(
+        values.overflow.y,
+        raikiri_style::property::OverflowValue::Hidden
+    );
+    let expected = PaintClip::new(PaintRect::new(0.0, 0.0, 20.0, 10.0));
+    assert_eq!(clip(&default, 0, "box"), Some(expected));
+    assert!(page.paint_order().into_iter().any(|event| matches!(event, PaintEvent::PushClip(value, ClipKind::Overflow) if value == expected)));
+
+    let attribute = body.replace("id=box", "id=box overflow=visible");
+    for visible in [
+        laid_out(body, "svg{display:block;overflow:visible}"),
+        laid_out(&attribute, "svg{display:block}"),
+    ] {
+        let page = visible.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().attr(f.node(), "id") == Some("box"))
+            .unwrap();
+        let values = page.computed(fragment.node()).unwrap();
+        assert_eq!(
+            values.overflow.x,
+            raikiri_style::property::OverflowValue::Visible
+        );
+        assert_eq!(
+            values.overflow.y,
+            raikiri_style::property::OverflowValue::Visible
+        );
+        assert_eq!(clip(&visible, 0, "box"), None);
+        assert!(
+            !page
+                .paint_order()
+                .into_iter()
+                .any(|event| matches!(event, PaintEvent::PushClip(_, ClipKind::Overflow)))
+        );
+    }
+}

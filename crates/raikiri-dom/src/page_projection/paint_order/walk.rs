@@ -102,6 +102,24 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             Frame::InlineGroup(root, group, part) => self.inline_group(root, group, part),
             Frame::HeldContent(index) => self.events.append(&mut self.held[index]),
             Frame::PopClip => self.events.push(PaintEvent::PopClip),
+            Frame::PopClipIfPainted(start) => {
+                let paints = self.events[start..].iter().copied().any(|event| {
+                    !matches!(
+                        event,
+                        PaintEvent::PushClip(..)
+                            | PaintEvent::PopClip
+                            | PaintEvent::PushOpacity(_)
+                            | PaintEvent::PopOpacity
+                            | PaintEvent::PushTransform(_)
+                            | PaintEvent::PopTransform
+                    ) && !super::event_clips::hides_decoration(self.cascade, event)
+                });
+                if paints {
+                    self.events.push(PaintEvent::PopClip);
+                } else {
+                    self.events.truncate(start);
+                }
+            }
             Frame::PopOpacity => self.events.push(PaintEvent::PopOpacity),
             Frame::PopTransform => {
                 self.events.push(PaintEvent::PopTransform);
@@ -276,16 +294,22 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         match layer.close {
             LayerClose::Paint => {}
             LayerClose::Merge(owner) => {
-                for (frames, into) in [
-                    (layer.pending, &mut outer.pending),
-                    (layer.positioned, &mut outer.positioned),
-                ] {
-                    if !frames.is_empty() {
-                        into.push(Frame::PushClip(owner));
-                        into.extend(frames);
-                        into.push(Frame::PopClip);
-                    }
+                if !layer.pending.is_empty() {
+                    outer.pending.push(Frame::PushClip(owner));
+                    outer.pending.extend(layer.pending);
+                    outer.pending.push(Frame::PopClip);
                 }
+                // The clip does not cut a box whose containing block is
+                // outside the block.
+                outer.positioned.extend(paint_rules::clip_contained_frames(
+                    self.document,
+                    self.cascade,
+                    owner,
+                    layer.positioned,
+                    positioned_frame,
+                    || Frame::PushClip(owner),
+                    || Frame::PopClip,
+                ));
             }
             // A box the enclosing layer lists at its end hands on its boxes
             // to wait with the boxes still to list.
@@ -538,9 +562,16 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             return;
         }
         if let Some(entry) = clip {
+            let close = if paint_rules::is_visibility_hidden_table(cv) {
+                // Like the native painter, retain a hidden table's scope
+                // only when its descendants contribute paint to this page.
+                Frame::PopClipIfPainted(self.events.len())
+            } else {
+                Frame::PopClip
+            };
             self.events
                 .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
-            self.stack.push(Frame::PopClip);
+            self.stack.push(close);
         }
         self.enter_subtree(node_id, node, cv, clip.is_some());
     }

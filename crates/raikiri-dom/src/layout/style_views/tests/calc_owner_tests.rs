@@ -26,7 +26,10 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
             let mut owners: Vec<Arc<AlignedCalc>> = Vec::new();
             let legacy = crate::layout::dispatch::push_calc(&mut owners, expression, non_negative);
             let raw = legacy.handle();
-            assert_eq!(owners[0].expression().px.to_bits(), expression.px.to_bits());
+            assert_eq!(
+                owners[0].expression(),
+                &raikiri_layout_style::CalcExpression::Affine(expression)
+            );
             assert_eq!(owners[0].non_negative(), non_negative);
             let mut values = ComputedValues::initial();
             if non_negative {
@@ -273,8 +276,7 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
             pool.iter()
                 .find(|owner| {
                     let value = owner.expression();
-                    value.px.to_bits() == expression.px.to_bits()
-                        && value.percent.to_bits() == expression.percent.to_bits()
+                    value == &raikiri_layout_style::CalcExpression::Affine(expression)
                         && owner.non_negative() == range
                 })
                 .unwrap()

@@ -293,6 +293,36 @@ fn scoped_override_production_validates_the_whole_batch_before_applying_it() {
 }
 
 #[test]
+fn scoped_override_production_holds_a_self_alignment_next_to_an_inset() {
+    use raikiri_layout_style::values::AlignItems;
+    let (mut doc, _, child, _) = fixture_with_styles("display:block", "width:31px");
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &cascade);
+    let key = session.nodes.box_key(child).unwrap();
+    assert_eq!(session.style_view(child).bridge_justify_self(), None);
+    assert_eq!(session.style_view(child).bridge_align_self(), None);
+    let centered = Some(AlignItems::CENTER);
+    session.with_overrides(
+        vec![
+            (
+                key,
+                OwnedPropertyOverride::length(LengthProperty::Left, L::Px(4.0), false).unwrap(),
+            ),
+            (key, OwnedPropertyOverride::justify_self(centered)),
+            (key, OwnedPropertyOverride::align_self(centered)),
+        ],
+        |tree| {
+            let view = tree.style_view(child);
+            assert_eq!(view.bridge_justify_self(), centered);
+            assert_eq!(view.bridge_align_self(), centered);
+            assert_eq!(view.size().width, Dimension::length(31.0));
+        },
+    );
+    assert_eq!(session.style_view(child).bridge_justify_self(), None);
+    assert_eq!(session.style_view(child).bridge_align_self(), None);
+}
+
+#[test]
 fn scoped_override_production_reaches_all_generated_key_kinds() {
     let mut doc = Document::new();
     let source = doc.append_element(Some(0), "div", Some("display:block"));
@@ -625,4 +655,45 @@ fn border_scope_retains_calc_until_successful_rebinding() {
     assert!(weak.upgrade().is_some());
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn scoped_used_padding_restores_percentage_edges_after_nested_unwind() {
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:block", "width:31px;padding:10%;border:2px solid");
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    let padding = |px| {
+        (
+            key,
+            OwnedPropertyOverride::length(LengthProperty::PaddingLeft, L::Px(px), true).unwrap(),
+        )
+    };
+    let original = tree.physical_style(child).padding();
+    tree.with_overrides(vec![padding(10.0)], |tree| {
+        assert_eq!(
+            tree.physical_style(child).padding().left,
+            LengthPercentage::length(10.0)
+        );
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tree.with_overrides(vec![padding(5.0)], |tree| {
+                assert_eq!(
+                    tree.physical_style(child).padding().left,
+                    LengthPercentage::length(5.0)
+                );
+                panic!("padding scope unwind");
+            });
+        }));
+        assert!(failure.is_err());
+        assert_eq!(
+            tree.physical_style(child).padding().left,
+            LengthPercentage::length(10.0)
+        );
+        assert_eq!(
+            tree.physical_style(child).border().left,
+            LengthPercentage::length(2.0)
+        );
+    });
+    assert_eq!(tree.physical_style(child).padding(), original);
+    assert_eq!(tree.override_checkpoint(), 0);
 }

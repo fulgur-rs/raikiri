@@ -197,6 +197,19 @@ fn native_text_write_resets_render_source_even_when_text_is_unchanged() {
 }
 
 #[test]
+fn native_text_append_resets_render_source_even_when_nothing_is_appended() {
+    for (addition, expected) in [("", "p { color: red }"), (" a {}", "p { color: red } a {}")] {
+        let (mut doc, _, style, text) = page();
+        doc.set_stylesheet_source(style, "p { color: blue }".into())
+            .unwrap();
+        doc.append_character_data(text, addition).unwrap();
+        let mut sources = Vec::new();
+        raikiri_style::walk_style_elements(&doc, |source| sources.push(source.to_owned()));
+        assert_eq!(sources, [expected]);
+    }
+}
+
+#[test]
 fn cssom_source_keeps_the_generic_walks_descendant_styles_visible() {
     let mut doc = Document::new();
     let outer = doc.append_element(Some(0), "style", None::<&str>);

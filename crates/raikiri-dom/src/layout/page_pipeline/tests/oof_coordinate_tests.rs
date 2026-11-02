@@ -171,3 +171,36 @@ fn a_box_in_a_filtered_inline_on_a_later_page_is_placed_like_one_in_a_relative_i
         );
     }
 }
+
+#[test]
+fn a_stretch_box_in_the_initial_containing_block_keeps_following_its_static_position() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:20px"));
+    // Its insets are `auto`, whatever the layout gives it to size it from the
+    // static position.
+    let stretched = document.append_element(
+        Some(body),
+        "div",
+        Some("position:absolute;width:stretch;height:stretch"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+
+    layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&PageLayoutControl::default()),
+            ..Default::default()
+        },
+    )
+    .expect("paged layout");
+
+    let coordinate = document.oof_coordinates.get(&stretched).unwrap();
+    assert!(coordinate.follow_static_x);
+    assert!(coordinate.follow_static_y);
+}

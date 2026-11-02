@@ -15,7 +15,8 @@ use crate::layout::protocol::{LayoutOutput, RunMode};
 use crate::layout::style_views::ReadRole;
 use crate::node::Node;
 use raikiri_layout_style::LayoutStyleView;
-use raikiri_layout_style::values::{AlignItemsKeyword, Contain, Position};
+use raikiri_layout_style::values::{AlignItemsKeyword, Position};
+use std::collections::HashSet;
 
 /// Whether the grid container `grid` runs its algorithm on the axes of a
 /// vertical writing mode.
@@ -82,14 +83,26 @@ pub(crate) fn first_baseline_item(
         .collect::<Vec<_>>();
     // A stable sort keeps the order-modified document order within a column.
     first_row_items.sort_by_key(|&(column, _)| column);
+    // Build membership once, rather than scanning every exclusion for each
+    // baseline candidate. The empty exclusion list needs no bucket storage.
+    let excluded: HashSet<_> = node.grid_items_without_baseline.iter().copied().collect();
+    #[cfg(test)]
+    tests::record_insertions(node.grid_items_without_baseline.len());
     first_row_items
         .iter()
         .map(|&(_, item)| item)
         .find(|&child| {
-            aligns_by_baseline(child) && !node.grid_items_without_baseline.contains(&child)
+            aligns_by_baseline(child) && {
+                #[cfg(test)]
+                tests::record_query();
+                !excluded.contains(&child)
+            }
         })
         .or_else(|| first_row_items.first().map(|&(_, item)| item))
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Replace the first baseline in `output`, the result of the grid algorithm
 /// for the container `idx`, with the one of the first line of the item that
@@ -101,8 +114,7 @@ pub(crate) fn first_baseline_item(
 /// baseline is the one the item handed over when the algorithm last laid it
 /// out: an offset from its block-start border edge, or, for an item that has
 /// none, one synthesized from its border box (CSS Box Alignment 3 §9.1).
-/// Layout containment suppresses the baseline of the item (CSS Contain 2
-/// §3.2).
+/// An item with layout containment hands over none (CSS Contain 2 §3.2).
 pub(super) fn with_first_baseline(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -124,23 +136,16 @@ pub(super) fn with_first_baseline(
         .filter(|&item| !tree.nodes[item].opposed_baseline_group);
     if let Some(item) = item {
         let node = &tree.nodes[item];
-        let contained = tree
-            .physical_style(item)
-            .contain()
-            .contains(Contain::LAYOUT);
         let height = node.layout.size.height;
-        let baseline = node
-            .exported_first_baseline
-            .filter(|_| !contained)
-            .unwrap_or_else(|| {
-                // The line-under edge of a box on horizontal axes is its
-                // bottom, whatever its writing mode.
-                if vertical {
-                    synthesized_baseline(tree, idx, height)
-                } else {
-                    height
-                }
-            });
+        let baseline = node.exported_first_baseline.unwrap_or_else(|| {
+            // The line-under edge of a box on horizontal axes is its bottom,
+            // whatever its writing mode.
+            if vertical {
+                synthesized_baseline(tree, idx, height)
+            } else {
+                height
+            }
+        });
         let top = node.layout.location.y - relative_block_offset(tree, idx, item, vertical);
         output.baselines.first = Some(top + baseline);
     }

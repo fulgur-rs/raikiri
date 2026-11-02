@@ -43,7 +43,7 @@ use decode::{
 };
 use image_cache::{
     BackgroundInflight, CachedBackgroundImage, CachedBackgroundSource, DecodedImageCache,
-    ProcessDecodeGuard, ProcessImageBudget,
+    InlineImageLease, ProcessDecodeGuard, ProcessImageBudget,
 };
 pub(crate) use network::{NetworkFontFaceLoader, ResourceNetworkProvider};
 pub use svg_images::RenderSvgImages;
@@ -52,7 +52,7 @@ pub use svg_images::RenderSvgImages;
 pub const DEFAULT_MAX_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 /// Default maximum combined response bytes accepted through [`RenderResources`].
 pub const DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES: u64 = 128 * 1024 * 1024;
-/// Maximum decoded CSS background image bytes retained by one resource set.
+/// Maximum accounted background and SVG data-image bytes retained per resource set.
 const DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_BACKGROUND_IMAGE_ATTEMPTS: usize = 256;
 const MAX_SVG_IMAGE_BYTES: usize = 32 * 1024 * 1024;
@@ -299,11 +299,12 @@ impl<'a> RenderResources<'a> {
         self
     }
 
-    /// Set the raster output scale used when computing border widths.
+    /// Set the raster output scale used when computing border widths and table spacing.
     ///
     /// For example, `1.0` means one device pixel per CSS pixel and `2.0`
     /// means two device pixels per CSS pixel. `None` preserves fractional
-    /// widths for output-neutral and vector consumers.
+    /// lengths for output-neutral and vector consumers. Table gaps may round
+    /// down to zero; border widths use their separate minimum-pixel rule.
     pub fn border_width_device_scale(mut self, scale: Option<f32>) -> Self {
         self.border_width_device_scale = scale;
         self
@@ -449,6 +450,15 @@ impl<'a> RenderResources<'a> {
             (cache.remaining_for(url), cache.prior_bytes(url))
         };
         per_available.min(self.process_budget.available_for(prior))
+    }
+
+    fn inline_image_remaining(&self) -> u64 {
+        let remaining = self
+            .image_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .inline_remaining();
+        remaining.min(self.process_budget.available_for(0))
     }
 
     fn cached_scene(&self, url: &Url, size: ImageRasterSize) -> Option<Arc<VectorImage>> {

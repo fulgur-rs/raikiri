@@ -22,8 +22,8 @@ fn float(side: &str, width: u32, height: u32) -> String {
     format!("<div style='float:{side};width:{width}px;height:{height}px'></div>")
 }
 
-/// The page, left edge and top of every line of text but the lead-in `a`.
-fn lines(body: &str) -> Vec<(u32, f32, f32)> {
+/// Resources with the Ahem font.
+fn ahem() -> RenderResources<'static> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -31,7 +31,12 @@ fn lines(body: &str) -> Vec<(u32, f32, f32)> {
         )
         .build()
         .unwrap();
-    let resources = RenderResources::new().fonts(fonts);
+    RenderResources::new().fonts(fonts)
+}
+
+/// The page, left edge and top of every line of text but the lead-in `a`.
+fn lines(body: &str) -> Vec<(u32, f32, f32)> {
+    let resources = ahem();
     let html = format!(
         "<!doctype html><style>@page{{size:100px 100px;margin:0}}\
          body{{margin:0;font:20px/30px Ahem}}</style><body>{body}</body>"
@@ -397,4 +402,75 @@ fn a_box_that_breaks_before_it_sits_beside_the_page_start_float() {
         float("left", 40, 50)
     ));
     assert_eq!(margin, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+}
+
+/// The page, left edge, top and height of every fragment of the boxes whose
+/// `style` attribute starts with `style`.
+fn fragments_styled(body: &str, style: &str) -> Vec<(u32, f32, f32, f32)> {
+    let html = format!(
+        "<!doctype html><style>@page{{size:100px 100px;margin:0}}\
+         body{{margin:0;font:20px/30px Ahem}}</style><body>{body}</body>"
+    );
+    let resources = ahem();
+    let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &document,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("layout must complete")
+    };
+    let mut boxes = Vec::new();
+    for index in 0..4 {
+        let Some(page) = result.page(index) else {
+            continue;
+        };
+        let dom = page.dom();
+        for fragment in page.fragments() {
+            if dom
+                .attr(fragment.node(), "style")
+                .is_some_and(|value| value.starts_with(style))
+            {
+                let rect = fragment.rect();
+                boxes.push((index, rect.x, rect.y, rect.height));
+            }
+        }
+    }
+    boxes
+}
+
+#[test]
+fn the_page_start_float_beside_text_of_its_own_paragraph_moves_once() {
+    // The float and the text after it make one paragraph with the block
+    // before the break. Both start the next page, and the float is moved
+    // there only once: it is whole at the top of the page.
+    let body = format!("{BREAK}{}{TEXT}", float("left", 40, 50));
+    assert_eq!(fragments_styled(&body, "float:"), [(1, 0.0, 0.0, 50.0)]);
+    let body = format!(
+        "<div style='display:flow-root'>{BREAK}{}{TEXT}</div>",
+        float("left", 40, 50)
+    );
+    assert_eq!(fragments_styled(&body, "float:"), [(1, 0.0, 0.0, 50.0)]);
+}
+
+#[test]
+fn the_box_around_text_after_a_forced_break_continues_on_the_next_page() {
+    // The box holds the block before the break and the text after it in one
+    // paragraph. Its first fragment runs to the page end and the second one
+    // holds the three 30px lines, which the float narrows.
+    let body = format!(
+        "<div style='display:flow-root;width:100px'>{BREAK}{}{TEXT}</div>",
+        float("left", 40, 50)
+    );
+    assert_eq!(
+        fragments_styled(&body, "display:flow-root"),
+        [(0, 0.0, 0.0, 100.0), (1, 0.0, 0.0, 90.0)]
+    );
+    let body = format!("<div style='display:flow-root;width:100px'>{BREAK}{TEXT}</div>");
+    assert_eq!(
+        fragments_styled(&body, "display:flow-root"),
+        [(0, 0.0, 0.0, 100.0), (1, 0.0, 0.0, 60.0)]
+    );
 }

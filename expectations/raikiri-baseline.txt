@@ -2855,6 +2855,7 @@ css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/track-sizing/colum
 css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/track-sizing/row-subgrid-extra-margin-005.html
 css/css-grid/grid-lanes/track-sizing/auto-repeat/intrinsic-auto-repeat/column-auto-repeat-auto-008.html
 css/css-grid/grid-lanes/track-sizing/auto-repeat/row-auto-repeat-006.html
+css/css-grid/grid-model/grid-container-scrollbar-001.html
 css/css-grid/grid-model/grid-display-grid-001.html
 css/css-grid/grid-model/grid-first-letter-001.html
 css/css-grid/grid-model/grid-first-letter-002.html
@@ -3309,6 +3310,7 @@ css/css-text-decor/text-decoration-shorthands-001.html
 css/css-text-decor/text-decoration-shorthands-002.html
 css/css-text-decor/text-decoration-style-multiple.html
 css/css-text-decor/text-decoration-style-recalc.html
+css/css-text-decor/text-decoration-subelements-002.html
 css/css-text-decor/text-decoration-subelements-005.html
 css/css-text-decor/text-shadow/basic-negcoord.html
 css/css-text-decor/text-shadow/basic-opacity.html
@@ -5463,3 +5465,72 @@ css/css-images/image-set/image-set-type-rendering-3.html
 css/css-images/image-set/image-set-type-rendering.html
 css/css-images/image-set/image-set-type-skip-unsupported-rendering.html
 css/css-images/image-set/image-set-unordered-res-rendering.html
+
+# --- `contain-intrinsic-inline-size` and `contain-intrinsic-block-size` (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# The flow-relative `contain-intrinsic-inline-size` and `contain-intrinsic-block-size` share their computed value with the `contain-intrinsic-width` or `-height` on the axis they name under the element's own writing mode (CSS Box Sizing 4 section 5, CSS Logical Properties 1 section 4), so a `contain: size` box with an inline size of 100px and a block size of 50px is 100px by 50px, and 50px by 100px in `vertical-lr`. Both were dropped as unknown properties before the change (the 100x50 box was missing) and KEEP in two audit-vacuous-passes runs.
+css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-logical-001.html
+css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-logical-002.html
+
+# --- Floats that share a line in a column (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A multicol column group placed each float below the one before it, so a left and a right float that fit side by side stood on two lines on either side of a `column-span: all` block. A float that fits in the room the floats before it leave now shares their line (CSS 2, section 9.5.1). The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-span-float-002.html
+
+# --- Outline of a grid or a table in columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# The columns cut the content of a grid or a table child of a multicol container to its box, but not its outline, which reaches beyond the box (CSS UI 4 section 3, an outline does not affect layout and is not clipped by the box). The outline of the grid and the table spanners lost its top and sides before the change, and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-span-all-005.html
+
+# --- Block-level boxes in ruby content (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A block-level box in ruby content, or in a ruby-internal box, is inlinized: it is an atomic inline-level box in the line it sits in, so a block, a table or a flex container in `rb` or `rt` no longer breaks the line around itself (CSS Ruby 1 section 2.2). Both tests were FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-ruby/ruby-inlinize-blocks-002.html
+css/css-ruby/ruby-line-breaking-002.html
+
+# --- `safe` and `unsafe` before a `<content-position>` of `justify-content` and `align-content` (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# `justify-content`, `align-content` and `place-content` accept an `<overflow-position>` keyword before `center`, `start`, `end`, `flex-start` and `flex-end` (CSS Box Alignment 3 section 4.4): `safe` aligns overflowing content to its start edge instead, and `unsafe` aligns it as written. The whole declaration was dropped before the change, so the content of these flex containers stayed at the default alignment (1044, 1800 and 2000 pixels differ). All three KEEP in two audit-vacuous-passes runs. `flexbox-safe-overflow-position-002`, `-005` and `-006` were already listed above and still pass.
+css/css-flexbox/flexbox-safe-overflow-position-001.html
+css/css-flexbox/flexbox-safe-overflow-position-003.html
+css/css-flexbox/flexbox-safe-overflow-position-004.html
+
+# --- A page name after only a float (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A float is no part of the page flow (CSS Page 3, section 4.1), so a box that names a page after only floats names the first page, and no page changes. Layout took the float for the page before the box and cleared the box below it. The test is a negative one: its subject has no effect, so `audit-vacuous-passes` reports it VACUOUS-UNSTYLED in two runs. It was FAIL before the change and stays as a guard, as the other named-page guards do.
+css/css-page/page-name-float-001-print.html
+
+# --- An absolute box across pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# An absolutely positioned box is laid out whole, and its background was painted over the margins of the pages it crosses. It is now cut to the page area where it goes on to the next page or comes from the page before, as the fragments of the box in the reference are (CSS Fragmentation 3, section 5.4). The test is a negative one: its subject has no effect, so `audit-vacuous-passes` reports it VACUOUS-UNSTYLED in two runs. It was FAIL before the change and stays as a guard, as the other monolithic-overflow guards do.
+css/css-page/monolithic-overflow-013-print.html
+
+# --- Columns that fill in turn across pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A multicol container with `column-fill: auto` and an auto height fills the columns of each page it crosses in turn, as tall as what the page has left, and goes on at the top of the next page (CSS Multi-column 1 sections 8.1 and 8.2; CSS Fragmentation 3 section 2). It kept one column per page before the change. The test was FAIL before and KEEP in the audit-vacuous-passes run.
+css/css-multicol/auto-fill-auto-size-002-print.html
+
+# --- A scroll container in columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A scroll container with a block size of its own is monolithic (CSS Fragmentation 3, monolithic content): a column end never cuts it, so it moves to the next column whole when it does not fit below what comes before it, and one taller than a column overflows the column it starts at the top of. A multicol container with one fell back to full-width block layout before the change (40000 pixels differed). The test was FAIL before and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-scroll-content.html
+
+# --- Floats on pages of different sizes (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A float that starts its line goes below the floats it does not fit beside at once, and the text after it wraps beside it (CSS 2.1 section 9.5.1). After a forced break inside a paragraph, a float of the paragraph that starts the next page is moved there once, and the paragraph's box holds the lines that moved. Both tests were FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-page/page-size-007-print.html
+css/css-page/page-size-008-print.html
+
+# --- Table header and footer copies beside unbroken content (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# A table whose body is in an anonymous row repeats its header group at the top of each page that a box of the body runs onto without breaking, and its footer group at the end of each page the box runs off, over the box. The header and footer groups paint after the body. The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-page/monolithic-overflow-016-print.html
+
+# --- A column spanner in an inline box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-31) ---
+# An inline box that holds only blocks is split around them and leaves nothing of its own (CSS 2 section 9.2.1.1), so a `column-span: all` block in it spans the columns of the container as it does when it is a child of the container, and the floats around it stay in the columns before and after it (CSS Multi-column 1 section 6.1). The wrapper was laid out as one box, so the spanner went below no float. The test was FAIL before and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-span-float-003.html
+
+# --- An image in a column flex container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# An image that is an item of a column flex container takes its width from a height along its aspect ratio (CSS Sizing 4 section 5.1): the height it states while the width of the container is measured, and the height the container flexed it to once that width is fixed. A container that wraps its items is as wide as the stated height gives, and the image on its line is as wide as the grown height gives.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-024.html
+
+# --- The automatic minimum width of a row flex item (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# A row flex item with an aspect ratio and a height of its own keeps the width that height gives along the ratio as its automatic minimum width (CSS Flexbox 1 section 4.5), however small its flex basis is, so the inline flex container around it is as wide as that item. The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-055.html
+
+# --- A stretched replaced flex item with a percentage height container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# An image that a row flex container stretches to a definite height, here half of a 50px box, is as wide as that height gives along its aspect ratio, and not the 60px of its natural width (CSS Flexbox 1 sections 4.5 and 9.8). The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html
+
+# --- A vertical table as wide as its cells (WPT pin 97ea26e2, EXACT, Linux, 2026-11-01) ---
+# A table in a vertical writing mode is as wide as its rows (CSS 2 section 17.5.2), not as wide as the room around it, so its cells shrink to their content the way the `width: fit-content` boxes of the reference do. The test was XFAIL before and KEEP in an audit-vacuous-passes run.
+css/css-tables/baseline-vertical.html

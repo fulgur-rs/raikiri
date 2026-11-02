@@ -849,9 +849,8 @@ impl Length {
 /// keywords such as `min-content` / `max-content`) without breaking users.
 /// This follows the pattern of sibling [`Length`] / [`CounterStyle`].
 ///
-/// Implement [`Copy`] because the underlying [`Length`] is `Copy` (each
-/// Px/Em/Rem/Percent/Pt variant holds a single f32). A `Sides<LengthOrAuto>`
-/// is four values of about 8 bytes each, so per-node copies are cheap.
+/// Ordinary lengths remain inline; comparison expressions own an immutable
+/// shared tree. Borrow values for reads and clone only when storing an owner.
 ///
 /// # Primary sources
 ///
@@ -1213,7 +1212,7 @@ pub enum LetterSpacingValue {
 pub type WordSpacingValue = LetterSpacingValue;
 
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LengthOrAuto {
     /// Authored length-percentage (`10px` / `1em` / `50%` / etc.).
     Length(Length),
@@ -1227,6 +1226,8 @@ pub enum LengthOrAuto {
     /// A mixed-unit `calc()` with font-relative or viewport terms, absolutized
     /// at computed-value time into [`Self::Calc`]'s computed counterpart.
     RelativeCalc(RelativeCalcLengthPercentage),
+    /// A comparison expression retained until its percentage basis is known.
+    Math(std::sync::Arc<super::LengthMath>),
     /// The `min-content` sizing keyword (CSS Sizing 3 §3.1.1). Only the
     /// `width` / `inline-size` parser produces it. Block-level boxes sized by
     /// Taffy honor it; inline-block shrink-to-fit, block children laid out
@@ -3934,13 +3935,16 @@ pub struct FlexFlow {
 /// `AlignItemsKeyword`/`AlignContentKeyword` types, but applies the same
 /// principle: share a type when the grammars are effectively identical.
 ///
+/// A `<content-position>` written with `safe` or `unsafe` is
+/// [`Self::Safe`] or [`Self::Unsafe`] around the same position (CSS Box
+/// Alignment 3 §4.4 `<overflow-position>`), and one written without either
+/// keyword is one of the plain variants. The computed value keeps the keywords
+/// as written, so `safe center` stays apart from `center`. Only a position takes
+/// an `<overflow-position>`: `safe space-between`, `safe stretch` and
+/// `safe normal` are invalid.
+///
 /// # Scope carving
 ///
-/// - **(b) unsupported**: `<overflow-position>` (`safe`/`unsafe` prefixes, §4.4)
-///   is not implemented. The parser does not accept these prefixes and drops
-///   the entire prefixed declaration (a two-token sequence such as `safe center`
-///   naturally produces `None` because it does not match the single keyword
-///   expected by `parse_content_alignment`).
 /// - **(b) unsupported**: `<baseline-position>` (optional `first`/`last` plus
 ///   `baseline`, a grammar branch only for `align-content`) is not implemented.
 ///   Taffy 0.12's `AlignContent`/`JustifyContent` (both based on
@@ -3950,7 +3954,7 @@ pub struct FlexFlow {
 ///   `left`/`right` extension (`<content-position> | left | right`, keywords
 ///   relative to writing mode) is not implemented; taffy has no matching variant.
 ///
-/// Following this crate's rule against inventing values, all three cases
+/// Following this crate's rule against inventing values, both cases
 /// **silently drop** the entire declaration on parse failure.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3982,20 +3986,98 @@ pub enum ContentAlignmentValue {
     FlexStart,
     /// `flex-end` — `<content-position>`.
     FlexEnd,
+    /// `safe <content-position>`: when the content overflows the alignment
+    /// container, it is aligned to `start` instead of the position, so that
+    /// nothing is lost beyond the start edge (CSS Box Alignment 3 §4.4,
+    /// "Overflow Alignment").
+    Safe(ContentPosition),
+    /// `unsafe <content-position>`: the content is aligned as asked whatever it
+    /// overflows.
+    Unsafe(ContentPosition),
 }
 
-css_keywords!(ContentAlignmentValue {
-    Normal => "normal",
-    Stretch => "stretch",
-    SpaceBetween => "space-between",
-    SpaceEvenly => "space-evenly",
-    SpaceAround => "space-around",
+impl ContentAlignmentValue {
+    /// This value's own keyword spelling, with the `<overflow-position>` keyword
+    /// in front of a position that has one.
+    pub const fn as_css_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Stretch => "stretch",
+            Self::SpaceBetween => "space-between",
+            Self::SpaceEvenly => "space-evenly",
+            Self::SpaceAround => "space-around",
+            Self::Center => ContentPosition::Center.as_css_str(),
+            Self::Start => ContentPosition::Start.as_css_str(),
+            Self::End => ContentPosition::End.as_css_str(),
+            Self::FlexStart => ContentPosition::FlexStart.as_css_str(),
+            Self::FlexEnd => ContentPosition::FlexEnd.as_css_str(),
+            Self::Safe(ContentPosition::Center) => "safe center",
+            Self::Safe(ContentPosition::Start) => "safe start",
+            Self::Safe(ContentPosition::End) => "safe end",
+            Self::Safe(ContentPosition::FlexStart) => "safe flex-start",
+            Self::Safe(ContentPosition::FlexEnd) => "safe flex-end",
+            Self::Unsafe(ContentPosition::Center) => "unsafe center",
+            Self::Unsafe(ContentPosition::Start) => "unsafe start",
+            Self::Unsafe(ContentPosition::End) => "unsafe end",
+            Self::Unsafe(ContentPosition::FlexStart) => "unsafe flex-start",
+            Self::Unsafe(ContentPosition::FlexEnd) => "unsafe flex-end",
+        }
+    }
+
+    /// Parses one keyword that is not qualified by an `<overflow-position>`,
+    /// ASCII case-insensitively.
+    pub(crate) fn from_css_ident(ident: &str) -> Option<Self> {
+        cssparser::match_ignore_ascii_case! { ident,
+            "normal" => Some(Self::Normal),
+            "stretch" => Some(Self::Stretch),
+            "space-between" => Some(Self::SpaceBetween),
+            "space-evenly" => Some(Self::SpaceEvenly),
+            "space-around" => Some(Self::SpaceAround),
+            _ => ContentPosition::from_css_ident(ident).map(ContentPosition::alignment),
+        }
+    }
+}
+
+/// A `<content-position>` keyword (CSS Box Alignment 3 §4.1
+/// <https://www.w3.org/TR/css-align-3/#typedef-content-position>), the position
+/// that an `<overflow-position>` prefix qualifies in [`ContentAlignmentValue`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentPosition {
+    /// `center`.
+    Center,
+    /// `start`.
+    Start,
+    /// `end`.
+    End,
+    /// `flex-start`.
+    FlexStart,
+    /// `flex-end`.
+    FlexEnd,
+}
+
+css_keywords!(ContentPosition {
     Center => "center",
     Start => "start",
     End => "end",
     FlexStart => "flex-start",
     FlexEnd => "flex-end",
 });
+
+impl ContentPosition {
+    /// The alignment that is just this position, with no `<overflow-position>`
+    /// keyword before it.
+    #[must_use]
+    pub fn alignment(self) -> ContentAlignmentValue {
+        match self {
+            Self::Center => ContentAlignmentValue::Center,
+            Self::Start => ContentAlignmentValue::Start,
+            Self::End => ContentAlignmentValue::End,
+            Self::FlexStart => ContentAlignmentValue::FlexStart,
+            Self::FlexEnd => ContentAlignmentValue::FlexEnd,
+        }
+    }
+}
 
 /// A `<self-position>` keyword (CSS Box Alignment 3 §4.1
 /// <https://www.w3.org/TR/css-align-3/#typedef-self-position>), the position
@@ -7812,6 +7894,10 @@ css_keywords!(EmptyCellsValue {
 /// absolutizes each component with `resolve_border_spacing`;
 /// unlike its sibling keyword-only types [`CaptionSideValue`] / [`EmptyCellsValue`],
 /// the values are not simply passed through.
+///
+/// Lifted computed components retain their provenance so raster inheritance
+/// does not quantize them repeatedly. Editing a component makes that length
+/// resolve as a new specified value. Provenance participates in staging equality.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct BorderSpacingValue {
@@ -7819,6 +7905,9 @@ pub struct BorderSpacingValue {
     pub horizontal: Length,
     /// Vertical (block-axis) spacing — the second component, or `horizontal` if omitted.
     pub vertical: Length,
+    /// Original absolute components lifted from a computed value. An unchanged
+    /// component keeps its exact value instead of snapping again on inheritance.
+    pub(crate) computed_lengths: Option<[f32; 2]>,
 }
 
 impl BorderSpacingValue {
@@ -7827,6 +7916,7 @@ impl BorderSpacingValue {
         Self {
             horizontal,
             vertical,
+            computed_lengths: None,
         }
     }
 }
@@ -9292,7 +9382,7 @@ impl VisualBox {
 /// accepts 1-2 values but copies the first when the second is omitted
 /// (see [`parse_background_size`] docs).
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum BackgroundSize {
     /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — each axis independently
     /// takes a length or `auto`.
@@ -9470,7 +9560,7 @@ impl BackgroundShorthand {
                 PropertyValue::BackgroundPositionY(self.column(|layer| layer.position.vertical))
             }
             PropertyKey::BackgroundSize => {
-                PropertyValue::BackgroundSize(self.column(|layer| layer.size))
+                PropertyValue::BackgroundSize(self.column(|layer| layer.size.clone()))
             }
             PropertyKey::BackgroundClip => {
                 PropertyValue::BackgroundClip(self.column(|layer| layer.clip))
@@ -12107,7 +12197,10 @@ pub enum PropertyValue {
     BackgroundPositionY(Arc<[CssPositionOffset]>),
     /// `contain-intrinsic-width` — **non-inherited**, initial:
     /// [`ContainIntrinsicSize::NONE`] (CSS Box Sizing 4 §5; see
-    /// [`ContainIntrinsicSize`]).
+    /// [`ContainIntrinsicSize`]). `contain-intrinsic-inline-size` is parsed into this
+    /// variant, and `contain-intrinsic-block-size` into [`Self::ContainIntrinsicHeight`]:
+    /// the cascade moves them to the axis they name under the element's writing mode (see
+    /// [`crate::logical`]).
     ContainIntrinsicWidth(ContainIntrinsicSize),
     /// `contain-intrinsic-height`; see [`Self::ContainIntrinsicWidth`].
     ContainIntrinsicHeight(ContainIntrinsicSize),
@@ -14196,6 +14289,11 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position-y" => PropertyKey::BackgroundPositionY,
         "contain-intrinsic-width" => PropertyKey::ContainIntrinsicWidth,
         "contain-intrinsic-height" => PropertyKey::ContainIntrinsicHeight,
+        // CSS Box Sizing 4 §5 contain-intrinsic-inline-size / -block-size: keyed by the
+        // {width, height} longhand they map to in horizontal-tb; the cascade moves them by
+        // the element's writing mode, like the margin and padding flow-relative longhands.
+        "contain-intrinsic-inline-size" => PropertyKey::ContainIntrinsicWidth,
+        "contain-intrinsic-block-size" => PropertyKey::ContainIntrinsicHeight,
         "contain-intrinsic-size" => PropertyKey::ContainIntrinsicSize,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,

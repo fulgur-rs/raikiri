@@ -1,0 +1,845 @@
+{
+  "oracle": "Chromium 152.0.7977.82, bundled Ahem 10px/10px, body margin 0, viewport 800x600",
+  "cases": [
+    {
+      "label": "vertical-rl report",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl uncapped",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl grid-area",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;display:grid;grid-template-rows:80px 120px;grid-template-columns:100px'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;grid-row:2;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl percent-width",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:100%;max-width:25%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          70,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          50,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl border-box",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;border:2px solid;box-sizing:border-box;width:100%;max-width:25%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          34
+        ],
+        [
+          "d",
+          12,
+          12,
+          26,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl calc-orthogonal",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr report",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr uncapped",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr grid-area",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;display:grid;grid-template-rows:80px 120px;grid-template-columns:100px'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;grid-row:2;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          80,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          90,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr percent-width",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:100%;max-width:25%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          70,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          50,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr border-box",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;border:2px solid;box-sizing:border-box;width:100%;max-width:25%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          34
+        ],
+        [
+          "d",
+          12,
+          12,
+          26,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr calc-orthogonal",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb report",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:horizontal-tb;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb uncapped",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:horizontal-tb;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb grid-area",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:horizontal-tb;display:grid;grid-template-rows:80px 120px;grid-template-columns:100px'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;grid-row:2;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          80,
+          50,
+          50
+        ],
+        [
+          "d",
+          20,
+          100,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb percent-width",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:horizontal-tb;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:100%;max-width:25%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          90,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          50,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb border-box",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:horizontal-tb;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;border:2px solid;box-sizing:border-box;width:100%;max-width:25%'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          54,
+          54
+        ],
+        [
+          "d",
+          22,
+          22,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-tb calc-orthogonal",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:horizontal-tb;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          36
+        ],
+        [
+          "d",
+          13,
+          13,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal-uncapped",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal-fixedwidth",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);width:50px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          66,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          50,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal-maxlarge",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);max-width:50px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal-percentmax",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);max-width:25%;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal-borderbox",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);box-sizing:border-box;max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          36,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal-pixelpadding",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:calc(5% + 3px);padding:8px;max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          26,
+          26
+        ],
+        [
+          "d",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl short-grid-area",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;display:grid;grid-template-columns:40px 60px;grid-template-rows:80px 120px;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;grid-column:2;grid-row:2;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          40,
+          22,
+          22
+        ],
+        [
+          "d",
+          6,
+          46,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl hoisted",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div style='writing-mode:horizontal-tb;width:70px;height:40px'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl fixed-owner",
+      "body": "<div style='transform:translate(0);width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:fixed;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl root-fixed",
+      "body": "<style>html{writing-mode:vertical-rl}</style><div id=t style='display:table;box-sizing:content-box;position:fixed;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          130,
+          130
+        ],
+        [
+          "d",
+          60,
+          60,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr short-grid-area",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;display:grid;grid-template-columns:40px 60px;grid-template-rows:80px 120px;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;grid-column:2;grid-row:2;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          80,
+          40,
+          22,
+          22
+        ],
+        [
+          "d",
+          86,
+          46,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr hoisted",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-lr;'><div style='writing-mode:horizontal-tb;width:70px;height:40px'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr fixed-owner",
+      "body": "<div style='transform:translate(0);width:200px;height:100px;writing-mode:vertical-lr;'><div id=t style='display:table;box-sizing:content-box;position:fixed;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr root-fixed",
+      "body": "<style>html{writing-mode:vertical-lr}</style><div id=t style='display:table;box-sizing:content-box;position:fixed;top:0;left:0;padding:10%;max-width:5px'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          130,
+          130
+        ],
+        [
+          "d",
+          60,
+          60,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal padding:10%;max-width:5px",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal padding-left:10%;max-width:5px",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding-left:10%;max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          30,
+          10
+        ],
+        [
+          "d",
+          10,
+          0,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal padding:10%",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal padding:10%;width:10px",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:10px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "orthogonal padding:10%;width:100px",
+      "body": "<div style='position:relative;width:200px;height:100px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:100px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          120,
+          30
+        ],
+        [
+          "d",
+          10,
+          10,
+          100,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "reversed orthogonal padding:10%;max-width:5px",
+      "body": "<div style='position:relative;width:100px;height:200px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          40,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "reversed orthogonal padding-left:10%;max-width:5px",
+      "body": "<div style='position:relative;width:100px;height:200px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding-left:10%;max-width:5px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          20,
+          10
+        ],
+        [
+          "d",
+          20,
+          0,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "reversed orthogonal padding:10%",
+      "body": "<div style='position:relative;width:100px;height:200px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          40,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "reversed orthogonal padding:10%;width:10px",
+      "body": "<div style='position:relative;width:100px;height:200px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:10px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          50,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "reversed orthogonal padding:10%;width:100px",
+      "body": "<div style='position:relative;width:100px;height:200px;writing-mode:vertical-rl;'><div id=t style='display:table;box-sizing:content-box;position:absolute;top:0;left:0;padding:10%;width:100px;writing-mode:horizontal-tb'><div style='display:table-row'><div id=d style='display:table-cell'><div style='width:10px;height:10px'></div></div></div></div></div>",
+      "boxes": [
+        [
+          "t",
+          0,
+          0,
+          140,
+          50
+        ],
+        [
+          "d",
+          20,
+          20,
+          100,
+          10
+        ]
+      ]
+    }
+  ]
+}

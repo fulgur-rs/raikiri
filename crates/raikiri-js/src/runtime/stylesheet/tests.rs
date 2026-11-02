@@ -103,3 +103,5 @@ pub(super) fn record_sheet_work(kind: usize) {
 fn take_sheet_work() -> [usize; 2] {
     SHEET_WORK.with(|work| work.replace([0; 2]))
 }
+
+mod margin_name_tests;

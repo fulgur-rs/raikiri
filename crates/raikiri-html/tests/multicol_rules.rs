@@ -161,13 +161,20 @@ fn public_rules_of_an_rtl_container_sit_in_the_gaps_after_each_column_to_the_lef
 
 #[test]
 fn relative_content_offsets_do_not_change_column_occupancy() {
-    for body in [
+    // An atomic inline cannot be split, so it stays in the first column
+    // wherever the offset puts it and there is nothing to draw a rule between.
+    let document = lay_out(
         "<div class=mc><span style='display:inline-block;width:20px;height:20px;position:relative;left:60px;background:blue'></span></div>",
+        ".mc{height:20px;column-rule:2px solid red}",
+    );
+    assert!(rules(&document).is_empty());
+    // A block of the same height is split between the two balanced columns,
+    // the offset does not change that, and the rule sits between the pieces.
+    let document = lay_out(
         "<div class=mc><div style='height:20px;position:relative;left:60px;background:blue'></div></div>",
-    ] {
-        let document = lay_out(body, ".mc{height:20px;column-rule:2px solid red}");
-        assert!(rules(&document).is_empty(), "{body}");
-    }
+        ".mc{height:20px;column-rule:2px solid red}",
+    );
+    assert_eq!(rules(&document), [(49.0, 0.0, 2.0, 20.0)]);
     // The shifted block still fills the first column, so the next one starts
     // the second column and the rule sits between them as without the offset.
     let document = lay_out(
@@ -502,9 +509,11 @@ fn a_relatively_positioned_paragraph_is_offset_once() {
         .iter()
         .map(|run| (run.text.to_owned(), run.origin))
         .collect();
+    // The columns are balanced rather than filled in turn: each paragraph is
+    // one column of the two, and the offset moves only the first.
     assert_eq!(
         runs,
-        [("A", (10.0, 16.0)), ("B", (0.0, 36.0))].map(|(text, origin)| (text.to_owned(), origin))
+        [("A", (10.0, 16.0)), ("B", (60.0, 16.0))].map(|(text, origin)| (text.to_owned(), origin))
     );
 }
 

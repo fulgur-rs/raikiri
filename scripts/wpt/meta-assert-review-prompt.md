@@ -41,3 +41,14 @@ without calling the API.
 `prepare-meta-assert-review --tests LIST` renders exactly the listed test ids,
 including reftests and `.xht` files, which is how a judge is calibrated against
 tests whose reftest outcome is already known.
+The `WPT model judge` workflow's `calibrate` mode does this end to end: it
+lists match reftests below the chosen directory (`list-tests --reftests`),
+takes their `run-baseline-report` outcome at the same commit as ground truth,
+judges up to `per_outcome` PASS and FAIL tests each (`calibration-sample`;
+PASS rows come only from `raikiri-baseline.txt`, since a sweep PASS can be
+vacuous), and
+`score` reports the false-pass rate (pass verdicts among pixel FAIL) and the
+pass precision in the job summary and `calibration.json`. Apply judge passes to
+the baseline only after a calibration run shows a false-pass rate you accept.
+A pixel FAIL can still satisfy a loose pass condition (anti-aliasing, a buggy
+reference), so the false-pass rate errs on the strict side.

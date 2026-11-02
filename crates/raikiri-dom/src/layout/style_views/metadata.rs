@@ -38,6 +38,9 @@ pub(super) fn prepare_metadata(
             .union(StyleFlags::REPLACED)
             .union(StyleFlags::COMPRESSIBLE_REPLACED);
     }
+    if source && !neutral_contents && avoids_floats(doc, idx) {
+        flags = flags.union(StyleFlags::AVOIDS_FLOATS);
+    }
     if source && !neutral_contents && inline_box {
         flags = flags.union(StyleFlags::INLINE_BOX);
     }
@@ -50,39 +53,27 @@ pub(super) fn prepare_metadata(
     node_metadata(node, flags)
 }
 
-/// For every node, whether it is an inline box that holds a block: a
-/// non-atomic inline box in a horizontal writing mode that stays inline, with a
-/// block-level box in flow inside it, directly or in inline boxes of its own.
-/// The block splits the box around it (CSS 2.1 section 9.2.1.1). The width,
-/// height, minimum and maximum sizes, vertical margins and vertical padding and
-/// border of such a box do not apply to it, whether it holds text or only the
-/// block (sections 8.3, 10.3.1 and 10.6.1).
+/// For every node, whether it is a non-atomic inline box that stays inline.
+/// The width, height, minimum and maximum sizes, block-axis margins, padding
+/// and border of such a box do not apply to it (CSS 2.1 sections 8.3, 10.3.1
+/// and 10.6.1), whatever
+/// it holds: text, a block that splits it (section 9.2.1.1), or nothing.
 ///
-/// One pass over the arena, children before their parents.
-pub(in crate::layout) fn inline_boxes_holding_blocks(
-    doc: &Document,
-    cascade: &CascadeResult,
-) -> Vec<bool> {
-    use super::super::ifc::boxes::IfcBoxKind;
-    use super::super::ifc::projection::box_kind;
-    let mut order = Vec::with_capacity(doc.nodes.len());
-    super::super::multicol::visit_top_down(doc, |_, id| order.push(id));
-    let mut holds = vec![false; doc.nodes.len()];
-    for &id in order.iter().rev() {
-        holds[id] = is_plain_inline_box(doc, cascade, id)
-            && doc.nodes[id].children.iter().any(|&child| {
-                holds[child] || box_kind(cascade, doc, child) == Some(IfcBoxKind::Block)
-            });
-    }
-    holds
+/// An inline box with no content that makes a line is laid out as a block in
+/// the block flow around it, so these values would otherwise size it.
+pub(in crate::layout) fn inline_boxes(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
+    let mut boxes = vec![false; doc.nodes.len()];
+    super::super::multicol::visit_top_down(doc, |_, id| {
+        boxes[id] = is_plain_inline_box(doc, cascade, id);
+    });
+    boxes
 }
 
-/// Whether `idx` is an inline box of a horizontal writing mode that stays
-/// inline: not blockified, not replaced and not inline SVG.
+/// Whether `idx` is a non-atomic inline box that stays inline:
+/// not blockified, not replaced and not inline SVG.
 fn is_plain_inline_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let node = &doc.nodes[idx];
     node.kind() == NodeKind::Element
-        && !node.used_writing_mode.is_vertical()
         && !node.is_inline_svg_content()
         && super::super::fixed::generates_inline_box(doc, idx, &cascade.computed[idx])
 }
@@ -92,6 +83,11 @@ pub(in crate::layout) fn node_metadata(
     flags: StyleFlags,
 ) -> StyleMetadata {
     use crate::node::FormattingContext as C;
+    let flags = if node.display() == DisplayValue::TableCell {
+        flags.union(StyleFlags::TABLE_CELL)
+    } else {
+        flags
+    };
     let flags = flags.union(match node.formatting_context {
         C::None => StyleFlags::HIDDEN,
         C::Inline => StyleFlags::IFC,
@@ -131,7 +127,7 @@ pub(in crate::layout) fn sizing_flags(
     }
     let cv = &cascade.computed[idx];
     let mut flags = F::EMPTY;
-    let content_keyword = |size| {
+    let content_keyword = |size: &ComputedLengthPercentageOrAuto| {
         matches!(
             size,
             ComputedLengthPercentageOrAuto::MaxContent
@@ -140,8 +136,8 @@ pub(in crate::layout) fn sizing_flags(
         )
     };
     let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
+    let width = logical.as_ref().map_or(&cv.width, |size| &size.width);
+    let height = logical.as_ref().map_or(&cv.height, |size| &size.height);
     if logical.is_some() {
         flags = flags.union(F::VERTICAL_LOGICAL_SIZE);
     }
@@ -161,7 +157,7 @@ pub(in crate::layout) fn sizing_flags(
     if !honors_content_limits(doc, cascade, idx, cv) {
         flags = flags.union(F::IGNORE_LIMIT_KEYWORDS);
     }
-    if cv.min_block_size.is_some_and(is_sizing_keyword)
+    if cv.min_block_size.as_ref().is_some_and(is_sizing_keyword)
         && (is_supported_flex_grid_item(doc, cascade, idx, cv)
             || is_supported_flex_grid_container(doc, idx, cv))
     {
@@ -220,6 +216,17 @@ pub(in crate::layout) fn size_containment(
     }
 }
 
+/// Whether the element, as a block-level box, keeps its border box clear of
+/// the margin boxes of the floats in its formatting context: a replaced
+/// element, whether or not it has a natural size, and the form controls that
+/// browsers lay out as one (CSS 2.1 section 9.5). An `<object>` shows its
+/// fallback content here, as an ordinary block, because nothing loads into it.
+fn avoids_floats(doc: &Document, idx: usize) -> bool {
+    let tag = doc.nodes[idx].tag_name();
+    (tag != Some("object") && crate::paint_rules::is_replaced_element(doc, idx))
+        || matches!(tag, Some("input" | "select" | "textarea" | "button"))
+}
+
 pub(in crate::layout) fn is_replaced(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     if crate::paint_rules::lays_out_as_replaced(doc, idx) {
         return true;
@@ -232,17 +239,17 @@ pub(in crate::layout) fn is_replaced(doc: &Document, cascade: &CascadeResult, id
     let cv = &cascade.computed[idx];
     let flags = sizing_flags(doc, cascade, idx);
     let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
+    let width = logical.as_ref().map_or(&cv.width, |size| &size.width);
+    let height = logical.as_ref().map_or(&cv.height, |size| &size.height);
     let width = if flags.contains(F::IGNORE_WIDTH_KEYWORD)
-        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO) && width == L::MinContent)
+        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO) && *width == L::MinContent)
     {
-        L::Auto
+        &L::Auto
     } else {
         width
     };
     let height = if flags.contains(F::IGNORE_HEIGHT_KEYWORD) {
-        L::Auto
+        &L::Auto
     } else {
         height
     };

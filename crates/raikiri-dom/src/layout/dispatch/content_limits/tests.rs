@@ -638,7 +638,7 @@ fn border_box_percentage_height_basis_subtracts_edges_once() {
             Some(root),
             "div",
             Some(
-                "box-sizing:border-box;height:100px;min-height:120px;\
+                "display:block;box-sizing:border-box;height:100px;min-height:120px;\
                  padding:5px 0;border:2px solid",
             ),
         );

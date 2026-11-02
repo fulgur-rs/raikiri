@@ -29,6 +29,80 @@ fn unchanged_stylesheet_list_reads_do_not_walk_the_dom() {
     assert_eq!(take_list_work(), [0, 0]);
 }
 
+#[test]
+fn unchanged_style_sheet_getters_share_the_list_index() {
+    for size in [100, 500, 2_000, 8_000] {
+        let (mut host, _, head, body) = StubHost::page();
+        let style = host
+            .document
+            .append_element(Some(head), "style", None::<&str>);
+        host.document
+            .set_element_attribute(style, "id", "subject")
+            .unwrap();
+        for _ in 0..size {
+            host.document
+                .append_element(Some(body), "div", None::<&str>);
+        }
+        let mut runtime = DomRuntime::new(host).unwrap();
+        ok(
+            &mut runtime,
+            "var subject=document.getElementById('subject');var sheets=document.styleSheets;var first=sheets.item(0);first!==null",
+        );
+        take_list_work();
+        ok(
+            &mut runtime,
+            "(()=>{for(let i=0;i<100;++i)if(subject.sheet!==first)return false;return true;})()",
+        );
+        assert_eq!(take_list_work(), [0, 0], "DOM size {size}");
+    }
+}
+
+#[test]
+fn style_sheet_getters_refresh_before_list_reads_for_html_and_svg() {
+    let (host, ..) = StubHost::page();
+    let mut runtime = DomRuntime::new(host).unwrap();
+    for namespace in ["http://www.w3.org/1999/xhtml", "http://www.w3.org/2000/svg"] {
+        ok(
+            &mut runtime,
+            &format!("var el=document.createElementNS('{namespace}','style');el.sheet===null"),
+        );
+        ok(
+            &mut runtime,
+            "document.head.appendChild(el);var sheet=el.sheet;sheet!==null && document.styleSheets.item(0)===sheet",
+        );
+        take_list_work();
+        ok(
+            &mut runtime,
+            "el.sheet===sheet && document.styleSheets.length===1",
+        );
+        assert_eq!(take_list_work(), [0, 0]);
+        ok(
+            &mut runtime,
+            "el.setAttribute('type','text/plain');el.sheet===null && document.styleSheets.length===0",
+        );
+        ok(
+            &mut runtime,
+            "el.setAttribute('type','TEXT/CSS');el.sheet===sheet && document.styleSheets.item(0)===sheet",
+        );
+        ok(
+            &mut runtime,
+            "document.body.appendChild(el);el.sheet===sheet && document.styleSheets.item(0)===sheet",
+        );
+        ok(
+            &mut runtime,
+            "var fragment=document.createDocumentFragment();fragment.appendChild(el);el.sheet===null && document.styleSheets.length===0",
+        );
+        ok(
+            &mut runtime,
+            "document.head.appendChild(fragment);el.sheet===sheet && document.styleSheets.item(0)===sheet",
+        );
+        ok(
+            &mut runtime,
+            "el.remove();el.sheet===null && document.styleSheets.length===0",
+        );
+    }
+}
+
 use crate::runtime::webidl::with_state;
 
 #[test]
@@ -165,7 +239,10 @@ fn template_contents_and_detached_subtrees_enter_the_list_only_when_connected() 
             .unwrap()
     })
     .unwrap();
-    ok(&mut runtime, "var moved=sheets[0];sheets.length===1");
+    ok(
+        &mut runtime,
+        "var hidden=document.head.lastChild;var moved=hidden.sheet;moved!==null && sheets.length===1 && sheets[0]===moved",
+    );
     with_state(runtime.context_mut(), |s| {
         s.host
             .document_mut()
@@ -173,7 +250,10 @@ fn template_contents_and_detached_subtrees_enter_the_list_only_when_connected() 
             .unwrap()
     })
     .unwrap();
-    ok(&mut runtime, "sheets.length===0 && sheets.item(0)===null");
+    ok(
+        &mut runtime,
+        "hidden.sheet===null && sheets.length===0 && sheets.item(0)===null",
+    );
     with_state(runtime.context_mut(), |s| {
         s.host
             .document_mut()
@@ -189,7 +269,10 @@ fn template_contents_and_detached_subtrees_enter_the_list_only_when_connected() 
             .unwrap()
     })
     .unwrap();
-    ok(&mut runtime, "sheets.length===2 && sheets[0]===moved");
+    ok(
+        &mut runtime,
+        "hidden.sheet===moved && sheets.length===2 && sheets[0]===moved",
+    );
 }
 
 #[test]

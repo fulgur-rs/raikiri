@@ -829,6 +829,88 @@ fn positioned_boxes_in_z_auto_positioned_boxes_interleave_by_stack_level() {
     assert_eq!(steps[step_at(&result, Step::Box(z)) - 1], Step::PushClip);
 }
 
+/// How many clips are open around `step` in the walker's sequence of the
+/// first page.
+fn clip_depth_at(result: &DocumentLayout, step: Step) -> usize {
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = step_at(result, step);
+    steps[..at].iter().fold(0, |depth, step| match step {
+        Step::PushClip => depth + 1,
+        Step::PopClip => depth - 1,
+        _ => depth,
+    })
+}
+
+/// An overflow clip does not cut an absolutely positioned box whose
+/// containing block is outside the clipping block (CSS 2.1 §11.1.1), however
+/// many clips lie between, but cuts one whose containing block is the block
+/// or a box inside it.
+#[test]
+fn an_absolute_box_with_its_containing_block_outside_a_clip_leaves_it() {
+    let clipped = |style: &str, id: &str| {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 30px\">\
+             <div style=\"overflow: hidden; height: 10px; {style}\">\
+             <div style=\"overflow: hidden; height: 5px\">\
+             <div id=a style=\"position: absolute; width: 20px; height: 20px; background: red\"></div>\
+             </div></div></div>"
+        ));
+        clip_depth_at(&result, Step::Box(by_id(&result, id)))
+    };
+    // The containing block is above both clips.
+    assert_eq!(clipped("", "a"), 0);
+    // The block between the clips is the containing block, so only the
+    // inner clip is left behind.
+    assert_eq!(clipped("position: relative", "a"), 1);
+}
+
+/// The block whose clip it is can itself be the containing block, and a
+/// fixed box belongs to the page unless a transform or a filter makes a box
+/// its containing block.
+#[test]
+fn a_clip_cuts_the_boxes_it_contains_and_leaves_those_of_the_page() {
+    let depth = |style: &str, position: &str| {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 30px\">\
+             <div style=\"overflow: hidden; height: 10px; {style}\">\
+             <div id=a style=\"position: {position}; width: 20px; height: 20px; background: red\"></div>\
+             </div></div>"
+        ));
+        clip_depth_at(&result, Step::Box(by_id(&result, "a")))
+    };
+    assert_eq!(depth("position: relative", "absolute"), 1);
+    assert_eq!(depth("transform: translate(0)", "absolute"), 1);
+    assert_eq!(depth("", "absolute"), 0);
+    assert_eq!(depth("", "fixed"), 0);
+    // A relative box stays in the flow its ancestors clip.
+    assert_eq!(depth("", "relative"), 1);
+    // A transform is the containing block of the fixed box too.
+    assert_eq!(depth("transform: translate(0)", "fixed"), 1);
+}
+
+/// The boxes that leave a clip and those it keeps can sit side by side, and
+/// the clip of a flex or grid container leaves them alone just as a block's
+/// does.
+#[test]
+fn a_clip_opens_again_around_the_boxes_it_keeps_between_those_it_leaves() {
+    for display in ["block", "flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 30px\">\
+             <div style=\"display: {display}; overflow: hidden; height: 10px\">\
+             <div id=a style=\"position: absolute; width: 20px; height: 20px\"></div>\
+             <div id=b style=\"position: relative; width: 20px; height: 20px\"></div>\
+             <div id=c style=\"position: absolute; width: 20px; height: 20px\"></div>\
+             </div></div>"
+        ));
+        let depths =
+            ["a", "b", "c"].map(|id| clip_depth_at(&result, Step::Box(by_id(&result, id))));
+        assert_eq!(depths, [0, 1, 0], "{display}");
+        let order = ["a", "b", "c"].map(|id| step_at(&result, Step::Box(by_id(&result, id))));
+        assert!(order[0] < order[1] && order[1] < order[2], "{display}");
+    }
+}
+
 /// An inline element with an opacity below one forms a stacking context, so
 /// the positioned boxes of an inline-block inside it paint in its group,
 /// below those of a later inline-block with a lower stack level. Both
@@ -1496,6 +1578,133 @@ fn overflow_clip_rectangles_match_for_a_box_starting_near_a_page_bottom() {
             "<div style=\"height: {spacer}px\"></div>\
              <div style=\"overflow: hidden; padding: 15px; border: 4px solid\">{inner}</div>"
         ));
+    }
+}
+
+/// A box moved whole to a later page leaves no overflow clip on the page
+/// where neither it nor its descendants have a fragment.
+#[test]
+fn an_overflow_box_moved_whole_leaves_no_clip_on_the_previous_page() {
+    let inner: String = (0..5).map(|i| format!("<p>line {i}</p>")).collect();
+    for spacer in [130, 150] {
+        let result = lay_out(
+            &format!(
+                "<div style='height:{spacer}px'></div>\
+             <div style='overflow:hidden;padding:15px;border:4px solid;break-inside:avoid'>{inner}</div>"
+            ),
+            "",
+        );
+        assert!(result.page_count() > 1);
+        let first = result.pages().next().expect("first page");
+        let (walker, api) = clip_rects(&first);
+        assert!(api.is_empty(), "box moved away from page zero");
+        assert_rects_match(&walker, &api, &format!("spacer {spacer}, page zero"));
+        for page in result.pages().skip(1) {
+            let (walker, api) = clip_rects(&page);
+            assert!(!api.is_empty(), "the moved subtree still needs its clip");
+            assert_rects_match(
+                &walker,
+                &api,
+                &format!("spacer {spacer}, page {}", page.index()),
+            );
+        }
+    }
+}
+
+#[test]
+fn an_absent_overflow_box_still_clips_a_negative_offset_child() {
+    for position in ["relative", "absolute"] {
+        let result = lay_out(
+            &format!(
+                "<div style='height:220px'></div>\
+             <div style='position:absolute;top:180px;left:10px;width:100px;height:40px;overflow:hidden'>\
+             <div style='position:{position};top:-180px;width:20px;height:20px;background:red'></div></div>"
+            ),
+            "",
+        );
+        let first = result.pages().next().expect("first page");
+        assert!(
+            trace(&first)
+                .iter()
+                .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
+        );
+        assert_eq!(
+            pixels_of(&render_first_page(&result), [255, 0, 0]),
+            0,
+            "{position}"
+        );
+    }
+}
+
+#[test]
+fn absent_overflow_boxes_do_not_hide_children_with_external_containing_blocks() {
+    for position in ["absolute", "fixed"] {
+        let result = lay_out(
+            &format!(
+                "<div style='height:180px'></div>\
+             <div style='overflow:hidden;width:100px;height:40px'>\
+             <div style='position:{position};left:10px;top:10px;width:20px;height:20px;background:lime'></div></div>"
+            ),
+            "",
+        );
+        assert_eq!(
+            pixels_of(&render_first_page(&result), [0, 255, 0]),
+            400,
+            "{position}"
+        );
+    }
+}
+
+#[test]
+fn a_hidden_clipping_table_keeps_its_visible_transformed_cell() {
+    let result = lay_out(
+        "<div style='display:table;visibility:hidden;overflow:hidden;border-spacing:0;transform:translate(12px,7px)'>\
+         <div style='display:table-row'><div style='display:table-cell;visibility:visible;width:20px;height:20px;background:lime'></div></div></div>",
+        "",
+    );
+    let page = result.pages().next().expect("first page");
+    assert!(
+        trace(&page)
+            .iter()
+            .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
+    );
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [0, 255, 0]), 400);
+    let reference = lay_out(
+        "<div style='display:table;visibility:hidden;overflow:visible;border-spacing:0;transform:translate(12px,7px)'>\
+         <div style='display:table-row'><div style='display:table-cell;visibility:visible;width:20px;height:20px;background:lime'></div></div></div>",
+        "",
+    );
+    assert_eq!(
+        pixels,
+        render_first_page(&reference),
+        "capturing the empty ancestor must not apply its transform twice"
+    );
+}
+
+#[test]
+fn empty_overflow_scopes_are_removed_from_the_recorded_scene_as_well_as_the_trace() {
+    use kurbo::Shape;
+    let inner: String = (0..5).map(|i| format!("<p>line {i}</p>")).collect();
+    let result = lay_out(
+        &format!(
+            "<div style='height:130px'></div>\
+         <div style='overflow:hidden;padding:15px;border:4px solid;break-inside:avoid'>{inner}</div>"
+        ),
+        "",
+    );
+    let page = result.pages().next().expect("first page");
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = anyrender::Scene::new();
+    raikiri_paint::paint_single_page_with_origin(&mut scene, document, cascade, page_box, origin)
+        .expect("paint");
+    for command in scene.commands {
+        if let anyrender::recording::RenderCommand::PushClipLayer(clip) = command {
+            assert_ne!(
+                clip.clip.bounding_box(),
+                kurbo::Rect::new(32.0, 184.0, 268.0, 324.0)
+            );
+        }
     }
 }
 
@@ -2269,5 +2478,37 @@ fn boxes_that_are_not_visible_keep_native_and_public_order() {
             assert!(!boxes.contains(&by_id(&result, hidden)), "{hidden}");
         }
         assert!(boxes.contains(&by_id(&result, "b")));
+    }
+}
+
+#[test]
+fn hidden_table_overflow_scopes_keep_only_painting_content() {
+    for visibility in ["hidden", "collapse"] {
+        for display in ["block", "table"] {
+            assert_same_order(
+                &format!(
+                    "<svg width='20' height='10' style='display:{display};visibility:{visibility}'>\
+                     <rect width='10' height='10' visibility='visible'/></svg>"
+                ),
+                "",
+            );
+        }
+        for child_visibility in ["hidden", "visible"] {
+            assert_same_order(
+                &format!(
+                    "<div style='display:table;visibility:{visibility};overflow:hidden'>\
+                     <div style='visibility:{child_visibility}'>x</div></div>"
+                ),
+                "",
+            );
+        }
+    }
+    for visibility in ["visible", "hidden"] {
+        assert_same_order(
+            &format!(
+                "<div style='visibility:{visibility};overflow:hidden;width:20px;height:10px'></div>"
+            ),
+            "",
+        );
     }
 }

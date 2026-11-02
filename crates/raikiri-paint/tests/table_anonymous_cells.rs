@@ -195,11 +195,13 @@ fn review_anonymous_cell_keeps_winning_collapsed_row_border() {
     assert_eq!(border.top.width().0, 2.0);
     assert_eq!(border.bottom.width().0, 2.0);
     assert_eq!(border.left.width().0, 2.0);
+    // The row's border is the edge of the table, as the border of a box at
+    // its origin: the table adds nothing outside it.
     let (mut reference, body) = document();
     element(
         &mut reference,
         body,
-        "position:absolute;left:2px;top:2px;width:20px;height:10px;border:2px solid red",
+        "position:absolute;left:0;top:0;width:20px;height:10px;border:2px solid red",
     );
     let expected = layout(&mut reference);
     assert_exact_pixels(
@@ -1662,28 +1664,38 @@ fn removing_anonymous_content_restores_fresh_explicit_row_geometry() {
 }
 
 #[test]
-fn anonymous_cells_share_css22_empty_row_classification_after_main_integration() {
-    for (row_visibility, child_style, policy, expected_row_height, expected_table_height) in [
+fn anonymous_cells_preserve_empty_row_geometry_and_hide_empty_paint() {
+    for (
+        row_visibility,
+        child_style,
+        policy,
+        expected_row_height,
+        expected_table_height,
+        paints_in_flow,
+    ) in [
         (
             "hidden",
             "visibility:visible",
             "empty-cells:hide",
-            0.0,
-            30.0,
+            20.0,
+            55.0,
+            true,
         ),
         (
             "visible",
             "visibility:hidden",
             "empty-cells:hide",
-            0.0,
-            30.0,
+            20.0,
+            55.0,
+            false,
         ),
         (
             "visible",
             "position:absolute;visibility:visible",
             "empty-cells:hide",
             0.0,
-            30.0,
+            35.0,
+            false,
         ),
         (
             "visible",
@@ -1691,6 +1703,7 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
             "empty-cells:hide",
             20.0,
             55.0,
+            true,
         ),
         (
             "hidden",
@@ -1698,6 +1711,7 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
             "empty-cells:show",
             20.0,
             55.0,
+            true,
         ),
         (
             "hidden",
@@ -1705,6 +1719,7 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
             "empty-cells:hide;border-collapse:collapse",
             20.0,
             40.0,
+            true,
         ),
     ] {
         let build = |anonymous: bool| {
@@ -1758,7 +1773,7 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
         let expected_following_y = if policy.contains("collapse") {
             20.0
         } else {
-            5.0 + expected_row_height + if expected_row_height > 0.0 { 5.0 } else { 0.0 }
+            10.0 + expected_row_height
         };
         assert_eq!(
             actual.get_node(following_row).unwrap().layout().location.y,
@@ -1769,7 +1784,7 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
             raster(scene(&reference, &reference_computed)),
         );
         let (mut rectangles, body) = document();
-        if expected_row_height > 0.0 {
+        if paints_in_flow {
             let top = if policy.contains("collapse") {
                 0.0
             } else {
@@ -1831,10 +1846,10 @@ fn anonymous_empty_cell_flags_rebuild_across_policy_and_content_changes() {
         "display:block;width:40px;height:20px;visibility:hidden",
     );
     for (policy, child_visibility, expected) in [
-        ("hide", "hidden", 5.0),
+        ("hide", "hidden", 30.0),
         ("show", "hidden", 30.0),
         ("hide", "visible", 30.0),
-        ("hide", "hidden", 5.0),
+        ("hide", "hidden", 30.0),
     ] {
         actual.set_element_inline_style(
             table,

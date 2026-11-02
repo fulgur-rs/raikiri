@@ -155,17 +155,17 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
     let avoided = doc.append_element(
         Some(body),
         "div",
-        Some("min-block-size: 40px; break-inside: avoid"),
+        Some("display:block; min-block-size: 40px; break-inside: avoid"),
     );
     let auto = doc.append_element(
         Some(body),
         "div",
-        Some("min-block-size: 40px; break-inside: auto"),
+        Some("display:block; min-block-size: 40px; break-inside: auto"),
     );
     let page_only = doc.append_element(
         Some(body),
         "div",
-        Some("min-block-size: 40px; break-inside: avoid-page"),
+        Some("display:block; min-block-size: 40px; break-inside: avoid-page"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -265,7 +265,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     fn margin_for(inline: &str) -> Edges<LengthPercentageAuto> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
-        let body = doc.append_element(Some(html), "body", Some(inline));
+        let body = doc.append_element(Some(html), "body", Some(format!("display:block;{inline}")));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -352,7 +352,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
     fn padding_for(inline: &str) -> Edges<LengthPercentage> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
-        let body = doc.append_element(Some(html), "body", Some(inline));
+        let body = doc.append_element(Some(html), "body", Some(format!("display:block;{inline}")));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -429,7 +429,7 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
         let body = doc.append_element(Some(html), "body", None::<&str>);
         // Put the inline style on non-body element p. Since
         // apply_page_content_box_to_body only touches body, p's style.size is observable after the bridge.
-        let p = doc.append_element(Some(body), "p", Some(inline));
+        let p = doc.append_element(Some(body), "p", Some(format!("display:block;{inline}")));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -486,7 +486,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
         let body = doc.append_element(Some(html), "body", None::<&str>);
         // Put the inline style on non-body element p. Since
         // apply_page_content_box_to_body only touches body, p's style.size is observable after the bridge.
-        let p = doc.append_element(Some(body), "p", Some(inline));
+        let p = doc.append_element(Some(body), "p", Some(format!("display:block;{inline}")));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -525,7 +525,11 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", None::<&str>);
-        let p = doc.append_element(Some(body), "p", inline);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Some(format!("display:block;{}", inline.unwrap_or_default())),
+        );
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -575,7 +579,11 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", None::<&str>);
-        let p = doc.append_element(Some(body), "p", inline);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Some(format!("display:block;{}", inline.unwrap_or_default())),
+        );
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -607,7 +615,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     let p = doc.append_element(
         Some(body),
         "p",
-        Some("position: relative; left: calc(50% + 1em); top: calc(10% - 2px)"),
+        Some("display: block; position: relative; left: calc(50% + 1em); top: calc(10% - 2px)"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -670,7 +678,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     fn border_for(inline: &str) -> Edges<LengthPercentage> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
-        let body = doc.append_element(Some(html), "body", Some(inline));
+        let body = doc.append_element(Some(html), "body", Some(format!("display:block;{inline}")));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
@@ -834,7 +842,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
         // font-size inherits 20px. `em` uses this node's 20px; `rem` uses
         // the root's 20px.
         Some(
-            "padding: 2em; margin: 1.5rem; width: 3em; \
+            "display: block; padding: 2em; margin: 1.5rem; width: 3em; \
                  border-top-width: 0.5em; border-top-style: solid",
         ),
     );
@@ -930,7 +938,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
             Some(w) => format!("{w}; {borders}"),
             None => borders.to_string(),
         };
-        let body = doc.append_element(Some(html), "body", Some(style.as_str()));
+        let body = doc.append_element(Some(html), "body", Some(format!("display:block;{style}")));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("apply Ok");
@@ -994,7 +1002,11 @@ fn layout_single_page_bridges_display_flow_root() {
     let _head = doc.append_element(Some(html), "head", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
     let flow_root = doc.append_element(Some(body), "div", Some("display:flow-root;width:200px"));
-    let child = doc.append_element(Some(flow_root), "div", Some("height:20px;background:red"));
+    let child = doc.append_element(
+        Some(flow_root),
+        "div",
+        Some("display:block;height:20px;background:red"),
+    );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
@@ -2135,7 +2147,7 @@ fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
     let mut diag = Vec::new();
     let size = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut calc_values,
-        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+        &ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
             percent: 50.0,
             px: 10.0,
         }),
@@ -2154,7 +2166,7 @@ fn a_stretch_size_is_handed_to_taffy_as_stretch() {
     let mut diag = Vec::new();
     let size = computed_length_percentage_or_auto_to_taffy_dimension(
         &mut calc_values,
-        ComputedLengthPercentageOrAuto::Stretch,
+        &ComputedLengthPercentageOrAuto::Stretch,
         "width",
         &mut diag,
     );
@@ -2882,3 +2894,34 @@ mod clamp_warning_tests;
 mod content_limit_bridge_tests;
 mod keyword_height_inset_tests;
 mod replaced_sizing_tests;
+
+#[test]
+fn content_limit_bridge_retains_programmatic_comparison_owners() {
+    use raikiri_layout_style::values::ExpandedDimension;
+    let mut owners = Vec::new();
+    let mut warnings = Vec::new();
+    let pixel = ComputedLengthPercentageOrAuto::Px(15.0);
+    assert_eq!(
+        computed_length_percentage_or_auto_to_taffy_dimension(
+            &mut owners,
+            &pixel,
+            "min-width",
+            &mut warnings
+        ),
+        Dimension::length(15.0)
+    );
+    let compared = crate::layout::test_support::compared_length("min(30px, calc(10px + 5%))");
+    let value = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut owners,
+        &compared,
+        "min-width",
+        &mut warnings,
+    );
+    let ExpandedDimension::Calc(handle) = value.expand() else {
+        panic!("comparison must retain its owner")
+    };
+    assert_eq!(handle.resolve(10.0), 10.5);
+    assert_eq!(handle.resolve(1000.0), 30.0);
+    assert_eq!(owners.len(), 1);
+    assert!(warnings.is_empty());
+}

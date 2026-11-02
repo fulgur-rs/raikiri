@@ -610,6 +610,139 @@ fn pipeline_applies_page_limit_after_geometry_stabilizes() {
     }
 }
 
+/// The error of laying `html` out under a limit of `pages` pages.
+fn pipeline_error_under_page_limit(html: &str, pages: u32) -> RenderError {
+    pipeline_error_under_limits(html, pages, None)
+}
+
+/// The error of laying `html` out under a limit of `pages` pages and, when
+/// given, of `fragments` layout fragments.
+fn pipeline_error_under_limits(html: &str, pages: u32, fragments: Option<usize>) -> RenderError {
+    let mut doc = parse(html);
+    if let Some(fragments) = fragments {
+        doc.uncascaded.dom.lower_layout_fragment_limit(fragments);
+    }
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(pages))
+                .build(),
+        )
+        .build();
+    match run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+            resume: None,
+        },
+    ) {
+        Err(error) => error,
+        Ok(PipelineRun::Completed(output)) => {
+            panic!(
+                "expected rejection, but generated {} pages",
+                output.slices.len()
+            )
+        }
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
+    }
+}
+
+#[test]
+fn pipeline_rejects_excess_pages_of_columns_that_fill_in_turn() {
+    // Two 100px columns on each 100px page hold 200px of the 900px box, which
+    // needs five pages; the columns are filled only as far as the limit lets.
+    let error = pipeline_error_under_page_limit(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;column-fill:auto'><div style='height:900px'></div></div>",
+        2,
+    );
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            actual: 3,
+        }
+    ));
+}
+
+#[test]
+fn pipeline_stops_filling_columns_at_the_page_limit_before_the_fragment_limit() {
+    // The box needs about ninety pieces, more than the fragment limit allows,
+    // but only the two pages the limit allows are planned, so the pages are
+    // what exceeds the limit.
+    let error = pipeline_error_under_limits(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;column-fill:auto'><div style='height:9000px'></div></div>",
+        2,
+        Some(32),
+    );
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn pipeline_rejects_columns_that_fill_in_turn_from_a_page_past_the_limit() {
+    // The container starts on the second page, which the limit does not allow.
+    let error = pipeline_error_under_page_limit(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='height:150px'></div>\
+         <div style='columns:2;column-fill:auto'><div style='height:300px'></div></div>",
+        1,
+    );
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn pipeline_rejects_columns_that_fill_in_turn_past_the_fragment_limit() {
+    // The source layout holds the box in one column; filling the columns of
+    // each page cuts it into far more pieces than the limit allows.
+    let mut doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;column-fill:auto'><div style='height:9000px'></div></div>",
+    );
+    let render = |doc: &HtmlDocument| {
+        run_pipeline(
+            doc,
+            PageDefaults::default(),
+            &LayoutConfig::default(),
+            PipelineInputs {
+                resources: None,
+                consumer_properties: &[],
+                property_observer: None,
+                preload_background_images: true,
+                resume: None,
+            },
+        )
+    };
+    assert!(matches!(render(&doc), Ok(PipelineRun::Completed(_))));
+    doc.uncascaded.dom.lower_layout_fragment_limit(32);
+    assert!(matches!(
+        render(&doc),
+        Err(RenderError::Layout(LayoutError::FragmentLimitExceeded {
+            limit: 32
+        }))
+    ));
+}
+
 #[test]
 fn pipeline_discovers_nested_named_page_before_enforcing_page_limit() {
     let doc = parse(
@@ -1876,6 +2009,24 @@ fn pipeline_clears_a_named_page_after_leading_generated_content() {
 }
 
 #[test]
+fn pipeline_names_the_first_page_after_generated_white_space_that_collapses() {
+    // White space that collapses away makes no line, so the box on page `b`
+    // after the float names the first page. Preserved white space is
+    // content on the unnamed page, and the box starts a new page.
+    for (white_space, slices) in [("normal", 1), ("pre", 2)] {
+        let doc = parse(&format!(
+            "<style>@page {{ size: 400px 400px; margin: 0 }} body {{ margin: 0 }}\
+             body::before {{ content: ' '; white-space: {white_space} }}\
+             .f {{ float: right; width: 100px; height: 100px }}</style>\
+             <div class='f'></div>\
+             <div style='page:b'>a</div>"
+        ));
+        let out = run(&doc);
+        assert_eq!(out.slices.len(), slices, "{white_space}");
+    }
+}
+
+#[test]
 fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
     // The wrapper generates no box, but its `::before` content still takes
     // the body's page before the box on page `b`.
@@ -1898,24 +2049,46 @@ fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
 }
 
 #[test]
-fn pipeline_clears_a_named_page_after_a_float_on_the_parent_page() {
-    // The float between the boxes on page `b` takes the body's page, so the
-    // second box on page `b` starts a new page clear of it.
+fn pipeline_clears_a_named_page_after_a_float_on_the_previous_page() {
+    // A float is no part of the page flow, so the one after the box on page
+    // `b` stays on that page, and the box on page `c` after it starts a new
+    // page clear of it.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
          <div style='page:b'>a</div><div class='f'></div>\
-         <div style='page:b'><div class='f'></div></div>",
+         <div style='page:c'><div class='f'></div></div>",
     );
     let out = run(&doc);
-    assert_eq!(out.slices.len(), 3);
-    let (document, _) = out.layout_for_page(2);
-    let xs: Vec<f32> = document
-        .page_fragments(2)
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let positions: Vec<(f32, f32)> = document
+        .page_fragments(1)
         .filter(|fragment| fragment.rect().width == 100.0)
-        .map(|fragment| fragment.rect().x)
+        .map(|fragment| (fragment.rect().x, fragment.rect().y))
         .collect();
-    assert_eq!(xs, vec![300.0]);
+    assert_eq!(positions, vec![(300.0, 0.0)]);
+}
+
+#[test]
+fn pipeline_keeps_a_named_page_after_a_float_on_its_page() {
+    // The float between the boxes on page `b` is no part of the page flow,
+    // so they share the page, and the second box lines up beside the float
+    // instead of clearing it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'>a</div><div class='f'></div>\
+         <div style='page:b; display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let block = document
+        .page_fragments(0)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the first page");
+    assert_eq!(block.rect().width, 300.0);
 }
 
 #[test]
@@ -1945,11 +2118,12 @@ fn pipeline_clears_a_named_page_after_preserved_white_space() {
     // Pagination takes no page value from white space, even preserved, so
     // the parent starts on page `b` with its named child. The parent then
     // starts the new page clear of the float before it, and its white space
-    // and child go to that page together.
+    // and child go to that page together. The box before the float is what
+    // the parent's page differs from.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
-         <div class='f'></div>\
+         <div>x</div><div class='f'></div>\
          <div style='white-space:pre'>   <div style='page:b; display:flow-root; height:50px'>b</div></div>",
     );
     let out = run(&doc);

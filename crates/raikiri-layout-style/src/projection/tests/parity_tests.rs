@@ -408,6 +408,7 @@ fn busy_box() -> (BoxStyle, taffy::Style<SmolStr>) {
         item_is_table: true,
         item_is_replaced: true,
         item_is_compressible_replaced: false,
+        item_avoids_floats: true,
         box_sizing: BoxSizing::ContentBox,
         direction: Direction::Rtl,
         overflow: Point {

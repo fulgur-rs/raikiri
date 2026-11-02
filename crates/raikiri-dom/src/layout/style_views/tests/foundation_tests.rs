@@ -432,7 +432,7 @@ fn same_generation_and_address_rebind_changed_scalar_and_calc_values() {
             let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
             apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         }
-        cascade.computed[child].width = second;
+        cascade.computed[child].width = second.clone();
         assert_eq!(cascade.generation(), generation);
         assert_eq!(&cascade as *const _, address);
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);

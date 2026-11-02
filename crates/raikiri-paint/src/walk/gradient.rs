@@ -12,6 +12,26 @@ use raikiri_style::property::{
     RadialGradient, RadialShape, RadialSize, VerticalSide,
 };
 
+mod budget;
+pub(super) use budget::{ConicBudget, ConicPaintBudget};
+
+fn stop_vector<T>(capacity: usize, budget: Option<&ConicBudget<'_>>) -> Option<Vec<T>> {
+    match budget {
+        Some(budget) => budget.vector(capacity),
+        None => Some(Vec::with_capacity(capacity)),
+    }
+}
+
+fn push_stop<T>(out: &mut Vec<T>, value: T, budget: Option<&ConicBudget<'_>>) -> Option<()> {
+    match budget {
+        Some(budget) => budget.push(out, value),
+        None => {
+            out.push(value);
+            Some(())
+        }
+    }
+}
+
 /// What one gradient tile is filled with.
 #[derive(Debug, Clone)]
 pub(super) enum GradientFill {
@@ -30,9 +50,10 @@ pub(super) enum GradientFill {
 /// all take the size of the positioning area on that axis.
 pub(super) fn gradient_image_size(size: &ComputedBackgroundSize, area: Rect) -> Option<(f64, f64)> {
     let (area_w, area_h) = (area.width(), area.height());
-    let resolve = |value: ComputedLengthPercentageOrAuto, basis: f64| match value {
-        ComputedLengthPercentageOrAuto::Px(px) => f64::from(px),
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis * f64::from(percent) / 100.0,
+    let resolve = |value: &ComputedLengthPercentageOrAuto, basis: f64| match value {
+        ComputedLengthPercentageOrAuto::Px(px) => f64::from(*px),
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * f64::from(*percent) / 100.0,
+        ComputedLengthPercentageOrAuto::Math(value) => f64::from(value.resolve(basis as f32)),
         ComputedLengthPercentageOrAuto::Calc(calc) => {
             basis * f64::from(calc.percent) / 100.0 + f64::from(calc.px)
         }
@@ -40,7 +61,7 @@ pub(super) fn gradient_image_size(size: &ComputedBackgroundSize, area: Rect) -> 
     };
     let (width, height) = match size {
         ComputedBackgroundSize::Explicit { width, height } => {
-            (resolve(*width, area_w), resolve(*height, area_h))
+            (resolve(width, area_w), resolve(height, area_h))
         }
         _ => (area_w, area_h),
     };
@@ -725,19 +746,33 @@ pub(super) fn fixed_up_stops(
     raw: &[RawStop],
     interpolation: &GradientColorInterpolation,
 ) -> Vec<(f64, DynamicColor)> {
+    try_fixed_up_stops(raw, interpolation, None)
+        .expect("unbounded stop buffers have no allocation budget")
+}
+
+pub(super) fn try_fixed_up_stops(
+    raw: &[RawStop],
+    interpolation: &GradientColorInterpolation,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<Vec<(f64, DynamicColor)>> {
     // One list in authored order: each hint, if any, then its stop.
-    let mut positions: Vec<Option<f32>> = Vec::with_capacity(raw.len() * 2);
-    let mut slots: Vec<(Option<usize>, usize)> = Vec::with_capacity(raw.len());
+    let mut positions = stop_vector(raw.len().checked_mul(2)?, budget)?;
+    let mut slots = stop_vector(raw.len(), budget)?;
     for stop in raw {
-        let hint = stop.hint.map(|hint| {
-            positions.push(Some(hint));
-            positions.len() - 1
-        });
-        positions.push(stop.position);
-        slots.push((hint, positions.len() - 1));
+        let hint = if let Some(hint) = stop.hint {
+            push_stop(&mut positions, Some(hint), budget)?;
+            Some(positions.len() - 1)
+        } else {
+            None
+        };
+        push_stop(&mut positions, stop.position, budget)?;
+        push_stop(&mut slots, (hint, positions.len() - 1), budget)?;
+    }
+    if let Some(budget) = budget {
+        budget.charge::<f32>(positions.len())?;
     }
     let offsets = fixup_stop_offsets(&positions);
-    let mut fixed: Vec<(f64, DynamicColor)> = Vec::with_capacity(raw.len());
+    let mut fixed = stop_vector(raw.len(), budget)?;
     for (stop, (hint, at)) in raw.iter().zip(slots) {
         let offset = f64::from(offsets[at]);
         if let (Some(hint), Some(&before)) = (hint, fixed.last()) {
@@ -749,11 +784,12 @@ pub(super) fn fixed_up_stops(
                 f64::from(offsets[hint]),
                 interpolation,
                 &mut fixed,
-            );
+                budget,
+            )?;
         }
-        fixed.push((offset, stop.color));
+        push_stop(&mut fixed, (offset, stop.color), budget)?;
     }
-    fixed
+    Some(fixed)
 }
 
 /// Number of samples in each of the two grids that sample a hint's curve.
@@ -783,34 +819,35 @@ fn expand_hint(
     hint: f64,
     interpolation: &GradientColorInterpolation,
     out: &mut Vec<(f64, DynamicColor)>,
-) {
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<()> {
     let span = after.0 - before.0;
     // Between equal colors every curve draws the same solid color.
     if span <= 0.0
         || before.1 == after.1
         || interpolation.hue_method == HueInterpolationMethod::Longer
     {
-        return;
+        return Some(());
     }
     let h = ((hint - before.0) / span).clamp(0.0, 1.0);
     if (h - 0.5).abs() < HINT_MIDDLE_TOLERANCE {
-        return;
+        return Some(());
     }
     if h <= 0.0 {
-        out.push((before.0, after.1));
-        return;
+        push_stop(out, (before.0, after.1), budget)?;
+        return Some(());
     }
     if h >= 1.0 {
-        out.push((after.0, before.1));
-        return;
+        push_stop(out, (after.0, before.1), budget)?;
+        return Some(());
     }
     let exponent = 0.5f64.ln() / h.ln();
-    let mut fractions: Vec<f64> = (1..HINT_SAMPLES)
-        .flat_map(|step| {
-            let t = step as f64 / HINT_SAMPLES as f64;
-            [t, t.powf(exponent.recip())]
-        })
-        .collect();
+    let mut fractions = stop_vector((HINT_SAMPLES - 1).checked_mul(2)?, budget)?;
+    for step in 1..HINT_SAMPLES {
+        let t = step as f64 / HINT_SAMPLES as f64;
+        push_stop(&mut fractions, t, budget)?;
+        push_stop(&mut fractions, t.powf(exponent.recip()), budget)?;
+    }
     fractions.sort_by(f64::total_cmp);
     fractions.dedup();
     let ramp = before.1.interpolate(
@@ -823,9 +860,10 @@ fn expand_hint(
         // range as narrow as the float precision allows.
         let offset = before.0 + span * t;
         if offset > before.0 && offset < after.0 {
-            out.push((offset, ramp.eval(t.powf(exponent) as f32)));
+            push_stop(out, (offset, ramp.eval(t.powf(exponent) as f32)), budget)?;
         }
     }
+    Some(())
 }
 
 /// Drop stops below zero from a radial gradient, keeping the color the line
@@ -885,34 +923,29 @@ fn solid_color(color: DynamicColor) -> Color {
 /// the distance between them, in premultiplied sRGB. Stops that share one
 /// position are spread evenly, so each pair weighs the same.
 pub(super) fn average_color(stops: &[(f64, DynamicColor)]) -> Color {
-    let premultiplied: Vec<[f64; 4]> = stops
-        .iter()
-        .map(|(_, color)| premultiply(dynamic_to_css_color(*color)))
-        .collect();
-    let period = match stops {
-        [first, .., last] => last.0 - first.0,
-        _ => 0.0,
+    let Some(first) = stops.first() else {
+        return Color::TRANSPARENT;
     };
-    let weights: Vec<f64> = stops
-        .windows(2)
-        .map(|pair| {
-            if period > 1e-6 {
-                (pair[1].0 - pair[0].0) / period
-            } else {
-                1.0 / (stops.len() - 1) as f64
-            }
-        })
-        .collect();
-    let [r, g, b, a] = match premultiplied.as_slice() {
-        [] => return Color::TRANSPARENT,
-        [only] => unpremultiply(*only),
-        many => unpremultiply(std::array::from_fn(|channel| {
-            many.windows(2)
-                .zip(&weights)
-                .map(|(pair, weight)| (pair[0][channel] + pair[1][channel]) / 2.0 * weight)
-                .sum::<f64>()
-        })),
-    };
+    let mut before = premultiply(dynamic_to_css_color(first.1));
+    if stops.len() == 1 {
+        let [r, g, b, a] = unpremultiply(before);
+        return Color::from_rgba8(r, g, b, a);
+    }
+    let period = stops.last().expect("nonempty stops").0 - first.0;
+    let mut sum = [0.0; 4];
+    for pair in stops.windows(2) {
+        let weight = if period > 1e-6 {
+            (pair[1].0 - pair[0].0) / period
+        } else {
+            1.0 / (stops.len() - 1) as f64
+        };
+        let after = premultiply(dynamic_to_css_color(pair[1].1));
+        for channel in 0..4 {
+            sum[channel] += (before[channel] + after[channel]) / 2.0 * weight;
+        }
+        before = after;
+    }
+    let [r, g, b, a] = unpremultiply(sum);
     Color::from_rgba8(r, g, b, a)
 }
 
@@ -925,36 +958,44 @@ fn ramp_average_color(
     stops: &[(f64, DynamicColor)],
     interpolation: &GradientColorInterpolation,
 ) -> Color {
+    try_ramp_average_color(stops, interpolation, None)
+        .expect("unbounded stop buffers have no allocation budget")
+}
+
+fn try_ramp_average_color(
+    stops: &[(f64, DynamicColor)],
+    interpolation: &GradientColorInterpolation,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<Color> {
     let in_gamut_stops = stops
         .iter()
         .all(|(_, color)| in_gamut(color.to_alpha_color::<Srgb>()));
     let ([first, .., last], false) = (stops, in_gamut_stops) else {
-        return average_color(stops);
+        return Some(average_color(stops));
     };
     let period = last.0 - first.0;
     let last_index = (stops.len() - 1) as f64;
-    let spread: Vec<(f32, DynamicColor)> = stops
-        .iter()
-        .enumerate()
-        .map(|(index, &(offset, color))| {
-            let offset = if period > 1e-6 {
-                (offset - first.0) / period
-            } else {
-                index as f64 / last_index
-            };
-            (offset as f32, color)
-        })
-        .collect();
-    let ramp: Vec<(f64, DynamicColor)> = expand_stops(
+    let mut spread = stop_vector(stops.len(), budget)?;
+    for (index, &(offset, color)) in stops.iter().enumerate() {
+        let offset = if period > 1e-6 {
+            (offset - first.0) / period
+        } else {
+            index as f64 / last_index
+        };
+        push_stop(&mut spread, (offset as f32, color), budget)?;
+    }
+    let expanded = try_expand_stops(
         &spread,
         conic_interpolation_tag(interpolation.color_space),
         conic_hue_direction(interpolation.hue_method),
         true,
-    )
-    .into_iter()
-    .map(|(offset, color)| (f64::from(offset), color))
-    .collect();
-    average_color(&ramp)
+        budget,
+    )?;
+    let mut ramp = stop_vector(expanded.len(), budget)?;
+    for (offset, color) in expanded {
+        push_stop(&mut ramp, (f64::from(offset), color), budget)?;
+    }
+    Some(average_color(&ramp))
 }
 
 /// Color channels from 0 to 1, multiplied by alpha.
@@ -1139,10 +1180,11 @@ fn refine_cell(
     segment: (f32, f32),
     (lo, hi): (f32, f32),
     out: &mut Vec<(f32, AlphaColor<Srgb>)>,
-) {
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<()> {
     let (start, end) = (lo.max(segment.0), hi.min(segment.1));
     if end <= start || hi - lo < MIN_EXPANDED_SEGMENT {
-        return;
+        return Some(());
     }
     let premultiplied = |color: AlphaColor<Srgb>| {
         let [r, g, b, a] = color.components;
@@ -1156,14 +1198,15 @@ fn refine_cell(
     if (0..4).all(|channel| {
         ((from[channel] + to[channel]) / 2.0 - middle[channel]).abs() <= CLIP_TOLERANCE
     }) {
-        return;
+        return Some(());
     }
     let mid = (lo + hi) / 2.0;
-    refine_cell(at, segment, (lo, mid), out);
+    refine_cell(at, segment, (lo, mid), out, budget)?;
     if mid > segment.0 && mid < segment.1 {
-        out.push(at(mid));
+        push_stop(out, at(mid), budget)?;
     }
-    refine_cell(at, segment, (mid, hi), out);
+    refine_cell(at, segment, (mid, hi), out, budget)?;
+    Some(())
 }
 
 /// Approximate interpolation in `space` with dense sRGB stops.
@@ -1179,25 +1222,41 @@ pub(super) fn expand_stops(
     direction: HueDirection,
     repeating: bool,
 ) -> Vec<(f32, DynamicColor)> {
-    let mut expanded = Vec::with_capacity(stops.len() * 8);
+    try_expand_stops(stops, space, direction, repeating, None)
+        .expect("unbounded stop buffers have no allocation budget")
+}
+
+pub(super) fn try_expand_stops(
+    stops: &[(f32, DynamicColor)],
+    space: ColorSpaceTag,
+    direction: HueDirection,
+    repeating: bool,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<Vec<(f32, DynamicColor)>> {
+    let capacity = if budget.is_some() {
+        stops.len()
+    } else {
+        stops.len().checked_mul(8)?
+    };
+    let mut expanded = stop_vector(capacity, budget)?;
     if let Some((offset, color)) = stops.first()
         && !repeating
         && *offset > 0.0
     {
-        expanded.push((0.0, *color));
+        push_stop(&mut expanded, (0.0, *color), budget)?;
     }
     for pair in stops.windows(2) {
         let ((from_offset, from), (to_offset, to)) = (pair[0], pair[1]);
         let span = to_offset - from_offset;
         // Equal colors still turn a full circle with `longer hue`.
         if span < MIN_EXPANDED_SEGMENT || (from == to && direction != HueDirection::Longer) {
-            expanded.push((from_offset, from));
+            push_stop(&mut expanded, (from_offset, from), budget)?;
             // A segment of one color that crosses an end of the turn holds
             // its color to that end.
             if from == to {
                 for end in [0.0, 1.0] {
                     if from_offset < end && end < to_offset {
-                        expanded.push((end, from));
+                        push_stop(&mut expanded, (end, from), budget)?;
                     }
                 }
             }
@@ -1205,17 +1264,13 @@ pub(super) fn expand_stops(
         }
         let exact = from.interpolate(to, space, direction);
         let sample = |t: f32| clamp_srgb(exact.eval(t).to_alpha_color::<Srgb>());
-        let mut push_samples = |samples: Vec<(f32, AlphaColor<Srgb>)>| {
-            for (offset, color) in samples {
-                expanded.push((offset, DynamicColor::from_alpha_color(color)));
-            }
-        };
         // Sample the clipped ramp exactly at brush offsets that do not
         // depend on where the segment starts or ends: the points of a fixed
         // grid, refined by halving its cells. A segment split by a stop that
         // lies on the ramp is then sampled where the whole one is, except in
         // the one cell holding the split.
-        let mut samples = vec![(from_offset, sample(0.0))];
+        let mut samples = stop_vector(1, budget)?;
+        push_stop(&mut samples, (from_offset, sample(0.0)), budget)?;
         // Samples keep their brush offset, since one rebuilt from a fraction
         // of a segment that starts far outside 0 to 1 is off by many units.
         let at = |offset: f32| {
@@ -1226,7 +1281,7 @@ pub(super) fn expand_stops(
         // that range would otherwise make this walk billions of cells, and the
         // cut ends of the range get their own exact samples.
         if from_offset < 0.0 && to_offset > 0.0 {
-            samples.push(at(0.0));
+            push_stop(&mut samples, at(0.0), budget)?;
         }
         let first = ((from_offset * BRUSH_GRID_STEPS as f32).floor() as i64).max(0);
         let last =
@@ -1234,20 +1289,32 @@ pub(super) fn expand_stops(
         for cell in first..last {
             let lo = cell as f32 / BRUSH_GRID_STEPS as f32;
             let hi = (cell + 1) as f32 / BRUSH_GRID_STEPS as f32;
-            refine_cell(&at, (from_offset, to_offset), (lo, hi), &mut samples);
+            refine_cell(
+                &at,
+                (from_offset, to_offset),
+                (lo, hi),
+                &mut samples,
+                budget,
+            )?;
             if hi > from_offset && hi < to_offset {
-                samples.push(at(hi));
+                push_stop(&mut samples, at(hi), budget)?;
             }
         }
-        push_samples(samples);
-    }
-    if let Some((offset, color)) = stops.last() {
-        expanded.push((*offset, *color));
-        if !repeating && *offset < 1.0 {
-            expanded.push((1.0, *color));
+        for (offset, color) in samples {
+            push_stop(
+                &mut expanded,
+                (offset, DynamicColor::from_alpha_color(color)),
+                budget,
+            )?;
         }
     }
-    expanded
+    if let Some((offset, color)) = stops.last() {
+        push_stop(&mut expanded, (*offset, *color), budget)?;
+        if !repeating && *offset < 1.0 {
+            push_stop(&mut expanded, (1.0, *color), budget)?;
+        }
+    }
+    Some(expanded)
 }
 
 /// Most periods of a repeating conic gradient that are drawn one by one.
@@ -1279,30 +1346,38 @@ pub(super) enum RepeatedTurn {
 /// A gradient whose stops all share one position has no period to repeat and
 /// shows its last color, as the stops of a gradient that does not repeat do
 /// past the last one.
-pub(super) fn repeat_over_turn(
+pub(super) fn try_repeat_over_turn(
     stops: Vec<(f64, DynamicColor)>,
     interpolation: &GradientColorInterpolation,
-) -> RepeatedTurn {
+    budget: &ConicBudget<'_>,
+) -> Option<RepeatedTurn> {
     let (first, (last, last_color)) = (stops[0].0, stops[stops.len() - 1]);
     let period = last - first;
     if period <= 0.0 {
-        return RepeatedTurn::Solid(solid_color(last_color));
+        return Some(RepeatedTurn::Solid(solid_color(last_color)));
     }
     if period < 1.0 / MAX_CONIC_PERIODS {
         // The average weighs a pair of stops by its share of the period only
         // above a tolerance of its own; a period of a millionth of a turn or
         // less would fall back to equal weights, so ask in units of the period.
-        let unit: Vec<(f64, DynamicColor)> = stops
-            .iter()
-            .map(|&(offset, color)| ((offset - first) / period, color))
-            .collect();
-        return RepeatedTurn::Solid(ramp_average_color(&unit, interpolation));
+        let mut unit = budget.vector(stops.len())?;
+        for &(offset, color) in &stops {
+            budget.push(&mut unit, ((offset - first) / period, color))?;
+        }
+        return Some(RepeatedTurn::Solid(try_ramp_average_color(
+            &unit,
+            interpolation,
+            Some(budget),
+        )?));
     }
     // The first period that starts at or before 0, and the first that ends at
     // or after 1. A period longer than the turn is the only one.
     let lowest = (-first / period).floor() as i64;
     let highest = (((1.0 - last) / period).ceil() as i64).max(lowest);
-    let mut repeated = Vec::with_capacity(stops.len() * (highest - lowest + 1) as usize);
+    let periods = usize::try_from(highest.checked_sub(lowest)?.checked_add(1)?).ok()?;
+    highest.checked_add(1)?;
+    let count = stops.len().checked_mul(periods)?;
+    let mut repeated = budget.vector(count)?;
     for index in lowest..=highest {
         let start = first + index as f64 * period;
         // The end is the start of the next period, not a sum that rounds
@@ -1316,10 +1391,10 @@ pub(super) fn repeat_over_turn(
             };
             // Rounding never lets an offset run backward.
             let held = repeated.last().map_or(placed, |&(previous, _)| previous);
-            repeated.push((placed.max(held), color));
+            budget.push(&mut repeated, (placed.max(held), color))?;
         }
     }
-    RepeatedTurn::Stops(repeated)
+    Some(RepeatedTurn::Stops(repeated))
 }
 
 /// Some stop lies outside the offsets 0 to 1 that a sweep draws.
@@ -1336,23 +1411,24 @@ pub(super) fn any_outside_turn(stops: &[(f32, DynamicColor)]) -> bool {
 /// outside keeps what is drawn. When every stop lies before the range the
 /// last color fills it, and when every stop lies after, the first one does:
 /// the cut list is then a single stop, which is held to the other end.
-pub(super) fn clip_to_one_turn(stops: Vec<(f32, DynamicColor)>) -> Vec<(f32, DynamicColor)> {
+pub(super) fn try_clip_to_one_turn(
+    mut stops: Vec<(f32, DynamicColor)>,
+    budget: &ConicBudget<'_>,
+) -> Option<Vec<(f32, DynamicColor)>> {
     if !any_outside_turn(&stops) {
-        return stops;
+        return Some(stops);
     }
-    let mut clipped: Vec<_> = stops
-        .into_iter()
-        .filter(|(offset, _)| (0.0..=1.0).contains(offset))
-        .collect();
-    if let Some(&(offset, color)) = clipped.first()
+    stops.retain(|(offset, _)| (0.0..=1.0).contains(offset));
+    if let Some(&(offset, color)) = stops.first()
         && offset > 0.0
     {
-        clipped.insert(0, (0.0, color));
+        budget.push(&mut stops, (0.0, color))?;
+        stops.rotate_right(1);
     }
-    if let Some(&(offset, color)) = clipped.last()
+    if let Some(&(offset, color)) = stops.last()
         && offset < 1.0
     {
-        clipped.push((1.0, color));
+        budget.push(&mut stops, (1.0, color))?;
     }
-    clipped
+    Some(stops)
 }

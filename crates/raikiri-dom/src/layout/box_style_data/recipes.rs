@@ -240,14 +240,17 @@ pub(crate) fn refresh(
                 panic!("source wrapper identity")
             };
             let cv = &cascade.computed[source];
-            let expected = if old_kind == RecipeKind::Contents {
-                DisplayValue::Contents
+            // A lifted spanner wrapper is a block, or an inline box around
+            // blocks, and the recipe is the same for both.
+            let unchanged = if old_kind == RecipeKind::Contents {
+                cv.display == DisplayValue::Contents
             } else {
-                DisplayValue::Block
+                matches!(cv.display, DisplayValue::Block | DisplayValue::Inline)
             };
-            assert_eq!(
-                cv.display, expected,
-                "changed wrapper identity requires source bridge"
+            assert!(
+                unchanged,
+                "changed wrapper identity requires source bridge: {:?}",
+                cv.display
             );
             let direction = crate::layout::bridge::direction_for_axes(
                 cv,

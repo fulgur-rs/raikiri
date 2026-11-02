@@ -20,6 +20,14 @@ pub(crate) fn content(value: C) -> values::AlignContent {
         C::End => values::AlignContent::END,
         C::FlexStart => values::AlignContent::FLEX_START,
         C::FlexEnd => values::AlignContent::FLEX_END,
+        C::Safe(position) => values::AlignContent {
+            safety: values::AlignmentSafety::Safe,
+            ..content(position.alignment())
+        },
+        C::Unsafe(position) => values::AlignContent {
+            safety: values::AlignmentSafety::Unsafe,
+            ..content(position.alignment())
+        },
         _ => values::AlignContent::NORMAL,
     }
 }

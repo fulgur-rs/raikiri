@@ -501,6 +501,79 @@ fn a_container_is_judged_by_the_normal_flow_place_of_its_items() {
 }
 
 #[test]
+fn a_paragraph_moves_even_when_its_padding_and_line_do_not_fit_one_page() {
+    // The padding above the lines runs over a page, and the page still breaks
+    // before the paragraph rather than between that padding and its line, as
+    // Chromium does with 250px of padding on pages of 200px: the paragraph
+    // starts the second page and its lines land on a third.
+    for lines in [1, 3] {
+        for edge in [
+            "padding-top:110px",
+            "border-top:110px solid",
+            "border-top:50px solid;padding-top:60px",
+        ] {
+            assert_eq!(
+                paragraph_after(50, lines, edge),
+                (100.0, 3),
+                "{lines} lines, {edge}"
+            );
+        }
+    }
+    // Padding that ends the second page, or a line short of it, sends the line
+    // alone to the third page.
+    for edge in ["padding-top:95px", "padding-top:100px", "padding-top:105px"] {
+        assert_eq!(paragraph_after(50, 1, edge), (100.0, 3), "{edge}");
+    }
+    // A paragraph that avoids a break inside it moves too, and so does one
+    // that starts the second page when the pages before it are full.
+    assert_eq!(
+        paragraph_after(50, 1, "padding-top:110px;break-inside:avoid"),
+        (100.0, 3)
+    );
+    assert_eq!(paragraph_after(150, 1, "padding-top:110px"), (200.0, 4));
+}
+
+#[test]
+fn a_paragraph_at_the_top_of_the_page_stays_when_its_padding_runs_over_a_page() {
+    // Nothing before the paragraph is there to break from: the padding spans
+    // the pages, and the line starts the second one.
+    assert_eq!(paragraph_after(0, 1, "padding-top:110px"), (0.0, 2));
+}
+
+#[test]
+fn a_paragraph_whose_margin_is_all_that_comes_before_it_moves_with_its_padding() {
+    // The margin above the paragraph is not part of the page: the padding
+    // starts below its top, and Chromium sends the paragraph to the next page
+    // as it does after a box.
+    let mut paragraph_id = 0;
+    let (doc, pages) = paged_body_with_ifc(|doc, body| {
+        paragraph_id = paragraph(doc, body, 1, "margin-top:5px;padding-top:110px");
+    });
+    assert_eq!((page_flow_y(&doc, paragraph_id), pages), (100.0, 3));
+}
+
+#[test]
+fn a_paragraph_in_a_wrapper_moves_with_the_wrapper_when_its_padding_runs_over_a_page() {
+    // The wrapper has padding below the paragraph, and the paragraph's own
+    // padding above its line runs over a page: the page breaks before the
+    // paragraph, which starts the wrapper's content.
+    let (mut wrapper_id, mut paragraph_id) = (0, 0);
+    let (doc, pages) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        wrapper_id = block(doc, body, "display:block;padding-bottom:15px");
+        paragraph_id = paragraph(doc, wrapper_id, 1, "padding-top:110px");
+    });
+    assert_eq!(
+        (
+            page_flow_y(&doc, wrapper_id),
+            page_flow_y(&doc, paragraph_id),
+            pages
+        ),
+        (100.0, 100.0, 3)
+    );
+}
+
+#[test]
 fn a_block_moves_even_when_its_padding_and_line_do_not_fit_one_page() {
     // The wrapper's padding runs over a page, and the page still breaks before
     // the wrapper rather than between that padding and its line, as Chromium

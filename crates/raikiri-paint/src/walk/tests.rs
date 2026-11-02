@@ -7,6 +7,8 @@ use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use raikiri_traits::PaintRect;
 
 mod canvas_sharing_tests;
+mod conic_budget_tests;
+mod empty_clip_tests;
 mod gradient_tests;
 mod image_sharing_tests;
 
@@ -4897,10 +4899,10 @@ fn elliptical_border_ring_has_independent_outer_and_inner_axes() {
 }
 
 #[test]
-fn overflow_hidden_clip_min_edges_floor_outward() {
-    // A fractional padding-box origin must not antialias-cut pixel-snapped
-    // descendant backgrounds. Min edges floor outward to integer pixels while
-    // max edges keep the exact extent for `overflow:hidden`.
+fn overflow_hidden_clip_edges_round_to_the_nearest_pixel() {
+    // Chromium moves every edge of an overflow clip to the nearest pixel, and
+    // a descendant background snaps the same way, so the two agree on the
+    // pixels: the background is neither antialias-cut nor clipped short.
     let scene = transform_markup_scene(
         "<body style='margin:0'><div style='position:absolute;left:10.4px;top:20.6px;width:100px;height:50px;overflow:hidden'><div style='width:10px;height:10px;background:green'></div></div>",
     );
@@ -4914,23 +4916,37 @@ fn overflow_hidden_clip_min_edges_floor_outward() {
             _ => None,
         })
         .find(|bounds| (bounds.x0 - 10.0).abs() < 1e-5)
-        .expect("overflow clip with floored min edge must exist");
+        .expect("overflow clip with rounded min edge must exist");
     assert!(
         (bounds.x0 - 10.0).abs() < 1e-5,
-        "min x floors outward {bounds:?}"
+        "min x rounds to the nearest pixel {bounds:?}"
     );
     assert!(
-        (bounds.y0 - 20.0).abs() < 1e-5,
-        "min y floors outward {bounds:?}"
+        (bounds.y0 - 21.0).abs() < 1e-5,
+        "min y rounds to the nearest pixel {bounds:?}"
     );
     assert!(
-        (bounds.x1 - 110.4).abs() < 1e-5,
-        "max x keeps exact extent {bounds:?}"
+        (bounds.x1 - 110.0).abs() < 1e-5,
+        "max x rounds to the nearest pixel {bounds:?}"
     );
     assert!(
-        (bounds.y1 - 70.6).abs() < 1e-5,
-        "max y keeps exact extent {bounds:?}"
+        (bounds.y1 - 71.0).abs() < 1e-5,
+        "max y rounds to the nearest pixel {bounds:?}"
     );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        120,
+        80,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 120 + x) * 4..(y * 120 + x) * 4 + 4];
+    let green = [0, 128, 0, 255];
+    let white = [255, 255, 255, 255];
+    for (x, y) in [(10, 21), (19, 21), (10, 30), (19, 30)] {
+        assert_eq!(pixel(x, y), &green, "inside the child at ({x}, {y})");
+    }
+    for (x, y) in [(9, 21), (20, 21), (10, 20), (10, 31)] {
+        assert_eq!(pixel(x, y), &white, "outside the child at ({x}, {y})");
+    }
 }
 
 fn engine_document() -> Document {
@@ -5717,7 +5733,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
         a: 255,
     };
     let Some(gradient::GradientFill::Brush(gradient, _)) =
-        conic_to_peniko(&center_conic, center, current)
+        conic_to_peniko(&ImageBrushCache::default(), &center_conic, center, current)
     else {
         panic!("expected a sweep brush");
     };
@@ -5726,9 +5742,12 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     let default_center = conic_center(&angle_conic.position, positioning);
     assert!((default_center.x - 100.0).abs() < 0.01);
     assert!((default_center.y - 100.0).abs() < 0.01);
-    let Some(gradient::GradientFill::Brush(angle_gradient, _)) =
-        conic_to_peniko(&angle_conic, default_center, current)
-    else {
+    let Some(gradient::GradientFill::Brush(angle_gradient, _)) = conic_to_peniko(
+        &ImageBrushCache::default(),
+        &angle_conic,
+        default_center,
+        current,
+    ) else {
         panic!("expected a sweep brush");
     };
     assert_eq!(angle_gradient.stops.len(), 8);
@@ -5754,10 +5773,18 @@ fn conic_paint_covers_empty_and_square_boxes() {
     let mut scene = Scene::new();
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let painting = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
-    paint_conic_gradient(&mut scene, &square, positioning, painting, current);
+    paint_conic_gradient(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &square,
+        positioning,
+        painting,
+        current,
+    );
     assert!(!scene.commands.is_empty());
     let before = scene.commands.len();
     paint_conic_gradient(
+        &ImageBrushCache::default(),
         &mut scene,
         &square,
         kurbo::Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -8110,12 +8137,10 @@ fn root_and_body_decorations_use_their_actual_border_boxes() {
     }
 }
 
-/// Paint `markup` on a 100px page and spell out row `y`: `B` for blue, `R`
-/// for red, `.` for white and `?` for anything else.
-fn background_clip_row(markup: &str, y: usize) -> String {
-    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
-    rgba[y * 100 * 4..(y + 1) * 100 * 4]
-        .chunks_exact(4)
+/// Spell out the pixels of a row or column: `B` for blue, `R` for red, `.`
+/// for white and `?` for anything else.
+fn spell_pixels<'a>(pixels: impl Iterator<Item = &'a [u8]>) -> String {
+    pixels
         .map(|px| match px {
             [0, 0, 255, 255] => 'B',
             [255, 0, 0, 255] => 'R',
@@ -8123,6 +8148,18 @@ fn background_clip_row(markup: &str, y: usize) -> String {
             _ => '?',
         })
         .collect()
+}
+
+/// Paint `markup` on a 100px page and spell out row `y`.
+fn background_clip_row(markup: &str, y: usize) -> String {
+    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
+    spell_pixels(rgba[y * 100 * 4..(y + 1) * 100 * 4].chunks_exact(4))
+}
+
+/// Paint `markup` on a 100px page and spell out column `x`.
+fn background_clip_column(markup: &str, x: usize) -> String {
+    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
+    spell_pixels((0..100).map(|y| &rgba[(y * 100 + x) * 4..(y * 100 + x + 1) * 4]))
 }
 
 /// Spell out a row from `(char, count)` runs.
@@ -8165,10 +8202,65 @@ fn a_vertical_cell_in_a_horizontal_table_paints_every_background_layer_across_it
 }
 
 #[test]
+fn a_cell_content_box_background_spans_the_room_its_alignment_spreads() {
+    // The row is 80px high and the content of the first cell 20px. Whatever
+    // the vertical alignment, the room around the content is part of the
+    // content box: it runs from the top padding to the bottom padding.
+    for align in ["baseline", "top", "middle", "bottom"] {
+        let column = background_clip_column(
+            &format!(
+                "<!DOCTYPE html><html><body style='margin:0;background:white'>\
+                 <table style='border-spacing:0'><tr>\
+                 <td style='padding:3px 0 7px;vertical-align:{align};\
+                 background:linear-gradient(blue,blue) content-box'>\
+                 <div style='width:20px;height:20px'></div></td>\
+                 <td style='padding:0'><div style='width:5px;height:80px'></div></td></tr>\
+                 </table></body></html>"
+            ),
+            5,
+        );
+        assert_eq!(
+            column,
+            row_of(&[('.', 3), ('B', 70), ('.', 27)]),
+            "vertical-align: {align}"
+        );
+    }
+}
+
+#[test]
+fn a_vertical_cell_content_box_background_spans_the_room_its_alignment_spreads() {
+    // The cell is 80px wide: 10px of padding on the left, 6px on the right,
+    // and 20px of content. The content box is the cell less that padding for
+    // each alignment and each writing mode.
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for align in ["baseline", "top", "middle", "bottom"] {
+            let row = background_clip_row(
+                &format!(
+                    "<!DOCTYPE html><html><body style='margin:0;background:white'>\
+                     <table style='border-spacing:0'><tr>\
+                     <td style='padding:0 6px 0 10px;writing-mode:{mode};vertical-align:{align};\
+                     background:linear-gradient(blue,blue) content-box'>\
+                     <div style='width:20px;height:20px'></div></td></tr>\
+                     <tr><td style='padding:0'><div style='width:80px;height:5px'></div></td></tr>\
+                     </table></body></html>"
+                ),
+                15,
+            );
+            assert_eq!(
+                row,
+                row_of(&[('.', 10), ('B', 64), ('.', 26)]),
+                "{mode}, vertical-align: {align}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_cell_in_a_vertical_table_clips_each_background_layer_to_its_own_box() {
-    // The vertical table stretches the cell across the page. Its content box
-    // is the child's 20px after the 4px border and 8px padding on the left;
-    // the padding box runs to the 2px right border.
+    // The vertical table is as wide as its cell: the 4px border and 8px
+    // padding on the left, the child's 20px, then the padding and the 2px
+    // right border. The content box is the child's 20px; the padding box runs
+    // to the right border; the page is white beyond the 40px table.
     let row = |background: &str| {
         background_clip_row(
             &format!(
@@ -8183,15 +8275,15 @@ fn a_cell_in_a_vertical_table_clips_each_background_layer_to_its_own_box() {
     };
     assert_eq!(
         row("linear-gradient(blue,blue) content-box"),
-        row_of(&[('?', 4), ('.', 8), ('B', 20), ('.', 66), ('?', 2)])
+        row_of(&[('?', 4), ('.', 8), ('B', 20), ('.', 6), ('?', 2), ('.', 60)])
     );
     assert_eq!(
         row("linear-gradient(blue,blue) content-box, linear-gradient(red,red) border-box"),
-        row_of(&[('?', 4), ('R', 8), ('B', 20), ('R', 66), ('?', 2)])
+        row_of(&[('?', 4), ('R', 8), ('B', 20), ('R', 6), ('?', 2), ('.', 60)])
     );
     assert_eq!(
         row("linear-gradient(red,red) border-box, linear-gradient(blue,blue) content-box"),
-        row_of(&[('?', 4), ('R', 94), ('?', 2)])
+        row_of(&[('?', 4), ('R', 34), ('?', 2), ('.', 60)])
     );
 }
 
@@ -8449,5 +8541,25 @@ fn a_fragment_clip_on_a_fractional_column_edge_does_not_dim_the_first_ink_column
     assert!(
         raster(wrapped) == raster(direct),
         "the wrapped paragraph paints differently from the direct one"
+    );
+}
+
+#[test]
+fn programmatic_fixed_comparison_insets_resolve_against_the_page_area() {
+    let mut values = gradient_tests::computed_for("width:min(30px,calc(10px + 5%))");
+    values.position = PositionValue::Fixed;
+    values.left = values.width.clone();
+    assert_eq!(
+        fixed_position_px(
+            &values,
+            &BoxLayout::new(),
+            (8.0, 48.0),
+            false,
+            800.0,
+            1000.0,
+            200.0,
+            100.0
+        ),
+        Some((20.0, 1048.0))
     );
 }

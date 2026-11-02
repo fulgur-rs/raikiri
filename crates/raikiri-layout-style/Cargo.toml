@@ -15,5 +15,8 @@ raikiri-layout-geometry.workspace = true
 raikiri-style.workspace = true
 taffy.workspace = true
 
+[dev-dependencies]
+cssparser.workspace = true
+
 [lints]
 workspace = true

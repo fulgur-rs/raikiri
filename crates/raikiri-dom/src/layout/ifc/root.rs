@@ -266,7 +266,7 @@ impl LineShifts {
     }
 
     /// How far the entries move line `index` down.
-    fn of(&self, index: usize) -> f32 {
+    pub(crate) fn of(&self, index: usize) -> f32 {
         if self.unordered {
             return self
                 .entries

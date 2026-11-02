@@ -306,3 +306,32 @@ fn first_line_recomputation_reaches_the_generated_content_of_the_line_origin() {
         (0, 0, 255)
     );
 }
+
+mod block_origin_tests;
+
+thread_local! {
+    static RECOMPUTATIONS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn record_recomputation() {
+    RECOMPUTATIONS.with(|count| {
+        if let Some(value) = count.get() {
+            count.set(Some(value + 1));
+        }
+    });
+}
+
+fn count_recomputations<T>(run: impl FnOnce() -> T) -> (T, usize) {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            RECOMPUTATIONS.set(None);
+        }
+    }
+    assert!(RECOMPUTATIONS.replace(Some(0)).is_none());
+    let reset = Reset;
+    let value = run();
+    let count = RECOMPUTATIONS.get().unwrap();
+    drop(reset);
+    (value, count)
+}

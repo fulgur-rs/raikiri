@@ -1,5 +1,5 @@
-//! Decoded background image caches and the process-wide decode budget
-//! shared by every resource set.
+//! Background image caches, SVG data-picture reservations, and the process
+//! decode budget shared by every resource set.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -12,9 +12,11 @@ use url::Url;
 use super::DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES;
 
 mod accounting_work;
+mod inline;
 mod source_accounting;
 
 use accounting_work::AccountingWork;
+pub(super) use inline::InlineImageLease;
 use source_accounting::{SourceChange, SourceLedger};
 
 #[cfg(test)]
@@ -23,14 +25,14 @@ mod tests;
 #[cfg(feature = "cache-accounting-diagnostics")]
 pub(super) mod probe;
 
-/// Maximum CSS background image decodes that may run at once, process-wide.
+/// Maximum image decodes that may run at once, process-wide.
 ///
 /// Independent [`RenderResources`](super::RenderResources) instances share this semaphore, so decoder
 /// concurrency stays bounded no matter how many resource contexts exist.
 /// Unrelated images proceed concurrently up to this bound instead of sharing
 /// one exclusive mutex; only work beyond the bound waits.
 pub(super) const PROCESS_MAX_CONCURRENT_IMAGE_DECODES: usize = 4;
-/// Maximum accounted CSS background cache bytes retained, process-wide.
+/// Maximum accounted background and SVG data-image cache bytes, process-wide.
 ///
 /// Each resource set keeps its own 128 MiB cache, but the sum across all live
 /// sets is additionally capped here. This bounds cache ownership, not
@@ -76,7 +78,8 @@ fn image_bytes(image: &DecodedImage) -> u64 {
     u64::try_from(image.rgba.len()).unwrap_or(u64::MAX)
 }
 
-/// Process-wide budget shared by every [`RenderResources`](super::RenderResources) for CSS background decoding.
+/// Process-wide budget shared by every [`RenderResources`](super::RenderResources)
+/// for background images and SVG data-picture memos.
 ///
 /// The per-set 128 MiB cache bounds one security context; this object bounds
 /// their sum plus concurrent decoder slots process-wide. Reconfigured
@@ -275,6 +278,8 @@ pub(super) struct DecodedImageCache {
     source_ledger: SourceLedger,
     pub(super) entries: HashMap<Url, CachedBackgroundImage>,
     pub(super) decoded_bytes: u64,
+    /// Keys, metadata and fresh decoded pixels owned by SVG data-image memos.
+    pub(super) inline_bytes: u64,
     /// The scenes of SVG images, oldest first. They share the byte budgets of
     /// the rasters, so an image kept as both pays for both.
     scenes: Vec<CachedScene>,
@@ -293,6 +298,7 @@ impl DecodedImageCache {
             source_ledger: SourceLedger::default(),
             entries: HashMap::new(),
             decoded_bytes: 0,
+            inline_bytes: 0,
             scenes: Vec::new(),
             scene_bytes: 0,
             raster_only: HashSet::new(),
@@ -308,6 +314,9 @@ impl DecodedImageCache {
 
 impl Drop for DecodedImageCache {
     fn drop(&mut self) {
+        // Every inline lease owns this cache, so all have already returned
+        // their reservations before the cache itself can be dropped.
+        debug_assert_eq!(self.inline_bytes, 0);
         self.process_budget
             .release(self.decoded_bytes.saturating_add(self.scene_bytes));
     }
@@ -331,7 +340,17 @@ impl DecodedImageCache {
         self.max_bytes.saturating_sub(
             self.decoded_bytes
                 .saturating_sub(existing)
-                .saturating_add(self.scene_bytes),
+                .saturating_add(self.scene_bytes)
+                .saturating_add(self.inline_bytes),
+        )
+    }
+
+    /// Space for a new inline allocation, without replacement credit for a URL.
+    pub(super) fn inline_remaining(&self) -> u64 {
+        self.max_bytes.saturating_sub(
+            self.decoded_bytes
+                .saturating_add(self.scene_bytes)
+                .saturating_add(self.inline_bytes),
         )
     }
 
@@ -366,7 +385,12 @@ impl DecodedImageCache {
         let bytes = Self::scene_bytes(&url, &scene);
         self.remove_scene(&url, size);
         // A scene the rasters leave no room for would only push the others out.
-        if self.decoded_bytes.saturating_add(bytes) > self.max_bytes {
+        if self
+            .decoded_bytes
+            .saturating_add(self.inline_bytes)
+            .saturating_add(bytes)
+            > self.max_bytes
+        {
             return;
         }
         while !self.scene_fits(bytes) && !self.scenes.is_empty() {
@@ -398,6 +422,7 @@ impl DecodedImageCache {
     fn scene_fits(&self, bytes: u64) -> bool {
         self.decoded_bytes
             .saturating_add(self.scene_bytes)
+            .saturating_add(self.inline_bytes)
             .saturating_add(bytes)
             <= self.max_bytes
     }
@@ -450,7 +475,10 @@ impl DecodedImageCache {
             .and_then(|base| change.apply_to(base))
             .and_then(|base| base.checked_add(Self::raster_bytes(&replacement)))
             .ok_or((self.max_bytes, u64::MAX))?;
-        let limit = self.max_bytes.saturating_sub(self.scene_bytes);
+        let limit = self
+            .max_bytes
+            .saturating_sub(self.scene_bytes)
+            .saturating_sub(self.inline_bytes);
         if next > limit {
             return Err((limit, next));
         }
@@ -529,6 +557,7 @@ impl DecodedImageCache {
         let per_available = self
             .max_bytes
             .saturating_sub(self.scene_bytes)
+            .saturating_sub(self.inline_bytes)
             .saturating_sub(base);
         let actual = image_bytes(&image);
         // A decoded raster image has one size; only SVG keeps several.
@@ -548,7 +577,11 @@ impl DecodedImageCache {
                 .try_fold(0_u64, |sum, (_, image)| sum.checked_add(image_bytes(image)));
             let next = total.and_then(|total| base.checked_add(total));
             if let Some(next) = next
-                && next <= self.max_bytes.saturating_sub(self.scene_bytes)
+                && next
+                    <= self
+                        .max_bytes
+                        .saturating_sub(self.scene_bytes)
+                        .saturating_sub(self.inline_bytes)
                 && self.reserve_decoded(next)
             {
                 self.commit_entry(

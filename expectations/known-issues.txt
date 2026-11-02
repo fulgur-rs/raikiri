@@ -404,3 +404,25 @@ css/css-flexbox/flexbox_flex-N-N-auto-shrink.html | Font-dependent: mismatches i
 css/css-flexbox/flexbox_flex-initial.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
 css/css-text/white-space/text-wrap-nowrap-001.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
 css/css-text/letter-spacing/letter-spacing-bengali-yaphala-001.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+
+# --- filter() image function (2026-10-31) ---
+# `filter(<image>, <filter-value-list>)` (Filter Effects 1, FilterCSSImageValue)
+# is implemented by WebKit only. Chromium, the reference renderer, drops every
+# declaration that uses it (CSS.supports() is false and the computed value is
+# none), so it mismatches these 12 references as well (Chromium 153 at the same
+# WPT pin), and raikiri fails the same 12. The two mask tests of the directory
+# (004 and 008) match in both engines, and in raikiri, because the dropped
+# `mask` declaration changes nothing, so they are not listed. Move these rows
+# out of this file if Chromium ships the function.
+css/filter-effects/filter-function/filter-function-001.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-002.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-003.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-005.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-006.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-007.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-linear-gradient.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-radial-gradient.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-conic-gradient.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-repeating-linear-gradient.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-repeating-radial-gradient.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too
+css/filter-effects/filter-function/filter-function-repeating-conic-gradient.html | filter() image function is WebKit-only; Chromium drops the declaration and mismatches the reference too

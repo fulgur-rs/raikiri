@@ -134,7 +134,8 @@ fn range_collapsed(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<J
     Ok(JsValue::from(range_points(this)?.collapsed()))
 }
 
-fn node_length(context: &mut Context, index: usize) -> JsResult<usize> {
+// Boundary validation only needs the requested prefix; content selection needs the full length.
+fn node_length(context: &mut Context, index: usize, limit: usize) -> JsResult<usize> {
     let length = with_state(context, |state| {
         let document = state.host.document();
         let node = document.get_node(index)?;
@@ -146,6 +147,11 @@ fn node_length(context: &mut Context, index: usize) -> JsResult<usize> {
                 .character_data(index)
                 .unwrap_or_default()
                 .encode_utf16()
+                .take(limit)
+                .inspect(|_| {
+                    #[cfg(test)]
+                    tests::record_utf16_visit();
+                })
                 .count(),
             // `NodeKind` is non-exhaustive; unknown future node kinds have no
             // child or character data exposed by this runtime.
@@ -166,7 +172,7 @@ fn range_select_node_contents(
 ) -> JsResult<JsValue> {
     range_points(this)?;
     let node = arg_node(args, 0, context)?;
-    let length = node_length(context, node)?;
+    let length = node_length(context, node, usize::MAX)?;
     let points = BoundaryPoints {
         start_container: node,
         start_offset: 0,
@@ -204,7 +210,7 @@ fn range_set_boundary(
     let mut points = range_points(this)?;
     let container = arg_node(args, 0, context)?;
     let offset = arg_unsigned_long(args, 1, context)?;
-    if offset > node_length(context, container)? {
+    if offset > node_length(context, container, offset)? {
         return Err(throw_dom_exception(
             context,
             "IndexSizeError",

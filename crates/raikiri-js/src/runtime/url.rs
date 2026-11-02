@@ -21,18 +21,17 @@ struct UrlData {
     search_params: JsObject,
 }
 
-fn this_url(this: &JsValue) -> JsResult<Url> {
-    this.as_object()
-        .and_then(|object| {
-            object
-                .downcast_ref::<UrlData>()
-                .map(|data| data.url.clone())
-        })
-        .ok_or_else(|| {
-            JsNativeError::typ()
-                .with_message("'this' is not a URL")
-                .into()
-        })
+fn with_url_data(
+    this: &JsValue,
+    read: impl FnOnce(&UrlData) -> JsResult<JsValue>,
+) -> JsResult<JsValue> {
+    let invalid_receiver = || JsNativeError::typ().with_message("'this' is not a URL");
+    let object = this.as_object().ok_or_else(invalid_receiver)?;
+    let data = object
+        .downcast_ref::<UrlData>()
+        .ok_or_else(invalid_receiver)?;
+    // Keep the borrow local: readers produce owned values without calling user JavaScript.
+    read(&data)
 }
 
 /// The basic URL parser run on `input` against an optional `base`, or
@@ -104,48 +103,54 @@ fn string(value: &str) -> JsResult<JsValue> {
 }
 
 fn href(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(this_url(this)?.as_str())
+    with_url_data(this, |data| string(data.url.as_str()))
 }
 
 fn origin(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(&this_url(this)?.origin().ascii_serialization())
+    with_url_data(this, |data| {
+        string(&data.url.origin().ascii_serialization())
+    })
 }
 
 fn protocol(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(&format!("{}:", this_url(this)?.scheme()))
+    with_url_data(this, |data| string(&format!("{}:", data.url.scheme())))
 }
 
 fn username(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(this_url(this)?.username())
+    with_url_data(this, |data| string(data.url.username()))
 }
 
 fn password(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(this_url(this)?.password().unwrap_or_default())
+    with_url_data(this, |data| string(data.url.password().unwrap_or_default()))
 }
 
 fn host(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    let url = this_url(this)?;
-    let host = url.host_str().unwrap_or_default();
-    match url.port() {
-        Some(port) => string(&format!("{host}:{port}")),
-        None => string(host),
-    }
+    with_url_data(this, |data| {
+        let host = data.url.host_str().unwrap_or_default();
+        match data.url.port() {
+            Some(port) => string(&format!("{host}:{port}")),
+            None => string(host),
+        }
+    })
 }
 
 fn hostname(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(this_url(this)?.host_str().unwrap_or_default())
+    with_url_data(this, |data| string(data.url.host_str().unwrap_or_default()))
 }
 
 fn port(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(
-        &this_url(this)?
-            .port()
-            .map_or_else(String::new, |port| port.to_string()),
-    )
+    with_url_data(this, |data| {
+        string(
+            &data
+                .url
+                .port()
+                .map_or_else(String::new, |port| port.to_string()),
+        )
+    })
 }
 
 fn pathname(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    string(this_url(this)?.path())
+    with_url_data(this, |data| string(data.url.path()))
 }
 
 /// `search` and `hash`: an empty component reads as `""`, not as the bare
@@ -158,23 +163,15 @@ fn delimited(delimiter: char, component: Option<&str>) -> JsResult<JsValue> {
 }
 
 fn search(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    delimited('?', this_url(this)?.query())
+    with_url_data(this, |data| delimited('?', data.url.query()))
 }
 
 fn hash(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    delimited('#', this_url(this)?.fragment())
+    with_url_data(this, |data| delimited('#', data.url.fragment()))
 }
 
 fn search_params(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    this_url(this)?;
-    Ok(this
-        .as_object()
-        .and_then(|object| {
-            object
-                .downcast_ref::<UrlData>()
-                .map(|data| data.search_params.clone())
-        })
-        .map_or_else(JsValue::undefined, JsValue::from))
+    with_url_data(this, |data| Ok(data.search_params.clone().into()))
 }
 
 const ACCESSORS: &[(&str, boa_engine::native_function::NativeFunctionPointer)] = &[

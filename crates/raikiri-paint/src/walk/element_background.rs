@@ -425,6 +425,7 @@ impl ElementBackgroundLayer<'_> {
         }
         if let Gradient::Conic(conic) = gradient {
             paint_conic_gradient(
+                self.image_cache,
                 scene,
                 conic,
                 areas.positioning,

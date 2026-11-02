@@ -10,7 +10,7 @@ use crate::layout::context::LayoutSession;
 use crate::layout::protocol::LayoutOutput;
 use raikiri_layout_geometry::{Point, Size};
 use raikiri_traits::NodeKind;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 fn union(a: BoxRect, b: BoxRect) -> BoxRect {
     let x0 = a.x.min(b.x);
@@ -28,14 +28,25 @@ fn union(a: BoxRect, b: BoxRect) -> BoxRect {
 /// Every in-document element below `root` that is not one of the paragraph's
 /// boxes (nor inside one), in document order.
 fn inline_elements(tree: &Document, root: usize, ifc: &IfcRoot) -> Vec<usize> {
+    // Index all boxes once, including floats, blocks and positioned boxes.
+    let mut box_nodes = HashSet::with_capacity(ifc.boxes.len());
+    for item in &ifc.boxes {
+        #[cfg(test)]
+        crate::layout::test_support::IFC_INLINE_ELEMENT_BOX_VISITS
+            .with(|count| count.set(count.get() + 1));
+        box_nodes.insert(item.node);
+    }
+    let is_box = |id| {
+        #[cfg(test)]
+        crate::layout::test_support::IFC_INLINE_ELEMENT_LOOKUPS
+            .with(|count| count.set(count.get() + 1));
+        box_nodes.contains(&id)
+    };
     let mut out = Vec::new();
     let mut stack: Vec<usize> = tree.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
         let node = &tree.nodes[id];
-        if !node.is_in_document()
-            || node.kind() != NodeKind::Element
-            || ifc.boxes.iter().any(|b| b.node == id)
-        {
+        if !node.is_in_document() || node.kind() != NodeKind::Element || is_box(id) {
             continue;
         }
         out.push(id);

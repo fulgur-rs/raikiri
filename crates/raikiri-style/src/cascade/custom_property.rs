@@ -126,6 +126,31 @@ impl ResolvedValue {
 }
 
 fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Option<ResolvedValue> {
+    if matches!(
+        deferred.property.as_str(),
+        "width"
+            | "height"
+            | "min-width"
+            | "min-height"
+            | "max-width"
+            | "max-height"
+            | "inline-size"
+            | "block-size"
+            | "min-inline-size"
+            | "min-block-size"
+            | "max-inline-size"
+            | "max-block-size"
+    ) {
+        // Sizing comparisons must keep their branches until the percentage
+        // basis is known; the generic simplifier may otherwise pick too soon.
+        let mut input = ParserInput::new(substituted);
+        let mut parser = Parser::new(&mut input);
+        if let Some(value) = parse_property_grammar(&deferred.property, &mut parser)
+            && parser.expect_exhausted().is_ok()
+        {
+            return Some(ResolvedValue::Parsed(value));
+        }
+    }
     if deferred.key == PropertyKey::HyphenateLimitChars {
         // The integer components need to know whether a fractional number came
         // from a math function: calc results are rounded, direct fractional

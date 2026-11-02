@@ -461,20 +461,34 @@ struct SourcePixels {
     rgba: SourceBytes,
 }
 
-/// Where a [`SourcePixels`] keeps its bytes: shared with the host's image
-/// cache, or copied out of a canvas bitmap (which drawing may overwrite).
+/// Where a [`SourcePixels`] keeps its bytes: shared immutable pixels, or a
+/// patch copied before an overlapping self-draw can overwrite it.
 enum SourceBytes {
     Image(Arc<DecodedImage>),
-    Canvas(Vec<u8>),
+    Canvas(Arc<raikiri_dom::CanvasBitmap>),
+    Patch(CanvasPatch),
+}
+
+struct CanvasPatch {
+    origin: (u32, u32),
+    width: u32,
+    rgba: Vec<u8>,
 }
 
 impl SourcePixels {
     fn pixel(&self, col: u32, row: u32) -> [u8; 4] {
-        let bytes = match &self.rgba {
-            SourceBytes::Image(image) => image.rgba.as_slice(),
-            SourceBytes::Canvas(rgba) => rgba.as_slice(),
+        let (bytes, width, col, row) = match &self.rgba {
+            SourceBytes::Image(image) => (image.rgba.as_slice(), self.width, col, row),
+            SourceBytes::Canvas(bitmap) => (bitmap.rgba.as_slice(), self.width, col, row),
+            // The patch bounds enclose every coordinate the shared sampler can produce.
+            SourceBytes::Patch(patch) => (
+                patch.rgba.as_slice(),
+                patch.width,
+                col - patch.origin.0,
+                row - patch.origin.1,
+            ),
         };
-        let off = ((row * self.width + col) as usize) * 4;
+        let off = ((row * width + col) as usize) * 4;
         bytes
             .get(off..off + 4)
             .and_then(|pixel| pixel.try_into().ok())
@@ -488,6 +502,24 @@ impl SourcePixels {
 enum ImageSource {
     Image(usize),
     Canvas(usize),
+}
+
+enum SourceInfo {
+    Image(SourcePixels),
+    Canvas {
+        index: usize,
+        width: u32,
+        height: u32,
+    },
+}
+
+impl SourceInfo {
+    fn size(&self) -> (f64, f64) {
+        match self {
+            Self::Image(pixels) => pixels.size,
+            Self::Canvas { width, height, .. } => (f64::from(*width), f64::from(*height)),
+        }
+    }
 }
 
 fn image_source(value: &JsValue, context: &mut Context) -> JsResult<ImageSource> {
@@ -511,16 +543,17 @@ fn image_source(value: &JsValue, context: &mut Context) -> JsResult<ImageSource>
 }
 
 /// "Check the usability of the image argument" (HTML Standard §4.12.5.1.15),
-/// then read its pixels: `Ok(None)` when there is nothing to draw (an image
+/// then read its dimensions: `Ok(None)` when there is nothing to draw (an image
 /// not yet loaded, or one whose pixels the host does not keep), and an
 /// `InvalidStateError` for a broken image or a zero-area canvas. An image is
 /// sized with the destination's output bitmap size, `bitmap_size`, as its
 /// default object size.
-fn source_pixels(
+/// Canvas pixels are acquired only after checking the drawing rectangles.
+fn source_info(
     context: &mut Context,
     source: ImageSource,
     bitmap_size: (u32, u32),
-) -> JsResult<Option<SourcePixels>> {
+) -> JsResult<Option<SourceInfo>> {
     match source {
         ImageSource::Image(index) => {
             let loaded = with_state(context, |s| s.loaded_images.get(&index).cloned())?;
@@ -534,23 +567,24 @@ fn source_pixels(
                 Some(Some(url)) => {
                     let default_size = (f64::from(bitmap_size.0), f64::from(bitmap_size.1));
                     let pixels = with_state(context, |s| s.host.image_pixels(&url, default_size))?;
-                    Ok(pixels.map(|pixels| SourcePixels {
-                        size: pixels.size,
-                        width: pixels.image.width,
-                        height: pixels.image.height,
-                        rgba: SourceBytes::Image(pixels.image),
+                    Ok(pixels.map(|pixels| {
+                        SourceInfo::Image(SourcePixels {
+                            size: pixels.size,
+                            width: pixels.image.width,
+                            height: pixels.image.height,
+                            rgba: SourceBytes::Image(pixels.image),
+                        })
                     }))
                 }
             }
         }
         ImageSource::Canvas(index) => {
-            let (size, rgba) = with_state(context, |s| {
+            let (size, materialized) = with_state(context, |s| {
                 let document = s.host.document();
-                let rgba = document
+                let materialized = document
                     .canvas_bitmap_ref(index)
-                    .filter(|bitmap| !bitmap.rgba.is_empty())
-                    .map(|bitmap| bitmap.rgba.clone());
-                (document.canvas_size(index), rgba)
+                    .is_some_and(|bitmap| !bitmap.rgba.is_empty());
+                (document.canvas_size(index), materialized)
             })?;
             let (width, height) = size.unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
             if width == 0 || height == 0 {
@@ -560,13 +594,12 @@ fn source_pixels(
                     "the canvas has no pixels",
                 ));
             }
-            // A canvas without materialized pixels is transparent black,
-            // which source-over leaves unchanged.
-            Ok(rgba.map(|rgba| SourcePixels {
-                size: (f64::from(width), f64::from(height)),
+            // Empty storage is transparent and may have enormous dimensions. Excluding
+            // it here also bounds the later self-draw axis scans by the bitmap limits.
+            Ok(materialized.then_some(SourceInfo::Canvas {
+                index,
                 width,
                 height,
-                rgba: SourceBytes::Canvas(rgba),
             }))
         }
     }
@@ -578,6 +611,41 @@ fn normalized(x: f64, y: f64, w: f64, h: f64) -> (f64, f64, f64, f64) {
     let (x, w) = if w < 0.0 { (x + w, -w) } else { (x, w) };
     let (y, h) = if h < 0.0 { (y + h, -h) } else { (y, h) };
     (x, y, w, h)
+}
+
+fn source_sample(
+    offset: f64,
+    d: f64,
+    dl: f64,
+    s: f64,
+    sl: f64,
+    extent: f64,
+    limit: u32,
+) -> Option<u32> {
+    // Keep the same evaluation order for planning a self-draw and painting it,
+    // including intermediate overflow from finite input rectangles.
+    let center = offset + 0.5;
+    if center < d || center >= d + dl {
+        return None;
+    }
+    let source = s + (center - d) * sl / dl;
+    if source < 0.0 || source >= extent {
+        return None;
+    }
+    let raster = (source * f64::from(limit) / extent).floor() as u32;
+    Some(raster.min(limit.saturating_sub(1)))
+}
+
+fn sampled_range(
+    destination: std::ops::Range<u32>,
+    sample: impl FnMut(u32) -> Option<u32>,
+) -> Option<std::ops::Range<u32>> {
+    let mut samples = destination.filter_map(sample);
+    let first = samples.next()?;
+    let (low, high) = samples.fold((first, first), |(low, high), pixel| {
+        (low.min(pixel), high.max(pixel))
+    });
+    Some(low..high + 1)
 }
 
 /// `ctx.drawImage(image, dx, dy)`, `drawImage(image, dx, dy, dw, dh)` and
@@ -613,10 +681,10 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     }
     let (canvas_w, canvas_h) = with_state(context, |s| s.host.document().canvas_size(canvas))?
         .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
-    let Some(pixels) = source_pixels(context, source, (canvas_w, canvas_h))? else {
+    let Some(info) = source_info(context, source, (canvas_w, canvas_h))? else {
         return Ok(JsValue::undefined());
     };
-    let (image_w, image_h) = pixels.size;
+    let (image_w, image_h) = info.size();
     // The 3- and 5-argument forms draw the whole image, and the 3-argument
     // form draws it at its natural size.
     let full = [0.0, 0.0, image_w, image_h];
@@ -642,20 +710,67 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     if left >= right || top >= bottom {
         return Ok(JsValue::undefined());
     }
-    let sample = |offset: f64, d: f64, dl: f64, s: f64, sl: f64, extent: f64, limit: u32| {
-        // The pixel center, mapped from the destination to the source, then
-        // from the source's CSS px to its raster pixels.
-        let center = offset + 0.5;
-        if center < d || center >= d + dl {
-            return None;
-        }
-        let source = s + (center - d) * sl / dl;
-        if source < 0.0 || source >= extent {
-            return None;
-        }
-        let raster = (source * f64::from(limit) / extent).floor() as u32;
-        Some(raster.min(limit.saturating_sub(1)))
-    };
+    let pixels =
+        match info {
+            SourceInfo::Image(pixels) => pixels,
+            SourceInfo::Canvas {
+                index,
+                width,
+                height,
+            } if index == canvas => {
+                let Some(columns) = sampled_range(left as u32..right as u32, |col| {
+                    source_sample(f64::from(col), dx, dw, sx, sw, image_w, width)
+                }) else {
+                    return Ok(JsValue::undefined());
+                };
+                let Some(rows) = sampled_range(top as u32..bottom as u32, |row| {
+                    source_sample(f64::from(row), dy, dh, sy, sh, image_h, height)
+                }) else {
+                    return Ok(JsValue::undefined());
+                };
+                let patch = with_state(context, |s| {
+                    let bitmap = s.host.document().canvas_bitmap_ref(index).expect(
+                        "source was materialized with no intervening callbacks or mutations",
+                    );
+                    let origin = (columns.start, rows.start);
+                    let patch_width = columns.end - columns.start;
+                    let row_bytes = columns.len() * 4;
+                    let mut rgba = Vec::with_capacity(row_bytes * rows.len());
+                    for row in rows {
+                        let offset = ((row * width + columns.start) as usize) * 4;
+                        rgba.extend_from_slice(&bitmap.rgba[offset..offset + row_bytes]);
+                    }
+                    CanvasPatch {
+                        origin,
+                        width: patch_width,
+                        rgba,
+                    }
+                })?;
+                SourcePixels {
+                    size: (image_w, image_h),
+                    width,
+                    height,
+                    rgba: SourceBytes::Patch(patch),
+                }
+            }
+            SourceInfo::Canvas {
+                index,
+                width,
+                height,
+            } => {
+                let bitmap = with_state(context, |s| {
+                    s.host.document().canvas_bitmap_snapshot(index).expect(
+                        "source was materialized with no intervening callbacks or mutations",
+                    )
+                })?;
+                SourcePixels {
+                    size: (image_w, image_h),
+                    width,
+                    height,
+                    rgba: SourceBytes::Canvas(bitmap),
+                }
+            }
+        };
     with_state(context, |s| {
         s.host.document_mut().canvas_composite_rect(
             canvas,
@@ -664,8 +779,10 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
             (right - left) as i32,
             (bottom - top) as i32,
             |col, row| {
-                let source_col = sample(f64::from(col), dx, dw, sx, sw, image_w, pixels.width)?;
-                let source_row = sample(f64::from(row), dy, dh, sy, sh, image_h, pixels.height)?;
+                let source_col =
+                    source_sample(f64::from(col), dx, dw, sx, sw, image_w, pixels.width)?;
+                let source_row =
+                    source_sample(f64::from(row), dy, dh, sy, sh, image_h, pixels.height)?;
                 Some(pixels.pixel(source_col, source_row))
             },
         );

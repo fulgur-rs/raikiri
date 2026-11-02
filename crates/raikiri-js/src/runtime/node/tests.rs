@@ -609,3 +609,41 @@ fn set_attribute_ns_keeps_case_and_namespaces_apart() {
         );
     }
 }
+
+#[test]
+fn has_attribute_keeps_case_namespace_and_empty_value_lookup() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "(()=>{const e=document.createElement('div');e.setAttribute('DATA-EMPTY','');return e.hasAttribute('data-empty')&&e.hasAttribute('DaTa-EmPtY')&&!e.hasAttribute('missing')&&!e.hasAttribute('bad name')&&e.getAttribute('data-empty')==='';})()",
+    );
+    ok(
+        &mut rt,
+        "(()=>{const e=document.createElementNS('http://www.w3.org/2000/svg','svg');e.setAttribute('viewBox','');return e.hasAttribute('viewBox')&&!e.hasAttribute('viewbox')&&!e.hasAttribute('VIEWBOX');})()",
+    );
+    ok(
+        &mut rt,
+        "(()=>{const e=document.createElement('div');e.setAttributeNS('urn:test','p:flag','namespaced');if(e.hasAttribute('flag')||e.hasAttribute('p:flag'))return false;e.setAttribute('flag','');return e.hasAttribute('flag')&&!e.hasAttribute('p:flag');})()",
+    );
+}
+
+#[test]
+fn has_attribute_keeps_brand_and_string_conversion_order() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "(()=>{let calls=0;const name={toString(){calls++;return 'id';}};try{Element.prototype.hasAttribute.call({},name);return false;}catch(e){return e instanceof TypeError&&calls===0;}})()",
+    );
+    ok(
+        &mut rt,
+        "(()=>{const e=document.createElement('div');let calls=0;const added=e.hasAttribute({toString(){calls++;e.setAttribute('flag','');return 'flag';}});const removed=e.hasAttribute({toString(){calls++;e.removeAttribute('flag');return 'flag';}});return added&&!removed&&calls===2;})()",
+    );
+    ok(
+        &mut rt,
+        "(()=>{const e=document.createElement('div');const sentinel={};try{e.hasAttribute({toString(){throw sentinel;}});return false;}catch(error){return error===sentinel;}})()",
+    );
+    ok(
+        &mut rt,
+        "(()=>{const e=document.createElement('div');e.setAttribute('undefined','');e.setAttribute('null','');return e.hasAttribute()&&e.hasAttribute(undefined)&&e.hasAttribute(null);})()",
+    );
+}

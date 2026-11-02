@@ -330,7 +330,10 @@ fn the_root_keeps_the_physical_sizes_its_own_writing_mode_mapped() {
         Some("writing-mode: horizontal-tb"),
     );
     let used = &result.computed[html];
-    assert_eq!((used.width, used.height), (L::Auto, L::Px(300.0)));
+    assert_eq!(
+        (used.width.clone(), used.height.clone()),
+        (L::Auto, L::Px(300.0))
+    );
     assert_eq!(used.vertical_logical_size, None);
     assert!(result.cssom_computed(html).vertical_logical_size.is_some());
 
@@ -339,7 +342,10 @@ fn the_root_keeps_the_physical_sizes_its_own_writing_mode_mapped() {
         Some("writing-mode: vertical-lr"),
     );
     let used = &result.computed[html];
-    assert_eq!((used.width, used.height), (L::Px(300.0), L::Auto));
+    assert_eq!(
+        (used.width.clone(), used.height.clone()),
+        (L::Px(300.0), L::Auto)
+    );
     assert_eq!(used.vertical_logical_size, None);
 }
 

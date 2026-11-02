@@ -121,6 +121,68 @@ fn a_wrapper_with_a_box_of_its_own_keeps_it() {
     }
 }
 
+const INLINE: &str = "display:inline";
+
+#[test]
+fn an_inline_wrapper_of_a_spanner_makes_no_box() {
+    // The inline box is split around the block, so it has nothing of its own.
+    for css in [
+        INLINE,
+        "display:inline;color:red;font-weight:bold",
+        "display:inline;visibility:hidden",
+        // A transform does not apply to an inline box.
+        "display:inline;transform:translate(1px)",
+    ] {
+        let (doc, wrapper) = wrapped_spanner(COLUMNS, "span", css);
+        assert!(doc.nodes[wrapper].generates_no_box(), "{css}");
+    }
+}
+
+#[test]
+fn an_inline_wrapper_with_a_box_of_its_own_keeps_it() {
+    for css in [
+        "padding-left:1px",
+        "border-left:1px solid",
+        "margin-left:5px",
+        "position:relative",
+        "position:sticky",
+        "background:red",
+        "opacity:.5",
+        "filter:blur(1px)",
+        "isolation:isolate",
+        "break-inside:avoid",
+    ] {
+        let (doc, wrapper) = wrapped_spanner(COLUMNS, "span", &format!("{INLINE};{css}"));
+        assert!(!doc.nodes[wrapper].generates_no_box(), "{css}");
+    }
+    // An inline box that is atomic, or replaced, is a box that holds no blocks.
+    for display in ["inline-block", "inline-flex", "inline-grid", "inline-table"] {
+        let (doc, wrapper) = wrapped_spanner(COLUMNS, "span", &format!("display:{display}"));
+        assert!(!doc.nodes[wrapper].generates_no_box(), "{display}");
+    }
+}
+
+#[test]
+fn an_inline_wrapper_inside_a_block_wrapper_makes_no_box_either() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+    let outer = doc.append_element(Some(container), "div", Some(BLOCK));
+    let inner = doc.append_element(Some(outer), "span", Some(INLINE));
+    let spanner = doc.append_element(
+        Some(inner),
+        "h2",
+        Some("display:block;column-span:all;height:10px"),
+    );
+    lay_out(&mut doc);
+
+    assert!(doc.nodes[outer].generates_no_box());
+    assert!(doc.nodes[inner].generates_no_box());
+    assert!(!doc.nodes[container].generates_no_box());
+    assert!(!doc.nodes[spanner].generates_no_box());
+}
+
 #[test]
 fn a_wrapper_below_one_that_keeps_its_box_is_not_reached() {
     let mut doc = Document::new();
@@ -153,7 +215,12 @@ fn lifts_with_lines(container_css: &str, wrapper_css: &str, content: &str) -> bo
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let container = doc.append_element(Some(body), "div", Some(container_css));
-    let wrapper = doc.append_element(Some(container), "div", Some(wrapper_css));
+    let tag = if wrapper_css.starts_with(INLINE) {
+        "span"
+    } else {
+        "div"
+    };
+    let wrapper = doc.append_element(Some(container), tag, Some(wrapper_css));
     match content {
         "text" => {
             doc.append_text(wrapper, "before");
@@ -249,6 +316,32 @@ fn the_lines_a_wrapper_holds_keep_their_layout() {
 }
 
 #[test]
+fn the_lines_an_inline_wrapper_holds_keep_their_layout() {
+    for content in ["text", "inline", "space", "comment", "nbsp"] {
+        assert!(lifts_with_lines(COLUMNS, INLINE, content), "{content}");
+    }
+    // What the container does not do to its lines the wrapper must not do
+    // either, and the inline-only properties count as well.
+    for css in [
+        "vertical-align:top",
+        "unicode-bidi:isolate",
+        "line-height:40px",
+        "direction:rtl",
+        "text-decoration:underline",
+        "color:red",
+        "font-size:30px",
+    ] {
+        let css = format!("{INLINE};{css}");
+        assert!(!lifts_with_lines(COLUMNS, &css, "text"), "{css}");
+    }
+    // With only white space between the blocks, there is no line to change.
+    for css in ["vertical-align:top", "line-height:40px", "color:red"] {
+        let css = format!("{INLINE};{css}");
+        assert!(lifts_with_lines(COLUMNS, &css, "space"), "{css}");
+    }
+}
+
+#[test]
 fn white_space_that_is_preserved_between_the_blocks_is_a_line() {
     for css in [
         "white-space:pre",
@@ -329,18 +422,20 @@ fn a_spanner_with_a_logical_float_is_still_a_spanner() {
 
 #[test]
 fn laying_out_again_keeps_the_wrapper_lifted() {
-    let (mut doc, wrapper) = wrapped_spanner(COLUMNS, "div", "display:block");
-    lay_out(&mut doc);
-    assert!(doc.nodes[wrapper].generates_no_box());
-    let height = |doc: &Document| {
-        doc.nodes[doc.nodes[wrapper].parent.unwrap()]
-            .layout
-            .size
-            .height
-    };
-    let first = height(&doc);
-    lay_out(&mut doc);
-    assert_eq!(height(&doc), first);
+    for (tag, css) in [("div", BLOCK), ("span", INLINE)] {
+        let (mut doc, wrapper) = wrapped_spanner(COLUMNS, tag, css);
+        lay_out(&mut doc);
+        assert!(doc.nodes[wrapper].generates_no_box(), "{css}");
+        let height = |doc: &Document| {
+            doc.nodes[doc.nodes[wrapper].parent.unwrap()]
+                .layout
+                .size
+                .height
+        };
+        let first = height(&doc);
+        lay_out(&mut doc);
+        assert_eq!(height(&doc), first, "{css}");
+    }
 }
 
 #[test]

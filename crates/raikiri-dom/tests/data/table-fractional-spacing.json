@@ -1,0 +1,2079 @@
+{
+  "oracle": "Chromium152.0.7977.82 standards800x600 body8 bundledAhem10px/10px; tdpadding0 div20x10; devicePixelRatio explicitlyverified",
+  "cases": [
+    {
+      "label": "horizontal-0px",
+      "html": "<table id=t style=\"border-spacing:0px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.3px",
+      "html": "<table id=t style=\"border-spacing:0.3px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.7px",
+      "html": "<table id=t style=\"border-spacing:0.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.989px",
+      "html": "<table id=t style=\"border-spacing:0.989px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.9899px",
+      "html": "<table id=t style=\"border-spacing:0.9899px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.99px",
+      "html": "<table id=t style=\"border-spacing:0.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.9901px",
+      "html": "<table id=t style=\"border-spacing:0.9901px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.989px",
+      "html": "<table id=t style=\"border-spacing:1.989px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.9901px",
+      "html": "<table id=t style=\"border-spacing:1.9901px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          26
+        ],
+        [
+          "a",
+          10,
+          10,
+          20,
+          10
+        ],
+        [
+          "b",
+          32,
+          10,
+          20,
+          10
+        ],
+        [
+          "c",
+          10,
+          22,
+          20,
+          10
+        ],
+        [
+          "d",
+          32,
+          22,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-4.9899px",
+      "html": "<table id=t style=\"border-spacing:4.9899px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "4px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          52,
+          32
+        ],
+        [
+          "a",
+          12,
+          12,
+          20,
+          10
+        ],
+        [
+          "b",
+          36,
+          12,
+          20,
+          10
+        ],
+        [
+          "c",
+          12,
+          26,
+          20,
+          10
+        ],
+        [
+          "d",
+          36,
+          26,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-4.99px",
+      "html": "<table id=t style=\"border-spacing:4.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          35
+        ],
+        [
+          "a",
+          13,
+          13,
+          20,
+          10
+        ],
+        [
+          "b",
+          38,
+          13,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          28,
+          20,
+          10
+        ],
+        [
+          "d",
+          38,
+          28,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-8.99px",
+      "html": "<table id=t style=\"border-spacing:8.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "9px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          67,
+          47
+        ],
+        [
+          "a",
+          17,
+          17,
+          20,
+          10
+        ],
+        [
+          "b",
+          46,
+          17,
+          20,
+          10
+        ],
+        [
+          "c",
+          17,
+          36,
+          20,
+          10
+        ],
+        [
+          "d",
+          46,
+          36,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-15.99px",
+      "html": "<table id=t style=\"border-spacing:15.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "16px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          88,
+          68
+        ],
+        [
+          "a",
+          24,
+          24,
+          20,
+          10
+        ],
+        [
+          "b",
+          60,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          24,
+          50,
+          20,
+          10
+        ],
+        [
+          "d",
+          60,
+          50,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1px",
+      "html": "<table id=t style=\"border-spacing:1px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.3px",
+      "html": "<table id=t style=\"border-spacing:1.3px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.5px",
+      "html": "<table id=t style=\"border-spacing:1.5px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.99px",
+      "html": "<table id=t style=\"border-spacing:1.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          26
+        ],
+        [
+          "a",
+          10,
+          10,
+          20,
+          10
+        ],
+        [
+          "b",
+          32,
+          10,
+          20,
+          10
+        ],
+        [
+          "c",
+          10,
+          22,
+          20,
+          10
+        ],
+        [
+          "d",
+          32,
+          22,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-2.01px",
+      "html": "<table id=t style=\"border-spacing:2.01px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          26
+        ],
+        [
+          "a",
+          10,
+          10,
+          20,
+          10
+        ],
+        [
+          "b",
+          32,
+          10,
+          20,
+          10
+        ],
+        [
+          "c",
+          10,
+          22,
+          20,
+          10
+        ],
+        [
+          "d",
+          32,
+          22,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-0.17em",
+      "html": "<table id=t style=\"border-spacing:0.17em;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.2pt",
+      "html": "<table id=t style=\"border-spacing:1.2pt;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-calc(1px + 0.7px)",
+      "html": "<table id=t style=\"border-spacing:calc(1px + 0.7px);\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "horizontal-1.9px 2.7px",
+      "html": "<table id=t style=\"border-spacing:1.9px 2.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          26
+        ],
+        [
+          "a",
+          9,
+          10,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          10,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          22,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          22,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "one-row-vertical-rl-0.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:0.3px 2.7px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          24,
+          20
+        ],
+        [
+          "a",
+          10,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          10,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "one-row-vertical-rl-1.5px 3.9px",
+      "html": "<table id=t style=\"border-spacing:1.5px 3.9px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 3px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          26,
+          23
+        ],
+        [
+          "a",
+          11,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          11,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "one-row-vertical-rl-3px 5px",
+      "html": "<table id=t style=\"border-spacing:3px 5px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "3px 5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          30,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "one-row-vertical-lr-0.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:0.3px 2.7px;writing-mode:vertical-lr\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          24,
+          20
+        ],
+        [
+          "a",
+          10,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          10,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "one-row-vertical-lr-1.5px 3.9px",
+      "html": "<table id=t style=\"border-spacing:1.5px 3.9px;writing-mode:vertical-lr\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 3px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          26,
+          23
+        ],
+        [
+          "a",
+          11,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          11,
+          20,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "one-row-vertical-lr-3px 5px",
+      "html": "<table id=t style=\"border-spacing:3px 5px;writing-mode:vertical-lr\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "3px 5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          30,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr1.25-0.7px",
+      "html": "<table id=t style=\"border-spacing:0.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1.25,
+      "computed_spacing": "0px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr1.25-1.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:1.3px 2.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1.25,
+      "computed_spacing": "0.8px 2.4px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          42.400001525878906,
+          27.200000762939453
+        ],
+        [
+          "a",
+          8.800000190734863,
+          10.40000057220459,
+          20,
+          10
+        ],
+        [
+          "b",
+          29.600000381469727,
+          10.40000057220459,
+          20,
+          10
+        ],
+        [
+          "c",
+          8.800000190734863,
+          22.80000114440918,
+          20,
+          10
+        ],
+        [
+          "d",
+          29.600000381469727,
+          22.80000114440918,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr1.25-4.99px",
+      "html": "<table id=t style=\"border-spacing:4.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1.25,
+      "computed_spacing": "4.8px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          54.400001525878906,
+          34.400001525878906
+        ],
+        [
+          "a",
+          12.800000190734863,
+          12.800000190734863,
+          20,
+          10
+        ],
+        [
+          "b",
+          37.60000228881836,
+          12.800000190734863,
+          20,
+          10
+        ],
+        [
+          "c",
+          12.800000190734863,
+          27.600000381469727,
+          20,
+          10
+        ],
+        [
+          "d",
+          37.60000228881836,
+          27.600000381469727,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr1.5-0.7px",
+      "html": "<table id=t style=\"border-spacing:0.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1.5,
+      "computed_spacing": "0.666667px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          42,
+          22
+        ],
+        [
+          "a",
+          8.666666984558105,
+          8.666666984558105,
+          20,
+          10
+        ],
+        [
+          "b",
+          29.33333396911621,
+          8.666666984558105,
+          20,
+          10
+        ],
+        [
+          "c",
+          8.666666984558105,
+          19.33333396911621,
+          20,
+          10
+        ],
+        [
+          "d",
+          29.33333396911621,
+          19.33333396911621,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr1.5-1.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:1.3px 2.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1.5,
+      "computed_spacing": "0.666667px 2.66667px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          42,
+          28
+        ],
+        [
+          "a",
+          8.666666984558105,
+          10.666666984558105,
+          20,
+          10
+        ],
+        [
+          "b",
+          29.33333396911621,
+          10.666666984558105,
+          20,
+          10
+        ],
+        [
+          "c",
+          8.666666984558105,
+          23.33333396911621,
+          20,
+          10
+        ],
+        [
+          "d",
+          29.33333396911621,
+          23.33333396911621,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr1.5-4.99px",
+      "html": "<table id=t style=\"border-spacing:4.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1.5,
+      "computed_spacing": "4.66667px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          54,
+          34
+        ],
+        [
+          "a",
+          12.666666984558105,
+          12.666666984558105,
+          20,
+          10
+        ],
+        [
+          "b",
+          37.333335876464844,
+          12.666666984558105,
+          20,
+          10
+        ],
+        [
+          "c",
+          12.666666984558105,
+          27.33333396911621,
+          20,
+          10
+        ],
+        [
+          "d",
+          37.333335876464844,
+          27.33333396911621,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr2-0.7px",
+      "html": "<table id=t style=\"border-spacing:0.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 2,
+      "computed_spacing": "0.5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          41.5,
+          21.5
+        ],
+        [
+          "a",
+          8.5,
+          8.5,
+          20,
+          10
+        ],
+        [
+          "b",
+          29,
+          8.5,
+          20,
+          10
+        ],
+        [
+          "c",
+          8.5,
+          19,
+          20,
+          10
+        ],
+        [
+          "d",
+          29,
+          19,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr2-1.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:1.3px 2.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 2,
+      "computed_spacing": "1px 2.5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          27.5
+        ],
+        [
+          "a",
+          9,
+          10.5,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          10.5,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          23,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          23,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr2-4.99px",
+      "html": "<table id=t style=\"border-spacing:4.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 2,
+      "computed_spacing": "4.5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          53.5,
+          33.5
+        ],
+        [
+          "a",
+          12.5,
+          12.5,
+          20,
+          10
+        ],
+        [
+          "b",
+          37,
+          12.5,
+          20,
+          10
+        ],
+        [
+          "c",
+          12.5,
+          27,
+          20,
+          10
+        ],
+        [
+          "d",
+          37,
+          27,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr3-0.7px",
+      "html": "<table id=t style=\"border-spacing:0.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 3,
+      "computed_spacing": "0.666667px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          42,
+          22
+        ],
+        [
+          "a",
+          8.666666984558105,
+          8.666666984558105,
+          20,
+          10
+        ],
+        [
+          "b",
+          29.33333396911621,
+          8.666666984558105,
+          20,
+          10
+        ],
+        [
+          "c",
+          8.666666984558105,
+          19.33333396911621,
+          20,
+          10
+        ],
+        [
+          "d",
+          29.33333396911621,
+          19.33333396911621,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr3-1.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:1.3px 2.7px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 3,
+      "computed_spacing": "1px 2.66667px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          28
+        ],
+        [
+          "a",
+          9,
+          10.666666984558105,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          10.666666984558105,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          23.33333396911621,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          23.33333396911621,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "dpr3-4.99px",
+      "html": "<table id=t style=\"border-spacing:4.99px;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 3,
+      "computed_spacing": "4.66667px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          54,
+          34
+        ],
+        [
+          "a",
+          12.666666984558105,
+          12.666666984558105,
+          20,
+          10
+        ],
+        [
+          "b",
+          37.333335876464844,
+          12.666666984558105,
+          20,
+          10
+        ],
+        [
+          "c",
+          12.666666984558105,
+          27.33333396911621,
+          20,
+          10
+        ],
+        [
+          "d",
+          37.333335876464844,
+          27.33333396911621,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "collapsed-fraction",
+      "html": "<table id=t style=\"border-spacing:0.7px 2.7px;border-collapse:collapse\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          20
+        ],
+        [
+          "a",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          28,
+          8,
+          20,
+          10
+        ],
+        [
+          "c",
+          8,
+          18,
+          20,
+          10
+        ],
+        [
+          "d",
+          28,
+          18,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "fixed-fraction",
+      "html": "<table id=t style=\"border-spacing:1.9px 2.7px;table-layout:fixed;width:120px;height:80px\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          120,
+          80
+        ],
+        [
+          "a",
+          9,
+          10,
+          58.5,
+          37
+        ],
+        [
+          "b",
+          68.5,
+          10,
+          58.5,
+          37
+        ],
+        [
+          "c",
+          9,
+          49,
+          58.5,
+          37
+        ],
+        [
+          "d",
+          68.5,
+          49,
+          58.5,
+          37
+        ]
+      ]
+    },
+    {
+      "label": "inherited-fraction",
+      "html": "<style>body{border-spacing:1.9px 2.7px}</style><table id=t style=\"border-spacing:inherit;\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          26
+        ],
+        [
+          "a",
+          9,
+          10,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          10,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          22,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          22,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "fraction-font",
+      "html": "<table id=t style=\"border-spacing:0.2em;font-size:7.5px\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          43,
+          23
+        ],
+        [
+          "a",
+          9,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          30,
+          9,
+          20,
+          10
+        ],
+        [
+          "c",
+          9,
+          20,
+          20,
+          10
+        ],
+        [
+          "d",
+          30,
+          20,
+          20,
+          10
+        ]
+      ]
+    }
+  ],
+  "known_preexisting_differences": [
+    {
+      "label": "vertical-rl-0.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:0.3px 2.7px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          20
+        ],
+        [
+          "a",
+          32,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          32,
+          18,
+          20,
+          10
+        ],
+        [
+          "c",
+          10,
+          8,
+          20,
+          10
+        ],
+        [
+          "d",
+          10,
+          18,
+          20,
+          10
+        ]
+      ],
+      "issue": "RAIKIRI-1351"
+    },
+    {
+      "label": "vertical-rl-1.5px 3.9px",
+      "html": "<table id=t style=\"border-spacing:1.5px 3.9px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 3px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          49,
+          23
+        ],
+        [
+          "a",
+          34,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          34,
+          20,
+          20,
+          10
+        ],
+        [
+          "c",
+          11,
+          9,
+          20,
+          10
+        ],
+        [
+          "d",
+          11,
+          20,
+          20,
+          10
+        ]
+      ],
+      "issue": "RAIKIRI-1351"
+    },
+    {
+      "label": "vertical-rl-3px 5px",
+      "html": "<table id=t style=\"border-spacing:3px 5px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "3px 5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          38,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ],
+      "issue": "RAIKIRI-1351"
+    },
+    {
+      "label": "vertical-lr-0.3px 2.7px",
+      "html": "<table id=t style=\"border-spacing:0.3px 2.7px;writing-mode:vertical-lr\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "0px 2px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          46,
+          20
+        ],
+        [
+          "a",
+          10,
+          8,
+          20,
+          10
+        ],
+        [
+          "b",
+          10,
+          18,
+          20,
+          10
+        ],
+        [
+          "c",
+          32,
+          8,
+          20,
+          10
+        ],
+        [
+          "d",
+          32,
+          18,
+          20,
+          10
+        ]
+      ],
+      "issue": "RAIKIRI-1351"
+    },
+    {
+      "label": "vertical-lr-1.5px 3.9px",
+      "html": "<table id=t style=\"border-spacing:1.5px 3.9px;writing-mode:vertical-lr\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "1px 3px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          49,
+          23
+        ],
+        [
+          "a",
+          11,
+          9,
+          20,
+          10
+        ],
+        [
+          "b",
+          11,
+          20,
+          20,
+          10
+        ],
+        [
+          "c",
+          34,
+          9,
+          20,
+          10
+        ],
+        [
+          "d",
+          34,
+          20,
+          20,
+          10
+        ]
+      ],
+      "issue": "RAIKIRI-1351"
+    },
+    {
+      "label": "vertical-lr-3px 5px",
+      "html": "<table id=t style=\"border-spacing:3px 5px;writing-mode:vertical-lr\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "computed_spacing": "3px 5px",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          38,
+          24,
+          20,
+          10
+        ]
+      ],
+      "issue": "RAIKIRI-1351"
+    }
+  ]
+}

@@ -178,6 +178,17 @@ fn a_parent_minimum_preserves_space_after_the_balanced_child_paragraph() {
 }
 
 #[test]
+fn a_parent_minimum_keeps_balanced_blocks_without_lines_as_short_as_their_content() {
+    // The minimum height is the container's, so the blocks still share the two
+    // columns and the background of the container reaches the minimum.
+    compare(
+        "<div class=mc><div style='height:40px;background:red'></div><div style='height:40px;background:lime'></div></div><p>E</p>",
+        ".mc{min-height:100px;background:yellow}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:100px;background:yellow'></div><div style='position:absolute;left:0;top:0;width:40px;height:40px;background:red'></div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'></div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+}
+
+#[test]
 fn separate_column_boxes_match_absolute_literal_rectangles() {
     compare(
         "<div class=mc><p style='background:red'>A</p><p style='background:lime'>B</p><p style='background:blue'>C</p><p style='background:yellow'>D</p></div>",
@@ -192,6 +203,64 @@ fn a_fixed_height_column_container_splits_a_nested_plain_block() {
         "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
         ".mc{height:40px}",
         "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn a_fixed_height_plain_chain_balances_its_lines_in_the_columns() {
+    // The columns are as tall as the lines need, and the container keeps its
+    // height, so the paragraph after it starts below the whole height.
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+    compare(
+        "<div class=mc><div><div><p>A<br>B<br>C</p></div></div></div><p>E</p>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C</div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+}
+
+#[test]
+fn a_fixed_height_plain_chain_fills_its_columns_in_turn_with_column_fill_auto() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div>",
+    );
+}
+
+#[test]
+fn a_balanced_fixed_height_chain_paints_its_wrapper_background_in_each_column() {
+    compare(
+        "<div class=mc><div style='background:lime'><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:lime'>A<br>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'>C<br>D</div>",
+    );
+}
+
+#[test]
+fn a_balanced_fixed_height_chain_paints_its_paragraph_background_in_each_column() {
+    compare(
+        "<div class=mc><div><p style='background:lime'>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:lime'>A<br>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'>C<br>D</div>",
+    );
+}
+
+#[test]
+fn boxes_with_text_and_a_height_are_placed_whole_in_balanced_columns() {
+    compare(
+        "<div class=mc><div style='height:40px;background:red'>A</div><div style='height:40px;background:lime'>B</div><div style='height:40px;background:blue'>C</div><div style='height:40px;background:yellow'>D</div></div><p>E</p>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:red'>A</div><div style='position:absolute;left:0;top:40px;width:40px;height:40px;background:lime'>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:blue'>C</div><div style='position:absolute;left:60px;top:40px;width:40px;height:40px;background:yellow'>D</div><div style='position:absolute;left:0;top:100px'>E</div>",
+    );
+    // The text wraps at the width of a column.
+    compare(
+        "<div class=mc><div style='height:40px;background:red'>A B</div><div style='height:40px;background:lime'>C D</div></div>",
+        ".mc{height:100px}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:red'>A<br>B</div><div style='position:absolute;left:60px;top:0;width:40px;height:40px;background:lime'>C<br>D</div>",
     );
 }
 
@@ -1545,11 +1614,11 @@ fn relative_paragraphs_with_each_inline_inset_are_painted_shifted_once_in_a_defi
 fn display_contents_children_of_a_definite_height_container_are_painted() {
     // An element with `display: contents` has no box, so it paints no
     // background, and the blocks inside it are painted where the columns put
-    // them.
+    // them: the columns are balanced, so each paragraph gets its own.
     compare(
         "<div class=mc style='height:60px'><div style='display:contents;background:blue'><p>A</p></div><div style='display:contents'><div style='display:contents'><p>B</p></div></div></div>",
         "",
-        "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:0;top:20px'>B</div>",
+        "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:60px;top:0'>B</div>",
     );
 }
 

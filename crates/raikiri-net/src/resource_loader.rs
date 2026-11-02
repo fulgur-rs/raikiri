@@ -16,7 +16,7 @@ use raikiri_traits::{
     DecodedImage, FetchedResource, ImageIntrinsicSize, ImageRasterSize, NetworkProvider, Request,
     ResolverError, policy::ResourceKind,
 };
-use url::Url;
+use url::{Position, Url};
 
 use crate::image_decoder::ImageDecoder;
 
@@ -45,10 +45,64 @@ fn cache_limit_error() -> ResolverError {
     ResolverError::Decode("image cache resource limit exceeded".to_owned())
 }
 
+/// A conservative source identity for HTTP raster images. Structured and
+/// encoded fragments retain their display identity, including media fragments.
+fn raster_source_key(url: &Url) -> Option<&str> {
+    if !matches!(url.scheme(), "http" | "https")
+        || !url
+            .fragment()
+            .unwrap_or_default()
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-'))
+    {
+        return None;
+    }
+    Some(&url[..Position::AfterQuery])
+}
+
+#[derive(Default)]
+struct SourceCache {
+    // Separate namespaces prevent a fragmentless SVG from being overwritten
+    // when another response at a fragment alias turns out to be a raster.
+    exact: HashMap<String, Arc<ImageSource>>,
+    rasters: HashMap<String, Arc<ImageSource>>,
+}
+
+impl SourceCache {
+    fn get(&self, url: &Url) -> Option<&Arc<ImageSource>> {
+        self.exact
+            .get(url.as_str())
+            .or_else(|| self.rasters.get(raster_source_key(url)?))
+    }
+
+    fn len(&self) -> usize {
+        self.exact.len() + self.rasters.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.exact.reserve(additional);
+        self.rasters.reserve(additional);
+    }
+
+    fn insert(&mut self, key: String, source: Arc<ImageSource>, shared: bool) {
+        let cache = if shared {
+            &mut self.rasters
+        } else {
+            &mut self.exact
+        };
+        cache.insert(key, source);
+    }
+}
+
 #[derive(Default)]
 struct LoadState {
-    cache: HashMap<Url, Arc<ImageSource>>,
-    loading: HashSet<Url>,
+    cache: SourceCache,
+    loading: HashSet<String>,
 }
 
 enum Admission<'a> {
@@ -60,7 +114,7 @@ struct PendingSource<'a> {
     state: &'a Mutex<LoadState>,
     budget: &'a Mutex<CacheBudget>,
     changed: &'a Condvar,
-    url: &'a Url,
+    url: &'a str,
     key_bytes: u64,
     active: bool,
 }
@@ -106,12 +160,86 @@ pub(crate) struct ImageSource {
     pub(crate) intrinsic: ImageIntrinsicSize,
     /// SVG rasters by paint size, least recently used first.
     raster_cache: Mutex<Vec<(ImageRasterSize, Arc<DecodedImage>)>>,
-    /// SVG scenes by box size, least recently used first.
-    scene_cache: Mutex<Vec<(ImageRasterSize, Arc<VectorImage>)>>,
+    /// SVG scenes by box size, with retained entries in LRU order and
+    /// temporary slots shared by requests whose scene is still being built.
+    scene_cache: Mutex<SceneCache>,
     /// Set once the scene builder has sent the document to the raster path,
     /// so no other box asks for a scene again.
     raster_only: AtomicBool,
     budget: Arc<Mutex<CacheBudget>>,
+}
+
+#[derive(Default)]
+struct SceneCache {
+    cached: Vec<(ImageRasterSize, Arc<VectorImage>)>,
+    loading: Vec<(ImageRasterSize, Arc<SceneFlight>)>,
+}
+
+enum SceneOutcome {
+    Pending,
+    Complete(Option<Arc<VectorImage>>),
+}
+
+struct SceneFlight {
+    outcome: Mutex<SceneOutcome>,
+    changed: Condvar,
+}
+
+impl SceneFlight {
+    fn new() -> Self {
+        Self {
+            outcome: Mutex::new(SceneOutcome::Pending),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) -> Option<Arc<VectorImage>> {
+        let mut outcome = self.outcome.lock().ok()?;
+        loop {
+            match &*outcome {
+                SceneOutcome::Complete(scene) => return scene.clone(),
+                SceneOutcome::Pending => outcome = self.changed.wait(outcome).ok()?,
+            }
+        }
+    }
+}
+
+/// An owner completes its flight even when construction fails or unwinds.
+/// Created after releasing the cache lock, so cleanup never locks it twice.
+struct PendingScene<'a> {
+    cache: &'a Mutex<SceneCache>,
+    flight: Arc<SceneFlight>,
+    active: bool,
+}
+
+impl PendingScene<'_> {
+    fn complete(&mut self, scene: Option<Arc<VectorImage>>) {
+        // Normal accesses fail closed on poison. Cleanup must still release
+        // waiters and remove this flight, without clearing the poison flag.
+        let mut cache = self.cache.lock().unwrap_or_else(|error| error.into_inner());
+        let mut outcome = self
+            .flight
+            .outcome
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *outcome = SceneOutcome::Complete(scene);
+        // Size equality cannot identify a flight containing NaN dimensions.
+        cache
+            .loading
+            .retain(|(_, flight)| !Arc::ptr_eq(flight, &self.flight));
+        self.active = false;
+        drop(outcome);
+        drop(cache);
+        self.flight.changed.notify_all();
+    }
+}
+
+impl Drop for PendingScene<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.complete(None);
+        }
+    }
 }
 
 enum ImageSourceKind {
@@ -131,7 +259,7 @@ impl ImageSource {
                 (height > 0.0).then_some(width / height),
             ),
             raster_cache: Mutex::new(Vec::new()),
-            scene_cache: Mutex::new(Vec::new()),
+            scene_cache: Mutex::new(SceneCache::default()),
             raster_only: AtomicBool::new(false),
             budget,
         }
@@ -149,7 +277,7 @@ impl ImageSource {
                 intrinsic.aspect_ratio,
             ),
             raster_cache: Mutex::new(Vec::new()),
-            scene_cache: Mutex::new(Vec::new()),
+            scene_cache: Mutex::new(SceneCache::default()),
             raster_only: AtomicBool::new(false),
             budget,
         }
@@ -164,39 +292,74 @@ impl ImageSource {
     /// pixels next. The document is built with the default style and without
     /// fonts, as its raster is.
     pub(crate) fn scene(&self, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
+        self.scene_with(size, |bytes, size| {
+            let document = SvgDocument::parse(bytes).ok()?;
+            match document.scene(
+                SvgViewport {
+                    width: size.width,
+                    height: size.height,
+                },
+                SvgRootStyle::default(),
+            ) {
+                Ok(scene) => Some(scene),
+                Err(error) => {
+                    if error.falls_back_to_raster() {
+                        self.raster_only.store(true, Ordering::Relaxed);
+                    }
+                    None
+                }
+            }
+        })
+    }
+
+    fn scene_with(
+        &self,
+        size: ImageRasterSize,
+        build: impl FnOnce(&[u8], ImageRasterSize) -> Option<VectorImage>,
+    ) -> Option<Arc<VectorImage>> {
         let ImageSourceKind::Svg(bytes) = &self.kind else {
             return None;
         };
-        if self.raster_only.load(Ordering::Relaxed) {
-            return None;
-        }
-        {
-            let mut cached = self.scene_cache.lock().ok()?;
-            if let Some(index) = cached.iter().position(|(cached, _)| *cached == size) {
-                let entry = cached.remove(index);
-                let scene = entry.1.clone();
-                cached.push(entry);
-                return Some(scene);
-            }
-        }
-        let document = SvgDocument::parse(bytes).ok()?;
-        let scene = match document.scene(
-            SvgViewport {
-                width: size.width,
-                height: size.height,
-            },
-            SvgRootStyle::default(),
-        ) {
-            Ok(scene) => Arc::new(scene),
-            Err(error) => {
-                if error.falls_back_to_raster() {
-                    self.raster_only.store(true, Ordering::Relaxed);
-                }
+        let (flight, owner) = {
+            let mut cache = self.scene_cache.lock().ok()?;
+            if self.raster_only.load(Ordering::Relaxed) {
                 return None;
             }
+            if let Some(index) = cache.cached.iter().position(|(cached, _)| *cached == size) {
+                let entry = cache.cached.remove(index);
+                let scene = entry.1.clone();
+                cache.cached.push(entry);
+                return Some(scene);
+            }
+            if let Some((_, flight)) = cache.loading.iter().find(|(pending, _)| *pending == size) {
+                (flight.clone(), false)
+            } else {
+                let flight = Arc::new(SceneFlight::new());
+                cache.loading.push((size, flight.clone()));
+                (flight, true)
+            }
         };
+        if !owner {
+            return flight.wait();
+        }
+        let mut pending = PendingScene {
+            cache: &self.scene_cache,
+            flight,
+            active: true,
+        };
+        // No cache, slot, or budget mutex is held while parsing or building.
+        let scene = Arc::new(build(bytes, size)?);
+        self.retain_scene(size, &scene)?;
+        pending.complete(Some(scene.clone()));
+        Some(scene)
+    }
+
+    /// Publishes only the retained scene, keeping budget and LRU accounting
+    /// scoped separately from the flight owner's cleanup guard.
+    fn retain_scene(&self, size: ImageRasterSize, scene: &Arc<VectorImage>) -> Option<()> {
         let new_bytes = u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX);
-        let mut cached = self.scene_cache.lock().ok()?;
+        let mut cache = self.scene_cache.lock().ok()?;
+        let cached = &mut cache.cached;
         let mut budget = self.budget.lock().ok()?;
         // Make room for the new scene by dropping the least recently used
         // sizes. A scene that cannot fit even then is returned without being
@@ -206,7 +369,7 @@ impl ImageSource {
             .map(|(_, scene)| u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX))
             .fold(0, u64::saturating_add);
         if new_bytes > budget.remaining().saturating_add(reclaimable) {
-            return Some(scene);
+            return Some(());
         }
         let mut excess = new_bytes.saturating_sub(budget.remaining());
         while !cached.is_empty() && (cached.len() >= MAX_RASTER_SIZES || excess > 0) {
@@ -217,7 +380,7 @@ impl ImageSource {
         }
         budget.used = budget.used.saturating_add(new_bytes);
         cached.push((size, scene.clone()));
-        Some(scene)
+        Some(())
     }
 
     pub(crate) fn rasterize(
@@ -365,6 +528,9 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         if let Some(cached) = self.cached_source(url) {
             return Ok(Admission::Cached(cached));
         }
+        // The eventual format is unknown: reserve enough for an exact SVG
+        // key, even when the pending key is a borrowed fragmentless prefix.
+        let pending_key = raster_source_key(url).unwrap_or(url.as_str());
         let key_bytes = url.as_str().len() as u64;
         loop {
             // Budget precedes State everywhere they are held together. Cache
@@ -376,7 +542,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
             }
             // A duplicate waits for its owner even when that reservation fills
             // the entry or byte budget. It consumes no additional permit/key.
-            if state.loading.contains(url) {
+            if state.loading.contains(pending_key) {
                 drop(budget);
                 self.wait_for_change(state)?;
                 continue;
@@ -396,7 +562,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
             }
             // Prepare allocations before charging the key. Reserve room for
             // every pending source's eventual cache insertion, too.
-            let key = url.clone();
+            let key = pending_key.to_owned();
             let pending = state.loading.len();
             state.cache.reserve(pending + 1);
             state.loading.reserve(1);
@@ -406,7 +572,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                 state: &self.state,
                 budget: &self.budget,
                 changed: &self.changed,
-                url,
+                url: pending_key,
                 key_bytes,
                 active: true,
             }));
@@ -430,7 +596,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         };
         // Keep the permit until decode and publication finish, bounding the
         // number of fetched buffers waiting for the serialized decoder.
-        let (bytes, is_data_url, is_svg) = self.fetch_bytes(url)?;
+        let (bytes, is_data_url, is_svg, final_url_shareable) = self.fetch_bytes(url)?;
         let source_bytes = if is_svg { bytes.len() as u64 } else { 0 };
         let mut budget = self.budget.lock().map_err(|_| cache_limit_error())?;
         let available = budget
@@ -452,19 +618,33 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         let charge = source_bytes
             .checked_add(source.decoded_byte_len().unwrap_or(0))
             .ok_or_else(cache_limit_error)?;
+        let shared = final_url_shareable
+            && raster_source_key(url).is_some()
+            && matches!(source.kind, ImageSourceKind::Raster(_));
+        let retained_key_bytes = if shared {
+            admission.url.len()
+        } else {
+            url.as_str().len()
+        } as u64;
+        let refund = admission.key_bytes - retained_key_bytes;
         let used = budget
             .used
-            .checked_add(charge)
+            .checked_sub(refund)
+            .and_then(|used| used.checked_add(charge))
             .filter(|&used| used <= budget.limit)
             .ok_or_else(cache_limit_error)?;
         let mut state = self.state.lock().map_err(|_| cache_limit_error())?;
-        // The entry and its capacity were reserved before fetching. Move the
-        // charged key directly into the cache and disarm cleanup atomically.
-        let key = state
+        // Move the one owned pending key into its final namespace. An exact
+        // source needs the original suffix, whose bytes were reserved up front.
+        let mut key = state
             .loading
-            .take(url)
+            .take(admission.url)
             .expect("pending source owns its key");
-        state.cache.insert(key, source.clone());
+        if !shared {
+            key.reserve_exact(url.as_str().len() - key.len());
+            key.push_str(&url.as_str()[key.len()..]);
+        }
+        state.cache.insert(key, source.clone(), shared);
         budget.used = used;
         admission.active = false;
         drop(state);
@@ -473,10 +653,10 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         Ok(source)
     }
 
-    fn fetch_bytes(&self, url: &Url) -> Result<(Vec<u8>, bool, bool), ResolverError> {
+    fn fetch_bytes(&self, url: &Url) -> Result<(Vec<u8>, bool, bool, bool), ResolverError> {
         let result = if url.scheme() == "data" {
             let is_svg = data_url_media_type(url.as_str()).is_some_and(is_svg_media_type);
-            (decode_data_url(url.as_str())?, true, is_svg)
+            (decode_data_url(url.as_str())?, true, is_svg, false)
         } else {
             let fetched = self.fetch(url)?;
             if fetched.bytes.len() > MAX_SVG_BYTES {
@@ -489,7 +669,12 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                 .as_deref()
                 .is_some_and(is_svg_media_type)
                 || url.path().to_ascii_lowercase().ends_with(".svg");
-            (fetched.bytes.to_vec(), false, is_svg)
+            (
+                fetched.bytes.to_vec(),
+                false,
+                is_svg,
+                raster_source_key(&fetched.final_url).is_some(),
+            )
         };
         if result.0.len() > MAX_SVG_BYTES {
             return Err(ResolverError::Decode(

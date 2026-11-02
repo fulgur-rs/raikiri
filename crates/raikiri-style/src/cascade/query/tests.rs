@@ -320,3 +320,122 @@ fn matcher_agrees_with_per_call_matching_across_a_wide_list() {
 
 mod budget_tests;
 mod legacy_probe_tests;
+
+#[test]
+fn only_proven_local_selector_lists_can_omit_ancestor_context() {
+    for source in [
+        "*",
+        "p",
+        ".a",
+        "#x",
+        "p.a#x[data-v]",
+        "*, p.a, #x",
+        "*|p",
+        "[a]",
+        "[a='v']",
+        "[a~='v']",
+        "[a|='v']",
+        "[a^='v']",
+        "[a$='v']",
+        "[a*='v']",
+        "[a='V' i]",
+        "[a='V' s]",
+        r"#a\:b",
+        r".a\ b",
+    ] {
+        assert!(
+            !SelectorQuery::parse(source)
+                .unwrap()
+                .requires_ancestor_context(),
+            "{source}"
+        );
+    }
+    for source in [
+        "body p",
+        "body > p",
+        "p + p",
+        "p ~ p",
+        "*, body p",
+        "body p, *",
+        ":root",
+        ":scope",
+        ":lang(ja)",
+        ":dir(rtl)",
+        ":first-child",
+        ":nth-child(2n of p)",
+        ":is(p)",
+        ":not(p)",
+        ":where(p)",
+        ":has(> p)",
+        ":hover",
+        "|p",
+        "[*|a]",
+    ] {
+        assert!(
+            SelectorQuery::parse(source)
+                .unwrap()
+                .requires_ancestor_context(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn omitted_context_agrees_for_local_operators_namespaces_and_quirks() {
+    for foreign in [false, true] {
+        for quirks in [
+            crate::StyleQuirksMode::NoQuirks,
+            crate::StyleQuirksMode::LimitedQuirks,
+            crate::StyleQuirksMode::Quirks,
+        ] {
+            let (mut dom, div, p) = doc();
+            dom.quirks_mode = quirks;
+            if foreign {
+                dom.set_namespace(p.0 as usize, "http://www.w3.org/2000/svg");
+            }
+            for (name, value) in [
+                ("class", "Probe"),
+                ("id", "Leaf"),
+                ("data-v", "Abc xyz"),
+                ("viewBox", "0 0 1 1"),
+            ] {
+                dom.set_attr(p.0 as usize, name, value);
+            }
+            for source in [
+                "*",
+                "p",
+                ".probe",
+                "#leaf",
+                "[data-v]",
+                "[DATA-V]",
+                "[viewBox]",
+                "[viewbox]",
+                "[data-v='Abc xyz']",
+                "[data-v~='xyz']",
+                "[data-v|='Abc']",
+                "[data-v^='Ab']",
+                "[data-v$='xyz']",
+                "[data-v*='bc x']",
+                "[data-v='abc XYZ' i]",
+                "[data-v='abc XYZ' s]",
+                "p.Probe#Leaf[data-v]",
+            ] {
+                let query = SelectorQuery::parse(source).unwrap();
+                assert!(!query.requires_ancestor_context(), "{source}");
+                assert_eq!(
+                    query.matches(&dom, p, &[div]),
+                    query.matches(&dom, p, &[]),
+                    "foreign={foreign}, quirks={quirks:?}, {source}"
+                );
+                let budget = crate::SelectorWorkBudget::new(None);
+                assert_eq!(
+                    query.matches(&dom, p, &[div]),
+                    query
+                        .try_matches_scoped(&dom, p, &[], Some(p), &budget)
+                        .unwrap(),
+                    "{source}"
+                );
+            }
+        }
+    }
+}

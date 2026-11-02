@@ -5,7 +5,6 @@ use super::{
     takes_no_block_space,
 };
 use raikiri_layout_style::values::Position;
-use raikiri_style::property::WhiteSpaceCollapse;
 use std::collections::HashMap;
 
 /// Source positions reused only within one pagination pass. Pagination moves
@@ -101,15 +100,9 @@ pub(super) fn flow_box(document: &Document, cascade: &CascadeResult, node_id: us
     // White space that the style preserves still generates lines.
     let collapse = cascade.computed[node_id].effective_white_space_collapse;
     let collapsed_text = node.kind() == NodeKind::Text
-        && node.text_content().is_some_and(|text| {
-            text.chars()
-                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
-                && match collapse {
-                    WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard => true,
-                    WhiteSpaceCollapse::PreserveBreaks => !text.contains(['\n', '\r']),
-                    _ => text.is_empty(),
-                }
-        });
+        && node
+            .text_content()
+            .is_some_and(|text| crate::generated_content::is_collapsed_white_space(text, collapse));
     // Comments and other non-element, non-text nodes generate no box.
     if !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         || collapsed_text

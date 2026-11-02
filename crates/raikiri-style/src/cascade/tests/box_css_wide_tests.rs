@@ -54,7 +54,7 @@ fn padding_px(value: f32) -> ComputedLengthPercentageOrCalc {
 
 /// The margins of `values` as `[top, right, bottom, left]`.
 fn margins(values: &ComputedValues) -> [Computed; 4] {
-    let m = values.margin;
+    let m = values.margin.clone();
     [m.top, m.right, m.bottom, m.left]
 }
 
@@ -66,18 +66,23 @@ fn paddings(values: &ComputedValues) -> [ComputedLengthPercentageOrCalc; 4] {
 
 /// The offsets of `values` as `[top, right, bottom, left]`.
 fn offsets(values: &ComputedValues) -> [Computed; 4] {
-    [values.top, values.right, values.bottom, values.left]
+    [
+        values.top.clone(),
+        values.right.clone(),
+        values.bottom.clone(),
+        values.left.clone(),
+    ]
 }
 
 /// The preferred, minimum and maximum sizes of `values`.
 fn sizes(values: &ComputedValues) -> [Computed; 6] {
     [
-        values.width,
-        values.height,
-        values.min_width,
-        values.min_height,
-        values.max_width,
-        values.max_height,
+        values.width.clone(),
+        values.height.clone(),
+        values.min_width.clone(),
+        values.min_height.clone(),
+        values.max_width.clone(),
+        values.max_height.clone(),
     ]
 }
 
@@ -185,10 +190,14 @@ fn initial_and_unset_give_the_initial_values() {
             "{WEAKER} #target {{ {} }}",
             ALL_LONGHANDS.replace("KW", keyword)
         ));
-        assert_eq!(margins(&child), [px(0.0); 4], "{keyword}");
+        assert_eq!(
+            margins(&child),
+            [const { Computed::Px(0.0) }; 4],
+            "{keyword}"
+        );
         assert_eq!(paddings(&child), [padding_px(0.0); 4], "{keyword}");
-        assert_eq!(sizes(&child), [Computed::Auto; 6], "{keyword}");
-        assert_eq!(offsets(&child), [Computed::Auto; 4], "{keyword}");
+        assert_eq!(sizes(&child), [const { Computed::Auto }; 6], "{keyword}");
+        assert_eq!(offsets(&child), [const { Computed::Auto }; 4], "{keyword}");
     }
 }
 
@@ -237,9 +246,9 @@ fn shorthands_set_every_longhand_in_order_of_appearance() {
     let initial = child(&format!(
         "{WEAKER} #target {{ margin: initial; padding: unset; inset: initial }}"
     ));
-    assert_eq!(margins(&initial), [px(0.0); 4]);
+    assert_eq!(margins(&initial), [const { Computed::Px(0.0) }; 4]);
     assert_eq!(paddings(&initial), [padding_px(0.0); 4]);
-    assert_eq!(offsets(&initial), [Computed::Auto; 4]);
+    assert_eq!(offsets(&initial), [const { Computed::Auto }; 4]);
 
     // A longhand after the shorthand wins its side, and the shorthand wins
     // over a longhand before it.
@@ -257,7 +266,7 @@ fn shorthands_set_every_longhand_in_order_of_appearance() {
     );
     let before = child("#target { margin-left: 3px; margin: inherit; top: 3px; inset: initial }");
     assert_eq!(margins(&before), [px(10.0), px(20.0), px(30.0), px(40.0)]);
-    assert_eq!(offsets(&before), [Computed::Auto; 4]);
+    assert_eq!(offsets(&before), [const { Computed::Auto }; 4]);
 }
 
 #[test]
@@ -332,7 +341,7 @@ fn revert_rolls_back_the_origin() {
         "p { margin: 7px; padding-left: 7px; width: 7px; top: 7px } \
          #target { margin: revert; padding-left: revert; width: revert; top: revert }",
     );
-    assert_eq!(margins(&values), [px(5.0); 4]);
+    assert_eq!(margins(&values), [const { Computed::Px(5.0) }; 4]);
     assert_eq!(values.padding.left, padding_px(6.0));
     assert_eq!(values.width, px(50.0));
     assert_eq!(values.top, px(4.0));
@@ -343,7 +352,7 @@ fn revert_rolls_back_the_origin() {
         &[],
         "#target { margin-top: 7px; margin: revert; left: revert; height: revert }",
     );
-    assert_eq!(margins(&values), [px(0.0); 4]);
+    assert_eq!(margins(&values), [const { Computed::Px(0.0) }; 4]);
     assert_eq!(values.left, Computed::Auto);
     assert_eq!(values.height, Computed::Auto);
 }
@@ -357,7 +366,7 @@ fn revert_layer_rolls_back_the_layer() {
                     #target { margin: revert-layer; padding-top: revert-layer; \
                               height: revert-layer; bottom: revert-layer } }",
     );
-    assert_eq!(margins(&values), [px(5.0); 4]);
+    assert_eq!(margins(&values), [const { Computed::Px(5.0) }; 4]);
     assert_eq!(values.padding.top, padding_px(6.0));
     assert_eq!(values.height, px(40.0));
     assert_eq!(values.bottom, px(4.0));

@@ -409,3 +409,126 @@ fn headers_whose_copies_exceed_the_projection_budget_are_not_repeated() {
     assert_eq!(header_count(&large, 0), 1);
     assert_eq!(header_count(&large, 50), 0);
 }
+
+/// The tops of the fragments of the element `id` on each page.
+fn tops(document: &DocumentLayout, id: &str) -> Vec<(u32, f32)> {
+    let mut tops = Vec::new();
+    for page_index in 0..document.page_count() {
+        let page = document.page(page_index).unwrap();
+        let dom = page.dom();
+        let node = find_by_id(dom.root(), &dom, id).unwrap();
+        tops.extend(
+            page.fragments()
+                .filter(|fragment| fragment.node() == node)
+                .map(|fragment| (page_index, fragment.rect().y)),
+        );
+    }
+    tops
+}
+
+fn table_with_footer(rows: usize, footer_first: bool) -> String {
+    let rows: String = (0..rows)
+        .map(|row| format!("<tr><td id='r{row}'>X</td></tr>"))
+        .collect();
+    let footer = "<tfoot><tr><th id='f'>F</th></tr></tfoot>";
+    let (before, after) = if footer_first {
+        (footer, "")
+    } else {
+        ("", footer)
+    };
+    format!(
+        "<table><thead><tr><th id='h'>H</th></tr></thead>{before}<tbody>{rows}</tbody>{after}</table>"
+    )
+}
+
+#[test]
+fn repeated_footers_close_each_page_and_reserve_room_above_them() {
+    // Each page holds the 10px header, four 20px rows and the 10px footer.
+    for footer_first in [false, true] {
+        let document = lay_out(&table_with_footer(9, footer_first));
+        assert_eq!(document.page_count(), 3, "footer first: {footer_first}");
+        assert_eq!(tops(&document, "h"), [(0, 0.0), (1, 0.0), (2, 0.0)]);
+        assert_eq!(tops(&document, "f"), [(0, 90.0), (1, 90.0), (2, 30.0)]);
+        for (row, page) in [(0, 0), (3, 0), (4, 1), (7, 1), (8, 2)] {
+            let expected = 10.0 + 20.0 * (row % 4) as f32;
+            assert_eq!(rect(&document, &format!("r{row}"), page).y, expected);
+        }
+        let page = document.page(1).unwrap();
+        let dom = page.dom();
+        let footer = find_by_id(dom.root(), &dom, "f").unwrap();
+        let copy = page
+            .fragments()
+            .find(|fragment| fragment.node() == footer)
+            .unwrap();
+        assert_eq!(copy.repeat(), Some(raikiri_html::RepeatKind::TableFooter));
+    }
+}
+
+#[test]
+fn a_single_page_footer_stays_after_the_rows() {
+    let document = lay_out(&table_with_footer(2, true));
+    assert_eq!(document.page_count(), 1);
+    assert_eq!(tops(&document, "h"), [(0, 0.0)]);
+    assert_eq!(tops(&document, "f"), [(0, 50.0)]);
+}
+
+#[test]
+fn headers_and_footers_repeat_beside_monolithic_content_of_an_anonymous_row() {
+    // The table's body is a 250px box that does not break, wrapped in an
+    // anonymous row and cell with the text after it. The header copies sit
+    // at the top of the pages it runs into, and the footer copies at the
+    // bottom of the pages it runs out of, over the box.
+    let document = lay_out(
+        "<div style='display:table;width:80px'>\
+         <div id='h' style='display:table-header-group'>H</div>\
+         <div id='f' style='display:table-footer-group'>F</div>\
+         <div id='m' style='contain:size;height:250px'></div>tail</div>",
+    );
+    assert_eq!(document.page_count(), 3);
+    assert_eq!(tops(&document, "h"), [(0, 0.0), (1, 0.0), (2, 0.0)]);
+    assert_eq!(tops(&document, "f"), [(0, 90.0), (1, 90.0), (2, 70.0)]);
+    assert_eq!(tops(&document, "m"), [(0, 10.0), (1, 0.0), (2, 0.0)]);
+}
+
+#[test]
+fn a_footer_only_table_whose_first_row_starts_the_next_page_keeps_its_footer_after_it() {
+    for spacer in [85, 95] {
+        let body = table_with_footer(4, true)
+            .replace("<thead><tr><th id='h'>H</th></tr></thead>", "")
+            .replace("<table>", "<table id='t'>");
+        let document = lay_out(&format!("<div style='height:{spacer}px'></div>{body}"));
+        // The table starts the next page with its first row, and its footer
+        // follows the four rows there.
+        assert_eq!(tops(&document, "t"), [(1, 0.0)], "spacer {spacer}");
+        assert_eq!(rect(&document, "r0", 1).y, 0.0, "spacer {spacer}");
+        assert_eq!(tops(&document, "f"), [(1, 80.0)], "spacer {spacer}");
+    }
+}
+
+#[test]
+fn header_and_footer_copies_paint_over_the_body_content_under_them() {
+    let document = lay_out(
+        "<div style='display:table;width:80px'>\
+         <div id='h' style='display:table-header-group;background:cyan'>H</div>\
+         <div id='f' style='display:table-footer-group;background:pink'>F</div>\
+         <div id='m' style='contain:size;height:250px;background:black'></div></div>",
+    );
+    for page_index in 0..2 {
+        let page = document.page(page_index).unwrap();
+        let dom = page.dom();
+        let id_of = |node| dom.attr(node, "id");
+        let boxes: Vec<&str> = page
+            .paint_order()
+            .iter()
+            .filter_map(|event| match event {
+                raikiri_html::PaintEvent::Box(fragment) => id_of(fragment.node()),
+                _ => None,
+            })
+            .collect();
+        let at = |id| boxes.iter().position(|&b| b == id).unwrap();
+        assert!(
+            at("m") < at("h") && at("m") < at("f"),
+            "page {page_index}: {boxes:?}"
+        );
+    }
+}

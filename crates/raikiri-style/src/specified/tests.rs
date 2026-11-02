@@ -748,10 +748,7 @@ fn inherit_from_copies_inherited_fields() {
     // `Px` via `lift_border_spacing`, as with `lift_tab_size`.
     assert_eq!(
         child.border_spacing,
-        BorderSpacingValue {
-            horizontal: Length::Px(10.0),
-            vertical: Length::Px(20.0),
-        }
+        lift_border_spacing(parent.border_spacing)
     );
     // CSS Tables 3 §7: caption-side is inherited (copied directly).
     assert_eq!(child.caption_side, CaptionSideValue::Bottom);
@@ -971,10 +968,7 @@ fn inherit_from_lifts_computed_line_height_length_without_re_resolving() {
 fn finalize_resolves_border_spacing_against_own_font_size() {
     let mut sv = SpecifiedValues::initial();
     sv.font_size = Length::Px(40.0);
-    sv.border_spacing = BorderSpacingValue {
-        horizontal: Length::Em(0.5),
-        vertical: Length::Px(10.0),
-    };
+    sv.border_spacing = BorderSpacingValue::new(Length::Em(0.5), Length::Px(10.0));
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.border_spacing.horizontal, ComputedLength(20.0));
     assert_eq!(cv.border_spacing.vertical, ComputedLength(10.0));

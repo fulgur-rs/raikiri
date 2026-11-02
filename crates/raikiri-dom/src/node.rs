@@ -6,6 +6,8 @@
 //! traits.
 
 mod box_properties;
+mod text_content;
+pub(crate) use text_content::TextContent;
 
 use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
@@ -76,6 +78,13 @@ bitflags::bitflags! {
         const HIDDEN_BY_TEXT_OVERFLOW = 1 << 7;
         /// The document element, whose principal box establishes a BFC.
         const IS_ROOT_ELEMENT = 1 << 8;
+        /// A block-level HTML `fieldset`, which roots its own block formatting
+        /// context whatever its style says. Set by
+        /// [`Node::set_box_properties`] from the display it captures.
+        const ROOTS_BLOCK_CONTEXT = 1 << 9;
+        /// The table is laying this cell out at its final physical size on
+        /// vertical axes. Measurement passes retain the horizontal table path.
+        const FINAL_VERTICAL_TABLE_CELL = 1 << 10;
     }
 }
 
@@ -394,7 +403,7 @@ pub struct MulticolTextFragment {
 #[doc(hidden)]
 pub struct TextData {
     /// Character data.
-    pub(crate) text_content: SmolStr,
+    pub(crate) text_content: TextContent,
 }
 
 /// How a box lays out its contents (CSS Display 3, 2: the inner display
@@ -693,6 +702,11 @@ pub struct Node {
     /// against at its last final layout, as taffy's block algorithm derives
     /// it: `None` when that height was not definite.
     pub(crate) percent_basis_height: Option<f32>,
+    /// The border-box height the block flow of this box found for its content
+    /// in its last layout, with its minimum and maximum applied: the height
+    /// `auto` gives it, whatever height it was given. `None` for a box that
+    /// block flow has not laid out.
+    pub(crate) auto_block_size: Option<f32>,
     /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
     pub(crate) flags: NodeFlags,
     /// Node kind and kind-specific fields (tagged union).
@@ -718,7 +732,7 @@ impl Node {
     /// The display layout sees for this box, derived from its CSS identity.
     pub(crate) fn layout_display(&self) -> Display {
         self.box_properties.layout_display(
-            self.multicol.is_some(),
+            self.multicol.is_some() || self.roots_block_context(),
             self.kind(),
             self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
         )
@@ -731,6 +745,10 @@ impl Node {
 
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
+        self.flags.set(
+            NodeFlags::ROOTS_BLOCK_CONTEXT,
+            display == DisplayValue::Block && self.is_html_fieldset(),
+        );
         self.box_properties = BoxProperties::new(display, position);
         if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
             self.box_properties.blockify_root();
@@ -833,6 +851,7 @@ impl Node {
             ifc: None,
             layout: BoxLayout::with_order(0),
             percent_basis_height: None,
+            auto_block_size: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
         }
@@ -866,6 +885,10 @@ impl Node {
 
     /// Construct a Text node with its character data.
     pub(crate) fn new_text(text: SmolStr) -> Self {
+        Self::new_text_content(text.into())
+    }
+
+    pub(crate) fn new_text_content(text: TextContent) -> Self {
         Self::with_data(NodeData::Text(TextData { text_content: text }))
     }
 
@@ -1178,8 +1201,8 @@ impl Node {
 
     /// Whether layout gives this element no box of its own, so that its
     /// children take its place in the container: a `display: contents`
-    /// element, or a plain block that wraps a column spanner (CSS
-    /// Multi-column Layout 1, 6.1).
+    /// element, or a plain block, or an inline box around blocks, that wraps a
+    /// column spanner (CSS Multi-column Layout 1, 6.1).
     ///
     /// This is the display that layout used, which the cascade does not
     /// carry for the wrapper of a spanner: painters that read the cascade's
@@ -1323,6 +1346,21 @@ impl Node {
         self.tag_name() == Some("button") && self.namespace_uri().is_none()
     }
 
+    /// Whether this is an HTML `fieldset`.
+    #[inline]
+    fn is_html_fieldset(&self) -> bool {
+        self.tag_name() == Some("fieldset") && self.namespace_uri().is_none()
+    }
+
+    /// Whether this is a block-level HTML `fieldset`, which roots its own block
+    /// formatting context (HTML Standard §15.5.12): it keeps clear of floats,
+    /// holds its floats and does not collapse its margins with those of its
+    /// children.
+    #[inline]
+    pub(crate) fn roots_block_context(&self) -> bool {
+        self.flags.contains(NodeFlags::ROOTS_BLOCK_CONTEXT)
+    }
+
     /// Return a null-namespace element attribute value, if present.
     ///
     /// The `style` attribute is stored separately from the ordinary attribute
@@ -1372,6 +1410,9 @@ impl Node {
     }
 
     /// Return the raw character data for a text node.
+    ///
+    /// Buffered appends are joined on the first borrow; later borrows reuse
+    /// that view until the text changes.
     ///
     /// Paint-side generated-content resolution uses this accessor while
     /// walking an element's descendant string value.

@@ -88,7 +88,7 @@ pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
 ///
 /// This is the expansion [`parse_margin_shorthand`] documents in full; the grammar differs between
 /// the properties only in `side`.
-fn parse_sides_shorthand<T: Copy>(
+fn parse_sides_shorthand<T: Clone>(
     input: &mut Parser<'_, '_>,
     side: fn(&mut Parser<'_, '_>) -> Option<T>,
 ) -> Option<Sides<T>> {
@@ -96,13 +96,18 @@ fn parse_sides_shorthand<T: Copy>(
     // Without a second value, apply the first to all four sides (§3.2: "If there is only one component
     // value, it applies to all sides").
     let Some(v2) = input.try_parse(|i| side(i).ok_or(())).ok() else {
-        return Some(Sides::all(v1));
+        return Some(Sides {
+            top: v1.clone(),
+            right: v1.clone(),
+            bottom: v1.clone(),
+            left: v1,
+        });
     };
     // Without a third value: top/bottom = first, right/left = second.
     let Some(v3) = input.try_parse(|i| side(i).ok_or(())).ok() else {
         return Some(Sides {
-            top: v1,
-            right: v2,
+            top: v1.clone(),
+            right: v2.clone(),
             bottom: v1,
             left: v2,
         });
@@ -111,7 +116,7 @@ fn parse_sides_shorthand<T: Copy>(
     let Some(v4) = input.try_parse(|i| side(i).ok_or(())).ok() else {
         return Some(Sides {
             top: v1,
-            right: v2,
+            right: v2.clone(),
             bottom: v3,
             left: v2,
         });
@@ -152,7 +157,7 @@ pub(super) fn parse_margin_logical_shorthand(
 
 /// Expand the 1–2 values of a flow-relative shorthand whose every value is parsed by `side`
 /// (`margin-inline: <'margin-top'>{1,2}`, `inset-inline: <'top'>{1,2}`).
-fn parse_start_end_shorthand<T: Copy>(
+fn parse_start_end_shorthand<T: Clone>(
     input: &mut Parser<'_, '_>,
     side: fn(&mut Parser<'_, '_>) -> Option<T>,
 ) -> Option<StartEnd<T>> {
@@ -160,7 +165,10 @@ fn parse_start_end_shorthand<T: Copy>(
     // Without a second value, apply the first to both edges (spec: "If only one value is given, it
     // applies to both the start and end edges").
     let Some(end) = input.try_parse(|i| side(i).ok_or(())).ok() else {
-        return Some(StartEnd::both(start));
+        return Some(StartEnd {
+            start: start.clone(),
+            end: start,
+        });
     };
     Some(StartEnd { start, end })
 }
@@ -226,6 +234,9 @@ fn expect_stretch_keyword<'i>(input: &mut Parser<'i, '_>) -> Result<(), ParseErr
 /// their block-axis counterparts) share. The `width` / `min-width` parsers add `auto` in front of it and
 /// the `max-width` parser adds `none`, so each rejects the other's keyword.
 fn parse_box_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if let Some(value) = crate::property::LengthMath::parse(input) {
+        return Some(LengthOrAuto::Math(value));
+    }
     if input
         .try_parse(|i| i.expect_ident_matching("min-content"))
         .is_ok()

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::flow_pages::FlowPages;
+use super::line_ownership::LineOwnership;
 use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use super::text_runs::{MarkerText, text_source};
 use crate::Document;
@@ -84,6 +85,7 @@ impl PageTextIndex {
         }
         let mut selected = vec![HashMap::new(); pages.len()];
         let flow = FlowPages::new(pages);
+        let mut line_ownership = LineOwnership::new(pages);
         let axis = pages
             .first()
             .map_or(FlowAxis::default(), |page| page.flow_axis);
@@ -145,7 +147,7 @@ impl PageTextIndex {
                     for (position, page) in pages.iter().enumerate() {
                         work.charge(1)?;
                         let (low, high) = page.flow_axis.line_extent(root, top, bottom);
-                        if page.owns_line(pages, low, high) {
+                        if line_ownership.owns(page, low, high) {
                             push_line(&mut selected[position], placement, index);
                         }
                     }

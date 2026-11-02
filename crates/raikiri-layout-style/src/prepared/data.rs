@@ -1,6 +1,4 @@
-use super::{
-    AlignedCalc, CalcLengthPercentage, CalcSlot, ComputedValues, PrepareError, PreparedStyle,
-};
+use super::{AlignedCalc, CalcExpression, CalcSlot, ComputedValues, PrepareError, PreparedStyle};
 use std::sync::Arc;
 
 /// Immutable calc bindings that own payloads without retaining computed values.
@@ -21,12 +19,12 @@ impl PreparedData {
     /// Rejects any payload whose expression bits or range differ from its slot.
     pub fn prepare_with(
         values: &ComputedValues,
-        mut owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+        mut owner: impl FnMut(CalcSlot, &CalcExpression, bool) -> Arc<AlignedCalc>,
     ) -> Result<Self, PrepareError> {
         let mut bindings = Vec::new();
         PreparedStyle::visit_values_calcs(values, |slot, expression, range| {
-            let payload = owner(slot, expression, range);
-            if !payload.matches(expression, range) {
+            let payload = owner(slot, &expression, range);
+            if !payload.matches(&expression, range) {
                 return Err(PrepareError::Mismatch(slot));
             }
             bindings.push((slot, payload));
@@ -56,7 +54,7 @@ impl PreparedData {
         PreparedStyle::visit_values_calcs(values, |slot, expression, range| {
             count += 1;
             let payload = self.payload(slot).ok_or(PrepareError::Missing(slot))?;
-            if !payload.matches(expression, range) {
+            if !payload.matches(&expression, range) {
                 return Err(PrepareError::Mismatch(slot));
             }
             Ok(())

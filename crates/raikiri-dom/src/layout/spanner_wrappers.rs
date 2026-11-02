@@ -1,8 +1,9 @@
 //! Column spanners inside block wrappers.
 //!
 //! A `column-span: all` box spans the columns of the multicol container it
-//! sits in, whatever plain blocks lie between them (CSS Multi-column Layout 1,
-//! 6.1): the wrappers are split around the spanner, the content before it
+//! sits in, whatever plain blocks, or inline boxes around blocks, lie between
+//! them (CSS Multi-column Layout 1, 6.1): the wrappers are split around the
+//! spanner, the content before it
 //! flows in columns, the spanner crosses them, and the content after it flows
 //! in columns again. The column strategies place the children of a container
 //! and look for spanners among those children only, so a wrapper holding a
@@ -88,10 +89,11 @@ fn collect_wrappers(
     }
 }
 
-/// Whether the box of `id` has nothing of its own: it is a block in the flow
-/// that is sized by its content, takes no space around it, clips nothing,
-/// draws nothing and starts no stacking context or containing block, and it
-/// does not change how the lines of its content are laid out.
+/// Whether the box of `id` has nothing of its own: it is a block in the flow,
+/// or an inline box around blocks, that is sized by its content, takes no
+/// space around it, clips nothing, draws nothing and starts no stacking
+/// context or containing block, and it does not change how the lines of its
+/// content are laid out.
 fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let node = &doc.nodes[id];
     let cv = &cascade.computed[id];
@@ -99,10 +101,14 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
     let sized = super::bridge::layout_values_of(doc, cascade, id);
     let min_height =
         super::bridge::physical_min_height(&sized, super::bridge::uses_vertical_axes(cascade, id));
-    let size_is_auto = |size| matches!(size, ComputedLengthPercentageOrAuto::Auto);
+    let size_is_auto = |size: &ComputedLengthPercentageOrAuto| {
+        matches!(size, ComputedLengthPercentageOrAuto::Auto)
+    };
     // A minimum or maximum that is a keyword is laid out by the box's
     // content limits, so it constrains nothing here.
-    let limit_is_none = |size| size_is_auto(size) || super::bridge::is_limit_keyword(size);
+    let limit_is_none = |size: &ComputedLengthPercentageOrAuto| {
+        size_is_auto(size) || super::bridge::is_limit_keyword(size)
+    };
     let overflows_visibly = |value| {
         !matches!(
             value,
@@ -112,14 +118,17 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
                 | OverflowValue::Auto
         )
     };
-    let margin_is_zero_or_auto = |margin| match margin {
+    let margin_is_zero_or_auto = |margin: &ComputedLengthPercentageOrAuto| match margin {
         ComputedLengthPercentageOrAuto::Auto => true,
-        ComputedLengthPercentageOrAuto::Px(px) => px == 0.0,
+        ComputedLengthPercentageOrAuto::Px(px) => *px == 0.0,
         _ => false,
     };
     let padding_is_zero =
         |padding| matches!(padding, ComputedLengthPercentageOrCalc::Px(px) if px == 0.0);
-    node.display() == DisplayValue::Block
+    // An inline box that holds a block is split around it (CSS 2, 9.2.1.1),
+    // so one with no edges, background or effect leaves nothing of its own
+    // either.
+    matches!(node.display(), DisplayValue::Block | DisplayValue::Inline)
         && node.layout_position() == Position::Static
         && !matches!(cv.float, FloatValue::Left | FloatValue::Right)
         && !matches!(
@@ -129,10 +138,10 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
         && overflows_visibly(cv.overflow.x)
         && overflows_visibly(cv.overflow.y)
         && [
-            cv.margin.top,
-            cv.margin.right,
-            cv.margin.bottom,
-            cv.margin.left,
+            &cv.margin.top,
+            &cv.margin.right,
+            &cv.margin.bottom,
+            &cv.margin.left,
         ]
         .into_iter()
         .all(margin_is_zero_or_auto)
@@ -152,12 +161,12 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
         ]
         .into_iter()
         .all(|width| width == 0.0)
-        && size_is_auto(sized.width)
-        && size_is_auto(sized.height)
-        && limit_is_none(sized.min_width)
+        && size_is_auto(&sized.width)
+        && size_is_auto(&sized.height)
+        && limit_is_none(&sized.min_width)
         && limit_is_none(min_height)
-        && limit_is_none(sized.max_width)
-        && limit_is_none(sized.max_height)
+        && limit_is_none(&sized.max_width)
+        && limit_is_none(&sized.max_height)
         && !node.paints_whole_box_effects
         && !node.paints_background_color
         && !node.claims_absolute_oof
@@ -208,7 +217,7 @@ fn keeps_line_layout(doc: &Document, cascade: &CascadeResult, id: usize, contain
     let mut anonymous = ComputedValues::inherit_from(container);
     // Both are blocks, and the margins were checked to take no space.
     anonymous.display = wrapper.display;
-    anonymous.margin = wrapper.margin;
+    anonymous.margin = wrapper.margin.clone();
     anonymous == *wrapper
 }
 

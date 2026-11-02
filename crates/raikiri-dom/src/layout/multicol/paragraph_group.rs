@@ -27,9 +27,29 @@ struct Paragraph {
     edge_start: f32,
     /// Block size of the padding and border below the last line.
     edge_end: f32,
+    /// For a box the columns hold whole, the number of lines it holds: the one
+    /// fragment of such a box reaches all of them, however many extents the
+    /// plan gives it.
+    held_lines: Option<usize>,
 }
 
 impl Paragraph {
+    /// A box the columns hold whole: its block size is the one extent of a
+    /// paragraph of one line, so no break falls inside it. `lines` is the
+    /// number of lines it holds, if any.
+    fn whole_box(height: f32, margin_top: f32, margin_bottom: f32, lines: Option<usize>) -> Self {
+        Self {
+            extents: vec![(0.0, height)],
+            margin_top,
+            margin_bottom,
+            orphans: 1,
+            widows: 1,
+            edge_start: 0.0,
+            edge_end: 0.0,
+            held_lines: lines,
+        }
+    }
+
     /// The first of the last `widows` lines: a break before it leaves the
     /// widows, and a break after it leaves fewer.
     fn widows_cut(&self) -> usize {
@@ -42,7 +62,7 @@ pub(super) fn balance(
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, has_empty, mut high) =
+    let (paragraphs, paragraph_count, has_empty, high) =
         collect(tree, entries, true, BlockEdges::Refused, false)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
@@ -51,15 +71,28 @@ pub(super) fn balance(
     {
         return None;
     }
-    let divided = divided_height(&paragraphs, context, FlowCursor::default(), high)?;
+    let (group, height) = balanced(&paragraphs, context, high)?;
+    Some(finish_group(group.placements, height))
+}
+
+/// The paragraphs placed in the columns of `context` at the height that
+/// balances them, with that height. `ceiling` is a height that holds them in
+/// one column.
+fn balanced(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    ceiling: f32,
+) -> Option<(Group, f32)> {
+    let divided = divided_height(paragraphs, context, FlowCursor::default(), ceiling)?;
     // Trial work and storage depend on shaped lines, never the declared count.
     let mut low = 0.0;
+    let mut high = ceiling;
     for _ in 0..32 {
         if high - low <= 0.001 {
             break;
         }
         let trial = (low + high) * 0.5;
-        if fill(&paragraphs, context, trial, false).is_some() {
+        if fill(paragraphs, context, trial, false).is_some() {
             high = trial;
         } else {
             low = trial;
@@ -69,9 +102,9 @@ pub(super) fn balance(
     // or, when the breaks between the boxes leave no room for that, as the
     // least height that holds them. The margin below the last box does not
     // have to fit in the columns, but counts in what is divided.
-    let group = fill(&paragraphs, context, divided.max(high), false)?;
+    let group = fill(paragraphs, context, divided.max(high), false)?;
     let height = divided.max(group.height);
-    Some(finish_group(group.placements, height))
+    Some((group, height))
 }
 
 /// The height of the paragraphs from `resume` in one column, with the margins
@@ -102,10 +135,31 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) =
+    let (paragraphs, paragraph_count, _, ceiling) =
         collect(tree, entries, true, BlockEdges::Sliced, true)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
+    }
+    // Columns that balance are as tall as their content needs, up to the
+    // height of the container (CSS Multi-column 1, 8.1). Content that needs
+    // more fills the container's height, and continues in overflow columns
+    // below, so only content that fits is balanced.
+    if context.column_fill != ColumnFillValue::Auto
+        && context.column_count > 0
+        && fill(&paragraphs, context, height, false).is_some()
+    {
+        // The padding and border of the paragraphs are part of what one
+        // column holds.
+        let edges: f32 = paragraphs
+            .iter()
+            .flatten()
+            .map(|paragraph| paragraph.edge_start + paragraph.edge_end)
+            .sum();
+        if let Some((group, balanced)) = balanced(&paragraphs, context, ceiling + edges)
+            && let Some(balanced) = balanced_below(balanced, height)
+        {
+            return Some(finish_group(group.placements, balanced));
+        }
     }
     let unbounded = FragmentationContext {
         column_count: usize::MAX,
@@ -149,15 +203,45 @@ fn collect(
         // holds it, and the plan fails when none does.
         if boxes && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
-            paragraphs.push(Some(Paragraph {
-                extents: vec![(0.0, output.size.height)],
+            paragraphs.push(Some(Paragraph::whole_box(
+                output.size.height,
                 margin_top,
                 margin_bottom,
-                orphans: 1,
-                widows: 1,
-                edge_start: 0.0,
-                edge_end: 0.0,
-            }));
+                None,
+            )));
+            continue;
+        }
+        // A box of lines with a height of its own goes whole to a column that
+        // holds it, as a box with no lines does, and is cut nowhere. Its lines
+        // must lie inside its height, or they would reach past the column.
+        if boxes && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
+            let lines = node.ifc.as_ref()?.lines.as_ref()?;
+            let (before, after) = block_edges(&layout);
+            let reach = lines
+                .lines
+                .last()
+                .map(|line| line.block_offset() + line.block_size())?;
+            if node.ifc_writing_mode() != Some(shodo::geometry::WritingMode::HorizontalTb)
+                || !paragraph_boxes_are_atomic(tree, child)
+                || multicol_subtree_has_float(tree, child)
+                || node.has_before_or_after_content
+                || !reach.is_finite()
+                || before + reach + after > output.size.height + f32::EPSILON
+                || !margin_top.is_finite()
+                || !margin_bottom.is_finite()
+            {
+                return None;
+            }
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph::whole_box(
+                output.size.height,
+                margin_top,
+                margin_bottom,
+                Some(lines.lines.len()),
+            )));
+            // The plan needs a paragraph, and this box holds lines, unlike one
+            // with none.
+            paragraph_count += 1;
             continue;
         }
         let empty = output.size.height == 0.0
@@ -209,6 +293,7 @@ fn collect(
                 widows: node.paragraph_widows,
                 edge_start: 0.0,
                 edge_end: 0.0,
+                held_lines: None,
             }));
             continue;
         }
@@ -234,6 +319,7 @@ fn collect(
             widows: node.paragraph_widows,
             edge_start,
             edge_end,
+            held_lines: None,
         }));
         paragraph_count += 1;
     }
@@ -462,7 +548,7 @@ fn fill_chunk(
             }
             fragments.push(MulticolTextFragment {
                 line_start: start,
-                line_end: end,
+                line_end: paragraph.held_lines.unwrap_or(end),
                 fragmentainer: column,
                 x: context.column_offset_x(column) - context.column_offset_x(first_column),
                 // Lines are measured from the content box, which lies below

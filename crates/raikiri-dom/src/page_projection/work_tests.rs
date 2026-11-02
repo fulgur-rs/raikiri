@@ -10,6 +10,7 @@ struct Work {
     line_candidates: usize,
     paragraph_nodes: usize,
     clip_probes: usize,
+    line_owner_probes: usize,
 }
 
 thread_local! {
@@ -18,6 +19,7 @@ thread_local! {
         line_candidates: 0,
         paragraph_nodes: 0,
         clip_probes: 0,
+        line_owner_probes: 0,
     }) };
 }
 
@@ -285,4 +287,70 @@ fn multicol_event_clip_queries_do_not_scan_every_line_in_every_column() {
             "{count} columns required {probes} clip probes"
         );
     }
+}
+
+pub(crate) fn line_owner_probe() {
+    WORK.with(|counter| {
+        let mut work = counter.get();
+        work.line_owner_probes += 1;
+        counter.set(work);
+    });
+}
+
+#[test]
+fn one_tall_line_searches_its_center_owner_only_once() {
+    let mut observations = Vec::new();
+    for page_count in [64usize, 256, 1024, 4096] {
+        let Fixture {
+            mut doc,
+            cascade,
+            root,
+        } = sheet_fixture(
+            "div::before{content:'X';background:red}",
+            &format!(
+                "height:{}px;line-height:{}px",
+                page_count * 100,
+                page_count * 100
+            ),
+            |_, _| {},
+        );
+        doc.set_font_collection(ahem_fonts());
+        doc.set_ifc_parallel_build(false);
+        let mut page = PageBox::new();
+        page.width = 400.;
+        page.height = 100.;
+        layout_single_page(&mut doc, &cascade, page).unwrap();
+        let lines = doc.ifc_layout_node(root).unwrap().ifc_lines().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].block_offset(), 0.);
+        assert_eq!(lines[0].block_size(), (page_count * 100) as f32);
+        let slices = (0..page_count)
+            .map(|index| PageSlice {
+                page_index: index as u32,
+                content_origin_y: index as f32 * 100.,
+                page_name: None,
+            })
+            .collect::<Vec<_>>();
+        WORK.set(Work::default());
+        doc.project_pages(&cascade, page, &slices, &[]).unwrap();
+        let probes = WORK.get().line_owner_probes;
+        assert_eq!(doc.page_projection.generated_boxes.len(), page_count);
+        let boxes: usize = doc
+            .page_projection
+            .generated_boxes
+            .values()
+            .flat_map(|v| v.values())
+            .map(Vec::len)
+            .sum();
+        assert_eq!(boxes, page_count);
+        eprintln!("line center lookup: pages={page_count}, probes={probes}, boxes={boxes}");
+        observations.push((page_count, probes));
+    }
+    for (pages, probes) in observations {
+        assert!(probes <= pages, "pages={pages},probes={probes}");
+    }
+}
+
+pub(crate) fn line_owner_probes() -> usize {
+    WORK.get().line_owner_probes
 }

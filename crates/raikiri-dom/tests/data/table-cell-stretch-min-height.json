@@ -1,0 +1,829 @@
+{
+  "oracle": "Chromium152.0.7977.82 standardsmode800x600 body8 Ahem10px/variableline; img20x50natural confirmed via decode() and naturalWidth/naturalHeight",
+  "cases": [
+    {
+      "label": "cell-own-min",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='height:200px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "cell-own-floor",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='height:200px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:100px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          82,
+          202
+        ],
+        [
+          "c",
+          8,
+          8,
+          82,
+          202
+        ],
+        [
+          "i",
+          9,
+          9,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "cell-own-tall",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='height:300px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          122,
+          302
+        ],
+        [
+          "c",
+          8,
+          8,
+          122,
+          302
+        ],
+        [
+          "i",
+          9,
+          9,
+          120,
+          300
+        ]
+      ]
+    },
+    {
+      "label": "cell-own-equal",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='height:220px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100%;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "span-own",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c rowspan=2><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td><td style='height:10px'>x</td></tr><tr><td style='height:10px'>x</td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          102,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "positioned-min",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='position:relative'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"><div id=p style='position:absolute;left:0;top:50%;height:50%;width:1px'></div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ],
+        [
+          "p",
+          8,
+          120,
+          1,
+          112
+        ]
+      ]
+    },
+    {
+      "label": "min-below",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:100px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          42,
+          200
+        ],
+        [
+          "c",
+          8,
+          8,
+          42,
+          200
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "min-edge",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:198px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          81.1875,
+          202
+        ],
+        [
+          "c",
+          8,
+          8,
+          81.1875,
+          202
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.1875,
+          198
+        ]
+      ]
+    },
+    {
+      "label": "min-199",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:199px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          81.59375,
+          203
+        ],
+        [
+          "c",
+          8,
+          8,
+          81.59375,
+          203
+        ],
+        [
+          "i",
+          9,
+          9,
+          79.59375,
+          199
+        ]
+      ]
+    },
+    {
+      "label": "min-200",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:200px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          82,
+          204
+        ],
+        [
+          "c",
+          8,
+          8,
+          82,
+          204
+        ],
+        [
+          "i",
+          9,
+          9,
+          80,
+          200
+        ]
+      ]
+    },
+    {
+      "label": "min-220",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "percent100-min",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100%;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "percent50-min",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:50%;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "auto-min",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "table-min",
+      "html": "<table id=t style='min-height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "zero-line",
+      "html": "<style>body{line-height:0px}</style><table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          222
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          222
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "large-line",
+      "html": "<style>body{line-height:30px}</style><table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          234
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          234
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "min-bottom",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='vertical-align:bottom'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "min-padding",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style='padding:10px;border:3px solid'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          114,
+          248
+        ],
+        [
+          "c",
+          8,
+          8,
+          114,
+          248
+        ],
+        [
+          "i",
+          21,
+          21,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "neighbor-tall",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td><td style='height:300px'>x</td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          102,
+          302
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          302
+        ],
+        [
+          "i",
+          9,
+          9,
+          120,
+          300
+        ]
+      ]
+    },
+    {
+      "label": "neighbor-content",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td><td><div style='height:300px'>x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          102,
+          302
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          302
+        ],
+        [
+          "i",
+          9,
+          9,
+          120,
+          300
+        ]
+      ]
+    },
+    {
+      "label": "peer-tall-stretch",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"></td><td><div style='height:220px'>x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          34,
+          222
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          222
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "peer-tall-percent",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100%\"></td><td><div style='height:220px'>x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          34,
+          222
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          222
+        ],
+        [
+          "i",
+          9,
+          9,
+          88,
+          220
+        ]
+      ]
+    },
+    {
+      "label": "own-block-stretch",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch\"><div style='height:220px'>x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          274
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          274
+        ],
+        [
+          "i",
+          9,
+          9,
+          20,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "own-block-percent",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100%\"><div style='height:220px'>x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          22,
+          274
+        ],
+        [
+          "c",
+          8,
+          8,
+          22,
+          274
+        ],
+        [
+          "i",
+          9,
+          9,
+          20,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "span-fraction-integer-gap",
+      "html": "<table id=t style='height:200px;border-spacing:2px'><tr><td id=c rowspan=3><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220.3px\"></td><td style='height:10px'>x</td></tr><tr><td style='height:10px'>x</td></tr><tr><td style='height:10px'>x</td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          108.109375,
+          228.296875
+        ],
+        [
+          "c",
+          10,
+          10,
+          90.109375,
+          224.296875
+        ],
+        [
+          "i",
+          11,
+          11,
+          88.109375,
+          220.296875
+        ]
+      ]
+    },
+    {
+      "label": "positive-min-growth",
+      "html": "<table id=t style='height:224.015625px;border-spacing:0'><tr><td id=c style=''><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          224.015625
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          224.015625
+        ],
+        [
+          "i",
+          9,
+          9,
+          88.796875,
+          222.015625
+        ]
+      ]
+    },
+    {
+      "label": "span-fraction",
+      "html": "<table id=t style='height:200px;border-spacing:0.3px'><tr><td id=c rowspan=3><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220.3px\"></td><td style='height:10px'>x</td></tr><tr><td style='height:10px'>x</td></tr><tr><td style='height:10px'>x</td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          102.109375,
+          224.296875
+        ],
+        [
+          "c",
+          8,
+          8,
+          90.109375,
+          224.296875
+        ],
+        [
+          "i",
+          9,
+          9,
+          88.109375,
+          220.296875
+        ]
+      ],
+      "issue": "RAIKIRI-1348",
+      "device_scale": 1,
+      "profile_note": "Explicit raster profile; None intentionally preserves vector fractional spacing."
+    }
+  ],
+  "known_preexisting_differences": [
+    {
+      "label": "cell-own-block",
+      "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='height:200px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100%\"><div style='height:220px'>x</div></td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          82,
+          424
+        ],
+        [
+          "c",
+          8,
+          8,
+          82,
+          424
+        ],
+        [
+          "i",
+          9,
+          9,
+          80,
+          200
+        ]
+      ],
+      "issue": "RAIKIRI-1346"
+    },
+    {
+      "label": "span-peer",
+      "html": "<table id=t style='height:200px;border-spacing:0'><tr><td id=c rowspan=2><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:stretch;min-height:220px\"></td><td style='height:300px'>x</td></tr><tr><td style='height:300px'>x</td></tr></table>",
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          102,
+          604
+        ],
+        [
+          "c",
+          8,
+          8,
+          90,
+          604
+        ],
+        [
+          "i",
+          9,
+          9,
+          240.796875,
+          602
+        ]
+      ],
+      "issue": "RAIKIRI-1347"
+    }
+  ]
+}

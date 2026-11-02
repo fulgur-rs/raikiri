@@ -1,6 +1,7 @@
 //! Prepared marker placements shared by page paint events and raster consumers.
 
 use super::flow_pages::FlowPages;
+use super::line_ownership::LineOwnership;
 use super::records::{PageFragment, ProjectedTextRoot};
 use crate::generated_content::{computed_for_id, generated_origin};
 use crate::{Document, PositionedMarker};
@@ -75,6 +76,7 @@ pub(super) fn prepare(
         }
     }
     let flow_pages = FlowPages::new(pages);
+    let mut line_ownership = LineOwnership::new(pages);
     let flow_axis = pages
         .first()
         .map_or_else(Default::default, |page| page.flow_axis);
@@ -182,7 +184,7 @@ pub(super) fn prepare(
                                 root.y + top,
                                 root.y + top + height,
                             );
-                            if !page.owns_line(pages, top, bottom) {
+                            if !line_ownership.owns(page, top, bottom) {
                                 continue;
                             }
                         }

@@ -300,37 +300,17 @@ fn annotation_boxes_keep_their_place_in_tree_order() {
 
 #[test]
 fn content_without_a_ruby_mapping_falls_back() {
-    let unplain: [fn(&mut Document, usize); 6] = [
-        // A block.
-        |doc, ruby| {
-            element(doc, ruby, "div", "display:block");
-        },
-        // A block in an annotation of a text container.
-        |doc, ruby| {
-            let rtc = element(doc, ruby, "rtc", "display:ruby-text-container");
-            let annotation = element(doc, rtc, "rt", "display:ruby-text");
-            element(doc, annotation, "div", "display:block");
-        },
-        // A block in a base of a base container.
-        |doc, ruby| {
-            let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
-            let base = element(doc, rbc, "rb", "display:ruby-base");
-            element(doc, base, "div", "display:block");
-        },
+    let unplain: [fn(&mut Document, usize); 2] = [
         // A nested ruby that is not plain.
         |doc, ruby| {
             let inner = element(doc, ruby, "ruby", "display:ruby");
-            element(doc, inner, "div", "display:block");
+            let base = rb(doc, inner, "a");
+            element(doc, base, "rtc", "display:ruby-text-container");
         },
-        // A base in a text container.
-        |doc, ruby| {
-            let rtc = element(doc, ruby, "rtc", "display:ruby-text-container");
-            rb(doc, rtc, "a");
-        },
-        // A block inside a base.
+        // A text container in a base.
         |doc, ruby| {
             let base = rb(doc, ruby, "a");
-            element(doc, base, "div", "display:block");
+            element(doc, base, "rtc", "display:ruby-text-container");
         },
     ];
     for build in unplain {
@@ -808,9 +788,14 @@ fn annotations_sit_over_their_bases() {
 /// Whether a ruby container with the content `build` adds is laid out as
 /// ruby rather than left to the ordinary inline path.
 fn is_planned(build: impl FnOnce(&mut Document, usize)) -> bool {
+    is_planned_with("display:ruby", build)
+}
+
+/// Like [`is_planned`], with the style `style` on the ruby container.
+fn is_planned_with(style: &str, build: impl FnOnce(&mut Document, usize)) -> bool {
     let mut container = 0;
     let fixture = block_fixture("", |doc, root| {
-        container = ruby(doc, root);
+        container = element(doc, root, "ruby", style);
         build(doc, container);
     });
     plan(&fixture.doc, &fixture.cascade, container).is_some()
@@ -1005,7 +990,7 @@ fn improper_annotations_stay_plain_wherever_inline_content_goes() {
     assert!(!is_planned(|doc, ruby| {
         let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
         let annotation = rt(doc, rbc, "x");
-        element(doc, annotation, "div", "display:block");
+        element(doc, annotation, "rtc", "display:ruby-text-container");
     }));
 }
 
@@ -1966,4 +1951,199 @@ fn atomic_inlines_in_a_vertical_annotation_follow_a_right_to_left_base() {
     let atomic = vertical_annotation_atomic("vertical-rl", "rtl");
     assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
     assert_eq!((atomic.0, atomic.1), (95.0, 85.0), "{atomic:?}");
+}
+
+/// Move the node `id` to the end of the children of `parent`.
+fn move_to(doc: &mut Document, parent: usize, id: usize) {
+    doc.append_child(parent, id).expect("move the box");
+}
+
+/// The ruby content that `place` builds around a box of 20 × 30 px with
+/// `display`, as the box and the runs of the laid-out paragraph.
+fn block_in_ruby(
+    display: &str,
+    place: fn(&mut Document, usize, usize),
+) -> ((f32, f32, f32, f32), Vec<Run>) {
+    let mut id = 0;
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        id = element(
+            doc,
+            container,
+            "div",
+            &format!("display:{display};width:20px;height:30px"),
+        );
+        place(doc, container, id);
+    });
+    let (doc, runs) = lay_out(fixture);
+    (border_box(&doc, id), runs)
+}
+
+#[test]
+fn a_block_level_box_in_ruby_content_is_laid_out_as_an_inline_block() {
+    // Where the box goes: it is the ruby's own child, or it moves into a base,
+    // an inline box of a base, an annotation, or a base of a base container.
+    let places: [fn(&mut Document, usize, usize); 6] = [
+        |doc, ruby, _| {
+            rt(doc, ruby, "x");
+        },
+        |doc, ruby, id| {
+            let base = rb(doc, ruby, "a");
+            move_to(doc, base, id);
+            rt(doc, ruby, "x");
+        },
+        |doc, ruby, id| {
+            let base = rb(doc, ruby, "a");
+            let span = element(doc, base, "span", "display:inline");
+            move_to(doc, span, id);
+            rt(doc, ruby, "x");
+        },
+        |doc, ruby, id| {
+            rb(doc, ruby, "a");
+            let annotation = rt(doc, ruby, "x");
+            move_to(doc, annotation, id);
+        },
+        |doc, ruby, id| {
+            rb(doc, ruby, "a");
+            let rtc = element(doc, ruby, "rtc", "display:ruby-text-container");
+            let annotation = rt(doc, rtc, "x");
+            move_to(doc, annotation, id);
+        },
+        |doc, ruby, id| {
+            let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+            let base = rb(doc, rbc, "a");
+            move_to(doc, base, id);
+            rt(doc, ruby, "x");
+        },
+    ];
+    for (index, place) in places.into_iter().enumerate() {
+        let block = block_in_ruby("block", place);
+        assert_eq!(block, block_in_ruby("inline-block", place), "place {index}");
+        assert_eq!((block.0.2, block.0.3), (20.0, 30.0), "place {index}");
+    }
+}
+
+#[test]
+fn a_block_level_box_in_ruby_content_keeps_the_ruby_planned() {
+    let mut container = 0;
+    let mut id = 0;
+    let fixture = block_fixture("", |doc, root| {
+        container = ruby(doc, root);
+        let base = rb(doc, container, "a");
+        let span = element(doc, base, "span", "display:inline");
+        id = element(doc, span, "div", "display:block");
+        rt(doc, container, "x");
+    });
+    assert!(plan(&fixture.doc, &fixture.cascade, container).is_some());
+    assert_eq!(
+        box_kind(&fixture.cascade, &fixture.doc, id),
+        Some(IfcBoxKind::Atomic)
+    );
+}
+
+#[test]
+fn a_block_level_box_outside_ruby_content_stays_a_block() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("", |doc, root| {
+        // A block in an inline box that is not in a ruby, and one in a ruby's
+        // sibling.
+        let span = element(doc, root, "span", "display:inline");
+        ids.0 = element(doc, span, "div", "display:block");
+        ids.1 = element(doc, root, "div", "display:block");
+        let container = ruby(doc, root);
+        rb(doc, container, "a");
+    });
+    for id in [ids.0, ids.1] {
+        assert_eq!(
+            box_kind(&fixture.cascade, &fixture.doc, id),
+            Some(IfcBoxKind::Block)
+        );
+    }
+}
+
+#[test]
+fn a_misparented_base_or_base_container_is_an_inline_box() {
+    // The ruby with `tag` boxes in a base, in a text container and in an
+    // inline box of a base, as the first glyph of each of its runs.
+    let layout = |tag: &str, display: &str| {
+        glyph_positions(|doc, ruby| {
+            let style = format!("display:{display}");
+            let base = rb(doc, ruby, "A");
+            text_element(doc, base, tag, &style, "B");
+            doc.append_text(base, "C");
+            rt(doc, ruby, "x");
+            let rtc = element(doc, ruby, "rtc", "display:ruby-text-container");
+            doc.append_text(rtc, "T");
+            text_element(doc, rtc, tag, &style, "R");
+            doc.append_text(rtc, "U");
+            let base = rb(doc, ruby, "D");
+            let span = element(doc, base, "span", "display:inline");
+            text_element(doc, span, tag, &style, "E");
+            rt(doc, ruby, "y");
+        })
+    };
+    for (tag, display) in [("rb", "ruby-base"), ("rbc", "ruby-base-container")] {
+        assert_eq!(layout(tag, display), layout("span", "inline"), "{display}");
+    }
+}
+
+#[test]
+fn a_misparented_base_keeps_the_ruby_planned() {
+    assert!(is_planned(|doc, ruby| {
+        let base = rb(doc, ruby, "a");
+        rb(doc, base, "b");
+        rt(doc, ruby, "x");
+    }));
+    assert!(is_planned(|doc, ruby| {
+        rb(doc, ruby, "a");
+        let rtc = element(doc, ruby, "rtc", "display:ruby-text-container");
+        rb(doc, rtc, "b");
+    }));
+    assert!(is_planned(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        let inner = element(doc, rbc, "rbc", "display:ruby-base-container");
+        rb(doc, inner, "a");
+        rt(doc, ruby, "x");
+    }));
+}
+
+#[test]
+fn a_block_level_box_with_an_auto_width_shrinks_to_fit_in_ruby_content() {
+    let lay = |display: &str| {
+        let mut id = 0;
+        let fixture = block_fixture("line-height:20px", |doc, root| {
+            let container = ruby(doc, root);
+            rb(doc, container, "a");
+            id = text_element(doc, container, "div", &format!("display:{display}"), "text");
+            rt(doc, container, "x");
+        });
+        let (doc, runs) = lay_out(fixture);
+        (border_box(&doc, id), runs)
+    };
+    let block = lay("block");
+    assert_eq!(block, lay("inline-block"));
+    // Four glyphs wide, not the width of the paragraph.
+    assert!(block.0.2 > 0.0 && block.0.2 < 400.0, "{block:?}");
+}
+
+#[test]
+fn a_block_level_box_in_an_inter_character_annotation_falls_back() {
+    // An atomic inline in an annotation that is turned beside its base does
+    // not follow the turn, and a block is one now.
+    assert!(!is_planned_with(
+        "display:ruby;ruby-position:inter-character",
+        |doc, ruby| {
+            rb(doc, ruby, "a");
+            let annotation = rt(doc, ruby, "x");
+            element(doc, annotation, "div", "display:block");
+        }
+    ));
+    assert!(is_planned_with(
+        "display:ruby;ruby-position:over",
+        |doc, ruby| {
+            rb(doc, ruby, "a");
+            let annotation = rt(doc, ruby, "x");
+            element(doc, annotation, "div", "display:block");
+        }
+    ));
 }

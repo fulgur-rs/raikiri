@@ -12,8 +12,11 @@ use cssparser::{
     SourceLocation, StyleSheetParser, Token,
 };
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
+use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::fmt;
+use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 
 use crate::consumer::ConsumerPropertyRegistration;
@@ -84,23 +87,81 @@ pub enum Origin {
     Animation,
 }
 
+/// An owned view of raw block text shared by nested inspection records.
+///
+/// Clones keep the backing block alive. The view exposes only its own text;
+/// source storage and range boundaries cannot be changed by a consumer.
+#[derive(Clone)]
+pub struct SharedAtRuleBlock {
+    source: Arc<str>,
+    range: Range<usize>,
+}
+
+impl SharedAtRuleBlock {
+    fn new(text: &str) -> Self {
+        Self {
+            source: Arc::from(text),
+            range: 0..text.len(),
+        }
+    }
+
+    fn slice(&self, range: Range<usize>) -> Self {
+        // Validate boundaries in this view before translating them to storage.
+        let _ = &self.as_str()[range.clone()];
+        Self {
+            source: self.source.clone(),
+            range: self.range.start + range.start..self.range.start + range.end,
+        }
+    }
+
+    /// Borrow the raw component-value text of this block view.
+    pub fn as_str(&self) -> &str {
+        &self.source[self.range.clone()]
+    }
+}
+
+impl fmt::Debug for SharedAtRuleBlock {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), formatter)
+    }
+}
+
+impl PartialEq for SharedAtRuleBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+impl Eq for SharedAtRuleBlock {}
+
 /// A syntactically valid at-rule body retained for a consumer that does not
 /// yet implement the at-rule's semantics.
 ///
 /// The contents exclude the outer braces. `Statement` represents an at-rule
 /// terminated by `;` (or by the end of the stylesheet, which CSS syntax also
-/// permits). `Block` retains the raw component-value text inside `{ ... }`.
+/// permits). `Block` and `SharedBlock` retain the raw component-value text
+/// inside `{ ... }`. Top-level records keep `Block(String)`; nonempty nested
+/// inspection blocks may use `SharedBlock`. Consumers should use
+/// [`Self::as_block`] to read either representation.
 /// When EOF ends the block, or a block, string, comment or url inside it, the
 /// text is completed with what EOF implied, so that it reads as the same tokens
 /// on its own and leaves nothing open inside the braces.
 #[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum AtRuleBody {
     /// The at-rule had no block body.
     Statement,
     /// The raw contents of the at-rule's curly-bracket block.
     Block(String),
+    /// Raw nested block contents held in an immutable shared source view.
+    SharedBlock(SharedAtRuleBlock),
 }
+
+impl PartialEq for AtRuleBody {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_block() == other.as_block()
+    }
+}
+impl Eq for AtRuleBody {}
 
 impl AtRuleBody {
     /// Return the block contents, or `None` for a statement at-rule.
@@ -108,6 +169,7 @@ impl AtRuleBody {
         match self {
             Self::Statement => None,
             Self::Block(body) => Some(body),
+            Self::SharedBlock(body) => Some(body.as_str()),
         }
     }
 }
@@ -143,9 +205,9 @@ pub enum RuleNode {
 
 /// A valid at-rule that is retained as opaque data.
 ///
-/// This is deliberately an owned representation. The parser input belongs to
-/// the caller of [`RuleTree::add_stylesheet`], so retaining `&str` slices here
-/// would make the rule tree borrow the stylesheet source. `prelude` includes
+/// This representation owns its text, directly or through shared immutable
+/// storage. The parser input belongs to the caller of [`RuleTree::add_stylesheet`]
+/// and is never borrowed by retained records. `prelude` includes
 /// the source text between the at-rule name and its terminator; comments and
 /// whitespace are retained in that text. For a block at-rule, `children` is a
 /// best-effort recursive view of nested rules; `body` remains authoritative
@@ -204,9 +266,9 @@ impl AtRuleRecord {
     /// is reconstructed. This is intended for inspection and forwarding, not
     /// as a byte-for-byte source-map representation.
     pub fn to_css(&self) -> String {
-        match &self.body {
-            AtRuleBody::Statement => format!("@{}{};", self.name, self.prelude),
-            AtRuleBody::Block(body) => format!("@{}{}{{{body}}}", self.name, self.prelude),
+        match self.body.as_block() {
+            None => format!("@{}{};", self.name, self.prelude),
+            Some(body) => format!("@{}{}{{{body}}}", self.name, self.prelude),
         }
     }
 
@@ -1245,14 +1307,29 @@ fn consume_raw_component_values<'i, 't>(
     input: &mut Parser<'i, 't>,
     source: &str,
 ) -> Result<String, cssparser::ParseError<'i, ()>> {
+    consume_raw_component_values_view(input, source).map(Cow::into_owned)
+}
+
+/// Borrow raw values when EOF completion leaves their text unchanged.
+fn consume_raw_component_values_view<'i, 't>(
+    input: &mut Parser<'i, 't>,
+    source: &str,
+) -> Result<Cow<'i, str>, cssparser::ParseError<'i, ()>> {
     let start = input.position();
     let mut walk = ComponentWalk::completing(source, true);
     if !walk.values(input, None, 0) {
         return Err(input.new_custom_error(()));
     }
+    let unchanged = walk
+        .eof
+        .as_ref()
+        .is_some_and(|eof| eof.escape.is_none() && eof.terminators.is_empty());
+    if unchanged {
+        return Ok(Cow::Borrowed(input.slice_from(start)));
+    }
     let mut values = input.slice_from(start).to_owned();
     walk.complete(&mut values);
-    Ok(values)
+    Ok(Cow::Owned(values))
 }
 
 /// Complete the contents of a block as EOF closed them.
@@ -1519,7 +1596,7 @@ enum NestedParsedRule {
 }
 
 const MAX_OPAQUE_RULE_NESTING_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
-// Descendant bodies overlap their ancestors, so cap their aggregate owned copies.
+// Descendant views overlap their ancestors, so cap their aggregate logical lengths.
 const MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES: usize = 8 * 1024 * 1024;
 // Statements and empty blocks copy no body, so cap the nodes too. As many as the
 // rules a tree counts by default, so that under the default limits the node
@@ -1544,7 +1621,7 @@ impl OpaqueBudget {
         }
     }
 
-    /// Spends one node that copies a body of `body_bytes`, or `false` when
+    /// Spends one node with a logical body length of `body_bytes`, or `false` when
     /// too little is left, in which case the node is not retained.
     fn spend(&mut self, body_bytes: usize) -> bool {
         if self.nodes == 0 || body_bytes > self.body_bytes {
@@ -1566,9 +1643,32 @@ fn prelude_opens_block(source: &str, input: &Parser<'_, '_>) -> bool {
         .is_some_and(|rest| rest.starts_with('{'))
 }
 
+/// The parser reads exactly this source view, preserving local coordinates.
+#[derive(Clone, Copy)]
+enum RawRuleSource<'s> {
+    Unshared(&'s str),
+    Shared(&'s SharedAtRuleBlock),
+}
+
+impl<'s> RawRuleSource<'s> {
+    fn as_str(self) -> &'s str {
+        match self {
+            Self::Unshared(source) => source,
+            Self::Shared(block) => block.as_str(),
+        }
+    }
+
+    fn block(self, text: Cow<'_, str>, range: Range<usize>) -> SharedAtRuleBlock {
+        match (self, text) {
+            (Self::Shared(parent), Cow::Borrowed(_)) => parent.slice(range),
+            (_, text) => SharedAtRuleBlock::new(text.as_ref()),
+        }
+    }
+}
+
 struct RawRuleParser<'s, 'b> {
     depth: usize,
-    source: &'s str,
+    source: RawRuleSource<'s>,
     budget: &'b mut OpaqueBudget,
 }
 
@@ -1584,7 +1684,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
         Ok((
             name.to_string(),
-            consume_raw_component_values(input, self.source)?,
+            consume_raw_component_values(input, self.source.as_str())?,
         ))
     }
 
@@ -1612,19 +1712,32 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_component_values(input, self.source)?;
+        let start = input.position().byte_index();
+        let body = consume_raw_component_values_view(input, self.source.as_str())?;
         if !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
-        let children = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
-            parse_nested_rule_nodes_at_depth(&body, self.depth + 1, self.budget)
+        let (body, children) = if body.is_empty() {
+            (AtRuleBody::Block(String::new()), Vec::new())
         } else {
-            Vec::new()
+            let body = self
+                .source
+                .block(body, start..input.position().byte_index());
+            let children = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
+                parse_nested_rule_nodes_from(
+                    RawRuleSource::Shared(&body),
+                    self.depth + 1,
+                    self.budget,
+                )
+            } else {
+                Vec::new()
+            };
+            (AtRuleBody::SharedBlock(body), children)
         };
         Ok(NestedParsedRule::AtRule(AtRuleRecord {
             name,
             prelude,
-            body: AtRuleBody::Block(body),
+            body,
             children,
             source_order: 0,
             origin: Origin::Author,
@@ -1641,7 +1754,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        consume_raw_component_values(input, self.source)
+        consume_raw_component_values(input, self.source.as_str())
     }
 
     fn parse_block<'t>(
@@ -1650,7 +1763,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_component_values(input, self.source)?;
+        let body = consume_raw_component_values(input, self.source.as_str())?;
         if !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
@@ -1687,7 +1800,15 @@ fn parse_nested_rule_nodes_at_depth(
     depth: usize,
     budget: &mut OpaqueBudget,
 ) -> Vec<RuleNode> {
-    let mut input = ParserInput::new(source);
+    parse_nested_rule_nodes_from(RawRuleSource::Unshared(source), depth, budget)
+}
+
+fn parse_nested_rule_nodes_from(
+    source: RawRuleSource<'_>,
+    depth: usize,
+    budget: &mut OpaqueBudget,
+) -> Vec<RuleNode> {
+    let mut input = ParserInput::new(source.as_str());
     let mut parser = Parser::new(&mut input);
     let mut rule_parser = RawRuleParser {
         depth,

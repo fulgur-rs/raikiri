@@ -1,0 +1,513 @@
+{
+  "browser": "Chromium 152.0.7977.82",
+  "conditions": "800x600 viewport; body margin 8px; Ahem explicitly loaded 10px/10px; images decoded to 1x1 before measuring; div box-sizing:border-box",
+  "cases": [
+    {
+      "label": "min-width:0;height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:5px;height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:5px;height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          5,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:20px;height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:20px;height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:10%;height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:10%;height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;padding:2px;border:1px solid;box-sizing:border-box",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;padding:2px;border:1px solid;box-sizing:border-box\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          6,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;padding:2px;border:1px solid;box-sizing:content-box",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;padding:2px;border:1px solid;box-sizing:content-box\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          6,
+          16
+        ],
+        [
+          "i",
+          8,
+          8,
+          16,
+          16
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;aspect-ratio:2/1",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;aspect-ratio:2/1\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;max-width:5px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;max-width:5px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          1
+        ],
+        [
+          "i",
+          8,
+          8,
+          1,
+          1
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;margin:2px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;margin:2px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          4,
+          14
+        ],
+        [
+          "i",
+          10,
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;justify-self:stretch",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;justify-self:stretch\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:0",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:0\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          0
+        ],
+        [
+          "i",
+          8,
+          8,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "label": "grid width 100px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:100px\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          100,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "grid width max-content",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:max-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "wider sibling",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px\"><div id=j style=\"width:40px;height:20px\"></div></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          40,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ],
+        [
+          "j",
+          8,
+          18,
+          40,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "canvas min-width:0;height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><canvas id=i width=2 height=1 style=\"min-width:0;height:10px\"></canvas></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "canvas height:10px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><canvas id=i width=2 height=1 style=\"height:10px\"></canvas></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "width:10px;min-height:20px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"width:10px;min-height:20px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          20
+        ]
+      ]
+    },
+    {
+      "label": "width:10px;max-height:5px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"width:10px;max-height:5px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          10,
+          5
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          5
+        ]
+      ]
+    },
+    {
+      "label": "min-width:20px;height:10px;min-height:30px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:20px;height:10px;min-height:30px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          30
+        ],
+        [
+          "i",
+          8,
+          8,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "min-width:0;height:10px;max-width:5px;max-height:4px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;max-width:5px;max-height:4px\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          4
+        ],
+        [
+          "i",
+          8,
+          8,
+          4,
+          4
+        ]
+      ]
+    },
+    {
+      "label": "percentage height height:20px",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;height:20px\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:20px;height:50%\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "percentage height ",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:20px;height:50%\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          20,
+          20
+        ],
+        [
+          "i",
+          8,
+          8,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "spanning two tracks",
+      "html": "<div style=\"display:flex;width:400px\"><div id=g style=\"display:grid;width:min-content;grid-template-columns:auto auto\"><img id=i src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"min-width:0;height:10px;grid-column:span 2\"></div></div>",
+      "expected": [
+        [
+          "g",
+          8,
+          8,
+          0,
+          10
+        ],
+        [
+          "i",
+          8,
+          8,
+          10,
+          10
+        ]
+      ]
+    }
+  ]
+}

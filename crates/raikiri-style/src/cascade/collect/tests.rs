@@ -126,7 +126,10 @@ fn outer_svg_dimension_attributes_are_overridable_geometry_hints() {
             doc.push_element_with_namespace(0, "svg", NS, &[("width", "10"), ("height", "10")]);
         let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
         assert_eq!(
-            (result.computed[svg].width, result.computed[svg].height),
+            (
+                result.computed[svg].width.clone(),
+                result.computed[svg].height.clone()
+            ),
             expected
         );
     }

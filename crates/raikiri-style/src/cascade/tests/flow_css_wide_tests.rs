@@ -55,7 +55,7 @@ fn child(css: &str) -> Flow {
 /// `[top, right, bottom, left]`.
 fn margins(css: &str) -> [f32; 4] {
     let (result, child) = cascade_child(PARENT, &[], css);
-    let margin = result.computed[child].margin;
+    let margin = result.computed[child].margin.clone();
     [margin.top, margin.right, margin.bottom, margin.left].map(|side| match side {
         ComputedLengthPercentageOrAuto::Px(px) => px,
         other => panic!("expected a length, got {other:?}"),

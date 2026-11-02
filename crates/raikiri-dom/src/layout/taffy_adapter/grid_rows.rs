@@ -26,6 +26,25 @@ pub(crate) fn rows_size_to_content(style: &LayoutStyleView<'_>) -> bool {
     }) && style.grid_auto_rows().all(auto)
 }
 
+/// Whether no column of the grid laid out with `style`, explicit or implicit,
+/// has a `min-content` or `max-content` minimum track size.
+///
+/// Those tracks take the content contribution of their items whatever the
+/// items state as their minimum, as every other intrinsic one does not.
+pub(crate) fn columns_have_no_content_minimum(style: &LayoutStyleView<'_>) -> bool {
+    let style = TaffyStyle::new(*style);
+    let sized_by_content =
+        |track: TrackSizingFunction| track.min.is_min_content() || track.min.is_max_content();
+    style.grid_template_columns().is_none_or(|mut components| {
+        components.all(|component| match component {
+            GenericGridTemplateComponent::Single(track) => !sized_by_content(track),
+            GenericGridTemplateComponent::Repeat(repetition) => {
+                !repetition.tracks().any(sized_by_content)
+            }
+        })
+    }) && !style.grid_auto_columns().any(sized_by_content)
+}
+
 /// The sizing function of every row of a grid, from the first implicit row
 /// before the explicit grid to the last after it.
 #[derive(Debug)]

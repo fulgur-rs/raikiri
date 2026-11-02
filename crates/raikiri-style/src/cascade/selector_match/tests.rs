@@ -8,6 +8,7 @@ use crate::test_dom::TestDoc;
 
 mod budget_boundary_tests;
 mod class_index_tests;
+mod direction_cache_tests;
 mod filtered_nth_tests;
 mod has_cache_tests;
 mod later_sibling_tests;
@@ -2954,8 +2955,9 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
             let elem = node.as_element().unwrap();
             let (direct_lang, _) =
                 effective_language(&doc, &elem, &ancestors, |_| None, || Ok(())).unwrap();
-            let direct_dir =
-                resolve_directionality(&doc, &elem, node_id(*id), &ancestors, || Ok(())).unwrap();
+            let (direct_dir, _) =
+                resolve_directionality(&doc, &elem, node_id(*id), &ancestors, |_| None, || Ok(()))
+                    .unwrap();
             assert_eq!(&*direct_lang, lang, "direct language of {id}");
             assert_eq!(direct_dir, dir, "direct direction of {id}");
             for source in selectors {

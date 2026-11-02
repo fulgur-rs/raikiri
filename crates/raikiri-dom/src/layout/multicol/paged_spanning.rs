@@ -99,6 +99,11 @@ pub(in crate::layout) fn paginate_spanning_columns(
         }
         return Ok(0.0);
     }
+    // The boxes of a container of boxes that hold no lines, which the columns
+    // fill from their own layout instead of from lines.
+    let leaves = spanner_free
+        .then(|| lineless::supported(tree, owner, false))
+        .flatten();
     let Some(container) = edits.first(owner) else {
         return Ok(0.0); // cov:ignore: retained groups are created only after the owner source fragment exists.
     };
@@ -143,7 +148,24 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     )
                 })
                 .collect();
-            if let Some(planned) =
+            if let Some(planned) = leaves
+                .as_deref()
+                .map(|leaves| lineless::paginate(tree, leaves, context, owner_y, page_for, work))
+                .transpose()?
+                .flatten()
+            {
+                groups.extend(planned.groups);
+                install_lineless_pieces(
+                    tree,
+                    segment,
+                    container,
+                    planned.pieces,
+                    delta,
+                    &mut shifts,
+                    &mut replacements,
+                );
+                delta = planned.end - (old.context.origin_y + old.height);
+            } else if let Some(planned) =
                 paragraph_group::paginate(tree, &entries, context, owner_y, page_for, work)?
                     .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
             {
@@ -382,6 +404,48 @@ impl CutLimits {
             && before
                 .checked_sub(1)
                 .is_none_or(|last| cut >= self.bands[last].1)
+    }
+}
+
+/// Install the pieces the pages cut the boxes `segment` of a container into:
+/// a box with pieces is replaced by them and stands where its first one is,
+/// and a box without any moves by `delta` like the rest of the flow.
+fn install_lineless_pieces(
+    tree: &mut Document,
+    segment: &[usize],
+    container: usize,
+    pieces: Vec<lineless::PagedPiece>,
+    delta: f32,
+    shifts: &mut HashMap<usize, f32>,
+    replacements: &mut Vec<(usize, Vec<LayoutFragment>)>,
+) {
+    let mut per_child = HashMap::<usize, Vec<LayoutFragment>>::new();
+    for piece in pieces {
+        per_child
+            .entry(piece.child)
+            .or_default()
+            .push(LayoutFragment {
+                node_id: piece.child,
+                parent: Some(container),
+                fragmentainer: piece.fragmentainer,
+                rect: piece.rect,
+                fragmentainer_clip: piece.clip,
+                fragment_index: piece.index,
+                fragment_count: piece.count,
+                line_start: None,
+                line_end: None,
+            });
+    }
+    for &id in segment {
+        let Some(fragments) = per_child.remove(&id) else {
+            shift_child(tree, shifts, id, delta);
+            continue;
+        };
+        tree.nodes[id].layout.location = Point {
+            x: fragments[0].rect.x,
+            y: fragments[0].rect.y,
+        };
+        replacements.push((id, fragments));
     }
 }
 

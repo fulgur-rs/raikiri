@@ -97,6 +97,110 @@ fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
 }
 
 #[test]
+fn balanced_column_height_keeps_the_orphans_of_every_column_before_a_break() {
+    let context = |column_count: usize, orphans: usize, widows: usize| FragmentationContext {
+        rtl: false,
+        available_width: 100.0 * column_count as f32,
+        available_height: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
+        column_width: 100.0,
+        column_count,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans,
+        widows,
+    };
+    let lines = |count: usize| {
+        (0..count)
+            .map(|index| (index as f32 * 10.0, index as f32 * 10.0 + 10.0))
+            .collect::<Vec<_>>()
+    };
+    let height = |count: usize, columns: usize, orphans: usize, widows: usize| {
+        balanced_column_height(&lines(count), context(columns, orphans, widows))
+            .expect("the lines balance")
+    };
+    let assert_height = |got: f32, expected: f32| {
+        assert!(
+            (got - expected).abs() < 0.01,
+            "balanced height {got}, expected {expected}"
+        );
+    };
+
+    // Two lines split 1|1 only when `orphans` lets a column hold one.
+    assert_height(height(2, 2, 1, 1), 10.0);
+    assert_height(height(2, 2, 2, 2), 20.0);
+    // The columns after the first give up lines to `widows`; a column before
+    // a break keeps `orphans`.
+    assert_height(height(3, 3, 2, 2), 20.0);
+    assert_height(height(3, 2, 2, 2), 20.0);
+    assert_height(height(4, 2, 3, 1), 30.0);
+    assert_height(height(5, 3, 3, 1), 30.0);
+    assert_height(height(4, 2, 1, 3), 30.0);
+    // More `orphans` than lines leave one column, whatever the count.
+    assert_height(height(2, 2, 3, 1), 20.0);
+    // The last column may hold fewer lines than `widows` asks for.
+    assert_height(height(5, 2, 3, 3), 30.0);
+
+    // Lines of different heights take the least height whose columns keep the
+    // `orphans`, even when a taller height gives the first column more lines
+    // and leaves the second one too few.
+    let uneven = [
+        (0.0, 10.0),
+        (10.0, 30.0),
+        (30.0, 50.0),
+        (50.0, 70.0),
+        (70.0, 110.0),
+    ];
+    assert_height(
+        balanced_column_height(&uneven, context(3, 2, 1)).expect("uneven lines"),
+        40.0,
+    );
+    // The columns grow through several steps when each next height still
+    // leaves a column too short (each case is measured in Chromium).
+    let heights = |heights: &[f32]| {
+        let mut top = 0.0;
+        heights
+            .iter()
+            .map(|height| {
+                let extent = (top, top + height);
+                top += height;
+                extent
+            })
+            .collect::<Vec<_>>()
+    };
+    for (line_heights, expected) in [
+        ([10.0, 10.0, 20.0, 10.0, 10.0], 40.0),
+        ([20.0, 20.0, 20.0, 30.0, 10.0], 60.0),
+        ([30.0, 30.0, 10.0, 20.0, 30.0], 70.0),
+    ] {
+        assert_height(
+            balanced_column_height(&heights(&line_heights), context(3, 3, 1)).expect("steps"),
+            expected,
+        );
+    }
+    // An `orphans` that no height below the number of steps keeps gives up on
+    // it, and the columns stay as tall as the last step made them.
+    assert_height(height(2000, 2, 100_000, 1), 12_560.0);
+
+    // A definite height caps the columns. When no height below the cap keeps
+    // the `orphans`, the columns take the cap, and the lines that do not fit
+    // continue in overflow columns.
+    let capped = |count: usize, cap: f32, orphans: usize| {
+        let context = FragmentationContext {
+            available_height: Some(cap),
+            ..context(2, orphans, 1)
+        };
+        balanced_column_height(&lines(count), context)
+    };
+    assert_height(capped(4, 25.0, 3).expect("capped"), 25.0);
+    assert_height(capped(4, 25.0, 2).expect("capped"), 20.0);
+    // Lines that need more columns than the cap leaves have nothing to balance.
+    assert_eq!(capped(8, 25.0, 2), None);
+}
+
+#[test]
 fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
         rtl: false,
@@ -394,18 +498,22 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
     crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let sized = doc.append_element(Some(body), "div", Some("width:400px"));
-    let half = doc.append_element(Some(sized), "div", Some("width:50%"));
-    let auto = doc.append_element(Some(half), "div", None::<&str>);
+    let sized = doc.append_element(Some(body), "div", Some("display:block;width:400px"));
+    let half = doc.append_element(Some(sized), "div", Some("display:block;width:50%"));
+    let auto = doc.append_element(Some(half), "div", Some("display:block"));
     let intrinsic = doc.append_element(
         Some(auto),
         "div",
         Some("width:min-content;position:absolute"),
     );
     let flex = doc.append_element(Some(intrinsic), "div", Some("display:flex"));
-    let vertical = doc.append_element(Some(flex), "div", Some("writing-mode:vertical-rl"));
-    let leaf = doc.append_element(Some(vertical), "div", None::<&str>);
-    let late_parent = doc.append_element(Some(body), "div", Some("width:30px"));
+    let vertical = doc.append_element(
+        Some(flex),
+        "div",
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let leaf = doc.append_element(Some(vertical), "div", Some("display:block"));
+    let late_parent = doc.append_element(Some(body), "div", Some("display:block;width:30px"));
     // Reparent under a later arena index and keep both DOM edge representations consistent.
     doc.detach_from_parent(half);
     doc.attach_child(late_parent, half);
@@ -485,8 +593,12 @@ fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
 fn multicol_min_constrained_child_requires_all_constraints() {
     let constrained = |child_css: &str| {
         let mut doc = Document::new();
-        let parent = doc.append_element(Some(0), "div", None::<&str>);
-        doc.append_element(Some(parent), "div", Some(child_css));
+        let parent = doc.append_element(Some(0), "div", Some("display:block"));
+        doc.append_element(
+            Some(parent),
+            "div",
+            Some(format!("display:block;{child_css}")),
+        );
         with_bridged_session(&mut doc, |session| {
             multicol_has_min_constrained_child(session, parent)
         })
@@ -3616,15 +3728,84 @@ fn blocks_painting_whole_box_effects_are_not_sliced() {
 }
 
 #[test]
-fn a_minimum_height_makes_columns_of_blocks_without_lines_taller() {
+fn a_minimum_height_leaves_balanced_columns_of_blocks_without_lines_as_tall_as_their_content() {
+    // The minimum height is the container's own; the content still divides
+    // evenly between the columns.
     let (doc, parent, children) = lineless_fixture(
-        "display:block;width:200px;columns:2;column-gap:0;min-height:200px",
+        "display:block;width:200px;columns:2;column-gap:0;min-height:100px",
+        &["display:block;height:40px", "display:block;height:40px"],
+    );
+    assert_eq!(doc.nodes[parent].layout.size.height, 100.0);
+    assert_eq!(fragment_rects(&doc, children[0]), vec![(0, 0.0, 0.0, 40.0)]);
+    assert_eq!(
+        fragment_rects(&doc, children[1]),
+        vec![(1, 100.0, 0.0, 40.0)]
+    );
+    // A box taller than the balanced columns is cut like without the minimum.
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0;min-height:300px",
         &["display:block;height:200px"],
     );
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 300.0);
     assert_eq!(
         fragment_rects(&doc, children[0]),
-        vec![(0, 0.0, 0.0, 200.0)]
+        vec![(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 100.0)]
+    );
+}
+
+#[test]
+fn a_minimum_height_makes_columns_that_fill_in_turn_taller() {
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0;column-fill:auto;min-height:100px",
+        &["display:block;height:40px", "display:block;height:40px"],
+    );
+    assert_eq!(doc.nodes[parent].layout.size.height, 100.0);
+    assert_eq!(fragment_rects(&doc, children[0]), vec![(0, 0.0, 0.0, 40.0)]);
+    assert_eq!(
+        fragment_rects(&doc, children[1]),
+        vec![(0, 0.0, 40.0, 40.0)]
+    );
+}
+
+#[test]
+fn a_maximum_height_below_the_minimum_does_not_cap_the_balanced_columns() {
+    // The minimum wins over the maximum (CSS 2, 10.7), so the columns balance
+    // under the minimum.
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0;min-height:100px;max-height:30px",
+        &["display:block;height:40px", "display:block;height:40px"],
+    );
+    assert_eq!(doc.nodes[parent].layout.size.height, 100.0);
+    assert_eq!(fragment_rects(&doc, children[0]), vec![(0, 0.0, 0.0, 40.0)]);
+    assert_eq!(
+        fragment_rects(&doc, children[1]),
+        vec![(1, 100.0, 0.0, 40.0)]
+    );
+}
+
+#[test]
+fn a_maximum_height_above_the_minimum_still_caps_the_balanced_columns() {
+    // Four 40px blocks balance to 80px; the maximum cuts the columns at 60px
+    // and the rest continues in a third column.
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0;min-height:50px;max-height:60px",
+        &[
+            "display:block;height:40px",
+            "display:block;height:40px",
+            "display:block;height:40px",
+            "display:block;height:40px",
+        ],
+    );
+    assert_eq!(doc.nodes[parent].layout.size.height, 60.0);
+    let rects: Vec<_> = children.iter().map(|&c| fragment_rects(&doc, c)).collect();
+    assert_eq!(
+        rects,
+        vec![
+            vec![(0, 0.0, 0.0, 40.0)],
+            vec![(0, 0.0, 40.0, 20.0), (1, 100.0, 0.0, 20.0)],
+            vec![(1, 100.0, 20.0, 40.0)],
+            vec![(2, 200.0, 0.0, 40.0)],
+        ]
     );
 }
 
@@ -3666,6 +3847,20 @@ fn an_inherited_vertical_writing_mode_keeps_blocks_without_lines_whole() {
     assert!(fragment_rects(&doc, child).len() <= 1);
 }
 
+/// The pieces of a 200px box in two columns of a container that is 200px
+/// high. `column-fill: auto` fills the first column with the whole box, and
+/// the default balances it into one half per column; Chromium gives both.
+fn stretched_box_pieces(fill: &str) -> Vec<(usize, f32, f32, f32)> {
+    if fill == "column-fill:auto" {
+        vec![(0, 0.0, 0.0, 200.0)]
+    } else {
+        vec![(0, 0.0, 0.0, 100.0), (1, 50.0, 0.0, 100.0)]
+    }
+}
+
+/// The values of `column-fill` that [`stretched_box_pieces`] answers for.
+const COLUMN_FILLS: [&str; 2] = ["column-fill:auto", "column-fill:balance"];
+
 #[test]
 fn blocks_without_lines_fill_the_used_height_of_the_container() {
     // A maximum below the authored height limits the columns.
@@ -3679,19 +3874,22 @@ fn blocks_without_lines_fill_the_used_height_of_the_container() {
         vec![(0, 0.0, 0.0, 100.0), (1, 50.0, 0.0, 50.0)]
     );
     // A flex item stretched by its container keeps the stretched height.
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("margin:0"));
-    let flex = doc.append_element(Some(body), "div", Some("display:flex;height:200px"));
-    let parent = doc.append_element(
-        Some(flex),
-        "div",
-        Some("display:block;width:100px;columns:2;column-gap:0"),
-    );
-    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
-    layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
-    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+    for fill in COLUMN_FILLS {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let flex = doc.append_element(Some(body), "div", Some("display:flex;height:200px"));
+        let css = format!("display:block;width:100px;columns:2;column-gap:0;{fill}");
+        let parent = doc.append_element(Some(flex), "div", Some(&css));
+        let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(doc.nodes[parent].layout.size.height, 200.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, child),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
@@ -3762,36 +3960,42 @@ fn a_decorated_block_that_stays_whole_does_not_hide_an_exhausted_budget() {
 
 #[test]
 fn a_grid_stretched_multicol_keeps_its_area_height() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("margin:0"));
-    let grid = doc.append_element(
-        Some(body),
-        "div",
-        Some("display:grid;grid-template-rows:200px;grid-template-columns:100px"),
-    );
-    let parent = doc.append_element(
-        Some(grid),
-        "div",
-        Some("display:block;columns:2;column-gap:0"),
-    );
-    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
-    layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
-    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+    for fill in COLUMN_FILLS {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:grid;grid-template-rows:200px;grid-template-columns:100px"),
+        );
+        let css = format!("display:block;columns:2;column-gap:0;{fill}");
+        let parent = doc.append_element(Some(grid), "div", Some(&css));
+        let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(doc.nodes[parent].layout.size.height, 200.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, child),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
 fn an_inset_positioned_multicol_keeps_its_containing_block_height() {
-    let (doc, parent, children) = lineless_fixture(
-        "display:block;position:absolute;top:0;bottom:0;width:100px;columns:2;column-gap:0",
-        &["display:block;height:200px"],
-    );
-    assert_eq!(doc.nodes[parent].layout.size.height, 600.0);
-    assert_eq!(
-        fragment_rects(&doc, children[0]),
-        vec![(0, 0.0, 0.0, 200.0)]
-    );
+    for fill in COLUMN_FILLS {
+        let css = format!(
+            "display:block;position:absolute;top:0;bottom:0;width:100px;columns:2;column-gap:0;{fill}"
+        );
+        let (doc, parent, children) = lineless_fixture(&css, &["display:block;height:200px"]);
+        assert_eq!(doc.nodes[parent].layout.size.height, 600.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, children[0]),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
@@ -3817,23 +4021,26 @@ fn a_maximum_height_only_bounds_balanced_columns_of_blocks_without_lines() {
 
 #[test]
 fn a_column_flex_item_keeps_its_flexed_height() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", None::<&str>);
-    let body = doc.append_element(Some(html), "body", Some("margin:0"));
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        Some("display:flex;flex-direction:column;height:200px"),
-    );
-    let parent = doc.append_element(
-        Some(flex),
-        "div",
-        Some("display:block;flex:1;width:100px;columns:2;column-gap:0"),
-    );
-    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
-    layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[parent].layout.size.height, 200.0);
-    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+    for fill in COLUMN_FILLS {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:flex;flex-direction:column;height:200px"),
+        );
+        let css = format!("display:block;flex:1;width:100px;columns:2;column-gap:0;{fill}");
+        let parent = doc.append_element(Some(flex), "div", Some(&css));
+        let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
+        layout_nested_flex_float_fixture(&mut doc);
+        assert_eq!(doc.nodes[parent].layout.size.height, 200.0, "{fill}");
+        assert_eq!(
+            fragment_rects(&doc, child),
+            stretched_box_pieces(fill),
+            "{fill}"
+        );
+    }
 }
 
 #[test]
@@ -4050,6 +4257,46 @@ fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
 }
 
 #[test]
+fn ancestor_width_table_marks_the_boxes_layout_sizes_because_they_make_a_context() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Some("display:block;width:400px"));
+    // The overflow of the body goes to the viewport, so the body is no root.
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;overflow:hidden"),
+    );
+    let plain = doc.append_element(Some(body), "div", Some("display:block"));
+    let scroller = doc.append_element(Some(plain), "div", Some("display:block;overflow:auto"));
+    let below = doc.append_element(Some(scroller), "div", Some("display:block"));
+    let text = doc.append_text(below, "test");
+    let aligned = doc.append_element(Some(plain), "div", Some("display:block;align-content:end"));
+    let columns = doc.append_element(Some(plain), "div", Some("display:block;column-count:2"));
+    let contained = doc.append_element(Some(plain), "div", Some("display:block;contain:paint"));
+    let visible = doc.append_element(Some(plain), "div", Some("display:block;overflow:clip"));
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    for node in [body, plain, below, visible] {
+        assert!(!widths.context_root[node], "{node} is no context root");
+    }
+    for node in [scroller, aligned, columns, contained] {
+        assert!(widths.context_root[node], "{node} is a context root");
+        assert!(widths.sized_by_context_root(node));
+    }
+    // The projected width stays what a paragraph breaks again at, and layout
+    // sizes the blocks below a root.
+    assert_eq!(widths.authored_containing_width(text), Some(400.0));
+    assert!(widths.sized_by_context_root(text));
+    assert!(widths.laid_out_container[below]);
+    assert!(!widths.sized_by_context_root(plain));
+    assert!(!widths.laid_out_container[plain]);
+}
+
+#[test]
 fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -4076,7 +4323,7 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
 }
 
 #[test]
-fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
+fn ancestor_width_table_ignores_the_width_of_an_inline_box() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -4088,7 +4335,7 @@ fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
     let inner = doc.append_element(Some(outer), "span", Some("display:inline;width:30px"));
     let block = doc.append_element(Some(inner), "div", Some("display:block"));
     let text = doc.append_text(block, "test");
-    // An inline box without a block keeps the width it is given.
+    // So does an inline box with no block in it: no width applies to it.
     let plain = doc.append_element(Some(body), "span", Some("display:inline;width:50px"));
     let plain_text = doc.append_text(plain, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -4098,8 +4345,8 @@ fn ancestor_width_table_ignores_the_width_of_an_inline_box_around_a_block() {
     assert_eq!(widths.content_width[inner], 400.0);
     assert_eq!(widths.authored_containing_width(block), Some(400.0));
     assert_eq!(widths.authored_containing_width(text), Some(400.0));
-    assert_eq!(widths.content_width[plain], 50.0);
-    assert_eq!(widths.authored_containing_width(plain_text), Some(50.0));
+    assert_eq!(widths.content_width[plain], 400.0);
+    assert_eq!(widths.authored_containing_width(plain_text), Some(400.0));
 }
 
 #[test]
@@ -4194,9 +4441,9 @@ fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
 
     let mut doc = Document::new();
     let body = doc.append_element(Some(0), "body", None::<&str>);
-    let half = doc.append_element(Some(body), "div", Some("width:50%"));
+    let half = doc.append_element(Some(body), "div", Some("display:block;width:50%"));
     let text = doc.append_text(half, "percentage");
-    let ch = doc.append_element(Some(body), "div", Some("width:4ch"));
+    let ch = doc.append_element(Some(body), "div", Some("display:block;width:4ch"));
     let ch_text = doc.append_text(ch, "ch");
     doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -4526,7 +4773,7 @@ fn an_absolute_box_breaks_where_its_overflow_below_its_border_ends() {
     );
     let absolute = ids[0].1[0];
     // The child sits below the border, so the box reaches 105px down.
-    doc.append_element(Some(absolute), "div", Some("height:95px"));
+    doc.append_element(Some(absolute), "div", Some("display:block;height:95px"));
     layout_nested_flex_float_fixture(&mut doc);
     let columns: Vec<usize> = fragment_rects(&doc, absolute)
         .into_iter()
@@ -4803,11 +5050,15 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     let nested = "display:block;columns:2;height:50px";
     assert!(starts(DEFINITE_COLUMNS, None, nested));
     // Earlier content, a top margin or a top padding moves it down.
-    assert!(!starts(DEFINITE_COLUMNS, Some("height:40px"), nested));
+    assert!(!starts(
+        DEFINITE_COLUMNS,
+        Some("display:block;height:40px"),
+        nested
+    ));
     assert!(!starts(
         DEFINITE_COLUMNS,
         None,
-        "columns:2;height:50px;margin-top:10px"
+        "display:block;columns:2;height:50px;margin-top:10px"
     ));
     assert!(!starts(
         &format!("{DEFINITE_COLUMNS};padding-top:10px"),
@@ -4819,9 +5070,10 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some("margin:0"));
-        let parent = doc.append_element(Some(body), "div", Some(outer));
+        let parent = doc.append_element(Some(body), "div", Some(format!("display:block;{outer}")));
         doc.append_text(parent, text);
-        let nested = doc.append_element(Some(parent), "div", Some(nested));
+        let nested =
+            doc.append_element(Some(parent), "div", Some(format!("display:block;{nested}")));
         layout_nested_flex_float_fixture(&mut doc);
         with_bridged_session(&mut doc, |session| {
             lineless::starts_the_outer_columns(session, nested)
@@ -4862,7 +5114,7 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         doc.append_text(second, "B");
         layout_nested_flex_float_fixture(&mut doc);
         with_bridged_session(&mut doc, |session| {
-            multicol_has_only_paragraph_children(session, parent)
+            multicol_has_only_paragraph_children(session, parent, false)
         })
     };
     assert!(paragraphs("display:block;margin:0"));
@@ -4894,12 +5146,22 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(!paragraphs(
         "display:block;margin:0;padding-bottom:2px;border-radius:4px"
     ));
+    // A box of lines with a height of its own goes whole to a column.
+    assert!(paragraphs("display:block;margin:0;height:20px"));
+    assert!(paragraphs(
+        "display:block;margin:0 0 4px;height:20px;padding:2px"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
         "display:block;position:absolute",
         "display:block;float:left",
-        "display:block;height:20px",
+        "display:block;height:20px;overflow:hidden",
+        "display:block;height:20px;float:right",
+        "display:block;height:20px;writing-mode:vertical-rl",
+        "display:block;height:20px;break-inside:avoid",
+        "display:block;height:20px;margin-top:auto",
+        "display:block;height:50%;margin:0",
         "display:block;min-height:20px",
         "display:block;max-height:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
@@ -5373,7 +5635,8 @@ fn authored_box_reads_what_the_style_view_reads() {
         (a, b) => a == b,
     };
     // `(tag, css)` of a box inside a 200px wide parent. The parent and the
-    // body are plain blocks.
+    // body are plain blocks. An inline box is not asked: no size applies to
+    // it, and the width table leaves it out.
     let cases = [
         ("div", ""),
         ("div", "box-sizing:border-box;padding:10px;border:3px solid"),
@@ -5433,10 +5696,6 @@ fn authored_box_reads_what_the_style_view_reads() {
         (
             "div",
             "width:fit-content;border-left:4px solid;border-right:6px solid",
-        ),
-        (
-            "div",
-            "display:inline;width:fit-content;border-left:4px solid",
         ),
         (
             "div",
@@ -6087,7 +6346,11 @@ fn the_margins_of_the_children_of_a_spanner_stay_inside_it() {
         "",
         &[Part::Lines(1), Part::Spanner("height:auto"), Part::Lines(2)],
     );
-    doc.append_element(Some(boxes[0]), "div", Some("margin-top:10px;height:20px"));
+    doc.append_element(
+        Some(boxes[0]),
+        "div",
+        Some("display:block;margin-top:10px;height:20px"),
+    );
     lay_out_in_ahem(&mut doc, 180.0, 160.0);
     let spanner = doc.nodes[boxes[0]].layout;
     assert_eq!((spanner.location.y, spanner.size.height), (20.0, 30.0));
@@ -6437,12 +6700,142 @@ fn a_single_paragraph_enters_the_stream_only_with_padding_or_border() {
         let (mut doc, container, _) = padded_paragraph_columns(css, 4);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{css}"
         );
     }
+}
+
+#[test]
+fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
+    // The planner gives the columns that balance their height, which a lone
+    // paragraph needs as well; one with block edges it cannot slice stays
+    // out, and one without block edges goes in whatever it paints.
+    for (css, enters) in [
+        ("background:green", true),
+        ("padding-left:4px", true),
+        ("padding-left:4px;box-shadow:0 0 2px", true),
+        ("padding-top:4px;box-decoration-break:clone", false),
+        ("padding-bottom:4px;box-shadow:0 0 2px", false),
+    ] {
+        let (mut doc, container, _) = padded_paragraph_columns(css, 4);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container, true)
+            }),
+            enters,
+            "{css}"
+        );
+    }
+    // A lone box of lines with a height of its own is placed whole by the
+    // planner, which the columns that balance need.
+    let (mut doc, container, _) = padded_paragraph_columns("height:60px", 2);
+    for balances in [true, false] {
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container, balances)
+            }),
+            balances
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_below_a_wrapper_balances_in_a_definite_height_container() {
+    // A paragraph below a plain wrapper is balanced like one of the container's
+    // own: the columns are as tall as its lines need, up to the height.
+    let ranges = |container_css: &str, lines: usize| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some(
+                format!(
+                    "display:block;width:200px;columns:2;column-gap:0;orphans:1;widows:1;\
+                     {container_css}"
+                )
+                .as_str(),
+            ),
+        );
+        let wrapper = doc.append_element(Some(container), "div", Some("display:block"));
+        let paragraph = doc.append_element(Some(wrapper), "div", Some("display:block"));
+        for line in 0..lines {
+            doc.append_text(paragraph, "x");
+            if line + 1 < lines {
+                doc.append_element(Some(paragraph), "br", None::<&str>);
+            }
+        }
+        lay_out_in_ahem(&mut doc, 400.0, 300.0);
+        paragraph_pieces(&doc, paragraph).0
+    };
+    assert_eq!(ranges("height:100px", 6), [(0, 3, 0), (3, 6, 1)]);
+    assert_eq!(ranges("height:100px", 3), [(0, 2, 0), (2, 3, 1)]);
+    // Lines that need all of the height fill it, and go on in an overflow column.
+    assert_eq!(ranges("height:20px", 6), [(0, 2, 0), (2, 4, 1), (4, 6, 2)]);
+    // `column-fill: auto` fills the columns in turn.
+    assert_eq!(ranges("height:100px;column-fill:auto", 6), [(0, 6, 0)]);
+}
+
+#[test]
+fn a_box_whose_lines_reach_past_its_height_is_not_placed_whole() {
+    // The planner places a box of lines with a height of its own whole in a
+    // column, so the lines have to lie inside the height; a box whose lines
+    // would reach past it keeps the placement it had.
+    let build = |text: &[&str]| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:200px;height:100px;columns:2;column-gap:0"),
+        );
+        let boxes: Vec<usize> = text
+            .iter()
+            .map(|lines| {
+                let child = doc.append_element(
+                    Some(container),
+                    "div",
+                    Some("display:block;height:20px;box-sizing:border-box"),
+                );
+                for (index, line) in lines.split('/').enumerate() {
+                    if index > 0 {
+                        doc.append_element(Some(child), "br", None::<&str>);
+                    }
+                    doc.append_text(child, line);
+                }
+                child
+            })
+            .collect();
+        lay_out_in_ahem(&mut doc, 400.0, 300.0);
+        (doc, boxes)
+    };
+    // Lines inside the heights: the boxes share the columns at their width.
+    let (doc, boxes) = build(&["x/x", "x", "x", "x"]);
+    for (index, &child) in boxes.iter().enumerate() {
+        assert_eq!(doc.nodes[child].layout.size.width, 100.0, "box {index}");
+    }
+    let tops: Vec<f32> = boxes
+        .iter()
+        .map(|&child| doc.nodes[child].layout.location.y)
+        .collect();
+    assert_eq!(tops, [0.0, 20.0, 0.0, 20.0]);
+    // Three lines in a box of 20px: the plan is declined, and the boxes follow
+    // one another at the width of a column.
+    let (doc, boxes) = build(&["x/x/x", "x"]);
+    for &child in &boxes {
+        assert_eq!(doc.nodes[child].layout.size.width, 100.0);
+        assert_eq!(doc.nodes[child].layout.size.height, 20.0);
+    }
+    let tops: Vec<f32> = boxes
+        .iter()
+        .map(|&child| doc.nodes[child].layout.location.y)
+        .collect();
+    assert_eq!(tops, [0.0, 20.0]);
 }
 
 #[test]
@@ -6983,7 +7376,7 @@ fn a_sized_box_enters_the_stream_only_beside_a_paragraph() {
         let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{leaf} {paragraph:?}"
@@ -7102,7 +7495,7 @@ fn a_paragraph_with_a_margin_that_is_not_auto_enters_the_stream() {
             boxes_and_paragraphs_in_columns(&[(css, 3), ("background:green", 3)]);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{css}"
@@ -7535,7 +7928,7 @@ fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() 
         let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container)
+                multicol_has_only_paragraph_children(session, container, false)
             }),
             enters,
             "{spacer} {paragraph:?}"
@@ -7588,4 +7981,429 @@ fn the_margin_below_the_last_balanced_paragraph_does_not_add_to_the_columns() {
     // 10px margins make 140px, which is 70px for each column.
     let (doc, container, _, _) = balanced_paragraphs_in("", "", &[3, 3]);
     assert_eq!(doc.nodes[container].layout.size.height, 70.0);
+}
+
+/// A 300px container of `columns` columns with no gap, and `container_css`
+/// besides, that holds one block of each of `styles`, a float or not, 20px high
+/// with no margin unless the style says otherwise. Returns the document, the
+/// container and the blocks.
+fn floats_in_columns(
+    columns: usize,
+    container_css: &str,
+    styles: &[&str],
+) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            format!("display:block;width:300px;columns:{columns};column-gap:0;{container_css}")
+                .as_str(),
+        ),
+    );
+    let children = styles
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;height:20px;{style}").as_str()),
+            )
+        })
+        .collect();
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    (doc, container, children)
+}
+
+#[test]
+fn floats_of_opposite_sides_share_a_line_in_a_column() {
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:right;width:100px",
+            "float:left;width:100px",
+        ],
+    );
+    let at = |index: usize| {
+        let location = doc.nodes[floats[index]].layout.location;
+        (location.x, location.y)
+    };
+    assert_eq!(at(0), (0.0, 0.0));
+    assert_eq!(at(1), (200.0, 0.0));
+    // The third float shares the line too, beside the first.
+    assert_eq!(at(2), (100.0, 0.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 20.0);
+}
+
+#[test]
+fn a_float_that_does_not_fit_beside_the_floats_before_it_goes_below_them() {
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:200px",
+            "float:left;width:200px",
+            "float:right;width:50px",
+        ],
+    );
+    let at = |index: usize| {
+        let location = doc.nodes[floats[index]].layout.location;
+        (location.x, location.y)
+    };
+    assert_eq!(at(0), (0.0, 0.0));
+    assert_eq!(at(1), (0.0, 20.0));
+    // The right float joins the line of the second float.
+    assert_eq!(at(2), (250.0, 20.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 40.0);
+}
+
+#[test]
+fn a_float_that_clears_goes_below_the_floats_before_it() {
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:right;width:100px;clear:left",
+        ],
+    );
+    let location = doc.nodes[floats[1]].layout.location;
+    assert_eq!((location.x, location.y), (200.0, 20.0));
+
+    // Clearing both sides is cleared by a float of either side.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:right;width:100px",
+            "float:left;width:100px;clear:both",
+        ],
+    );
+    assert_eq!(locations(&doc, &floats)[1].1, 20.0);
+}
+
+#[test]
+fn a_float_with_no_room_on_the_line_is_still_cleared() {
+    // A float whose margin box has no width, by its width or by a negative
+    // margin, is on the line all the same, so a float that clears it goes below.
+    for first in [
+        "float:left;width:0",
+        "float:left;width:100px;margin-right:-100px",
+    ] {
+        let (doc, _, floats) =
+            floats_in_columns(1, "", &[first, "float:left;clear:left;width:100px"]);
+        assert_eq!(locations(&doc, &floats)[1].1, 20.0, "{first}");
+    }
+}
+
+#[test]
+fn floats_that_fit_one_column_stay_in_it_beside_each_other() {
+    // Balancing would send the second of two blocks stacked in a column to the
+    // next one, but the two floats take one line of the first column.
+    let (doc, container, floats) =
+        floats_in_columns(2, "", &["float:left;width:60px", "float:left;width:60px"]);
+    let at = |index: usize| {
+        let location = doc.nodes[floats[index]].layout.location;
+        (location.x, location.y)
+    };
+    assert_eq!(at(0), (0.0, 0.0));
+    assert_eq!(at(1), (60.0, 0.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 20.0);
+}
+
+#[test]
+fn white_space_between_floats_does_not_end_their_line() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:300px;columns:1;column-gap:0"),
+    );
+    let style = "display:block;height:20px;width:100px";
+    let left = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("{style};float:left").as_str()),
+    );
+    doc.append_text(container, " ");
+    let right = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("{style};float:right").as_str()),
+    );
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    assert_eq!(doc.nodes[left].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[right].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[right].layout.location.x, 200.0);
+}
+
+#[test]
+fn an_empty_block_between_floats_ends_their_line_only_when_it_clears() {
+    // An empty block has no block size, so a float after it is no lower than the
+    // float before it. Clearing puts the block below that float, and the float
+    // after it below the block.
+    let (doc, _, blocks) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "height:0",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(locations(&doc, &blocks)[2], (100.0, 0.0));
+    let (doc, _, blocks) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "height:0;clear:both",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(doc.nodes[blocks[2]].layout.location.y, 20.0);
+}
+
+/// The location of each of `blocks` in the document `doc`.
+fn locations(doc: &Document, blocks: &[usize]) -> Vec<(f32, f32)> {
+    blocks
+        .iter()
+        .map(|&block| {
+            let location = doc.nodes[block].layout.location;
+            (location.x, location.y)
+        })
+        .collect()
+}
+
+#[test]
+fn a_clear_of_the_other_side_does_not_end_the_line_and_the_margins_count_in_it() {
+    // The right float clears the right side, where there is no float, so it
+    // stays on the line of the left floats. Their margins take room too: the
+    // second left float starts after the margin box of the first.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;margin:0 10px",
+            "float:left;width:100px;margin:0 10px",
+            "float:right;width:50px;clear:right",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(10.0, 0.0), (130.0, 0.0), (250.0, 0.0)]
+    );
+}
+
+#[test]
+fn a_float_that_clears_one_side_goes_beside_the_taller_floats_of_the_other() {
+    // Clearing the right side takes the third float below the 20px right float
+    // only, not below the 100px left one it fits beside (CSS 2, 9.5.1 rules 5
+    // and 6; Chromium puts it at (200, 20)). With every float 20px high there
+    // is no difference.
+    for (left_height, container_height) in [(100, 100.0), (20, 40.0)] {
+        let left = format!("float:left;width:100px;height:{left_height}px");
+        let (doc, container, floats) = floats_in_columns(
+            1,
+            "",
+            &[
+                left.as_str(),
+                "float:right;width:100px",
+                "float:right;width:100px;clear:right",
+            ],
+        );
+        assert_eq!(
+            locations(&doc, &floats),
+            [(0.0, 0.0), (200.0, 0.0), (200.0, 20.0)]
+        );
+        assert_eq!(doc.nodes[container].layout.size.height, container_height);
+    }
+    // The left clear goes below the left float and beside the taller right one.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:right;width:100px;height:60px",
+            "float:left;width:100px;clear:left",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (200.0, 0.0), (0.0, 20.0)]
+    );
+}
+
+#[test]
+fn a_float_that_clears_both_sides_goes_below_the_lowest_float() {
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:100px",
+            "float:right;width:100px",
+            "float:right;width:100px;clear:both",
+        ],
+    );
+    assert_eq!(locations(&doc, &floats)[2], (200.0, 100.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 120.0);
+}
+
+#[test]
+fn a_float_that_does_not_fit_moves_down_to_the_next_bottom_of_a_float_before_it() {
+    // The wide left float has no room beside the right one, and goes down to its
+    // bottom, which is above the bottom of the taller left float.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:100px",
+            "float:right;width:100px",
+            "float:left;width:200px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (200.0, 0.0), (100.0, 20.0)]
+    );
+    // It goes below the first float that is in its way when that is the lowest.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:100px",
+            "float:left;width:100px",
+            "float:right;width:150px",
+            "float:left;width:100px;clear:left",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (100.0, 0.0), (150.0, 20.0), (0.0, 100.0)]
+    );
+}
+
+#[test]
+fn the_margin_box_of_a_float_that_clears_starts_at_the_bottom_of_the_floats() {
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;height:50px",
+            "float:right;width:100px;height:10px",
+            "float:right;width:100px;height:10px;clear:right;margin:5px 0",
+        ],
+    );
+    assert_eq!(locations(&doc, &floats)[2], (200.0, 15.0));
+}
+
+#[test]
+fn a_float_with_no_height_goes_beside_the_floats_that_reach_its_top() {
+    // Chromium puts it beside the float, and the float after it too.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:left;width:100px;height:0",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (100.0, 0.0), (100.0, 0.0)]
+    );
+}
+
+#[test]
+fn a_float_with_no_height_that_goes_down_holds_the_top_of_the_floats_after_it() {
+    // The empty float has no room beside the first one and goes below it, and
+    // the last float does not go up beside the first one (CSS 2, 9.5.1 rule 5).
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:200px",
+            "float:left;width:200px;height:0",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (0.0, 20.0), (0.0, 20.0)]
+    );
+    assert_eq!(doc.nodes[container].layout.size.height, 40.0);
+}
+
+#[test]
+fn balanced_columns_count_floats_that_share_a_line_once() {
+    // Four floats make two lines of two, so the columns are 20px high, not
+    // 40px, and the second line stands in the second column.
+    let (doc, container, floats) = floats_in_columns(
+        2,
+        "",
+        &[
+            "float:left;width:60px",
+            "float:left;width:60px",
+            "float:left;width:60px",
+            "float:left;width:60px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (60.0, 0.0), (150.0, 0.0), (210.0, 0.0)]
+    );
+    assert_eq!(doc.nodes[container].layout.size.height, 20.0);
+}
+
+#[test]
+fn comparison_widths_supply_the_containing_width_of_descendants() {
+    for (source, expected) in [
+        ("min(30px, calc(10px + 5%))", 20.0),
+        ("max(10px, 5%)", 10.0),
+        ("clamp(5px, calc(10px + 5%), 15px)", 15.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let container = doc.append_element(Some(body), "div", Some("display:block;width:200px"));
+        let sized = doc.append_element(
+            Some(container),
+            "div",
+            Some(format!("display:block;width:{source}").as_str()),
+        );
+        let child = doc.append_element(Some(sized), "div", Some("display:block;width:50%"));
+        let text = doc.append_text(child, "text");
+        let cascade = cascaded(&doc);
+        let facts = AncestorFacts::new(&doc, &cascade, 800.0);
+        assert_eq!(facts.content_width[sized], expected, "{source}");
+        assert_eq!(facts.content_width[child], expected / 2.0, "{source}");
+        assert_eq!(
+            facts.authored_containing_width(text),
+            Some(expected / 2.0),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn authored_comparison_limits_resolve_against_the_requested_basis() {
+    let mut doc = Document::new();
+    let id = doc.append_element(
+        Some(0),
+        "div",
+        Some("min-width:min(30px,calc(10px + 5%));max-width:max(20px,10%)"),
+    );
+    let cascade = cascaded(&doc);
+    let authored = AuthoredBox::new(&doc, &cascade, id);
+    assert_eq!(authored.min_width(100.0), Some(15.0));
+    assert_eq!(authored.max_width(100.0), Some(20.0));
+    assert_eq!(authored.min_width(1000.0), Some(30.0));
+    assert_eq!(authored.max_width(1000.0), Some(100.0));
 }

@@ -72,6 +72,8 @@ pub(crate) struct TentativeFloat {
     pub(crate) margin: Edges<f32>,
     /// What `perform_child_layout` returned for the float.
     pub(crate) output: LayoutOutput,
+    /// Content of the line comes before the float.
+    late: bool,
 }
 
 struct RunBoxesOutcome {
@@ -841,7 +843,10 @@ fn run_boxes_segment(
         let Some(result) = result else { break };
         match result {
             LineResult::FloatEncountered {
-                node, float_cursor, ..
+                node,
+                float_cursor,
+                inline_position,
+                ..
             } => {
                 let node = node.0 as usize;
                 cursor = Some(float_cursor);
@@ -850,7 +855,7 @@ fn run_boxes_segment(
                 if deferred.iter().any(|f| f.node == node) {
                     continue;
                 }
-                let float = measure_float(tree, node, geometry);
+                let mut float = measure_float(tree, node, geometry);
                 // `space` already has the tentative floats taken off. A float
                 // with no other float beside it is placed where it is even
                 // when it is wider than the line.
@@ -877,12 +882,44 @@ fn run_boxes_segment(
                         && ctx
                             .cleared_threshold(float.clear)
                             .is_some_and(|bottom| bottom > top_edge + line_y));
+                // A float with nothing of the line before it does not wait
+                // for the next line: it goes below the floats it does not
+                // fit beside, and the content after it in the source wraps
+                // beside it there (CSS 2.1 9.5.1 rules 6 and 8). The floats
+                // already met on this line come before it in the source and
+                // have no content before them either, so they are final too.
+                let indent = line_indent(&line_options, first_line, after_forced);
+                let starts_line = inline_position <= indent + 0.01;
+                if (!fits || below)
+                    && starts_line
+                    && deferred.is_empty()
+                    && !withdrawn.contains(&node)
+                {
+                    for float in tentative.drain(..).chain(std::iter::once(float)) {
+                        ceiling = ceiling.max(commit_fragmented_float(
+                            tree,
+                            ctx,
+                            float,
+                            line_y,
+                            geometry,
+                            FragmentedFloatOutput {
+                                perform,
+                                adjoins_top_margin: false,
+                                fragmentainer,
+                                placements: &mut fragment_box_placements,
+                                oof_candidates: &mut oof_candidates,
+                            },
+                        ));
+                    }
+                    continue;
+                }
                 // Floats are placed in source order (CSS 2.1 9.5.1 rule 5):
                 // once one of this line waits for the next line, the later
                 // ones wait too.
                 if withdrawn.contains(&node) || !fits || below || !deferred.is_empty() {
                     deferred.push(float);
                 } else {
+                    float.late = !starts_line;
                     tentative.push(float);
                 }
             }
@@ -934,13 +971,47 @@ fn run_boxes_segment(
                 // The engine indents the first line, and with `each-line` a
                 // line after a forced break or a block; a hanging indent is on
                 // every other line instead (CSS Text 3 §8.1).
-                let text_indent = line_options.text_indent;
-                let indented = first_line || (text_indent.each_line && after_forced);
-                let indent = if indented != text_indent.hanging {
-                    line_options.text_indent.length
-                } else {
-                    0.0
-                };
+                let indent = line_indent(&line_options, first_line, after_forced);
+                // A float met after content of the line sits beside that
+                // content only while the line holds both. When the floats
+                // that come after content leave too little room for the line,
+                // they go below it instead of pushing the line below them,
+                // last first and only as many as it takes (CSS 2.1 9.5.1
+                // rules 6 and 8). That also holds when the line overflows the
+                // room it has with no float beside it, as a line that cannot
+                // wrap does. When floats at the start of the line are the
+                // cause, the line moves below them as before and the later
+                // floats stay beside it.
+                let content = line.inline_size() + indent;
+                let late_room: f32 = tentative
+                    .iter()
+                    .filter(|f| f.late)
+                    .map(|f| f.margin_box.width)
+                    .sum();
+                let mut taken = 0;
+                if content > space.inline_size + 0.01
+                    && (content <= space.inline_size + late_room + 0.01
+                        || content > base.inline_size + 0.01)
+                    && !open_block
+                        .as_ref()
+                        .is_some_and(generated_blocks::OpenBlock::avoids_floats)
+                {
+                    let mut room = space.inline_size;
+                    for float in tentative.iter().rev().take_while(|f| f.late) {
+                        if content <= room + 0.01 {
+                            break;
+                        }
+                        room += float.margin_box.width;
+                        taken += 1;
+                    }
+                }
+                if taken > 0 {
+                    // They come before the floats that wait already, in
+                    // source order.
+                    let kept = tentative.len() - taken;
+                    deferred.splice(0..0, tentative.drain(kept..));
+                    continue;
+                }
                 let narrowed = space.inline_start != 0.0 || space.inline_size < width;
                 // A line that cannot wrap overflows where it is instead: moving
                 // it below the floats would act as a soft wrap. A box that
@@ -1628,8 +1699,7 @@ fn is_empty_closure(
 }
 
 /// Whether the inline box `node` has a padding or border on its top or bottom
-/// side, as authored: the style view of an inline box that holds a block reads
-/// none.
+/// side, as authored: the style view of an inline box reads none.
 fn has_edge_across_the_line(tree: &LayoutSession<'_>, node: usize) -> bool {
     if crate::generated_content::generated_origin(node).is_some() {
         return false;
@@ -1899,6 +1969,18 @@ fn child_height_basis(geometry: &FlowGeometry, vertical: bool) -> Option<f32> {
     }
 }
 
+/// The text indent the line begins with: the first line is indented, and with
+/// `each-line` a line after a forced break; a hanging indent is on every other
+/// line instead (CSS Text 3 §8.1).
+fn line_indent(options: &LineOptions, first_line: bool, after_forced: bool) -> f32 {
+    let indent = options.text_indent;
+    if (first_line || (indent.each_line && after_forced)) != indent.hanging {
+        indent.length
+    } else {
+        0.0
+    }
+}
+
 /// Lay a float out the way the block algorithm does: resolve its margins
 /// against the container, then give it the room that is left.
 fn measure_float(
@@ -1937,6 +2019,7 @@ fn measure_float(
         },
         margin,
         output,
+        late: false,
     }
 }
 
@@ -4911,6 +4994,24 @@ fn content_sizes_on_axis(
         AcrossLines::Room(room) => (None, AvailableSpace::Definite(room)),
         AcrossLines::Width(width) => (Some(width), AvailableSpace::Definite(width)),
     };
+    // A replaced box that states `height: stretch` fills the definite height
+    // of the root, less its margins, as it does once it is laid out: its width
+    // along the ratio follows from that height.
+    let known_height = basis
+        .max_content
+        .height
+        .filter(|_| {
+            !vertical
+                && matches!(
+                    tree.physical_style(node).size().height.expand(),
+                    ExpandedDimension::Stretch
+                )
+                && crate::paint_rules::is_replaced_element(tree.document, node)
+        })
+        .map(|room| {
+            let margin = resolved_margins(tree, node, 0.0);
+            (room - margin.top - margin.bottom).max(0.0)
+        });
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
         let parent_size = if available == AvailableSpace::MinContent {
             basis.min_content
@@ -4925,7 +5026,7 @@ fn content_sizes_on_axis(
                 axis,
                 known_dimensions: Size {
                     width: known_width,
-                    height: None,
+                    height: known_height,
                 },
                 known_dimensions_are_definite: Size {
                     width: true,

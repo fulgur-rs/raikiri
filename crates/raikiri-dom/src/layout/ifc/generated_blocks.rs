@@ -70,7 +70,7 @@ pub(crate) fn align_physically(options: &mut LineOptions, rtl: bool) {
 
 /// The box geometry of one block-level `::before` or `::after`, as computed:
 /// lengths are resolved when the paragraph is laid out, against its width.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GeneratedBlock {
     /// Id of the start token, the inline engine's id of the pseudo-element.
     pub(crate) start: u64,
@@ -105,7 +105,7 @@ pub(crate) struct GeneratedBlock {
 /// block-start and block-end sides, `left` and `right` the inline-start and
 /// inline-end ones. The block start is at the right of the root when
 /// `block_start_right`.
-fn on_axes<T: Copy>(sides: Sides<T>, block_start_right: bool) -> Sides<T> {
+fn on_axes<T>(sides: Sides<T>, block_start_right: bool) -> Sides<T> {
     let (start, end) = if block_start_right {
         (sides.right, sides.left)
     } else {
@@ -134,7 +134,7 @@ impl GeneratedBlock {
         Self {
             start,
             end,
-            margin: cv.margin,
+            margin: cv.margin.clone(),
             padding: cv.padding,
             border: Sides {
                 top: cv.border.top.width().px(),
@@ -142,12 +142,12 @@ impl GeneratedBlock {
                 bottom: cv.border.bottom.width().px(),
                 left: cv.border.left.width().px(),
             },
-            width: cv.width,
-            min_width: cv.min_width,
-            max_width: cv.max_width,
-            height: cv.height,
-            min_height: cv.min_height,
-            max_height: cv.max_height,
+            width: cv.width.clone(),
+            min_width: cv.min_width.clone(),
+            max_width: cv.max_width.clone(),
+            height: cv.height.clone(),
+            min_height: cv.min_height.clone(),
+            max_height: cv.max_height.clone(),
             border_box: cv.box_sizing == BoxSizing::BorderBox,
             // Logical sides are not mapped, as for an element's box (see the
             // taffy bridge).
@@ -230,10 +230,10 @@ impl GeneratedBlock {
     fn margins(&self, basis: f32) -> Sides<f32> {
         let side = |value| length_or_auto(value, Some(basis)).unwrap_or(0.0);
         Sides {
-            top: side(self.margin.top),
-            right: side(self.margin.right),
-            bottom: side(self.margin.bottom),
-            left: side(self.margin.left),
+            top: side(&self.margin.top),
+            right: side(&self.margin.right),
+            bottom: side(&self.margin.bottom),
+            left: side(&self.margin.left),
         }
     }
 
@@ -252,7 +252,7 @@ impl GeneratedBlock {
     /// height counts only against the definite `definite_height` of the
     /// containing block (CSS 2.1 10.5).
     fn used_height(&self, content: f32, edges: f32, definite_height: Option<f32>) -> f32 {
-        let sizes = [self.height, self.min_height, self.max_height];
+        let sizes = [&self.height, &self.min_height, &self.max_height];
         self.used_size(sizes, content, edges, definite_height)
     }
 
@@ -260,7 +260,7 @@ impl GeneratedBlock {
     /// max]` properties: see [`Self::used_height`].
     fn used_size(
         &self,
-        [size, min_size, max_size]: [ComputedLengthPercentageOrAuto; 3],
+        [size, min_size, max_size]: [&ComputedLengthPercentageOrAuto; 3],
         content: f32,
         edges: f32,
         definite: Option<f32>,
@@ -296,12 +296,12 @@ impl GeneratedBlock {
         let (block_edges, sizes) = if vertical && !self.on_root_axes {
             (
                 edges.left + edges.right,
-                [self.width, self.min_width, self.max_width],
+                [&self.width, &self.min_width, &self.max_width],
             )
         } else {
             (
                 edges.top + edges.bottom,
-                [self.height, self.min_height, self.max_height],
+                [&self.height, &self.min_height, &self.max_height],
             )
         };
         self.formatting_root
@@ -344,8 +344,8 @@ impl GeneratedBlock {
     /// (CSS 2.1 10.3.3): `auto` margins share it, else the end-side margin
     /// takes it, the left one in a right-to-left paragraph.
     fn inline_insets(&self, width: f32, rtl: bool, edges: &Sides<f32>) -> (f32, f32) {
-        let mut left = length_or_auto(self.margin.left, Some(width));
-        let mut right = length_or_auto(self.margin.right, Some(width));
+        let mut left = length_or_auto(&self.margin.left, Some(width));
+        let mut right = length_or_auto(&self.margin.right, Some(width));
         let insets = |left: f32, right: f32| (left + edges.left, right + edges.right);
         let content = match self.content_width(Some(width), edges) {
             Some(content) => content,
@@ -382,17 +382,17 @@ impl GeneratedBlock {
     /// The definite content-box width of the box, clamped by its minimum and
     /// maximum; `None` for an `auto` width or a percentage without `basis`.
     fn content_width(&self, basis: Option<f32>, edges: &Sides<f32>) -> Option<f32> {
-        let content = self.content_box_width(self.width, basis, edges)?;
+        let content = self.content_box_width(&self.width, basis, edges)?;
         Some(self.clamp_width(content, basis, edges))
     }
 
     /// The content-box width `content` clamped by the box's minimum and
     /// maximum widths, never below zero.
     fn clamp_width(&self, mut content: f32, basis: Option<f32>, edges: &Sides<f32>) -> f32 {
-        if let Some(max) = self.content_box_width(self.max_width, basis, edges) {
+        if let Some(max) = self.content_box_width(&self.max_width, basis, edges) {
             content = content.min(max);
         }
-        if let Some(min) = self.content_box_width(self.min_width, basis, edges) {
+        if let Some(min) = self.content_box_width(&self.min_width, basis, edges) {
             content = content.max(min);
         }
         content.max(0.0)
@@ -401,7 +401,7 @@ impl GeneratedBlock {
     /// The content-box width a width property `value` gives, if definite.
     fn content_box_width(
         &self,
-        value: ComputedLengthPercentageOrAuto,
+        value: &ComputedLengthPercentageOrAuto,
         basis: Option<f32>,
         edges: &Sides<f32>,
     ) -> Option<f32> {
@@ -453,7 +453,7 @@ impl GeneratedBlock {
         // height of its own is known before the lines are laid out; an `auto`
         // height follows the lines the box has at that width; lines that
         // cannot be measured on their own leave only its minimum height.
-        let own_height = length_or_auto(self.height, flow.definite_height).is_some();
+        let own_height = length_or_auto(&self.height, flow.definite_height).is_some();
         let mut height = |width: f32| {
             let content = if own_height {
                 0.0
@@ -478,10 +478,10 @@ impl GeneratedBlock {
         // `auto` side margins share the room the box leaves; the slot already
         // holds the margins that are not `auto`.
         let auto = |value| length_or_auto(value, Some(flow.width)).is_none();
-        let autos = u8::from(auto(self.margin.left)) + u8::from(auto(self.margin.right));
+        let autos = u8::from(auto(&self.margin.left)) + u8::from(auto(&self.margin.right));
         let free = (stretch - width).max(0.0);
         let mut left = slot.x - flow.content_left;
-        if auto(self.margin.left) {
+        if auto(&self.margin.left) {
             left += free / f32::from(autos);
         } else if flow.rtl && autos == 0 {
             // A narrow box in a right-to-left paragraph sits at the end side.
@@ -513,7 +513,7 @@ impl GeneratedBlock {
 /// and the other keywords, for a percentage without a basis, and for a value
 /// that is not finite. A `calc()` with no percentage needs no basis.
 pub(super) fn length_or_auto(
-    value: ComputedLengthPercentageOrAuto,
+    value: &ComputedLengthPercentageOrAuto,
     basis: Option<f32>,
 ) -> Option<f32> {
     match (value, basis) {
@@ -523,6 +523,7 @@ pub(super) fn length_or_auto(
         (ComputedLengthPercentageOrAuto::Calc(calc), None) if calc.percent == 0.0 => {
             crate::layout::page::used_computed_length_percentage_or_auto(value, 0.0)
         }
+        // Percentage-free comparisons are already folded to Px by the resolver.
         (_, Some(basis)) => {
             crate::layout::page::used_computed_length_percentage_or_auto(value, basis)
         }

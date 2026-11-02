@@ -14,7 +14,18 @@
 //! static position, and `stretch` there fills the room from that position to
 //! the far edge of the containing block, not the whole block (which the box
 //! would overflow by the offset of its static position). Where the static
-//! position is centered in the containing block, the box fills it.
+//! position is centered, the box fills the room that reaches as far on each
+//! side of the static position as the nearer edge of the containing block, and
+//! none at all past an edge. It stays centered in that room when a `max-width`
+//! cuts it short, and falls back to the start of it when it overflows and
+//! asked for `safe` alignment itself. A `safe center` of the flex container
+//! (`justify-content` and `align-items`) puts the static position at the center
+//! just as `center` does: the box has no size at that position, so nothing
+//! overflows.
+//!
+//! The room reaches the far edge of the padding box of the containing block,
+//! whatever its padding, border and `box-sizing`, and whether it is a block, a
+//! flex container or a grid container.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
@@ -563,4 +574,301 @@ cases! {
     abspos_stretch_aligned_safe_to_the_end_without_overflow:
         r#"<div style="display:flex;align-items:safe end;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
         [("t", (8.0, 8.0, 150.0, 150.0))];
+    abspos_stretch_centered_in_a_nested_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_centered_in_the_inline_axis_of_a_nested_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 28.0, 140.0, 130.0))];
+    abspos_stretch_centered_in_the_block_axis_of_a_nested_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (28.0, 8.0, 130.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_flex_container_less_margins:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:2px 6px 4px 10px"></div></div></div>"# =>
+        [("t", (18.0, 10.0, 124.0, 134.0))];
+    abspos_stretch_centered_in_a_nested_flex_container_with_a_fixed_height:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:20px"></div></div></div>"# =>
+        [("t", (8.0, 68.0, 140.0, 20.0))];
+    abspos_stretch_centered_nearer_the_far_edge_of_the_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px 20px 20px 40px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (38.0, 8.0, 120.0, 140.0))];
+    abspos_stretch_centered_with_a_left_inset:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;left:5px"></div></div></div>"# =>
+        [("t", (13.0, 8.0, 145.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_flex_container_in_rtl:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;direction:rtl;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_vertical_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;writing-mode:vertical-rl;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_flex_container_stays_centered_under_max_width:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px"></div></div></div>"# =>
+        [("t", (53.0, 8.0, 50.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_grid_container_by_justify_items_and_align_items:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:grid;justify-items:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_grid_container_ignores_justify_content:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:grid;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (28.0, 8.0, 130.0, 140.0))];
+    abspos_stretch_centered_in_a_nested_block_container_by_self_alignment:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;justify-self:center;align-self:center"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 40.0))];
+    abspos_stretch_centered_width_clamped_in_a_vertical_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px;writing-mode:vertical-rl"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px"></div></div></div>"# =>
+        [("t", (53.0, 8.0, 50.0, 140.0))];
+    abspos_stretch_centered_height_clamped_in_a_vertical_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px;writing-mode:vertical-rl"><div id=t style="position:absolute;width:stretch;height:stretch;max-height:50px"></div></div></div>"# =>
+        [("t", (8.0, 53.0, 140.0, 50.0))];
+    abspos_stretch_centered_width_clamped_under_vertical_axes:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px;writing-mode:vertical-rl"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px"></div></div></div>"# =>
+        [("t", (63.0, 8.0, 50.0, 140.0))];
+    abspos_stretch_centered_height_clamped_under_vertical_axes:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px;writing-mode:vertical-rl"><div id=t style="position:absolute;width:stretch;height:stretch;max-height:50px"></div></div></div>"# =>
+        [("t", (18.0, 53.0, 140.0, 50.0))];
+    abspos_stretch_centered_width_clamped_in_a_horizontal_flex_container_under_vertical_axes:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px;writing-mode:horizontal-tb"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px"></div></div></div>"# =>
+        [("t", (63.0, 8.0, 50.0, 140.0))];
+    abspos_stretch_centered_height_clamped_in_a_horizontal_flex_container_under_vertical_axes:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px;writing-mode:horizontal-tb"><div id=t style="position:absolute;width:stretch;height:stretch;max-height:50px"></div></div></div>"# =>
+        [("t", (18.0, 53.0, 140.0, 50.0))];
+    abspos_stretch_clamped_centered_by_justify_content_only_in_a_horizontal_flex_container_in_a_horizontal_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;writing-mode:horizontal-tb;justify-content:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (53.0, 28.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_align_items_only_in_a_horizontal_flex_container_in_a_horizontal_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;writing-mode:horizontal-tb;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (28.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_justify_content_only_in_a_vertical_flex_container_in_a_horizontal_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;writing-mode:vertical-rl;justify-content:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (78.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_align_items_only_in_a_vertical_flex_container_in_a_horizontal_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;writing-mode:vertical-rl;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (53.0, 28.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_justify_content_only_in_a_horizontal_flex_container_in_a_vertical_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;writing-mode:horizontal-tb;justify-content:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (63.0, 28.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_align_items_only_in_a_horizontal_flex_container_in_a_vertical_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;writing-mode:horizontal-tb;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (38.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_justify_content_only_in_a_vertical_flex_container_in_a_vertical_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;writing-mode:vertical-rl;justify-content:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (88.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_clamped_centered_by_align_items_only_in_a_vertical_flex_container_in_a_vertical_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="display:flex;writing-mode:vertical-rl;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div></div>"# =>
+        [("t", (63.0, 28.0, 50.0, 50.0))];
+    abspos_stretch_centered_past_the_far_edge_of_the_containing_block_has_no_room:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:300px;height:300px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (158.0, 158.0, 0.0, 0.0))];
+    abspos_stretch_centered_on_the_far_edge_of_the_containing_block_has_no_room:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:200px;height:200px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (108.0, 108.0, 0.0, 0.0))];
+    abspos_stretch_centered_on_the_near_edge_of_the_containing_block_has_no_room:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:-50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 0.0, 0.0))];
+    abspos_stretch_overflowing_centered_in_a_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:95px;min-height:95px"></div></div></div>"# =>
+        [("t", (30.5, 30.5, 95.0, 95.0))];
+    abspos_stretch_overflowing_centered_by_its_own_alignment:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:95px;min-height:95px;justify-self:center;align-self:center"></div></div></div>"# =>
+        [("t", (30.5, 30.5, 95.0, 95.0))];
+    abspos_stretch_overflowing_centered_by_its_own_safe_alignment:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:145px;min-height:145px;justify-self:safe center;align-self:safe center"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 145.0, 145.0))];
+    abspos_stretch_overflowing_centered_in_the_inline_axis_by_its_own_safe_alignment:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:145px;min-height:145px;justify-self:safe center"></div></div></div>"# =>
+        [("t", (8.0, 5.5, 145.0, 145.0))];
+    abspos_stretch_overflowing_centered_in_the_block_axis_by_its_own_safe_alignment:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:145px;min-height:145px;align-self:safe center"></div></div></div>"# =>
+        [("t", (5.5, 8.0, 145.0, 145.0))];
+    abspos_stretch_centered_past_the_far_edge_keeps_its_minimum_size_centered:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:300px;height:300px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:50px;min-height:50px"></div></div></div>"# =>
+        [("t", (133.0, 133.0, 50.0, 50.0))];
+    abspos_stretch_centered_on_the_far_edge_keeps_its_minimum_size_centered:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:200px;height:200px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:50px;min-height:50px"></div></div></div>"# =>
+        [("t", (83.0, 83.0, 50.0, 50.0))];
+    abspos_stretch_centered_past_the_far_edge_starts_its_minimum_size_when_safe:
+        r#"<div style="display:flow-root;position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:300px;height:300px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:50px;min-height:50px;justify-self:safe center;align-self:safe center"></div></div></div>"# =>
+        [("t", (158.0, 158.0, 50.0, 50.0))];
+    abspos_stretch_centered_by_justify_content_ignores_its_own_justify_self:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;justify-self:end"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_left_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-left:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_right_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-right:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_top_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-top:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_a_bottom_auto_margin_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-bottom:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_keeps_all_auto_margins_at_zero:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin:auto"></div></div></div>"# =>
+        [("t", (53.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_centered_fills_the_room_beside_auto_margins:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:auto"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_centered_centers_its_margin_box_beside_an_auto_margin:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin-left:auto;margin-right:6px"></div></div></div>"# =>
+        [("t", (50.0, 53.0, 50.0, 50.0))];
+    abspos_stretch_in_the_initial_containing_block_from_the_static_position:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (58.0, 50.0, 742.0, 550.0))];
+    fixed_stretch_in_the_initial_containing_block_from_the_static_position:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:fixed;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (58.0, 50.0, 742.0, 550.0))];
+    abspos_stretch_in_the_initial_containing_block_less_margins:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:5px 7px 9px 11px"></div></div>"# =>
+        [("t", (69.0, 55.0, 724.0, 536.0))];
+    abspos_stretch_centered_in_the_initial_containing_block:
+        r#"<div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (0.0, 0.0, 156.0, 140.0))];
+    abspos_stretch_centered_in_the_initial_containing_block_stays_centered_under_max_size:
+        r#"<div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div>"# =>
+        [("t", (53.0, 45.0, 50.0, 50.0))];
+    abspos_stretch_aligned_to_the_end_in_the_initial_containing_block:
+        r#"<div style="display:flex;justify-content:flex-end;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (0.0, 0.0, 128.0, 120.0))];
+    abspos_stretch_in_the_initial_containing_block_in_rtl:
+        r#"<style>html{direction:rtl}</style><div style="margin-right:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (0.0, 50.0, 742.0, 550.0))];
+    abspos_stretch_in_the_initial_containing_block_in_vertical_rl:
+        r#"<style>html{writing-mode:vertical-rl}</style><div style="margin-right:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (0.0, 58.0, 750.0, 542.0))];
+    abspos_stretch_in_the_initial_containing_block_with_a_left_inset:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;left:10px"></div></div>"# =>
+        [("t", (10.0, 50.0, 790.0, 550.0))];
+    fixed_stretch_centered_in_the_initial_containing_block:
+        r#"<div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:fixed;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (0.0, 0.0, 156.0, 140.0))];
+    abspos_stretch_width_only_in_the_initial_containing_block:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch"></div></div>"# =>
+        [("t", (58.0, 50.0, 742.0, 0.0))];
+    abspos_stretch_height_only_in_the_initial_containing_block:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;height:stretch"></div></div>"# =>
+        [("t", (58.0, 50.0, 0.0, 550.0))];
+    abspos_stretch_centered_in_the_initial_containing_block_in_vertical_rl:
+        r#"<style>html{writing-mode:vertical-rl}</style><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (660.0, 0.0, 140.0, 156.0))];
+    abspos_stretch_centered_in_the_initial_containing_block_in_rtl:
+        r#"<style>html{direction:rtl}</style><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (644.0, 0.0, 156.0, 140.0))];
+    fixed_stretch_aligned_to_the_end_in_the_initial_containing_block:
+        r#"<div style="display:flex;justify-content:flex-end;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:fixed;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (0.0, 0.0, 128.0, 120.0))];
+    abspos_stretch_centered_in_the_initial_containing_block_keeps_auto_margins_at_zero:
+        r#"<div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px;margin:auto"></div></div>"# =>
+        [("t", (53.0, 45.0, 50.0, 50.0))];
+    abspos_stretch_centered_in_the_initial_containing_block_overflows_on_both_sides_inline:
+        r#"<div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:300px"></div></div>"# =>
+        [("t", (-72.0, 0.0, 300.0, 140.0))];
+    abspos_stretch_in_the_initial_containing_block_cut_short_by_a_max_content_limit:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:max-content;max-height:max-content"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("t", (58.0, 50.0, 30.0, 10.0))];
+    fixed_stretch_in_the_initial_containing_block_cut_short_by_a_max_content_limit:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:fixed;width:stretch;height:stretch;max-width:max-content;max-height:max-content"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("t", (58.0, 50.0, 30.0, 10.0))];
+    abspos_stretch_centered_in_the_initial_containing_block_cut_short_by_a_max_content_limit:
+        r#"<div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:max-content;max-height:max-content"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("t", (63.0, 65.0, 30.0, 10.0))];
+    abspos_stretch_in_the_initial_containing_block_between_a_min_content_and_a_numeric_limit:
+        r#"<div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;min-width:min-content;max-width:40px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("t", (58.0, 50.0, 40.0, 10.0))];
+    abspos_stretch_height_centered_in_the_initial_containing_block_keeps_the_cross_axis_static_position_in_a_column_flex:
+        r#"<div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:10px;height:stretch"></div></div>"# =>
+        [("t", (118.0, 0.0, 10.0, 140.0))];
+    abspos_stretch_width_end_aligned_in_the_initial_containing_block_keeps_the_cross_axis_static_position_in_a_row_flex:
+        r#"<div style="display:flex;justify-content:flex-end;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:10px"></div></div>"# =>
+        [("t", (0.0, 65.0, 128.0, 10.0))];
+    abspos_stretch_height_centered_in_the_initial_containing_block_keeps_the_static_position_in_a_grid:
+        r#"<div style="display:grid;justify-items:end;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:10px;height:stretch"></div></div>"# =>
+        [("t", (118.0, 0.0, 10.0, 140.0))];
+    abspos_stretch_both_axes_in_the_initial_containing_block_under_max_size_in_a_column_flex:
+        r#"<div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div>"# =>
+        [("t", (78.0, 45.0, 50.0, 50.0))];
+    abspos_stretch_fills_to_the_padding_box_of_its_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (28.0, 18.0, 130.0, 140.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_bordered_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;border:5px solid"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (33.0, 23.0, 120.0, 130.0))];
+    abspos_stretch_less_margins_fills_to_the_padding_box_of_its_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:3px 4px 5px 6px"></div></div>"# =>
+        [("t", (34.0, 21.0, 120.0, 132.0))];
+    abspos_stretch_with_left_and_top_insets_fills_to_the_padding_box_of_its_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px"><div id=t style="position:absolute;width:stretch;height:stretch;left:7px;top:9px"></div></div>"# =>
+        [("t", (15.0, 17.0, 143.0, 141.0))];
+    abspos_stretch_with_right_and_bottom_insets_fills_to_the_padding_box_of_its_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px"><div id=t style="position:absolute;width:stretch;height:stretch;right:7px;bottom:9px"></div></div>"# =>
+        [("t", (8.0, 8.0, 143.0, 141.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_flex_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;display:flex"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (28.0, 18.0, 130.0, 140.0))];
+    abspos_stretch_centered_in_a_flex_containing_block_stays_centered_under_max_width_beside_padding_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;display:flex;justify-content:center;align-items:center"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px"></div></div>"# =>
+        [("t", (58.0, 8.0, 50.0, 150.0))];
+    abspos_stretch_aligned_to_the_end_of_a_flex_containing_block_reaches_back_to_the_padding_box_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;display:flex;justify-content:flex-end;align-items:flex-end"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 130.0, 140.0))];
+    abspos_stretch_fills_the_padding_box_of_a_grid_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;display:grid"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
+    abspos_stretch_centered_fills_the_padding_box_of_a_grid_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;display:grid;justify-items:center;align-items:center"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_vertical_rl_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;writing-mode:vertical-rl"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 18.0, 130.0, 140.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_right_to_left_containing_block_border_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;direction:rtl"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 18.0, 130.0, 140.0))];
+    abspos_stretch_fills_to_the_padding_box_of_its_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (28.0, 18.0, 170.0, 160.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_bordered_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;border:5px solid"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (33.0, 23.0, 170.0, 160.0))];
+    abspos_stretch_less_margins_fills_to_the_padding_box_of_its_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box"><div id=t style="position:absolute;width:stretch;height:stretch;margin:3px 4px 5px 6px"></div></div>"# =>
+        [("t", (34.0, 21.0, 160.0, 152.0))];
+    abspos_stretch_with_left_and_top_insets_fills_to_the_padding_box_of_its_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box"><div id=t style="position:absolute;width:stretch;height:stretch;left:7px;top:9px"></div></div>"# =>
+        [("t", (15.0, 17.0, 183.0, 161.0))];
+    abspos_stretch_with_right_and_bottom_insets_fills_to_the_padding_box_of_its_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box"><div id=t style="position:absolute;width:stretch;height:stretch;right:7px;bottom:9px"></div></div>"# =>
+        [("t", (8.0, 8.0, 183.0, 161.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_flex_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;display:flex"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (28.0, 18.0, 170.0, 160.0))];
+    abspos_stretch_centered_in_a_flex_containing_block_stays_centered_under_max_width_beside_padding_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;display:flex;justify-content:center;align-items:center"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px"></div></div>"# =>
+        [("t", (78.0, 8.0, 50.0, 170.0))];
+    abspos_stretch_aligned_to_the_end_of_a_flex_containing_block_reaches_back_to_the_padding_box_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;display:flex;justify-content:flex-end;align-items:flex-end"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 170.0, 160.0))];
+    abspos_stretch_fills_the_padding_box_of_a_grid_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;display:grid"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 190.0, 170.0))];
+    abspos_stretch_centered_fills_the_padding_box_of_a_grid_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;display:grid;justify-items:center;align-items:center"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 190.0, 170.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_vertical_rl_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;writing-mode:vertical-rl"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 18.0, 170.0, 160.0))];
+    abspos_stretch_fills_to_the_padding_box_of_a_right_to_left_containing_block_content_box:
+        r#"<div style="position:relative;width:150px;height:150px;padding:10px 20px;box-sizing:content-box;direction:rtl"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 18.0, 170.0, 160.0))];
+    abspos_stretch_in_a_safe_center_flex_container_min_size_overflow:
+        r#"<div style="position:relative;width:100px;height:100px"><div style="display:flex;justify-content:safe center;align-items:safe center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:95px;min-height:95px"></div></div></div>"# =>
+        [("t", (30.5, 20.0, 95.0, 100.0))];
+    abspos_stretch_in_a_center_flex_container_min_size_overflow:
+        r#"<div style="position:relative;width:100px;height:100px"><div style="display:flex;justify-content:center;align-items:center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:95px;min-height:95px"></div></div></div>"# =>
+        [("t", (30.5, 20.0, 95.0, 100.0))];
+    abspos_fixed_size_in_a_safe_center_flex_container:
+        r#"<div style="display:flex;justify-content:safe center;align-items:safe center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:10px;height:10px"></div></div>"# =>
+        [("t", (73.0, 65.0, 10.0, 10.0))];
+    abspos_stretch_under_max_size_in_a_safe_center_flex_container:
+        r#"<div style="position:relative;display:flex;justify-content:safe center;align-items:safe center;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:50px;max-height:50px"></div></div>"# =>
+        [("t", (53.0, 45.0, 50.0, 50.0))];
 }

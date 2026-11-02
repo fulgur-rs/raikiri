@@ -961,6 +961,7 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
         LengthOrAuto::Auto => "auto".to_owned(),
         LengthOrAuto::Calc(calc) => serialize_calc_length_percentage(calc),
         LengthOrAuto::RelativeCalc(calc) => serialize_relative_calc_length_percentage(calc),
+        LengthOrAuto::Math(value) => value.to_css(),
         LengthOrAuto::MinContent => "min-content".to_owned(),
         LengthOrAuto::MaxContent => "max-content".to_owned(),
         LengthOrAuto::FitContent => "fit-content".to_owned(),

@@ -37,6 +37,10 @@ impl<'a, 'b> ProjectionWork<'a, 'b> {
     pub(crate) fn check(&self) -> Result<(), LayoutError> {
         self.control.check_aborted()
     }
+    /// The number of pages the control allows, or `None` when it has no limit.
+    pub(crate) fn page_limit(&self) -> Option<u32> {
+        self.control.max_pages
+    }
     pub(crate) fn page_available(&self, page_index: u32) -> Result<bool, LayoutError> {
         self.control.check_discovery_page_index(page_index)?;
         Ok(self

@@ -21,6 +21,8 @@ pub enum RepeatKind {
     EveryPage,
     /// A complete copy of the first header group on a table's pages.
     TableHeader,
+    /// A complete copy of the first footer group on a table's pages.
+    TableFooter,
 }
 
 /// A local overflow clip that applies to content on one page.
@@ -165,7 +167,9 @@ impl<'a> Fragment<'a> {
     pub fn repeat(&self) -> Option<RepeatKind> {
         self.item
             .is_repeat
-            .then_some(if self.item.is_table_header_repeat {
+            .then_some(if self.item.is_table_footer_repeat {
+                RepeatKind::TableFooter
+            } else if self.item.is_table_header_repeat {
                 RepeatKind::TableHeader
             } else {
                 RepeatKind::EveryPage

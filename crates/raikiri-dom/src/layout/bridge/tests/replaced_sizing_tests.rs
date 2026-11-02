@@ -761,8 +761,11 @@ fn a_percentage_height_of_an_image_resolves_against_an_absolute_box_with_a_defin
     let (parent, image) = {
         let (mut parent, mut image) = (0, 0);
         let doc = laid_out(|doc, body| {
-            let container =
-                doc.append_element(Some(body), "div", Some("position:relative;height:80px"));
+            let container = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;position:relative;height:80px"),
+            );
             parent = doc.append_element(
                 Some(container),
                 "div",
@@ -804,7 +807,11 @@ fn a_percentage_height_of_a_block_is_auto_in_an_absolute_box_that_sizes_to_its_c
         let (mut parent, mut child) = (0, 0);
         let doc = laid_out(|doc, body| {
             parent = doc.append_element(Some(body), "div", Some(box_css));
-            child = doc.append_element(Some(parent), "div", Some("height:100%;min-height:10px"));
+            child = doc.append_element(
+                Some(parent),
+                "div",
+                Some("display:block;height:100%;min-height:10px"),
+            );
         });
         (size(&doc, parent).1, size(&doc, child).1)
     };
@@ -823,7 +830,7 @@ fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width(
         let container = doc.append_element(
             Some(body),
             "div",
-            Some("position:relative;width:200px;height:100px"),
+            Some("display:block;position:relative;width:200px;height:100px"),
         );
         parent = doc.append_element(
             Some(container),
@@ -1398,7 +1405,7 @@ fn a_block_with_a_keyword_height_is_not_stretched_either() {
                     "div",
                     Some(&format!("align-self:stretch;width:30px;height:{height}")),
                 );
-                doc.append_element(Some(block), "div", Some("height:40px"));
+                doc.append_element(Some(block), "div", Some("display:block;height:40px"));
             });
             assert_eq!(size(&doc, block), (30.0, 40.0), "{name} {height}");
         }
@@ -1406,8 +1413,8 @@ fn a_block_with_a_keyword_height_is_not_stretched_either() {
     let mut block = 0;
     let doc = laid_out(|doc, body| {
         let container = doc.append_element(Some(body), "div", Some(KEYWORD_WIDTH_CONTAINERS[2].1));
-        block = doc.append_element(Some(container), "div", Some("width:30px"));
-        doc.append_element(Some(block), "div", Some("height:40px"));
+        block = doc.append_element(Some(container), "div", Some("display:block;width:30px"));
+        doc.append_element(Some(block), "div", Some("display:block;height:40px"));
     });
     assert_eq!(size(&doc, block), (30.0, 100.0));
 }

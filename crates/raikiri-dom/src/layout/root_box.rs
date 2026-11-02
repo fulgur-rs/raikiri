@@ -135,25 +135,33 @@ pub fn root_box(
     );
     // A root on vertical axes maps a declared `inline-size` / `block-size`
     // onto its height / width.
-    let (width, height) = super::bridge::vertical_logical_size(cascade, root)
-        .map_or((computed.width, computed.height), |size| {
-            (size.width, size.height)
+    let logical = super::bridge::vertical_logical_size(cascade, root);
+    let (width, height) = logical
+        .as_ref()
+        .map_or((&computed.width, &computed.height), |size| {
+            (&size.width, &size.height)
         });
     let horizontal = Axis {
         size: width,
-        min: computed.min_width,
-        max: computed.max_width,
+        min: &computed.min_width,
+        max: &computed.max_width,
         area: area_width,
         edges: border.left + border.right + padding.left + padding.right,
-        margins: (margin(computed.margin.left), margin(computed.margin.right)),
+        margins: (
+            margin(&computed.margin.left),
+            margin(&computed.margin.right),
+        ),
     };
     let vertical = Axis {
         size: height,
-        min: computed.min_height,
-        max: computed.max_height,
+        min: &computed.min_height,
+        max: &computed.max_height,
         area: area_height,
         edges: border.top + border.bottom + padding.top + padding.bottom,
-        margins: (margin(computed.margin.top), margin(computed.margin.bottom)),
+        margins: (
+            margin(&computed.margin.top),
+            margin(&computed.margin.bottom),
+        ),
     };
     let rtl = matches!(computed.direction, Direction::Rtl);
     let border_box = match pages_along_x {
@@ -202,10 +210,10 @@ pub fn root_box(
 }
 
 /// The sizing inputs of the root along one physical axis.
-struct Axis {
-    size: ComputedLengthPercentageOrAuto,
-    min: ComputedLengthPercentageOrAuto,
-    max: ComputedLengthPercentageOrAuto,
+struct Axis<'a> {
+    size: &'a ComputedLengthPercentageOrAuto,
+    min: &'a ComputedLengthPercentageOrAuto,
+    max: &'a ComputedLengthPercentageOrAuto,
     /// Extent of the page area along the axis.
     area: f32,
     /// Border and padding on both sides.
@@ -215,7 +223,7 @@ struct Axis {
     margins: (Option<f32>, Option<f32>),
 }
 
-impl Axis {
+impl Axis<'_> {
     /// The used start margin and border-box size of the root across the
     /// pages, where each page holds all of it.
     ///
@@ -310,9 +318,9 @@ pub(super) fn root_element(document: &Document) -> Option<usize> {
 /// its `min-` and `max-` limits and read as `box-sizing` says.
 fn definite_border_box_size(
     computed: &ComputedValues,
-    size: ComputedLengthPercentageOrAuto,
-    min: ComputedLengthPercentageOrAuto,
-    max: ComputedLengthPercentageOrAuto,
+    size: &ComputedLengthPercentageOrAuto,
+    min: &ComputedLengthPercentageOrAuto,
+    max: &ComputedLengthPercentageOrAuto,
     basis: f32,
     edges: f32,
 ) -> Option<f32> {
@@ -330,8 +338,8 @@ fn definite_border_box_size(
 fn clamp_auto_size(
     computed: &ComputedValues,
     content: f32,
-    min: ComputedLengthPercentageOrAuto,
-    max: ComputedLengthPercentageOrAuto,
+    min: &ComputedLengthPercentageOrAuto,
+    max: &ComputedLengthPercentageOrAuto,
     basis: f32,
     edges: f32,
 ) -> f32 {

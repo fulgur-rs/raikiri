@@ -5,11 +5,12 @@ use super::element_box::ElementBox;
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
-    BackgroundEnv, InlineSvg, border_hides_background_edge, color_only_background_layer,
-    fixed_background_viewport, img_src_url, infer_url_color, paint_canvas,
-    paint_element_background, paint_element_border_image, paint_element_border_rounded,
-    paint_element_border_with_top, paint_element_box_shadows, paint_element_outline,
-    paint_generated_pseudo, paint_image, paint_list_marker_with_snapshots, push_overflow_clip,
+    BackgroundEnv, InlineSvg, background_padding_for_paint, border_hides_background_edge,
+    color_only_background_layer, fixed_background_viewport, img_src_url, infer_url_color,
+    paint_canvas, paint_element_background, paint_element_border_image,
+    paint_element_border_rounded, paint_element_border_with_top, paint_element_box_shadows,
+    paint_element_outline, paint_generated_pseudo, paint_image, paint_list_marker_with_snapshots,
+    push_overflow_clip,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Rect};
@@ -294,23 +295,59 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             cv,
             inside_fixed,
             fixed_in_viewport,
+            paint_y,
+            paint_height,
             ..
         } = *element;
         let PageGeometry {
             page_clip_transform,
             page_content_clip,
+            page_top,
+            flow_band,
             ..
         } = self.geometry;
         // Paint element background (CSS Backgrounds 3 §2.2).
         // Shift applies to the box itself per CSS 2.1 §10.8.1.
-        let clip_background = page_content_clip.filter(|_| {
-            !inside_fixed
-                && !fixed_in_viewport
-                && matches!(
-                    cv.position,
-                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                )
-        });
+        let clip_background = page_content_clip
+            .filter(|_| {
+                !inside_fixed
+                    && !fixed_in_viewport
+                    && matches!(
+                        cv.position,
+                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                    )
+            })
+            .or_else(|| {
+                // An absolutely positioned box is laid out whole, not broken
+                // at the pages. Its background is cut to the page area where
+                // the box goes on to the next page or comes from the page
+                // before, as the background of each fragment of a broken box
+                // is (CSS Fragmentation 3, section 5.4). On the first page a
+                // box above the page area lies in the margin, and is not cut.
+                const UNBOUNDED: f64 = 1.0e7;
+                let clip = page_content_clip?;
+                if inside_fixed
+                    || fixed_in_viewport
+                    || flow_band.is_some()
+                    || !matches!(cv.position, PositionValue::Absolute)
+                {
+                    return None;
+                }
+                let continues_from_before = page_top > 0.0 && f64::from(paint_y) < clip.y0 - 0.01;
+                let continues_after = f64::from(paint_y + paint_height) > clip.y1 + 0.01;
+                (continues_from_before || continues_after).then(|| {
+                    Rect::new(
+                        -UNBOUNDED,
+                        if continues_from_before {
+                            clip.y0
+                        } else {
+                            -UNBOUNDED
+                        },
+                        UNBOUNDED,
+                        if continues_after { clip.y1 } else { UNBOUNDED },
+                    )
+                })
+            });
         if let Some(clip) = clip_background {
             self.scene.scene.push_clip_layer(page_clip_transform, &clip);
         }
@@ -342,6 +379,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn paint_background_layers(&mut self, element: &ElementBox<'w>, own: &OwnBox) {
         let ElementBox {
             cv,
+            layout,
             paint_padding,
             paint_border_radius,
             painted_border,
@@ -354,6 +392,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             background_height: own_background_height,
             ..
         } = *own;
+        let paint_padding = background_padding_for_paint(cv, &layout, paint_padding);
         let env = self.background_env(element);
         paint_element_background(
             self.image_cache,

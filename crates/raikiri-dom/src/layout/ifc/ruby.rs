@@ -12,10 +12,15 @@
 //! `ruby-text-container` is improperly contained: an anonymous ruby container
 //! wraps each run of such boxes, giving every one an empty base of its own.
 //!
-//! Content that this mapping does not cover yet (blocks, generated content,
-//! misparented bases, atomic inlines in an inter-character annotation) leaves
-//! the container to the ordinary inline path, which lays its bases and
-//! annotations out in the line.
+//! Ruby content is inline-level: a block-level box in it is inlinized into an
+//! atomic inline (CSS Ruby 1 §2.2), and a `ruby-base` or `ruby-base-container`
+//! that is not a child of a ruby container or a base container is an inline
+//! box.
+//!
+//! Content that this mapping does not cover yet (generated content, a
+//! `ruby-text-container` that is not a child of a ruby container, atomic
+//! inlines in an inter-character annotation) leaves the container to the
+//! ordinary inline path, which lays its bases and annotations out in the line.
 
 use super::assign::is_css_whitespace;
 use super::boxes::{IfcBox, IfcBoxKind};
@@ -217,8 +222,14 @@ impl Planner<'_> {
         }
         match doc.nodes[id].display() {
             // An element with `display: contents` generates no box: its
-            // children take its place (CSS Display 3 §2.5).
-            DisplayValue::Inline | DisplayValue::Contents => doc.nodes[id]
+            // children take its place (CSS Display 3 §2.5). A ruby base or
+            // base container that is not a child of a ruby container or a
+            // base container is an inline box, as it is in the ordinary
+            // inline path.
+            DisplayValue::Inline
+            | DisplayValue::Contents
+            | DisplayValue::RubyBase
+            | DisplayValue::RubyBaseContainer => doc.nodes[id]
                 .children
                 .iter()
                 .all(|&child| self.is_plain_inline_at(child, depth + 1)),

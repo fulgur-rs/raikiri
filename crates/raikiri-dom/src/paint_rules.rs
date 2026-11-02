@@ -135,9 +135,9 @@ pub(crate) fn clips_element_overflow(
 /// normalized again after an opposite edge crops them. Open axes impose no
 /// bound and do not form rounded corners.
 ///
-/// The clip origin is floored to include pixel-snapped descendants. An
-/// `overflow: clip` far edge is floored too. Viewport-propagated overflow and
-/// ordinary inline boxes do not produce a local clip.
+/// Each edge of a clipping axis is rounded to the nearest pixel, the way
+/// Chromium snaps a clip rectangle. Viewport-propagated overflow and ordinary
+/// inline boxes do not produce a local clip.
 pub fn overflow_clip(
     document: &Document,
     cascade: &CascadeResult,
@@ -242,7 +242,7 @@ pub(crate) fn lays_out_as_replaced(document: &Document, node_id: usize) -> bool 
 /// box under the UA default `overflow-clip-margin: content-box`; a visible
 /// axis lets the content paint outside its box (CSS Overflow 3 §3.1). The
 /// edges snap like [`overflow_clip`], whose clip the page paint order puts
-/// around the same content.
+/// around the same content: each to the nearest pixel.
 pub fn replaced_content_clip(
     cv: &ComputedValues,
     border_box: PaintRect,
@@ -343,21 +343,26 @@ impl OverflowClipGeometry {
     }
 
     /// Snap edges only after translating the whole border box to its page.
+    ///
+    /// Every edge of a clipping axis moves to the nearest pixel, so a box whose
+    /// edge lies on a half pixel covers the pixel after it. This is how
+    /// Chromium pixel-snaps a clip rectangle, for `overflow: clip`, a scroll
+    /// container and the content of a replaced element alike. An open axis
+    /// keeps its far edge as it is, since it imposes no bound.
     pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
-        let x0 = (border_box.x + self.edges.left).floor();
-        let y0 = (border_box.y + self.edges.top).floor();
+        let left = border_box.x + self.edges.left;
+        let top = border_box.y + self.edges.top;
         let right = border_box.x + border_box.width - self.edges.right;
         let bottom = border_box.y + border_box.height - self.edges.bottom;
-        let x1 = if self.overflow.x == OverflowValue::Clip {
-            right.floor()
-        } else {
-            right
+        let axis = |overflow, start, end| {
+            if overflow == OverflowValue::Visible {
+                (snap_to_pixel(start), end)
+            } else {
+                snap_clip_span(start, end)
+            }
         };
-        let y1 = if self.overflow.y == OverflowValue::Clip {
-            bottom.floor()
-        } else {
-            bottom
-        };
+        let (x0, x1) = axis(self.overflow.x, left, right);
+        let (y0, y1) = axis(self.overflow.y, top, bottom);
         let mut clip = PaintClip::new(PaintRect::new(
             x0,
             y0,
@@ -369,6 +374,30 @@ impl OverflowClipGeometry {
         clip.corner_radii = self.corner_radii;
         clip
     }
+}
+
+/// The nearest pixel, with a half rounding up (0.5 gives 1, -0.5 gives 0) as
+/// Chromium's `LayoutUnit` does, where `f32::round` rounds a half away from
+/// zero.
+fn snap_to_pixel(value: f32) -> f32 {
+    (value + 0.5).floor()
+}
+
+/// The thinnest clip that still paints in Chromium; a narrower span is empty.
+const MIN_PAINTED_CLIP_SPAN: f32 = 1.0 / 16.0;
+
+/// Snap the clip span `start..end` of one axis to whole pixels, each edge to
+/// the nearest pixel. A span that rounds to nothing keeps the pixel its far
+/// edge reaches into, as in Chromium: a clip of 0.3px from 10.1px still shows
+/// the row at 10, while one from 10.6px shows none because it ends before
+/// the row it would start in.
+fn snap_clip_span(start: f32, end: f32) -> (f32, f32) {
+    let first = snap_to_pixel(start);
+    let last = snap_to_pixel(end);
+    if last <= first && end > first && end - start >= MIN_PAINTED_CLIP_SPAN {
+        return (first, first + 1.0);
+    }
+    (first, last)
 }
 
 fn resolve_overflow_clip_edges(
@@ -1219,6 +1248,85 @@ pub fn insert_positioned_frame<F>(
     frames.insert(at, frame);
 }
 
+/// Whether the overflow clip of element `owner` leaves the box `node_id`
+/// inside it alone: an absolutely or fixed positioned box whose containing
+/// block lies outside `owner`.
+///
+/// An overflow clip cuts the content of its element, but not the descendants
+/// whose containing block is the viewport or an ancestor of the element (CSS
+/// 2.1 §11.1.1). The containing block is the nearest ancestor that
+/// establishes one, so `owner` itself cuts the box when it is that ancestor.
+pub fn escapes_overflow_clip(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    node_id: usize,
+) -> bool {
+    let fixed = match cascade.computed.get(node_id).map(|cv| &cv.position) {
+        Some(PositionValue::Absolute) => false,
+        Some(PositionValue::Fixed) => true,
+        _ => return false,
+    };
+    let establishes = |id: usize| {
+        let node = &document.nodes[id];
+        if fixed {
+            node.claims_fixed_oof
+        } else {
+            node.claims_absolute_oof
+        }
+    };
+    !document
+        .ancestors(node_id)
+        .take_while(|&id| id != owner)
+        .chain(std::iter::once(owner))
+        .any(establishes)
+}
+
+/// The frames a layer hands to the enclosing one for the clipping block
+/// `owner`: `frames`, a list in tree order, with the clip of `owner` opened by
+/// `open` and closed by `close` around the runs it covers, and not around the
+/// boxes it leaves alone (see [`escapes_overflow_clip`]).
+///
+/// The frames a clip opened inside the layer hold boxes whose containing
+/// block is inside that clip, so the clip of `owner` covers them too.
+pub fn clip_contained_frames<F>(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    frames: Vec<F>,
+    kind: impl Fn(&F) -> PositionedFrame,
+    open: impl Fn() -> F,
+    close: impl Fn() -> F,
+) -> Vec<F> {
+    let mut clipped_frames = Vec::with_capacity(frames.len());
+    let (mut depth, mut inside) = (0usize, false);
+    for frame in frames {
+        let clipped = match kind(&frame) {
+            PositionedFrame::Open(_) => {
+                depth += 1;
+                true
+            }
+            PositionedFrame::Close => {
+                debug_assert!(depth > 0, "a clip closes that no frame opened");
+                depth = depth.saturating_sub(1);
+                true
+            }
+            PositionedFrame::Box(id) => {
+                depth > 0 || !escapes_overflow_clip(document, cascade, owner, id)
+            }
+        };
+        if clipped != inside {
+            clipped_frames.push(if inside { close() } else { open() });
+            inside = clipped;
+        }
+        clipped_frames.push(frame);
+    }
+    if inside {
+        clipped_frames.push(close());
+    }
+    clipped_frames
+}
+
 /// Whether a box hands the positioned boxes it holds to the enclosing layer.
 ///
 /// Positioned descendants belong to the nearest stacking context, where they
@@ -2012,7 +2120,8 @@ pub fn sort_paint_children(
 
 /// The key [`sort_paint_children`] sorts a child by: its stacking bucket and
 /// z-index, then floats after other boxes of the same level, then the flex or
-/// grid `order`. A stacking context that is neither positioned nor a flex or
+/// grid `order`, or for a table's child, header and footer groups after the
+/// other children. A stacking context that is neither positioned nor a flex or
 /// grid item, such as an element with `opacity` below 1, paints at
 /// [`STACKING_CONTEXT_PAINT_KEY`].
 pub(crate) fn paint_child_key(
@@ -2048,6 +2157,17 @@ pub(crate) fn paint_child_key(
             PositionValue::Absolute | PositionValue::Fixed
         ) {
         computed.order
+    } else if matches!(
+        parent_display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        // The copies of a table's header and footer groups on its pages
+        // paint over the body content that runs under them, so the groups
+        // paint after the table's other children.
+        match computed.display {
+            DisplayValue::TableHeaderGroup | DisplayValue::TableFooterGroup => 1,
+            _ => 0,
+        }
     } else {
         0
     };

@@ -633,12 +633,133 @@ fn a_run_of_tied_boxes_stays_when_the_edges_fit_and_moves_when_the_next_page_can
         (vec![0.0, 40.0, 70.0], 100.0)
     );
     // 50px of boxes and 60px of padding make 110px, more than a page. The run
-    // still moves: a break before it beats one between its last box and the
-    // padding, which runs on past the page edge.
+    // still moves, as a break before it beats one between its last box and the
+    // padding; the page it moves to starts with the run, and the last box goes
+    // on to the page after with the padding, the avoided break giving way.
     assert_eq!(
         tied_boxes("padding-bottom:60px", &tied),
-        (vec![0.0, 100.0, 130.0], 210.0)
+        (vec![0.0, 100.0, 200.0], 280.0)
     );
+}
+
+#[test]
+fn the_last_box_of_a_run_at_a_page_top_moves_on_with_the_edges_that_do_not_fit() {
+    // The boxes tied to each other and the padding fill the second page
+    // exactly with 50px of padding, and do not with one pixel more.
+    let tied = [(10, ""), (30, "break-after:avoid"), (20, "")];
+    assert_eq!(
+        tied_boxes("padding-bottom:50px", &tied),
+        (vec![0.0, 100.0, 130.0], 200.0)
+    );
+    assert_eq!(
+        tied_boxes("padding-bottom:51px", &tied),
+        (vec![0.0, 100.0, 200.0], 271.0)
+    );
+    // A border closes the block the same way, and so does an avoided break
+    // before the last box instead of one after the box before it.
+    for (second, third) in [
+        ("break-after:avoid", ""),
+        ("", "break-before:avoid"),
+        ("", "break-before:avoid-page"),
+    ] {
+        assert_eq!(
+            tied_boxes(
+                "border-bottom:51px solid",
+                &[(10, ""), (30, second), (20, third)]
+            ),
+            (vec![0.0, 100.0, 200.0], 271.0),
+            "{second} {third}"
+        );
+    }
+}
+
+#[test]
+fn the_last_box_of_a_run_that_starts_its_page_in_the_flow_moves_on_with_the_edges() {
+    // The first box of the run starts the second page where the box before it
+    // ends the first, so the run has nowhere further to go.
+    let tied = [(100, ""), (50, "break-after:avoid"), (40, "")];
+    assert_eq!(
+        tied_boxes("padding-bottom:10px", &tied),
+        (vec![0.0, 100.0, 150.0], 200.0)
+    );
+    assert_eq!(
+        tied_boxes("padding-bottom:11px", &tied),
+        (vec![0.0, 100.0, 200.0], 251.0)
+    );
+}
+
+#[test]
+fn only_the_last_box_of_a_longer_run_moves_on_with_the_edges() {
+    // The other boxes of the run stay together on the page the run moved to.
+    assert_eq!(
+        tied_boxes(
+            "padding-bottom:60px",
+            &[
+                (10, ""),
+                (30, "break-after:avoid"),
+                (30, "break-after:avoid"),
+                (30, "")
+            ]
+        ),
+        (vec![0.0, 100.0, 130.0, 200.0], 290.0)
+    );
+}
+
+#[test]
+fn the_last_box_of_a_run_stays_when_it_crosses_the_end_of_its_page() {
+    // A last box taller than a page breaks inside, wherever it starts.
+    let (positions, _) = tied_boxes(
+        "padding-bottom:30px",
+        &[(10, ""), (30, "break-after:avoid"), (130, "")],
+    );
+    assert_eq!(positions, vec![0.0, 10.0, 40.0]);
+    // So does one that fits a page but starts the second one with the run
+    // and runs past its end: moving it would not take it out of the way.
+    let (positions, _) = tied_boxes(
+        "padding-bottom:30px",
+        &[(100, ""), (50, "break-after:avoid"), (60, "")],
+    );
+    assert_eq!(positions, vec![0.0, 100.0, 150.0]);
+}
+
+#[test]
+fn the_last_box_of_a_run_stays_where_a_box_cannot_move_on_its_own() {
+    // The same boxes as above, 100px, 50px and 40px, and the padding that
+    // sends the last one to the third page when nothing around them holds
+    // them: a clipped parent of a set height, a flex container and a
+    // multicol container keep the page positions the flow gave them.
+    for wrapper in [
+        "display:block;overflow:hidden;height:300px",
+        "display:flex",
+        "display:block;columns:1",
+    ] {
+        let (mut tied, mut last) = (0, 0);
+        let (doc, _) = paged_body(|doc, body| {
+            let outer = block(doc, body, wrapper);
+            let card = block(doc, outer, "display:block;padding-bottom:15px");
+            block(doc, card, "display:block;height:100px");
+            tied = block(doc, card, "display:block;height:50px;break-after:avoid");
+            last = block(doc, card, "display:block;height:40px");
+        });
+        assert_eq!(page_flow_y(&doc, tied), 100.0, "{wrapper}");
+        assert_eq!(page_flow_y(&doc, last), 150.0, "{wrapper}");
+    }
+}
+
+#[test]
+fn the_last_box_of_a_run_in_nested_blocks_moves_on_with_the_edges_of_both() {
+    let (mut tied, mut last) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let outer = block(doc, body, "display:block;padding-bottom:15px");
+        let inner = block(doc, outer, "display:block;padding-bottom:15px");
+        block(doc, inner, "display:block;height:10px");
+        tied = block(doc, inner, "display:block;height:50px;break-after:avoid");
+        last = block(doc, inner, "display:block;height:40px");
+    });
+    // The run of two boxes moves to the second page and ends at 190, where
+    // 30px of padding do not fit: the second box goes to the third page.
+    assert_eq!(page_flow_y(&doc, tied), 100.0);
+    assert_eq!(page_flow_y(&doc, last), 200.0);
 }
 
 #[test]
@@ -1149,12 +1270,54 @@ fn lines_that_orphans_and_widows_keep_together_move_with_the_edges() {
 }
 
 #[test]
-fn a_paragraph_too_short_for_both_constraints_keeps_its_orphans_before_the_edges() {
-    // Three lines cannot have two orphans and two widows. The first two stay,
-    // and the last one moves with the padding, as Chromium prints it.
-    assert_eq!(closed_paragraph(3, ""), (40.0, 150.0));
-    // Orphans of three leave no line to move, so the paragraph moves whole.
-    assert_eq!(closed_paragraph(3, "orphans:3"), (100.0, 170.0));
+fn a_paragraph_too_short_for_both_constraints_moves_whole_with_the_edges() {
+    // Three lines cannot have two orphans and two widows. The break before
+    // the paragraph is the one between boxes, so all three lines move with
+    // the padding, as Chromium prints it.
+    assert_eq!(closed_paragraph(3, ""), (100.0, 170.0));
+    // So do lines that one of the two leaves no break for: orphans of three,
+    // widows of three, and four lines with three of either.
+    for css in ["orphans:3", "orphans:2;widows:3", "orphans:1;widows:3"] {
+        assert_eq!(closed_paragraph(3, css), (100.0, 170.0), "{css}");
+    }
+    for css in ["orphans:3", "widows:3", "orphans:2;widows:3"] {
+        assert_eq!(closed_paragraph(4, css), (100.0, 180.0), "{css}");
+    }
+}
+
+#[test]
+fn a_paragraph_whose_own_padding_runs_past_the_page_is_split_between_its_lines() {
+    // The lines end at 70, and 40px of padding of the paragraph itself end at
+    // 110: its box does not fit the page, so it cannot move whole to a better
+    // break. The last line goes to the next page with that padding and the
+    // padding of the div, as Chromium prints three lines and 80px of padding
+    // of their own on a page of 200px. Before the last line moves, the
+    // paragraph spans its lines and the 40px of padding; moving the line adds
+    // the 40px between the page end and the top of the next page.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        block(doc, parent, "display:block;height:40px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;\
+             padding-bottom:40px",
+        );
+        doc.append_text(paragraph, "aaa aaa aaa");
+    });
+    assert_eq!(page_flow_y(&doc, paragraph), 40.0);
+    assert_eq!(doc.nodes[paragraph].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 190.0);
+}
+
+#[test]
+fn lines_enough_for_both_constraints_are_split_between_them_after_a_box() {
+    // Orphans plus widows is as many lines as there are: one break is left, and
+    // it keeps its lines apart.
+    assert_eq!(closed_paragraph(3, "orphans:2;widows:1"), (40.0, 150.0));
+    assert_eq!(closed_paragraph(3, "orphans:1;widows:2"), (40.0, 160.0));
+    assert_eq!(closed_paragraph(5, "orphans:3;widows:2"), (20.0, 160.0));
 }
 
 #[test]
@@ -1190,6 +1353,62 @@ fn lines_move_when_the_next_page_cannot_hold_them_with_the_edges() {
     // The lines still go to the next page: a break between lines beats one
     // between the last line and the padding, which runs on past the page edge.
     assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 210.0));
+}
+
+#[test]
+fn a_paragraph_moved_whole_to_a_page_still_splits_when_the_edges_run_past_its_end() {
+    // The lines end at 70 and the padding below them does not fit, so the
+    // paragraph moves to the top of the next page: 100 to 120 for two lines.
+    // The page break before it is then gone, and 81px of padding after the
+    // lines no longer fit either: the last line goes on to the page after
+    // with the padding, as Chromium prints it.
+    assert_eq!(closed_paragraph_with(2, 80, ""), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(2, 81, ""), (100.0, 291.0));
+    assert_eq!(closed_paragraph_with(2, 90, ""), (100.0, 300.0));
+    // Three lines cannot have two orphans and two widows, so the last line is
+    // what goes: Chromium leaves two lines on the page it moved the paragraph
+    // to.
+    assert_eq!(closed_paragraph_with(3, 70, ""), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(3, 71, ""), (100.0, 281.0));
+    // So do lines that one of the two leaves no break for.
+    for css in ["orphans:3", "widows:3", "orphans:1;widows:3"] {
+        assert_eq!(closed_paragraph_with(3, 71, css), (100.0, 281.0), "{css}");
+    }
+    assert_eq!(closed_paragraph_with(4, 60, "orphans:3"), (100.0, 200.0));
+    assert_eq!(closed_paragraph_with(4, 61, "orphans:3"), (100.0, 271.0));
+    // Orphans that a break cannot keep do not hold the lines together either.
+    assert_eq!(closed_paragraph_with(2, 90, "orphans:5"), (100.0, 300.0));
+    assert_eq!(closed_paragraph_with(2, 90, "widows:5"), (100.0, 300.0));
+}
+
+#[test]
+fn the_padding_of_the_paragraph_itself_counts_when_it_splits_after_moving_whole() {
+    // 5px of padding or border below the lines of the paragraph are edges that
+    // follow its last line like those of the div: 20 + 5 + 75 fill the page
+    // and one pixel more does not.
+    for css in ["padding-bottom:5px", "border-bottom:5px solid"] {
+        assert_eq!(closed_paragraph_with(2, 75, css), (100.0, 200.0), "{css}");
+        assert_eq!(closed_paragraph_with(2, 76, css), (100.0, 291.0), "{css}");
+        assert_eq!(closed_paragraph_with(3, 65, css), (100.0, 200.0), "{css}");
+        assert_eq!(closed_paragraph_with(3, 66, css), (100.0, 281.0), "{css}");
+    }
+    // The paragraph moves whole when its box fits the page it moves to,
+    // whatever the edges are: breaking before it beats breaking in it.
+    assert_eq!(
+        closed_paragraph_with(3, 30, "padding-bottom:5px"),
+        (100.0, 165.0)
+    );
+}
+
+#[test]
+fn a_paragraph_of_one_line_moves_whole_whatever_the_edges_below_it() {
+    // A single line has no break to take: it keeps its edges, which run past
+    // the end of the page it moved to.
+    assert_eq!(closed_paragraph_with(1, 90, ""), (100.0, 200.0));
+    assert_eq!(
+        closed_paragraph_with(1, 90, "padding-bottom:5px"),
+        (100.0, 205.0)
+    );
 }
 
 /// `body > [div(10px), div(padding-bottom:40px) > paragraph]` where the
@@ -1722,9 +1941,6 @@ fn a_card_of_two_lines_after_a_box_in_the_card_moves_whole() {
     // With a box before the paragraph in the card, a break between the two is
     // a better one: the paragraph moves whole, and orphans of two keep it so.
     assert_eq!(closed_paragraph(2, ""), (100.0, 160.0));
-    // When the next page cannot hold the paragraph with the edges, it moves
-    // all the same: a break before it beats one between it and the edges.
-    assert_eq!(closed_paragraph_with(2, 90, ""), (100.0, 210.0));
 }
 
 /// `body > [div(20px), outer > [div(30px), wrapper > paragraph], div(10px)]`
@@ -1732,18 +1948,42 @@ fn a_card_of_two_lines_after_a_box_in_the_card_moves_whole() {
 /// pages. Returns the height of the paragraph, of the wrapper and the
 /// page-flow y of the block after `outer`.
 fn wrapper_after_a_box(outer_css: &str, wrapper_css: &str) -> (f32, f32, f32) {
+    wrapper_after_a_box_with(outer_css, wrapper_css, "", "aaa aaa")
+}
+
+/// [`wrapper_after_a_box`] with `paragraph_css` on the paragraph and `text` in
+/// it, which is one line for each word.
+fn wrapper_after_a_box_with(
+    outer_css: &str,
+    wrapper_css: &str,
+    paragraph_css: &str,
+    text: &str,
+) -> (f32, f32, f32) {
+    wrapper_after_a_lead(outer_css, "", wrapper_css, paragraph_css, text)
+}
+
+/// [`wrapper_after_a_box_with`] with `lead_css` on the box before the wrapper.
+fn wrapper_after_a_lead(
+    outer_css: &str,
+    lead_css: &str,
+    wrapper_css: &str,
+    paragraph_css: &str,
+    text: &str,
+) -> (f32, f32, f32) {
     let (mut paragraph, mut wrapper, mut after) = (0, 0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         block(doc, body, "display:block;height:20px");
         let outer = block(doc, body, &format!("display:block;{outer_css}"));
-        block(doc, outer, "display:block;height:30px");
+        block(doc, outer, &format!("display:block;height:30px;{lead_css}"));
         wrapper = block(doc, outer, &format!("display:block;{wrapper_css}"));
         paragraph = block(
             doc,
             wrapper,
-            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
         );
-        doc.append_text(paragraph, "aaa aaa");
+        doc.append_text(paragraph, text);
         after = block(doc, body, "display:block;height:10px");
     });
     (
@@ -1754,13 +1994,79 @@ fn wrapper_after_a_box(outer_css: &str, wrapper_css: &str) -> (f32, f32, f32) {
 }
 
 #[test]
-fn a_paragraph_after_a_box_inside_the_block_that_the_edges_close_is_not_split() {
-    // The wrapper comes after a box in the card whose padding closes it: a
-    // break before the wrapper is left to the rules for it, and the two lines
-    // are not split for orphans that they cannot keep.
+fn a_wrapper_of_a_paragraph_after_a_box_moves_whole_with_the_edges_that_close_the_card() {
+    // The wrapper comes after a box in the card whose padding closes it. The
+    // two lines of the paragraph cannot be split for orphans, so the page
+    // breaks before the wrapper, which moves to the next page with its own
+    // padding and that of the card.
     assert_eq!(
         wrapper_after_a_box("padding-bottom:40px", "padding-bottom:10px"),
-        (20.0, 30.0, 120.0)
+        (20.0, 30.0, 170.0)
+    );
+}
+
+#[test]
+fn a_wrapper_of_lines_that_orphans_and_widows_keep_together_moves_whole_with_the_edges() {
+    // Three lines cannot have two orphans and two widows, and a break between
+    // two lines of fewer than the two together leaves too few at one end. The
+    // page breaks before the wrapper in each case, as it does in browsers.
+    // The wrapper is 20px of lines and 10px of padding, or 30px of lines and
+    // 10px of padding, and the 40px of padding of the card follow it to the
+    // next page: the block after the card starts at 100, plus the two.
+    for (paragraph_css, text, wrapper, after) in [
+        ("", "aaa aaa aaa", 40.0, 180.0),
+        ("orphans:1", "aaa aaa", 30.0, 170.0),
+        ("widows:1", "aaa aaa", 30.0, 170.0),
+    ] {
+        assert_eq!(
+            wrapper_after_a_box_with(
+                "padding-bottom:40px",
+                "padding-bottom:10px",
+                paragraph_css,
+                text
+            ),
+            (wrapper - 10.0, wrapper, after),
+            "{paragraph_css} {text}"
+        );
+    }
+    // The block around the paragraph needs no padding of its own.
+    assert_eq!(
+        wrapper_after_a_box("padding-bottom:40px", ""),
+        (20.0, 20.0, 160.0)
+    );
+}
+
+#[test]
+fn a_wrapper_of_lines_that_can_be_split_keeps_its_place() {
+    // Four lines break between the second and third, so the wrapper stays and
+    // the last two go to the next page with the padding: the paragraph spans
+    // its 40px of lines and the 30px that the page end cuts out.
+    let (paragraph, _, _) = wrapper_after_a_box_with(
+        "padding-bottom:40px",
+        "padding-bottom:10px",
+        "",
+        "aaa aaa aaa aaa",
+    );
+    assert_eq!(paragraph, 70.0);
+}
+
+#[test]
+fn a_wrapper_of_lines_after_a_box_that_ties_it_is_split_between_the_lines() {
+    // The box before the wrapper avoids a break after it, so the break between
+    // the two is not there to take. The break falls between the lines, though
+    // three of them have too few for two orphans and two widows: the last one
+    // goes to the next page with the padding, as browsers print it. The
+    // paragraph spans its 30px of lines and the 30px that the page end cuts
+    // out.
+    assert_eq!(
+        wrapper_after_a_lead(
+            "padding-bottom:40px",
+            "break-after:avoid",
+            "padding-bottom:10px",
+            "",
+            "aaa aaa aaa"
+        ),
+        (60.0, 70.0, 160.0)
     );
 }
 
@@ -1780,17 +2086,37 @@ fn a_paragraph_after_a_box_outside_the_block_that_the_edges_close_is_split() {
 /// on 100px pages. Returns the height of the paragraph and the page-flow y of
 /// the paragraph.
 fn card_after_a_lead(lead_css: &str) -> (f32, f32) {
+    card_after_leads(50, &[(0, lead_css)], 2, "")
+}
+
+/// `body > [div(above), div(padding-bottom:40px) > [leads..., paragraph]]`
+/// where each lead is a div of the height and style given, and the paragraph is
+/// `lines` lines of 10px Ahem text, 30px wide, with `paragraph_css`, on 100px
+/// pages. No div comes first when `above` is 0. Returns the height and the
+/// page-flow y of the paragraph.
+fn card_after_leads(
+    above: u32,
+    leads: &[(u32, &str)],
+    lines: usize,
+    paragraph_css: &str,
+) -> (f32, f32) {
     let mut paragraph = 0;
     let (doc, _) = paged_body_with_ifc(|doc, body| {
-        block(doc, body, "display:block;height:50px");
+        if above > 0 {
+            block(doc, body, &format!("display:block;height:{above}px"));
+        }
         let card = block(doc, body, "display:block;padding-bottom:40px");
-        block(doc, card, &format!("display:block;{lead_css}"));
+        for &(height, css) in leads {
+            block(doc, card, &format!("display:block;height:{height}px;{css}"));
+        }
         paragraph = block(
             doc,
             card,
-            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
         );
-        doc.append_text(paragraph, "aaa aaa");
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
     });
     (
         doc.nodes[paragraph].layout.size.height,
@@ -1815,6 +2141,113 @@ fn a_paragraph_after_an_out_of_flow_box_in_the_card_is_split() {
     assert_eq!(
         card_after_a_lead("position:absolute;width:10px;height:10px"),
         (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_paragraph_tied_to_an_empty_block_that_starts_the_card_is_split_between_its_lines() {
+    // The empty block avoids a break after it, so the paragraph is tied to the
+    // first box of the card and no break between boxes is left to take inside
+    // the card. The break falls between the lines, though two lines have too
+    // few for two orphans and two widows: the last one goes to the next page
+    // with the padding, as Chromium prints it.
+    assert_eq!(card_after_a_lead("break-after:avoid"), (60.0, 50.0));
+}
+
+#[test]
+fn a_paragraph_tied_to_the_boxes_before_it_back_to_the_start_is_split_between_its_lines() {
+    // The lines end at 70 on the page and the 40px of padding do not fit. In
+    // each card an avoided break ties the paragraph to every box before it, so
+    // the break falls between the lines whatever their number: the paragraph
+    // spans its lines up to the page end and those that follow, as Chromium
+    // prints two lines as one and one, three as two and one, and four as two
+    // and two.
+    for (lines, above) in [(2, 50), (3, 40), (4, 30)] {
+        let split = match lines {
+            2 => (60.0, 50.0),
+            3 => (70.0, 40.0),
+            _ => (90.0, 30.0),
+        };
+        // An empty block with a break avoided after it or before the next.
+        assert_eq!(
+            card_after_leads(above, &[(0, "break-after:avoid")], lines, ""),
+            split,
+            "{lines} lines after an empty block"
+        );
+        assert_eq!(
+            card_after_leads(above, &[(0, "")], lines, "break-before:avoid"),
+            split,
+            "{lines} lines that avoid a break before them"
+        );
+        // Two empty blocks, each tied to the next.
+        assert_eq!(
+            card_after_leads(
+                above,
+                &[(0, "break-after:avoid"), (0, "break-after:avoid")],
+                lines,
+                ""
+            ),
+            split,
+            "{lines} lines after two empty blocks"
+        );
+        // A box with space, with and without a box above the card.
+        let height = 70 - 10 * lines as u32;
+        assert_eq!(
+            card_after_leads(0, &[(height, "break-after:avoid")], lines, ""),
+            split,
+            "{lines} lines after a box"
+        );
+        assert_eq!(
+            card_after_leads(
+                0,
+                &[
+                    (height - 10, "break-after:avoid"),
+                    (10, "break-after:avoid")
+                ],
+                lines,
+                ""
+            ),
+            split,
+            "{lines} lines after two boxes tied to each other"
+        );
+    }
+}
+
+#[test]
+fn a_float_between_the_boxes_that_tie_a_paragraph_does_not_untie_it() {
+    // The float is no box in the flow of the card: the paragraph is tied to the
+    // box before the float, and its lines are split as without the float.
+    assert_eq!(
+        card_after_leads(
+            0,
+            &[(50, "break-after:avoid"), (10, "float:left;width:0px")],
+            2,
+            ""
+        ),
+        (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_page_name_change_before_a_tied_paragraph_starts_a_page_for_it() {
+    // The paragraph names a page, and the page break that this forces before it
+    // is the one that the avoided break gave way to: the paragraph starts the
+    // next page whole, with the padding after it.
+    assert_eq!(
+        card_after_leads(50, &[(0, "break-after:avoid")], 2, "page:foo"),
+        (20.0, 100.0)
+    );
+}
+
+#[test]
+fn a_paragraph_tied_to_a_box_that_a_break_can_follow_moves_with_it() {
+    // The first box of the card ends where a break is not avoided, so the page
+    // breaks there: the box tied to the paragraph and the paragraph move to the
+    // next page together, as Chromium prints them, and the lines are not
+    // split.
+    assert_eq!(
+        card_after_leads(0, &[(40, ""), (10, "break-after:avoid")], 2, ""),
+        (20.0, 110.0)
     );
 }
 

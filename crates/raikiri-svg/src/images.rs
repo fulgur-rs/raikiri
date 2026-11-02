@@ -8,6 +8,7 @@
 //! the decoded pixels, so a document's pictures are fetched and budgeted by
 //! the same code as the pictures of the HTML around it.
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -97,12 +98,12 @@ struct State {
 }
 
 struct Asked {
-    key: Key,
+    key: Key<'static>,
     picture: Option<usize>,
 }
 
-enum Key {
-    Url(String),
+enum Key<'a> {
+    Url(Cow<'a, str>),
     Data {
         mime: String,
         hash: u64,
@@ -110,7 +111,7 @@ enum Key {
     },
 }
 
-impl Key {
+impl Key<'_> {
     fn data(mime: &str, bytes: Arc<Vec<u8>>) -> Self {
         let mut hasher = DefaultHasher::new();
         bytes.hash(&mut hasher);
@@ -121,12 +122,19 @@ impl Key {
         }
     }
 
-    fn matches(&self, other: &Self) -> bool {
+    fn into_owned(self) -> Key<'static> {
+        match self {
+            Self::Url(href) => Key::Url(Cow::Owned(href.into_owned())),
+            Self::Data { mime, hash, bytes } => Key::Data { mime, hash, bytes },
+        }
+    }
+
+    fn matches(&self, other: &Key<'_>) -> bool {
         match (self, other) {
-            (Self::Url(a), Self::Url(b)) => a == b,
+            (Key::Url(a), Key::Url(b)) => a == b,
             (
-                Self::Data { mime, hash, bytes },
-                Self::Data {
+                Key::Data { mime, hash, bytes },
+                Key::Data {
                     mime: other_mime,
                     hash: other_hash,
                     bytes: other_bytes,
@@ -208,7 +216,7 @@ impl<'a> Images<'a> {
                 if href.is_empty() || href.starts_with('#') {
                     return None;
                 }
-                self.resolve(Key::Url(href.to_owned()), || self.source.url(href))
+                self.resolve(Key::Url(Cow::Borrowed(href)), || self.source.url(href))
             }),
         }
     }
@@ -216,7 +224,7 @@ impl<'a> Images<'a> {
     /// The parser's picture for `key`, asking the source the first time.
     fn resolve(
         &self,
-        key: Key,
+        key: Key<'_>,
         ask: impl FnOnce() -> Option<Arc<DecodedImage>>,
     ) -> Option<usvg::ImageKind> {
         let mut state = self.state();
@@ -234,7 +242,10 @@ impl<'a> Images<'a> {
                 let picture = ask()
                     .filter(|image| is_well_formed(image))
                     .and_then(|image| state.add(image, max_bytes));
-                state.asked.push(Asked { key, picture });
+                state.asked.push(Asked {
+                    key: key.into_owned(),
+                    picture,
+                });
                 picture
             }
         };

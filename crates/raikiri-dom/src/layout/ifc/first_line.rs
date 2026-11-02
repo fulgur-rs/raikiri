@@ -78,21 +78,17 @@ impl FirstLine {
             .iter()
             .map(|&id| StyleNodeId::new(id as u64))
             .collect();
-        let root_values = cascade.first_line_style(doc, &origins, root_id, root_id, None)?;
-        // A `::first-line` box takes the values of the `::first-line` boxes
-        // around it, as the text of the line does, so its decoration is
-        // looked up from those values.
-        let decorating = line_origins
-            .iter()
-            .zip(&origins)
-            .filter_map(|(&id, &origin)| {
-                let ordinary = cascade.pseudo.get(&(origin, PseudoElem::FirstLine))?;
-                has_paintable_line(ordinary.text_decoration_line)
-                    .then(|| cascade.first_line_style(doc, &origins, origin, origin, None))
-                    .flatten()
-                    .map(|style| (id, style))
-            })
-            .collect();
+        // Resolve the root and each decorating origin in one inheritance walk.
+        // The ordinary pseudo decides whether a box paints a decoration.
+        let mut decorating = Vec::new();
+        let root_values =
+            cascade.first_line_block_style(doc, &origins, root_id, |origin, style| {
+                if let Some(ordinary) = cascade.pseudo.get(&(origin, PseudoElem::FirstLine))
+                    && has_paintable_line(ordinary.text_decoration_line)
+                {
+                    decorating.push((origin.0 as usize, style.clone()));
+                }
+            })?;
         Some(Self {
             root: root_id,
             origins,

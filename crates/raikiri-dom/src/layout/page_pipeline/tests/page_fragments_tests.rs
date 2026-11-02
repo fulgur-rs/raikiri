@@ -839,25 +839,39 @@ fn pages_of_a_fixed_height_paragraph(
 
 #[test]
 fn a_paragraph_whose_first_line_overflows_the_page_moves() {
-    // The 20px paragraph at y 10 ends at 30 > 25: it moves to page 1 as a unit.
+    // The first line of the 20px paragraph at y 20 ends at 30 > 25: it moves
+    // to page 1 as a unit.
     let results = pages_of_a_fixed_height_paragraph(
         "aaaa bbbb",
         "width:40px;height:20px;orphans:1;widows:1",
-        10.0,
+        20.0,
         25.0,
     );
     assert_eq!(results[0], (2, vec![1]), "pinned");
 }
 
 #[test]
+fn a_paragraph_whose_second_line_overflows_the_page_breaks_before_it() {
+    // The paragraph keeps its 20px, which ends at 30 > 25 for the one at y 10,
+    // but only its second line crosses the page end: it starts page 1.
+    let results = pages_of_a_fixed_height_paragraph(
+        "aaaa bbbb",
+        "width:40px;height:20px;orphans:1;widows:1",
+        10.0,
+        25.0,
+    );
+    assert_eq!(results[0], (2, vec![0, 1]), "pinned");
+}
+
+#[test]
 fn a_padded_paragraph_whose_first_line_overflows_moves() {
-    // The root's border box (22px tall, it fits a 26px page) starts at 5 and
-    // its content box at 7: the lines end at 27 > 26 and the paragraph moves.
-    // Measured from the border box they would end at 25 and stay.
+    // The root's border box (22px tall, it fits a 26px page) starts at 15 and
+    // its content box at 17: the first line ends at 27 > 26 and the paragraph
+    // moves. Measured from the border box it would end at 25 and stay.
     let results = pages_of_a_fixed_height_paragraph(
         "aaaa bbbb",
         "width:40px;height:20px;padding-top:2px;box-sizing:content-box;orphans:1;widows:1",
-        5.0,
+        15.0,
         26.0,
     );
     assert_eq!(results[0], (2, vec![1]), "pinned");
@@ -868,7 +882,13 @@ fn a_padded_paragraph_whose_first_line_overflows_moves() {
 /// 100px pages (Ahem 20px, line height 30px). Returns the number of its lines
 /// on each page from the first up to the last it reaches.
 fn lines_on_each_page_after_a_spacer(spacer_height: f32, style: &str, lines: usize) -> Vec<usize> {
-    lines_per_page_after_a_spacer(spacer_height, style, lines, false)
+    lines_per_page_after_a_spacer(spacer_height, style, lines, false, 100.0)
+}
+
+/// Like [`lines_on_each_page_after_a_spacer`], with no spacer and pages
+/// `page_height` tall.
+fn lines_on_each_page_of_height(page_height: f32, style: &str, lines: usize) -> Vec<usize> {
+    lines_per_page_after_a_spacer(0.0, style, lines, false, page_height)
 }
 
 /// Like [`lines_on_each_page_after_a_spacer`], with the paragraph as bare text
@@ -878,7 +898,7 @@ fn bare_lines_on_each_page_after_a_spacer(
     style: &str,
     lines: usize,
 ) -> Vec<usize> {
-    lines_per_page_after_a_spacer(spacer_height, style, lines, true)
+    lines_per_page_after_a_spacer(spacer_height, style, lines, true, 100.0)
 }
 
 fn lines_per_page_after_a_spacer(
@@ -886,6 +906,7 @@ fn lines_per_page_after_a_spacer(
     style: &str,
     lines: usize,
     bare: bool,
+    page_height: f32,
 ) -> Vec<usize> {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -915,7 +936,7 @@ fn lines_per_page_after_a_spacer(
     let cascade = cascade(&doc, &rules).expect("cascade");
     let mut page = PageBox::new();
     page.width = 100.0;
-    page.height = 100.0;
+    page.height = page_height;
     let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     let fragments = text_fragments(&doc, &cascade, page, &slices, text);
     let last_page = fragments.iter().map(|(page, _)| *page).max().unwrap_or(0);
@@ -1002,6 +1023,360 @@ fn a_paragraph_taller_than_a_page_moved_whole_keeps_its_widows_on_its_last_page(
             lines_on_each_page_after_a_spacer(spacer_height, "", 7),
             from_the_top,
             "{spacer_height} 7 lines"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_after_a_spacer_breaks_between_its_lines_as_chromium_does() {
+    // (spacer height, block style, lines, lines on each page). The counts are
+    // the lines Chromium prints on each page of `page.pdf`, read with
+    // `pdftotext -bbox`, for spacers that leave the paragraph's first line
+    // off the 30px grid of the pages: a line that crosses a page end starts
+    // the next page, and the lines after it follow. The first page lists no
+    // lines when the paragraph moves whole.
+    let cases: &[(f32, &str, usize, &[usize])] = &[
+        // The default orphans and widows (2 each).
+        (45.0, "", 5, &[0, 3, 2]),
+        (45.0, "", 7, &[0, 3, 2, 2]),
+        (45.0, "", 6, &[0, 3, 3]),
+        (15.0, "", 3, &[2, 1]),
+        (15.0, "", 4, &[2, 2]),
+        (15.0, "", 6, &[2, 2, 2]),
+        (15.0, "", 5, &[2, 3]),
+        (15.0, "", 7, &[2, 3, 2]),
+        (0.0, "", 5, &[3, 2]),
+        (0.0, "", 7, &[3, 2, 2]),
+        (0.0, "", 6, &[3, 3]),
+        // One orphan and one widow allowed.
+        (75.0, "orphans:1;widows:1", 4, &[0, 3, 1]),
+        (75.0, "orphans:1;widows:1", 5, &[0, 3, 2]),
+        (75.0, "orphans:1;widows:1", 6, &[0, 3, 3]),
+        (75.0, "orphans:1;widows:1", 7, &[0, 3, 3, 1]),
+        (45.0, "orphans:1;widows:1", 2, &[1, 1]),
+        (45.0, "orphans:1;widows:1", 3, &[1, 2]),
+        (45.0, "orphans:1;widows:1", 4, &[1, 3]),
+        (45.0, "orphans:1;widows:1", 5, &[1, 3, 1]),
+        (45.0, "orphans:1;widows:1", 6, &[1, 3, 2]),
+        (45.0, "orphans:1;widows:1", 7, &[1, 3, 3]),
+        (15.0, "orphans:1;widows:1", 3, &[2, 1]),
+        (15.0, "orphans:1;widows:1", 4, &[2, 2]),
+        (15.0, "orphans:1;widows:1", 5, &[2, 3]),
+        (15.0, "orphans:1;widows:1", 6, &[2, 3, 1]),
+        (15.0, "orphans:1;widows:1", 7, &[2, 3, 2]),
+        (0.0, "orphans:1;widows:1", 4, &[3, 1]),
+        (0.0, "orphans:1;widows:1", 5, &[3, 2]),
+        (0.0, "orphans:1;widows:1", 6, &[3, 3]),
+        (0.0, "orphans:1;widows:1", 7, &[3, 3, 1]),
+        // Three orphans and three widows.
+        (15.0, "orphans:3;widows:3", 4, &[0, 3, 1]),
+        (15.0, "orphans:3;widows:3", 5, &[0, 3, 2]),
+        (15.0, "orphans:3;widows:3", 6, &[0, 3, 3]),
+        (15.0, "orphans:3;widows:3", 7, &[0, 3, 3, 1]),
+        (0.0, "orphans:3;widows:3", 4, &[3, 1]),
+        (0.0, "orphans:3;widows:3", 5, &[3, 2]),
+        (0.0, "orphans:3;widows:3", 6, &[3, 3]),
+        (0.0, "orphans:3;widows:3", 7, &[3, 3, 1]),
+        // Three widows: a break moves up only as far as the orphans allow.
+        (45.0, "widows:3", 7, &[0, 3, 2, 2]),
+        (45.0, "widows:3", 8, &[0, 3, 2, 3]),
+        (45.0, "widows:3", 6, &[0, 3, 3]),
+        (15.0, "widows:3", 3, &[2, 1]),
+        (15.0, "widows:3", 4, &[2, 2]),
+        (15.0, "widows:3", 6, &[2, 2, 2]),
+        (15.0, "widows:3", 7, &[2, 2, 3]),
+        (15.0, "widows:3", 5, &[2, 3]),
+        (15.0, "widows:3", 9, &[2, 3, 2, 2]),
+        (0.0, "widows:3", 7, &[3, 2, 2]),
+        (0.0, "widows:3", 8, &[3, 2, 3]),
+        (0.0, "widows:3", 6, &[3, 3]),
+        // More widows than a page holds: the first break gives up lines for
+        // them, and no later break does.
+        (0.0, "widows:4", 6, &[2, 3, 1]),
+        (0.0, "widows:4", 7, &[3, 3, 1]),
+        (0.0, "widows:4", 9, &[3, 3, 3]),
+        (0.0, "widows:5", 7, &[2, 3, 2]),
+        (0.0, "orphans:1;widows:4", 5, &[1, 3, 1]),
+        (0.0, "widows:6", 8, &[2, 3, 3]),
+        // Four orphans: no page holds them, so the lines that fit go together.
+        (5.0, "orphans:4", 4, &[0, 3, 1]),
+        (5.0, "orphans:4", 5, &[0, 3, 2]),
+        (5.0, "orphans:4", 6, &[0, 3, 3]),
+        (5.0, "orphans:4", 7, &[0, 3, 3, 1]),
+        (0.0, "orphans:4", 4, &[3, 1]),
+        (0.0, "orphans:4", 5, &[3, 2]),
+        (0.0, "orphans:4", 6, &[3, 3]),
+        (0.0, "orphans:4", 7, &[3, 3, 1]),
+    ];
+    for (spacer_height, style, lines, expected) in cases {
+        assert_eq!(
+            lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "{spacer_height} {style} {lines} lines"
+        );
+        assert_eq!(
+            bare_lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "bare {spacer_height} {style} {lines} lines"
+        );
+    }
+}
+
+#[test]
+fn the_edges_below_a_paragraph_go_with_its_last_line_as_in_chromium() {
+    // (spacer height, block style, lines, lines on each page). The counts are
+    // the lines Chromium prints on each page of `page.pdf`, read with
+    // `pdftotext -bbox`, for a paragraph that has padding or a border below
+    // its lines. Lines are 30px on 100px pages. When the lines fit a page but
+    // the edges do not, the page gives up its last line to the next one with
+    // them. The breaks that the lines need are repaired for `orphans` and
+    // `widows` first, and the edges are then fitted to the lines as they come
+    // out. These pages hold three lines, too few for a page to keep two
+    // orphans and give up two widows, so the one line is all that moves.
+    let cases: &[(f32, &str, usize, &[usize])] = &[
+        // The default orphans and widows (2 each): the last line goes with the padding.
+        (0.0, "padding-bottom:15px", 2, &[2]),
+        (0.0, "padding-bottom:15px", 3, &[2, 1]),
+        (0.0, "padding-bottom:15px", 4, &[2, 2]),
+        (0.0, "padding-bottom:15px", 5, &[3, 2]),
+        (0.0, "padding-bottom:15px", 6, &[3, 2, 1]),
+        (15.0, "padding-bottom:15px", 2, &[2]),
+        (15.0, "padding-bottom:15px", 3, &[2, 1]),
+        (15.0, "padding-bottom:15px", 4, &[2, 2]),
+        (15.0, "padding-bottom:15px", 5, &[2, 2, 1]),
+        (15.0, "padding-bottom:15px", 6, &[2, 2, 2]),
+        (30.0, "padding-bottom:15px", 2, &[1, 1]),
+        (30.0, "padding-bottom:15px", 3, &[2, 1]),
+        (30.0, "padding-bottom:15px", 4, &[2, 2]),
+        (30.0, "padding-bottom:15px", 5, &[2, 2, 1]),
+        (30.0, "padding-bottom:15px", 6, &[2, 2, 2]),
+        // One orphan and one widow.
+        (0.0, "padding-bottom:15px;orphans:1;widows:1", 2, &[2]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:1", 3, &[2, 1]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:1", 4, &[3, 1]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:1", 6, &[3, 2, 1]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:1", 7, &[3, 3, 1]),
+        (
+            0.0,
+            "padding-bottom:15px;orphans:1;widows:1",
+            9,
+            &[3, 3, 2, 1],
+        ),
+        (30.0, "padding-bottom:15px;orphans:1;widows:1", 2, &[1, 1]),
+        (30.0, "padding-bottom:15px;orphans:1;widows:1", 3, &[2, 1]),
+        (30.0, "padding-bottom:15px;orphans:1;widows:1", 4, &[2, 2]),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:1",
+            6,
+            &[2, 3, 1],
+        ),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:1",
+            7,
+            &[2, 3, 2],
+        ),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:1",
+            9,
+            &[2, 3, 3, 1],
+        ),
+        // Three widows: the breaks the lines need are repaired, the last line then goes with the padding.
+        (0.0, "padding-bottom:15px;widows:3", 3, &[2, 1]),
+        (0.0, "padding-bottom:15px;widows:3", 4, &[2, 2]),
+        (0.0, "padding-bottom:15px;widows:3", 5, &[2, 2, 1]),
+        (0.0, "padding-bottom:15px;widows:3", 6, &[3, 2, 1]),
+        (0.0, "padding-bottom:15px;widows:3", 7, &[3, 2, 2]),
+        (0.0, "padding-bottom:15px;widows:3", 8, &[3, 2, 2, 1]),
+        (0.0, "padding-bottom:15px;widows:3", 9, &[3, 3, 2, 1]),
+        (30.0, "padding-bottom:15px;widows:3", 3, &[2, 1]),
+        (30.0, "padding-bottom:15px;widows:3", 4, &[2, 2]),
+        (30.0, "padding-bottom:15px;widows:3", 5, &[2, 2, 1]),
+        (30.0, "padding-bottom:15px;widows:3", 6, &[2, 2, 2]),
+        (30.0, "padding-bottom:15px;widows:3", 7, &[2, 2, 2, 1]),
+        (30.0, "padding-bottom:15px;widows:3", 8, &[2, 3, 2, 1]),
+        (30.0, "padding-bottom:15px;widows:3", 9, &[2, 3, 2, 2]),
+        // Four widows are more lines than a page holds.
+        (0.0, "padding-bottom:15px;widows:4", 5, &[2, 2, 1]),
+        (0.0, "padding-bottom:15px;widows:4", 6, &[2, 3, 1]),
+        (0.0, "padding-bottom:15px;widows:4", 7, &[3, 3, 1]),
+        (0.0, "padding-bottom:15px;widows:4", 9, &[3, 3, 2, 1]),
+        (30.0, "padding-bottom:15px;widows:4", 5, &[2, 2, 1]),
+        (30.0, "padding-bottom:15px;widows:4", 6, &[2, 3, 1]),
+        (30.0, "padding-bottom:15px;widows:4", 7, &[2, 3, 2]),
+        (30.0, "padding-bottom:15px;widows:4", 9, &[2, 3, 3, 1]),
+        // One orphan and three widows.
+        (0.0, "padding-bottom:15px;orphans:1;widows:3", 3, &[2, 1]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:3", 4, &[1, 2, 1]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:3", 5, &[2, 2, 1]),
+        (0.0, "padding-bottom:15px;orphans:1;widows:3", 6, &[3, 2, 1]),
+        (
+            0.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            7,
+            &[3, 1, 2, 1],
+        ),
+        (
+            0.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            9,
+            &[3, 3, 2, 1],
+        ),
+        (30.0, "padding-bottom:15px;orphans:1;widows:3", 3, &[1, 2]),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            4,
+            &[1, 2, 1],
+        ),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            5,
+            &[2, 2, 1],
+        ),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            6,
+            &[2, 1, 2, 1],
+        ),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            7,
+            &[2, 2, 2, 1],
+        ),
+        (
+            30.0,
+            "padding-bottom:15px;orphans:1;widows:3",
+            9,
+            &[2, 3, 1, 2, 1],
+        ),
+        // Three orphans: the last line goes alone when the lines fit, as the break is not one the lines need.
+        (0.0, "padding-bottom:15px;orphans:3", 3, &[2, 1]),
+        (0.0, "padding-bottom:15px;orphans:3", 4, &[3, 1]),
+        (0.0, "padding-bottom:15px;orphans:3", 6, &[3, 2, 1]),
+        (0.0, "padding-bottom:15px;orphans:3", 9, &[3, 3, 2, 1]),
+        // A border below the lines and a padding above and below them.
+        (
+            0.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            2,
+            &[2],
+        ),
+        (
+            0.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            3,
+            &[2, 1],
+        ),
+        (
+            0.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            4,
+            &[2, 2],
+        ),
+        (
+            0.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            5,
+            &[3, 2],
+        ),
+        (
+            0.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            6,
+            &[3, 2, 1],
+        ),
+        (
+            30.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            2,
+            &[1, 1],
+        ),
+        (
+            30.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            3,
+            &[2, 1],
+        ),
+        (
+            30.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            4,
+            &[2, 2],
+        ),
+        (
+            30.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            5,
+            &[2, 2, 1],
+        ),
+        (
+            30.0,
+            "padding:7px 0 12px;border-bottom:4px solid red",
+            6,
+            &[2, 2, 2],
+        ),
+        // A border alone.
+        (10.0, "border-bottom:3px solid red", 2, &[2]),
+        (10.0, "border-bottom:3px solid red", 3, &[2, 1]),
+        (10.0, "border-bottom:3px solid red", 5, &[3, 2]),
+        (40.0, "border-bottom:3px solid red", 2, &[1, 1]),
+        (40.0, "border-bottom:3px solid red", 3, &[2, 1]),
+        (40.0, "border-bottom:3px solid red", 5, &[2, 3]),
+    ];
+    for (spacer_height, style, lines, expected) in cases {
+        assert_eq!(
+            lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "{spacer_height} {style} {lines} lines"
+        );
+    }
+}
+
+#[test]
+fn the_page_that_cannot_hold_the_edges_gives_up_the_widows_it_can_spare() {
+    // (page height, lines, orphans, widows, lines on each page). The counts
+    // are the lines Chromium prints on each page of `page.pdf`, read with
+    // `pdftotext -bbox`, for a 20px-wide paragraph with 15px of padding below
+    // it. The page holds the lines and 10px more, so the padding does not
+    // fit. It gives up `widows` lines to the next page when it keeps its
+    // `orphans` after that, and its last line when it cannot.
+    let cases: &[(f32, usize, usize, usize, &[usize])] = &[
+        (70.0, 2, 2, 2, &[1, 1]),
+        (70.0, 2, 1, 1, &[1, 1]),
+        (100.0, 3, 2, 2, &[2, 1]),
+        (100.0, 3, 1, 1, &[2, 1]),
+        (100.0, 3, 1, 3, &[2, 1]),
+        (100.0, 3, 2, 1, &[2, 1]),
+        (130.0, 4, 2, 2, &[2, 2]),
+        (130.0, 4, 1, 3, &[1, 3]),
+        (130.0, 4, 2, 3, &[3, 1]),
+        (130.0, 4, 3, 1, &[3, 1]),
+        (160.0, 5, 2, 2, &[3, 2]),
+        (160.0, 5, 2, 3, &[2, 3]),
+        (160.0, 5, 3, 2, &[3, 2]),
+        (160.0, 5, 1, 5, &[4, 1]),
+        (280.0, 9, 2, 2, &[7, 2]),
+        (280.0, 9, 1, 1, &[8, 1]),
+        (280.0, 9, 2, 3, &[6, 3]),
+        (280.0, 9, 3, 3, &[6, 3]),
+        (280.0, 9, 1, 5, &[4, 5]),
+        (280.0, 9, 4, 4, &[5, 4]),
+    ];
+    for (page_height, lines, orphans, widows, expected) in cases {
+        assert_eq!(
+            lines_on_each_page_of_height(
+                *page_height,
+                &format!("padding-bottom:15px;orphans:{orphans};widows:{widows}"),
+                *lines
+            ),
+            *expected,
+            "{page_height}px pages, {lines} lines, orphans {orphans}, widows {widows}"
         );
     }
 }
@@ -1168,9 +1543,9 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
 #[test]
 fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it() {
     use crate::layout::test_support::ifc_ahem_fonts;
-    // body: "aa " + a 20px block of two lines + " dd". The block's first line
-    // ends at 30 > 25, so the block moves to page 1 as a unit; the text after
-    // it comes later in the same paragraph.
+    // body: "aa " + a 20px block of two lines + " dd". The block's second
+    // line ends at 30 > 25, so it starts page 1; the text after the block
+    // comes later in the same paragraph.
     let mut results = Vec::new();
     {
         let mut doc = Document::new();
@@ -1205,7 +1580,7 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
             .collect();
         results.push(rects);
     }
-    assert_eq!(results[0], [(1, 0.0)], "pinned");
+    assert_eq!(results[0], [(0, 10.0), (1, 0.0)], "pinned");
 }
 
 #[test]
@@ -1499,10 +1874,10 @@ fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
 }
 
 #[test]
-fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
+fn the_lines_after_a_fixed_height_block_that_breaks_follow_its_end() {
     // "aa", a 20px block holding "bb" that would straddle the 25px page,
-    // then " dd": the block moves to the second page as a unit and " dd"
-    // follows it (on both paths).
+    // then " dd": the block breaks between its lines and " dd" follows the
+    // end of its box, 5px into the second page (on both paths).
     let run = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -1541,11 +1916,11 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
                 .expect("fragment")
         })
     };
-    // Hand-computed: the block's two lines start the second page; " dd"
-    // would follow the 20px block at 20px, where its 10px line does not fit
-    // the 25px page, so it starts the third page.
-    assert_eq!(run(), [(1, 0.0), (2, 0.0)]);
-    assert_eq!(run(), [(1, 0.0), (2, 0.0)]);
+    // Hand-computed: the first line of the block ends the first page at 20;
+    // the second starts the next one, which the block's 20px box reaches 5px
+    // into, where " dd" goes on.
+    assert_eq!(run(), [(0, 10.0), (1, 5.0)]);
+    assert_eq!(run(), [(0, 10.0), (1, 5.0)]);
 }
 
 #[test]
@@ -1683,6 +2058,101 @@ fn engine_fragments_of(
                 .expect("fragment")
         })
         .collect()
+}
+
+/// The page names, and the `(page, y)` of the text of each of `boxes`, of a
+/// body with a block per `(style, floats)` pair, on 100x50 pages.
+fn pages_of_blocks(boxes: &[(&str, bool)]) -> (Vec<Option<String>>, Vec<(u32, f32)>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let texts: Vec<usize> = boxes
+        .iter()
+        .map(|&(style, floats)| {
+            let float = if floats { "float:left;width:20px;" } else { "" };
+            let block = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("display:block;{float}{style}")),
+            );
+            doc.append_text(block, "x")
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+    let positions = texts
+        .iter()
+        .map(|&text| {
+            fragments
+                .iter()
+                .flat_map(|p| p.items.iter())
+                .find(|item| item.node_id == NodeId::new(text as u64))
+                .map(|item| (item.page_index, item.rect.y))
+                .expect("fragment")
+        })
+        .collect();
+    let names = slices.iter().map(|slice| slice.page_name.clone()).collect();
+    (names, positions)
+}
+
+#[test]
+fn a_page_name_after_only_a_float_names_the_first_page() {
+    // The page-name-float-001 shape: a float, then a box that names a page.
+    // The float is not part of the page flow, so the box is the first in the
+    // flow: it names the first page and starts level with the float instead of
+    // opening a page below it. The float's own name is of no account, and
+    // neither is its lack of one.
+    for float_style in ["page:a", ""] {
+        assert_eq!(
+            pages_of_blocks(&[(float_style, true), ("page:b", false)]),
+            (vec![Some("b".to_owned())], vec![(0, 0.0), (0, 0.0)]),
+            "float with `{float_style}`"
+        );
+    }
+}
+
+#[test]
+fn a_float_after_a_named_box_stays_on_the_page_of_that_box() {
+    // A float is no part of the page flow, so the box after it is compared
+    // with the box before it. A change of page name between the two opens
+    // the next page for the box after the float, not for the float; without
+    // one the box stays on the page level with the float, and nothing clears
+    // it.
+    let cases = [
+        // (float, box after it, page names, page of the box after it, its y)
+        ("", "", vec![Some("a"), None], 1, 0.0),
+        ("page:b", "", vec![Some("a"), None], 1, 0.0),
+        ("", "page:b", vec![Some("a"), Some("b")], 1, 0.0),
+        ("", "page:a", vec![Some("a")], 0, 10.0),
+        ("page:a", "page:a", vec![Some("a")], 0, 10.0),
+    ];
+    for (float_style, after_style, names, page, y) in cases {
+        let (page_names, positions) =
+            pages_of_blocks(&[("page:a", false), (float_style, true), (after_style, false)]);
+        let names: Vec<Option<String>> = names
+            .into_iter()
+            .map(|name| name.map(str::to_owned))
+            .collect();
+        assert_eq!(
+            (page_names, positions),
+            (names, vec![(0, 0.0), (0, 10.0), (page, y)]),
+            "float with `{float_style}`, then a box with `{after_style}`"
+        );
+    }
 }
 
 #[test]
@@ -2964,20 +3434,23 @@ fn a_nested_paragraph_split_within_its_line_constraints_stays() {
 }
 
 #[test]
-fn a_fixed_height_paragraph_whose_first_line_overflows_moves_only_as_a_direct_child() {
-    // The 30px paragraph at y 10 ends at 40 on a 35px page. As a direct
-    // child of the body it moves to page 1 as a unit; nested in a section it
-    // fragments at the break, as the same box does as a flex item.
-    let direct = paragraph_after_a_spacer(None, 10.0, "height:30px;orphans:1;widows:1", 35.0);
-    assert_eq!(direct.fragments, whole_on_page_1());
-    let nested = paragraph_after_a_spacer(Some(""), 10.0, "height:30px;orphans:1;widows:1", 35.0);
-    assert_eq!(
-        nested.fragments,
-        vec![
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
-        ]
-    );
+fn a_fixed_height_paragraph_breaks_between_its_lines_as_a_direct_child_and_nested() {
+    // The 30px paragraph at y 10 ends at 40 on a 35px page: its third line
+    // crosses the page end and starts page 1, whether the paragraph is a
+    // direct child of the body or nested in a section, as the same box is as
+    // a flex item.
+    for section in [None, Some("")] {
+        let laid_out =
+            paragraph_after_a_spacer(section, 10.0, "height:30px;orphans:1;widows:1", 35.0);
+        assert_eq!(
+            laid_out.fragments,
+            vec![
+                (0, Some(PageFragmentLineRange::new(0, 2))),
+                (1, Some(PageFragmentLineRange::new(2, 3))),
+            ],
+            "{section:?}"
+        );
+    }
 }
 
 #[test]
@@ -3367,13 +3840,16 @@ fn a_flex_item_beside_another_keeps_its_natural_break() {
 }
 
 #[test]
-fn widows_taller_than_the_next_page_keep_the_natural_break() {
+fn widows_taller_than_the_next_page_give_up_lines_at_the_first_break() {
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
-    // Eight 10px lines on 40px pages: six widows would not fit on the next
-    // page anyway, so the paragraph breaks where `widows: 1` breaks it.
-    let fragments = |css: &str| {
-        let (mut doc, cascade, root) =
-            ahem_paragraph("a b c d e f g h", &format!("width:10px;{css}"));
+    // `words` one-letter words in a 10px-wide paragraph of 10px lines on 40px
+    // pages: the lines on each page.
+    let lines_on_each_page = |css: &str, words: usize| {
+        let text = (0..words)
+            .map(|word| char::from(b'a' + word as u8).to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (mut doc, cascade, root) = ahem_paragraph(&text, &format!("width:10px;{css}"));
         doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         let mut page = PageBox::new();
         page.width = 100.0;
@@ -3381,10 +3857,32 @@ fn widows_taller_than_the_next_page_keep_the_natural_break() {
         let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
         let text = doc.nodes[root].children[0];
         text_fragments(&doc, &cascade, page, &slices, text)
+            .iter()
+            .filter_map(|(_, range)| range.map(|r| (r.end - r.start) as usize))
+            .collect::<Vec<_>>()
     };
-    let natural = fragments("orphans:1;widows:1");
-    assert!(natural.len() > 1, "{natural:?}");
-    assert_eq!(fragments("orphans:1;widows:6"), natural);
+    // (block style, words, lines on each page). The counts are the lines
+    // Chromium prints on each page of `page.pdf`, read with `pdftotext -bbox`.
+    // Widows of more lines than a page holds still take lines from the first
+    // break, as far as the orphans allow, though the lines then run past the
+    // end of the page after it; the breaks after the first stay where they fall.
+    let cases: &[(&str, usize, &[usize])] = &[
+        ("orphans:1;widows:1", 8, &[4, 4]),
+        ("orphans:1;widows:6", 8, &[2, 4, 2]),
+        ("orphans:1;widows:6", 6, &[1, 4, 1]),
+        ("orphans:1;widows:6", 12, &[4, 4, 4]),
+        ("orphans:1;widows:5", 7, &[2, 4, 1]),
+        ("orphans:1;widows:8", 10, &[2, 4, 4]),
+        ("widows:6", 7, &[2, 4, 1]),
+        ("widows:6", 9, &[3, 4, 2]),
+    ];
+    for (css, words, expected) in cases {
+        assert_eq!(
+            lines_on_each_page(css, *words),
+            *expected,
+            "{css} {words} words"
+        );
+    }
 }
 
 #[test]
@@ -3488,11 +3986,12 @@ fn a_flex_item_sharing_its_line_through_a_negative_margin_keeps_its_natural_brea
 }
 
 #[test]
-fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
+fn a_paragraph_with_a_definite_height_moves_a_line_down_inside_it_for_its_widows() {
     use crate::layout::test_support::ifc_ahem_fonts;
     // Three 10px lines in a 30px tall paragraph 15px down a 40px page would
-    // leave one widow. The paragraph's height is its own, so its lines do
-    // not move down inside it; it moves to page 1 whole and stays 30px tall.
+    // leave one widow. The paragraph's height is its own, so its second line
+    // moves to page 1 with the third and the box stays 30px tall; the block
+    // after it follows the box.
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
@@ -3517,10 +4016,13 @@ fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
     let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert_eq!(
         text_fragments(&doc, &cascade, page, &slices, text),
-        [(1, Some(PageFragmentLineRange::new(0, 3)))]
+        [
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
+        ]
     );
     assert_eq!(doc.nodes[paragraph].layout.size.height, 30.0);
-    assert_eq!(absolute_rect(&doc, after).1, 70.0);
+    assert_eq!(absolute_rect(&doc, after).1, 45.0);
 }
 
 #[test]

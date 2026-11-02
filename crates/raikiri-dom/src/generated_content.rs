@@ -11,6 +11,7 @@ use crate::Document;
 use crate::target::{CompactCounterSnapshots, CounterSnapshot, CounterSnapshots};
 use raikiri_style::property::{
     ContentComponent, CounterStyle, DisplayValue, FloatValue, PositionValue, QuoteKeyword,
+    WhiteSpaceCollapse,
 };
 use raikiri_style::{
     CascadeResult, ComputedValues, CounterStyleRegistry, PseudoElem, StyleNodeId,
@@ -247,16 +248,27 @@ pub fn is_in_flow_generated_text(
         })
 }
 
-/// Whether the `pseudo` of `element` is in-flow generated text that makes
-/// no line: an inline box whose `content` is only empty strings and that has
-/// no margin, border or padding. It holds nothing a line could show, so it
-/// neither is the first formatted line nor comes before content that is
-/// (CSS 2.1 §9.4.2). A `content` that is resolved while the paragraph is laid
-/// out, such as a counter, a quote or an attribute, is not judged here.
-pub(crate) fn is_blank_inline_generated_text(
+/// Whether `text` is white space that `collapse` removes from the line it is
+/// on, so that it alone makes no line (CSS Text 3 §4.1.1, CSS 2.1 §9.4.2).
+/// White space that the style preserves still generates lines.
+pub(crate) fn is_collapsed_white_space(text: &str, collapse: WhiteSpaceCollapse) -> bool {
+    text.chars()
+        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+        && match collapse {
+            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard => true,
+            WhiteSpaceCollapse::PreserveBreaks => !text.contains(['\n', '\r']),
+            _ => text.is_empty(),
+        }
+}
+
+/// Whether the `pseudo` of `element` is an in-flow inline box with no margin,
+/// border or padding whose `content` is only strings that `blank` accepts
+/// under the box's `white-space-collapse`.
+fn is_inline_generated_text_of_blanks(
     cascade: &CascadeResult,
     element: usize,
     pseudo: PseudoElem,
+    blank: fn(&str, WhiteSpaceCollapse) -> bool,
 ) -> bool {
     use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, Sides};
     is_in_flow_generated_text(cascade, element, pseudo)
@@ -265,9 +277,10 @@ pub(crate) fn is_blank_inline_generated_text(
             .get(&(StyleNodeId::new(element as u64), pseudo))
             .is_some_and(|cv| {
                 matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents)
-                    && cv.content.iter().all(
-                        |part| matches!(part, ContentComponent::Literal(text) if text.is_empty()),
-                    )
+                    && cv.content.iter().all(|part| {
+                        matches!(part, ContentComponent::Literal(text)
+                            if blank(text, cv.effective_white_space_collapse))
+                    })
                     && cv.padding == Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
                     && cv.margin == Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))
                     && [
@@ -279,6 +292,34 @@ pub(crate) fn is_blank_inline_generated_text(
                     .iter()
                     .all(|side| side.width().0 == 0.0)
             })
+}
+
+/// Whether the `pseudo` of `element` is in-flow generated text that makes
+/// no line: an inline box whose `content` is only empty strings and that has
+/// no margin, border or padding. It holds nothing a line could show, so it
+/// neither is the first formatted line nor comes before content that is
+/// (CSS 2.1 §9.4.2). A `content` that is resolved while the paragraph is laid
+/// out, such as a counter, a quote or an attribute, is not judged here.
+pub(crate) fn is_blank_inline_generated_text(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    is_inline_generated_text_of_blanks(cascade, element, pseudo, |text, _| text.is_empty())
+}
+
+/// Whether the `pseudo` of `element` is in-flow generated text that takes
+/// part in the page flow, as a text node with a line of its own does: in-flow
+/// generated text (see [`is_in_flow_generated_text`]) other than an inline box
+/// that holds only empty strings or white space that collapses away, which
+/// makes no line (see [`is_blank_inline_generated_text`]).
+pub(crate) fn is_page_flow_generated_text(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    is_in_flow_generated_text(cascade, element, pseudo)
+        && !is_inline_generated_text_of_blanks(cascade, element, pseudo, is_collapsed_white_space)
 }
 
 /// Whether the `pseudo` of `element` is in-flow generated text that can make
@@ -1089,47 +1130,41 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
     Some(text)
 }
 
-/// `value` in the counter style `style`: the roman styles, a custom
-/// `@counter-style` of `registry`, else decimal.
+/// The name under which `registry` knows the style that `name` asks for.
+///
+/// A predefined name matches without regard to case, so an author style that
+/// redefines one answers to every spelling of it (stored in lower case); the
+/// name of any other style matches exactly. A rule spelled with capitals is
+/// still found by the same spelling.
+pub(crate) fn author_style_name<'a>(
+    registry: &CounterStyleRegistry,
+    name: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    if name.bytes().any(|byte| byte.is_ascii_uppercase())
+        && raikiri_traits::page::is_predefined_counter_style(name)
+    {
+        let lowered = name.to_ascii_lowercase();
+        if registry.get(&lowered).is_some() {
+            return std::borrow::Cow::Owned(lowered);
+        }
+    }
+    std::borrow::Cow::Borrowed(name)
+}
+
+/// `value` in the counter style `style`: an author `@counter-style` of
+/// `registry` first, since it can redefine a predefined name, then the
+/// predefined styles of CSS Counter Styles 3, else decimal.
 #[doc(hidden)]
 pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
-    match style {
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
-            if value <= 0 {
-                return value.to_string();
-            }
-            let mut n = value;
-            let mut result = String::new();
-            for (unit, glyph) in [
-                (1000, "m"),
-                (900, "cm"),
-                (500, "d"),
-                (400, "cd"),
-                (100, "c"),
-                (90, "xc"),
-                (50, "l"),
-                (40, "xl"),
-                (10, "x"),
-                (9, "ix"),
-                (5, "v"),
-                (4, "iv"),
-                (1, "i"),
-            ] {
-                while n >= unit {
-                    result.push_str(glyph);
-                    n -= unit;
-                }
-            }
-            result
+    if let CounterStyle::Named(name) = style {
+        let author_name = author_style_name(registry, name.as_str());
+        if registry.get(&author_name).is_some() {
+            // A value the style and its fallbacks cannot render uses decimal.
+            return resolve_custom_counter(registry, &author_name, value)
+                .unwrap_or_else(|| value.to_string());
         }
-        CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("upper-roman") => {
-            format_counter(value, &CounterStyle::Named("lower-roman".into()), registry)
-                .to_uppercase()
-        }
-        CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
-            .unwrap_or_else(|| value.to_string()),
-        _ => value.to_string(),
     }
+    raikiri_traits::page::format_predefined_counter(value, style)
 }
 
 #[cfg(test)]

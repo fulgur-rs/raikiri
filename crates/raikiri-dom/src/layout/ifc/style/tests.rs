@@ -1144,3 +1144,13 @@ fn inline_relative_insets_prefer_the_start_side_of_a_vertical_containing_block()
         (5.0, -4.0)
     );
 }
+
+#[test]
+fn programmatic_comparison_margins_are_explicitly_rejected_by_affine_inline_edges() {
+    let mut values = ComputedValues::initial();
+    values.margin.left = crate::layout::test_support::compared_length("max(10px, 5%)");
+    assert!(matches!(
+        inline_edges(&values, 0, &fonts()),
+        Err(IfcError::Unsupported { .. })
+    ));
+}

@@ -43,9 +43,11 @@ pub(crate) struct LayoutContext {
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `dispatch::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
-    /// The flex container whose intrinsic widths are being measured, whose
-    /// items are bounded by their flex base sizes meanwhile (see
-    /// `with_flex_intrinsic_probe` in [`crate::layout::dispatch`]).
+    /// The flex container whose intrinsic widths are being measured for its
+    /// shrink-to-fit width, whose items are bounded by their flex base sizes
+    /// meanwhile (see `with_flex_intrinsic_probe` in [`crate::layout::dispatch`]).
+    /// A container asked for its min-content or max-content width in any other
+    /// way bounds its items the same, whatever this holds.
     pub(crate) flex_intrinsic_probe: Option<usize>,
     /// Definite block sizes retained as percentage bases for the direct
     /// children of boxes being measured for intrinsic height limits.
@@ -71,6 +73,10 @@ pub(crate) struct LayoutContext {
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
+    /// The root whose out-of-flow candidates are being recorded, and the
+    /// candidates it hands to the library's positioning pass for the initial
+    /// containing block (see `compute_root_layout_with_content_limits`).
+    pub(crate) root_oof_capture: Option<RootOofCapture>,
     /// The block extent each vertical paragraph root with an auto block size
     /// settled on, by root and inline size (the bits of the physical height).
     /// It is a first guess for the next layout of the same root, and a wrong
@@ -194,6 +200,18 @@ pub(crate) enum TextGroupScope {
 pub(crate) struct NodeLayoutState {
     pub(crate) box_key: BoxKey,
     pub(crate) taffy_child_walks: Option<Vec<protocol::NodeId>>,
+}
+
+/// The out-of-flow candidates that no box claimed, as the root handed them to
+/// the library's positioning pass for the initial containing block.
+#[derive(Debug)]
+pub(crate) struct RootOofCapture {
+    pub(crate) root: protocol::NodeId,
+    pub(crate) available_space: Size<protocol::AvailableSpace>,
+    pub(crate) candidates: protocol::OofCandidates,
+    /// The override checkpoint from before the static-position overrides of the
+    /// positioning pass were pushed, while they are in place.
+    pub(crate) checkpoint: Option<usize>,
 }
 
 pub(crate) struct LayoutSession<'doc> {

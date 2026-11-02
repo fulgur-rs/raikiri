@@ -149,13 +149,13 @@ fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
     assert_ne!(copied_comment, comment);
     assert_ne!(copied_trailing_text, trailing_text);
     assert!(
-        matches!(&target.nodes[copied_text].data, NodeData::Text(t) if t.text_content == "first")
+        matches!(&target.nodes[copied_text].data, NodeData::Text(t) if t.text_content.as_str() == "first")
     );
     assert!(
         matches!(&target.nodes[copied_comment].data, NodeData::Comment(t) if t == "middle comment")
     );
     assert!(
-        matches!(&target.nodes[copied_trailing_text].data, NodeData::Text(t) if t.text_content == "last")
+        matches!(&target.nodes[copied_trailing_text].data, NodeData::Text(t) if t.text_content.as_str() == "last")
     );
     let NodeData::Element(copied_span_data) = &target.nodes[copied_span].data else {
         panic!("expected copied span element"); // cov:ignore: the source fixture constructs this as an Element.

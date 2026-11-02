@@ -1514,17 +1514,31 @@ fn text_under_a_moved_clip_in_columns_has_no_runs_and_a_warning() {
         "",
         "i",
     );
-    // The painter clips each column fragment of the paragraph where it
+    // The painter clips each column fragment of a padded paragraph where it
     // draws that fragment.
     assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"columns: 2; height: 40px\">\
+             <p id=\"f\" style=\"position: relative; left: 4px; top: 3px; padding: 2px 0\">{}</p></div>",
+            vec!["word"; 40].join(" ")
+        ),
+        "",
+        "f",
+    );
+}
+
+#[test]
+fn a_translated_plain_paragraph_in_columns_matches_paint() {
+    // The columns of a plain paragraph are not clipped, so the translation
+    // only moves its lines.
+    assert_cases_match_paint(&[(
         &format!(
             "<p>kept</p><div style=\"columns: 2; height: 40px\">\
              <p id=\"f\" style=\"transform: translate(4px, 3px)\">{}</p></div>",
             vec!["word"; 40].join(" ")
         ),
         "",
-        "f",
-    );
+    )]);
 }
 
 #[test]

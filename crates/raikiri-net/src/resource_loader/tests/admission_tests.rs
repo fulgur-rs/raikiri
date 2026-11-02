@@ -603,3 +603,196 @@ fn a_poisoned_condvar_wait_returns_a_resource_error() {
     assert!(result.is_err());
     assert!(resolver.state.is_poisoned());
 }
+
+#[test]
+fn concurrent_raster_fragment_aliases_share_one_pending_slot_and_source() {
+    let (provider, gate, started) = controlled();
+    let base: Url = "https://images.test/a.png".parse().unwrap();
+    let urls: Vec<Url> = (0..8)
+        .map(|i| format!("{base}#{i}").parse().unwrap())
+        .collect();
+    let resolver = ResourceLoader::with_limits_and_concurrency(
+        provider,
+        urls[0].as_str().len() as u64 + 8,
+        1,
+        1,
+    );
+    let barrier = std::sync::Barrier::new(9);
+    let sources = std::thread::scope(|scope| {
+        let _release = ReleaseAll(&gate);
+        let handles: Vec<_> = urls
+            .iter()
+            .map(|url| {
+                let resolver = &resolver;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    resolver.load_source(url)
+                })
+            })
+            .collect();
+        barrier.wait();
+        assert!(started.recv_timeout(DEADLINE).is_ok());
+        assert!(started.recv_timeout(Duration::from_millis(100)).is_err());
+        gate.release_all();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert!(sources.iter().all(|s| Arc::ptr_eq(s, &sources[0])));
+    assert_eq!(gate.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(gate.peak.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        resolver.budget.lock().unwrap().used,
+        base.as_str().len() as u64 + 8
+    );
+    assert!(resolver.state.lock().unwrap().loading.is_empty());
+}
+
+#[test]
+fn fragment_waiters_retry_after_fetch_error_decode_error_and_provider_panic() {
+    for outcome in [1, 2, 3] {
+        let (provider, gate, started) = controlled();
+        gate.first_outcome.store(outcome, Ordering::SeqCst);
+        let resolver = ResourceLoader::new(provider);
+        let url: Url = "https://images.test/a.png#owner".parse().unwrap();
+        let other_alias: Url = "https://images.test/a.png#waiter".parse().unwrap();
+        let (first, results) = std::thread::scope(|scope| {
+            let _release = ReleaseAll(&gate);
+            let resolver = &resolver;
+            let handles: Vec<_> = [&url, &other_alias]
+                .into_iter()
+                .map(|url| scope.spawn(move || resolver.load_source(url)))
+                .collect();
+            let first = started.recv_timeout(DEADLINE);
+            gate.release_all();
+            (
+                first,
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        assert!(first.is_ok());
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(Ok(_))))
+                .count(),
+            1
+        );
+        assert_eq!(gate.calls.load(Ordering::SeqCst), 2);
+        assert!(!resolver.budget.is_poisoned());
+        assert!(resolver.state.lock().unwrap().loading.is_empty());
+        assert_eq!(
+            resolver.budget.lock().unwrap().used,
+            "https://images.test/a.png".len() as u64 + 8
+        );
+        let other: Url = "https://images.test/other.png".parse().unwrap();
+        assert!(resolver.load_source(&other).is_ok());
+        assert_eq!(gate.calls.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[test]
+fn fragment_alias_hits_do_not_wait_for_a_decoder_holding_the_budget() {
+    let resolver = recording();
+    let owner_url: Url = "https://images.test/cached.png#owner".parse().unwrap();
+    let cached_url: Url = "https://images.test/cached.png#alias".parse().unwrap();
+    let slow_url: Url = "https://images.test/slow.png".parse().unwrap();
+    let cached = resolver.load_source(&owner_url).unwrap();
+    let (entered, entered_rx) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let (started, hit) = std::thread::scope(|scope| {
+        let resolver = &resolver;
+        let slow_url = &slow_url;
+        let cached_url = &cached_url;
+        let cached = &cached;
+        let owner = scope.spawn(move || {
+            resolver.load_source_with(slow_url, |bytes, data, svg, available| {
+                entered.send(()).unwrap();
+                release_rx.recv().unwrap();
+                resolver.build_source(bytes, data, svg, available)
+            })
+        });
+        let started = entered_rx.recv_timeout(DEADLINE);
+        let (done, receiver) = mpsc::channel();
+        let hit = scope.spawn(move || {
+            let result = resolver
+                .load_source(cached_url)
+                .is_ok_and(|source| Arc::ptr_eq(&source, cached));
+            done.send(result).unwrap();
+        });
+        let completed = receiver.recv_timeout(DEADLINE);
+        let _ = release.send(());
+        assert!(owner.join().unwrap().is_ok());
+        hit.join().unwrap();
+        (started, completed)
+    });
+    assert!(started.is_ok());
+    assert!(hit.unwrap());
+    assert_eq!(resolver.network.fetch_count.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn concurrent_svg_fragments_publish_distinct_exact_sources_after_waiting() {
+    let (mut provider, gate, started) = controlled();
+    provider.bytes = TWO_COLOR_SVG;
+    let urls: Vec<Url> = (0..8)
+        .map(|i| {
+            format!("https://images.test/a.svg#id{}", i % 4)
+                .parse()
+                .unwrap()
+        })
+        .collect();
+    let resolver = ResourceLoader::with_limits_and_concurrency(provider, MAX_CACHE_BYTES, 4, 1);
+    let barrier = std::sync::Barrier::new(9);
+    let sources = std::thread::scope(|scope| {
+        let _release = ReleaseAll(&gate);
+        let handles: Vec<_> = urls
+            .iter()
+            .map(|url| {
+                let resolver = &resolver;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    resolver.load_source(url)
+                })
+            })
+            .collect();
+        barrier.wait();
+        assert!(started.recv_timeout(DEADLINE).is_ok());
+        gate.release_all();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap().unwrap())
+            .collect::<Vec<_>>()
+    });
+    for (index, url) in urls.iter().enumerate() {
+        assert!(Arc::ptr_eq(
+            &sources[index],
+            &resolver.cached_source(url).unwrap()
+        ));
+        assert!(Arc::ptr_eq(&sources[index], &sources[(index + 4) % 8]));
+        for other in 0..index {
+            assert_eq!(
+                Arc::ptr_eq(&sources[index], &sources[other]),
+                urls[index] == urls[other]
+            );
+        }
+    }
+    assert_eq!(gate.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(gate.peak.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        resolver.budget.lock().unwrap().used,
+        urls[..4]
+            .iter()
+            .map(|url| url.as_str().len() as u64 + TWO_COLOR_SVG.len() as u64)
+            .sum::<u64>()
+    );
+    let state = resolver.state.lock().unwrap();
+    assert_eq!(state.cache.len(), 4);
+    assert!(state.loading.is_empty());
+}

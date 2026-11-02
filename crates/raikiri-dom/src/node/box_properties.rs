@@ -63,8 +63,16 @@ impl BoxProperties {
         }
     }
 
-    /// Lower CSS display to the box types layout supports.
-    pub(crate) fn layout_display(&self, multicol: bool, kind: NodeKind, root: bool) -> Display {
+    /// Lower CSS display to the box types layout supports. `roots_context` is
+    /// set for a block-level box that establishes an independent block
+    /// formatting context whatever its style says, such as a multicol
+    /// container or a fieldset.
+    pub(crate) fn layout_display(
+        &self,
+        roots_context: bool,
+        kind: NodeKind,
+        root: bool,
+    ) -> Display {
         // Non-elements have no CSS display property. Preserve the native
         // default used by programmatic document layout instead of lowering
         // their inline text identity as an element's block box.
@@ -78,7 +86,7 @@ impl BoxProperties {
             display if display.is_grid_container() => Display::Grid,
             _ => Display::Block,
         };
-        if (multicol || root) && display == Display::Block {
+        if (roots_context || root) && display == Display::Block {
             Display::FlowRoot
         } else {
             display

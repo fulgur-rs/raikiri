@@ -150,6 +150,9 @@ enum Frame {
     /// contexts with negative stack levels painted below it.
     HeldContent(usize),
     PopClip,
+    /// Discard the clip opened at this event index if its hidden table
+    /// contributes no paint on this page.
+    PopClipIfPainted(usize),
     PopOpacity,
     PopTransform,
 }

@@ -7,6 +7,7 @@ pub(crate) mod fragment;
 pub(crate) mod generated_boxes;
 pub(crate) mod generated_images;
 mod image_markers;
+mod line_ownership;
 pub(crate) mod paint_order;
 pub(crate) mod paint_transform;
 pub(crate) mod records;

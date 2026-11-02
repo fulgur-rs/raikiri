@@ -520,6 +520,8 @@ pub(crate) fn walk_from<D: StyleDom>(
     // Per element of `ancestor_path`, the nearest element up to it that
     // declares each stroke length, kept in lockstep with the path.
     let mut stroke_declarers: Vec<StrokeDeclarers> = Vec::new();
+    // Nearest exported painting declarations, in the same ancestor slots.
+    let mut painting_declarers: Vec<PaintingDeclarers> = Vec::new();
     let mut store = InputStore::new(options.share_retention_budget);
     // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
     // and reused for every node. Two per-node `HashMap`s previously accounted
@@ -550,6 +552,8 @@ pub(crate) fn walk_from<D: StyleDom>(
         ancestor_path.truncate(ancestors);
         ancestor_filter.truncate(ancestors);
         stroke_declarers.truncate(ancestors);
+        painting_declarers.truncate(ancestors);
+        let parent_painting_declarers = painting_declarers.last().copied().unwrap_or_default();
         // Skip the entire subtree when is_in_document()==false: detached and
         // template descendants keep initial() instead of inheriting from their
         // parent (nodes under `<template style="color:red">` do not inherit
@@ -623,6 +627,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             ancestor_path.push(id);
             ancestor_filter.push(&elem);
             stroke_declarers.push(StrokeDeclarers::default());
+            painting_declarers.push(PaintingDeclarers::default());
         }
 
         let shared = collector.shared();
@@ -974,6 +979,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                     inherit_ancestor_paint(
                         &mut node_svg_properties,
                         attribute_set,
+                        parent_painting_declarers,
                         ancestors,
                         &out.svg_properties,
                         &out.computed,
@@ -991,6 +997,10 @@ pub(crate) fn walk_from<D: StyleDom>(
             if let Some(slot) = stroke_declarers.last_mut() {
                 *slot = parent_declarers.declared_by(&node_svg_properties, attribute_set, id);
             }
+        }
+        if is_element && let Some(slot) = painting_declarers.last_mut() {
+            *slot = parent_painting_declarers
+                .declared_by(&node_svg_properties, ancestor_path.len() - 1);
         }
         if !node_svg_properties.is_empty() {
             // Every element owns a copy of the text of its painting
@@ -1743,6 +1753,25 @@ pub(crate) struct SvgCollector<'a> {
     pub(crate) painting_only: bool,
 }
 
+/// Ancestor-path indices of the nearest non-inherited exported painting
+/// declarations, including known absences. Presentation attributes that are
+/// not exported do not change this environment.
+#[derive(Clone, Copy, Default)]
+struct PaintingDeclarers([Option<usize>; crate::property::PropertyKey::SVG_PRESENTATION.len()]);
+
+impl PaintingDeclarers {
+    /// Includes the final exports of the element at `depth`, after sharing,
+    /// root completion, and relative-length conversion.
+    fn declared_by(mut self, properties: &[SvgStyleProperty], depth: usize) -> Self {
+        for property in properties.iter().filter(|property| !property.inherited) {
+            if let Some(slot) = svg_presentation_slot(property.property) {
+                self.0[slot] = Some(depth);
+            }
+        }
+        self
+    }
+}
+
 /// Completes the painting properties of the root of an inline SVG with the
 /// values it inherits from its ancestors.
 ///
@@ -1756,6 +1785,7 @@ pub(crate) struct SvgCollector<'a> {
 fn inherit_ancestor_paint(
     properties: &mut Vec<SvgStyleProperty>,
     attribute_set: [bool; crate::property::PropertyKey::SVG_PRESENTATION.len()],
+    declarers: PaintingDeclarers,
     ancestors: &[StyleNodeId],
     exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     computed: &[ComputedValues],
@@ -1771,10 +1801,21 @@ fn inherit_ancestor_paint(
     for (pending, set) in pending.iter_mut().zip(attribute_set) {
         *pending &= !set;
     }
-    for ancestor in ancestors.iter().rev() {
-        let Some(listed) = exported.get(ancestor) else {
+    // Preserve the old nearest-ancestor and per-export order, visiting each
+    // donor only once. Missing properties require no ancestor lookup.
+    let mut depths = declarers.0;
+    depths.sort_unstable();
+    let mut previous = None;
+    for depth in depths.into_iter().rev().flatten() {
+        if previous == Some(depth) {
             continue;
-        };
+        }
+        previous = Some(depth);
+        let ancestor = &ancestors[depth];
+        #[cfg(test)]
+        tests::paint_inheritance_tests::record_donor_lookup();
+        // Each recorded donor has a nonempty final export in this walk.
+        let listed = &exported[ancestor];
         for entry in listed {
             let Some(slot) = svg_presentation_slot(entry.property)
                 .filter(|&slot| pending[slot] && !entry.inherited)
@@ -2594,6 +2635,9 @@ fn inherited_box_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
             LengthOrAuto::Length(Length::Percent(percent))
         }
         ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+        ComputedLengthPercentageOrAuto::Math(value) => {
+            LengthOrAuto::Math(crate::property::LengthMath::from_computed(&value))
+        }
         ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
         ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
@@ -2638,28 +2682,40 @@ fn box_defaulting_value(
     };
     let (physical_width, physical_height) = inherited_physical_sizes(inherited);
     Some(match key {
-        PropertyKey::MarginTop => PropertyValue::MarginTop(margin(inherited.margin.top)),
-        PropertyKey::MarginRight => PropertyValue::MarginRight(margin(inherited.margin.right)),
-        PropertyKey::MarginBottom => PropertyValue::MarginBottom(margin(inherited.margin.bottom)),
-        PropertyKey::MarginLeft => PropertyValue::MarginLeft(margin(inherited.margin.left)),
+        PropertyKey::MarginTop => PropertyValue::MarginTop(margin(inherited.margin.top.clone())),
+        PropertyKey::MarginRight => {
+            PropertyValue::MarginRight(margin(inherited.margin.right.clone()))
+        }
+        PropertyKey::MarginBottom => {
+            PropertyValue::MarginBottom(margin(inherited.margin.bottom.clone()))
+        }
+        PropertyKey::MarginLeft => PropertyValue::MarginLeft(margin(inherited.margin.left.clone())),
         PropertyKey::PaddingTop => PropertyValue::PaddingTop(padding(inherited.padding.top)),
         PropertyKey::PaddingRight => PropertyValue::PaddingRight(padding(inherited.padding.right)),
         PropertyKey::PaddingBottom => {
             PropertyValue::PaddingBottom(padding(inherited.padding.bottom))
         }
         PropertyKey::PaddingLeft => PropertyValue::PaddingLeft(padding(inherited.padding.left)),
-        PropertyKey::Top => PropertyValue::Top(size_or_offset(inherited.top)),
-        PropertyKey::Right => PropertyValue::Right(size_or_offset(inherited.right)),
-        PropertyKey::Bottom => PropertyValue::Bottom(size_or_offset(inherited.bottom)),
-        PropertyKey::Left => PropertyValue::Left(size_or_offset(inherited.left)),
+        PropertyKey::Top => PropertyValue::Top(size_or_offset(inherited.top.clone())),
+        PropertyKey::Right => PropertyValue::Right(size_or_offset(inherited.right.clone())),
+        PropertyKey::Bottom => PropertyValue::Bottom(size_or_offset(inherited.bottom.clone())),
+        PropertyKey::Left => PropertyValue::Left(size_or_offset(inherited.left.clone())),
         PropertyKey::Width => PropertyValue::Width(size_or_offset(physical_width)),
         PropertyKey::Height => {
             PropertyValue::Height(size_or_offset(inherited_height(inherited, physical_height)))
         }
-        PropertyKey::MinWidth => PropertyValue::MinWidth(size_or_offset(inherited.min_width)),
-        PropertyKey::MinHeight => PropertyValue::MinHeight(size_or_offset(inherited.min_height)),
-        PropertyKey::MaxWidth => PropertyValue::MaxWidth(size_or_offset(inherited.max_width)),
-        PropertyKey::MaxHeight => PropertyValue::MaxHeight(size_or_offset(inherited.max_height)),
+        PropertyKey::MinWidth => {
+            PropertyValue::MinWidth(size_or_offset(inherited.min_width.clone()))
+        }
+        PropertyKey::MinHeight => {
+            PropertyValue::MinHeight(size_or_offset(inherited.min_height.clone()))
+        }
+        PropertyKey::MaxWidth => {
+            PropertyValue::MaxWidth(size_or_offset(inherited.max_width.clone()))
+        }
+        PropertyKey::MaxHeight => {
+            PropertyValue::MaxHeight(size_or_offset(inherited.max_height.clone()))
+        }
         _ => return None,
     })
 }
@@ -2703,16 +2759,16 @@ pub(crate) fn resolve_logical_size_keyword(
     let parent = match (marker.key, vertical) {
         (PropertyKey::InlineSize, false) | (PropertyKey::BlockSize, true) => physical_width,
         (PropertyKey::MinBlockSize, false) | (PropertyKey::MinInlineSize, true) => {
-            inherited.min_height
+            inherited.min_height.clone()
         }
         (PropertyKey::MinBlockSize, true) | (PropertyKey::MinInlineSize, false) => {
-            inherited.min_width
+            inherited.min_width.clone()
         }
         (PropertyKey::MaxBlockSize, false) | (PropertyKey::MaxInlineSize, true) => {
-            inherited.max_height
+            inherited.max_height.clone()
         }
         (PropertyKey::MaxBlockSize, true) | (PropertyKey::MaxInlineSize, false) => {
-            inherited.max_width
+            inherited.max_width.clone()
         }
         // `inline-size` of a vertical box and `block-size` of a horizontal one.
         _ => inherited_height(inherited, physical_height),
@@ -2751,12 +2807,10 @@ fn inherited_physical_sizes(
     ComputedLengthPercentageOrAuto,
     ComputedLengthPercentageOrAuto,
 ) {
-    inherited
-        .vertical_logical_size
-        .as_ref()
-        .map_or((inherited.width, inherited.height), |size| {
-            (size.width, size.height)
-        })
+    inherited.vertical_logical_size.as_ref().map_or(
+        (inherited.width.clone(), inherited.height.clone()),
+        |size| (size.width.clone(), size.height.clone()),
+    )
 }
 
 /// The `key` border-image longhand of `inherited`, mapped back to the
@@ -3152,22 +3206,22 @@ pub(crate) fn resolve_against_inherited(
             PropertyValue::BorderRadius(Box::new(inherited_border_radius_value(inherited)))
         },
         PropertyValue::MarginTopInherit => {
-            PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top))
+            PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top.clone()))
         }
         PropertyValue::MarginRightInherit => {
-            PropertyValue::MarginRight(inherited_margin_length(inherited.margin.right))
+            PropertyValue::MarginRight(inherited_margin_length(inherited.margin.right.clone()))
         }
         PropertyValue::MarginBottomInherit => {
-            PropertyValue::MarginBottom(inherited_margin_length(inherited.margin.bottom))
+            PropertyValue::MarginBottom(inherited_margin_length(inherited.margin.bottom.clone()))
         }
         PropertyValue::MarginLeftInherit => {
-            PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left))
+            PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left.clone()))
         }
         PropertyValue::MarginInherit => PropertyValue::Margin(Box::new(Sides {
-            top: inherited_margin_length(inherited.margin.top),
-            right: inherited_margin_length(inherited.margin.right),
-            bottom: inherited_margin_length(inherited.margin.bottom),
-            left: inherited_margin_length(inherited.margin.left),
+            top: inherited_margin_length(inherited.margin.top.clone()),
+            right: inherited_margin_length(inherited.margin.right.clone()),
+            bottom: inherited_margin_length(inherited.margin.bottom.clone()),
+            left: inherited_margin_length(inherited.margin.left.clone()),
         })),
         PropertyValue::BorderTopWidthCssWide(kw) => {
             PropertyValue::BorderTopWidth(resolve_border_page_longhand(kw, inherited, true, false, false))

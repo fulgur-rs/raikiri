@@ -289,7 +289,10 @@ fn get_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 fn has_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let name = dom_string(args, 0, context)?;
-    Ok(JsValue::from(attribute(context, index, &name)?.is_some()))
+    let present = with_state(context, |s| {
+        s.host.document().element_attribute(index, &name).is_some()
+    })?;
+    Ok(JsValue::from(present))
 }
 
 /// Set an element attribute and mark the host dirty. Shared by

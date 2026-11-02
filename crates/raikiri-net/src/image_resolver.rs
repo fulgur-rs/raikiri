@@ -21,6 +21,12 @@ use crate::resource_loader::{ResourceLoader, default_object_size};
 ///
 /// Fetch + decode happen synchronously inside [`ReplacedResolver::resolve`];
 /// results are cached by URL so later metadata and paint lookups are cache hits.
+/// HTTP(S) raster images share a source across absent, empty, or simple ASCII
+/// token fragments (letters, digits, `.`, `_`, `~`, `-`). Provider requests keep
+/// their original URL; successful raster responses are reused across these aliases.
+/// SVG, structured or encoded fragments, other schemes, and redirects ending
+/// at such a URL keep their full display identity. Redirect entry URLs remain
+/// distinct. Original-URL metadata and paint lookups reach the shared source.
 /// Up to four distinct cold URL loads can overlap their network waits. Raster
 /// decoding, SVG parsing, and cache publication share the byte budget and are
 /// serialized. Duplicate requests share a successful source without consuming

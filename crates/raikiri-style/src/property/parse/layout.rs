@@ -290,13 +290,24 @@ pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
     })
 }
 
-/// Shared parser for `justify-content` and `align-content`; see the
-/// scope carving in the [`ContentAlignmentValue`] docs. This function consumes
-/// only one ident. Thus `safe`/`unsafe` prefixes, `<baseline-position>`, and
-/// the `left`/`right` values specific to justify-content remain unmatched:
-/// two-token sequences and unsupported idents return `_ => None`.
+/// Shared parser for `justify-content` and `align-content`:
+/// `normal | <content-distribution> | <overflow-position>? <content-position>`;
+/// see the scope carving in the [`ContentAlignmentValue`] docs. An
+/// `<overflow-position>` qualifies a position only, so `safe space-between`,
+/// `safe stretch` and `safe normal` are invalid, and so are `<baseline-position>`
+/// and the `left`/`right` values specific to justify-content.
 pub(super) fn parse_content_alignment(input: &mut Parser<'_, '_>) -> Option<ContentAlignmentValue> {
-    ContentAlignmentValue::from_css_ident(input.expect_ident().ok()?)
+    let overflow = parse_overflow_position(input);
+    let ident = input.expect_ident().ok()?;
+    let Some(safe) = overflow else {
+        return ContentAlignmentValue::from_css_ident(ident);
+    };
+    let position = ContentPosition::from_css_ident(ident)?;
+    Some(if safe {
+        ContentAlignmentValue::Safe(position)
+    } else {
+        ContentAlignmentValue::Unsafe(position)
+    })
 }
 
 /// The `Result` form of [`parse_content_alignment`], following the wrapper

@@ -104,21 +104,31 @@ impl Metrics {
         };
         // A minimum or maximum carries across the aspect ratio only into an
         // axis whose preferred size is `auto`. Under `ContentSize` the
-        // authored size is ignored, so every axis is `auto`. A width that
-        // stands in for `auto` is no authored one either.
+        // authored size is ignored, so every axis is `auto`, except one the
+        // parent has fixed where the box states a size: the parent fixed the
+        // size the box states, which the bounds of the other axis do not move.
+        // A width that stands in for `auto` is no authored one either.
         let carried = |own: Size<Option<f32>>| {
             let across = across_ratio(own);
-            let auto = |preferred: Option<f32>, stands_in: bool| {
-                stands_in || inputs.sizing_mode != SizingMode::InherentSize || preferred.is_none()
+            let auto = |preferred: Option<f32>, fixed: Option<f32>, stands_in: bool| {
+                stands_in
+                    || preferred.is_none()
+                    || (inputs.sizing_mode != SizingMode::InherentSize && fixed.is_none())
             };
             Size {
                 width: across.width.filter(|_| {
                     own.width.is_none()
                         && !stretched.width
-                        && auto(specified.width, width_stands_in)
+                        && auto(
+                            specified.width,
+                            inputs.known_dimensions.width,
+                            width_stands_in,
+                        )
                 }),
                 height: across.height.filter(|_| {
-                    own.height.is_none() && !stretched.height && auto(specified.height, false)
+                    own.height.is_none()
+                        && !stretched.height
+                        && auto(specified.height, inputs.known_dimensions.height, false)
                 }),
             }
         };
@@ -145,7 +155,14 @@ impl Metrics {
         }
         .maybe_add(adjustment);
         let own_max = own_max.maybe_add(adjustment);
-        let authored = across_ratio(specified).maybe_add(adjustment);
+        // A border-box size is no smaller than the padding and border it
+        // holds, and the ratio relates the box that results.
+        let stated_box = if style.box_sizing == BoxSizing::ContentBox {
+            specified
+        } else {
+            specified.maybe_max(padding_border.sum_axes())
+        };
+        let authored = across_ratio(stated_box).maybe_add(adjustment);
         // Whether the content may raise an axis that the aspect ratio gives:
         // unless the box scrolls or `min-*` says otherwise, an automatic
         // minimum keeps it from ending up smaller than its content.

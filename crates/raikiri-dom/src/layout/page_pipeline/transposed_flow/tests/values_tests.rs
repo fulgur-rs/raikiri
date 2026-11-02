@@ -77,7 +77,7 @@ fn in_place_transposition_reads_the_original_vertical_logical_size() {
         let original = &fixture.cascade.computed[fixture.root];
         let size = original.vertical_logical_size.as_ref().unwrap();
         assert_eq!(
-            (size.width, size.height),
+            (size.width.clone(), size.height.clone()),
             (Length::Px(40.0), Length::Px(90.0))
         );
         let mut values = original.clone();

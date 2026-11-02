@@ -193,21 +193,24 @@ fn an_output_that_started_in_the_library_comes_back_as_it_was() {
 }
 
 #[test]
-fn box_layout_helpers_answer_as_the_librarys_do() {
+fn box_layout_helpers_floor_content_extents_and_preserve_other_library_answers() {
     for start in 0..extreme_floats().len() {
         let layout = box_layout(&mut Floats(start));
         let theirs = layout.into_taffy();
+        // Used content extents floor negative raw sizes, while NaN payloads
+        // and signed zero retain the library's diagnostic representation.
+        let used = |raw: f32| if raw < 0.0 { 0.0 } else { raw };
         let same = |own: f32, theirs: f32, what: &str| {
             assert_eq!(own.to_bits(), theirs.to_bits(), "{what} of {layout:?}");
         };
         same(
             layout.content_box_width(),
-            theirs.content_box_width(),
+            used(theirs.content_box_width()),
             "content box width",
         );
         same(
             layout.content_box_height(),
-            theirs.content_box_height(),
+            used(theirs.content_box_height()),
             "content box height",
         );
         same(
@@ -228,7 +231,10 @@ fn box_layout_helpers_answer_as_the_librarys_do() {
         );
         assert_eq!(
             bits_of(&layout.content_box_size()),
-            bits_of(&Size::<f32>::from_taffy(theirs.content_box_size()))
+            bits_of(&Size {
+                width: used(theirs.content_box_width()),
+                height: used(theirs.content_box_height()),
+            })
         );
     }
 }

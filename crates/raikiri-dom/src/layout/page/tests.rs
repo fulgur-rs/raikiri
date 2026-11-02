@@ -461,19 +461,19 @@ fn used_style_length_helpers_cover_used_value_forms() {
         Some(12.0)
     );
     assert_eq!(
-        used_computed_length_percentage_or_auto(ComputedLengthPercentageOrAuto::Px(12.0), 100.0),
+        used_computed_length_percentage_or_auto(&ComputedLengthPercentageOrAuto::Px(12.0), 100.0),
         Some(12.0)
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(
-            ComputedLengthPercentageOrAuto::Percent(25.0),
+            &ComputedLengthPercentageOrAuto::Percent(25.0),
             100.0
         ),
         Some(25.0)
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(
-            ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            &ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
                 percent: 25.0,
                 px: 10.0,
             }),
@@ -482,12 +482,12 @@ fn used_style_length_helpers_cover_used_value_forms() {
         Some(35.0)
     );
     assert_eq!(
-        used_computed_length_percentage_or_auto(ComputedLengthPercentageOrAuto::Auto, 100.0),
+        used_computed_length_percentage_or_auto(&ComputedLengthPercentageOrAuto::Auto, 100.0),
         None
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(
-            ComputedLengthPercentageOrAuto::Px(f32::NAN),
+            &ComputedLengthPercentageOrAuto::Px(f32::NAN),
             100.0
         ),
         None
@@ -567,6 +567,65 @@ fn first_page_name_reads_the_body_before_a_footer_written_first() {
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
 
     assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("body"));
+}
+
+#[test]
+fn first_page_name_is_unnamed_when_generated_content_leads_the_body() {
+    use crate::layout::ifc::test_support::sheet_fixture;
+
+    // Generated content before the first box is the first content of the
+    // body, which has no page name, so the box does not name the first page.
+    // Empty generated content and white space that collapses away make no
+    // line, so they are not content. Preserved white space, a box of its own
+    // and a padding box are.
+    for (sheet, expected) in [
+        ("", Some("b")),
+        (r#"body::before { content: "" }"#, Some("b")),
+        (r#"body::before { content: " " }"#, Some("b")),
+        (r#"body::before { content: " "; white-space: pre }"#, None),
+        (r#"body::before { content: " "; display: block }"#, None),
+        (r#"body::before { content: " "; padding: 1px }"#, None),
+        (r#"body::before { content: "x" }"#, None),
+    ] {
+        let fixture = sheet_fixture(sheet, "page:b", |doc, root| {
+            doc.append_text(root, "b");
+        });
+        assert_eq!(
+            first_page_name(&fixture.doc, &fixture.cascade).as_deref(),
+            expected,
+            "{sheet}"
+        );
+    }
+}
+
+#[test]
+fn first_page_name_is_the_page_of_a_box_whose_generated_content_leads() {
+    use crate::layout::ifc::test_support::sheet_fixture;
+
+    // The wrapper's generated content comes before its named child, so it is
+    // the wrapper that starts the first page, on the page of the body.
+    for (sheet, expected) in [
+        ("", Some("b")),
+        (r#"[data-wrapper]::before { content: "" }"#, Some("b")),
+        (r#"[data-wrapper]::before { content: " " }"#, Some("b")),
+        (
+            r#"[data-wrapper]::before { content: " "; white-space: pre }"#,
+            None,
+        ),
+        (r#"[data-wrapper]::before { content: "x" }"#, None),
+    ] {
+        let fixture = sheet_fixture(sheet, "", |doc, root| {
+            doc.set_element_attribute(root, "data-wrapper", "")
+                .expect("attribute");
+            let named = doc.append_element(Some(root), "div", Some("display:block;page:b"));
+            doc.append_text(named, "b");
+        });
+        assert_eq!(
+            first_page_name(&fixture.doc, &fixture.cascade).as_deref(),
+            expected,
+            "{sheet}"
+        );
+    }
 }
 
 #[test]
@@ -1566,4 +1625,64 @@ fn find_body_takes_a_frameset_only_as_a_child_of_the_root_element() {
     let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(find_body(&doc), Some(body));
+}
+
+#[test]
+fn page_sizing_comparisons_resolve_against_paper_before_auto_margin_distribution() {
+    use raikiri_style::{Origin, RuleTree, cascade};
+    for (source, width) in [
+        ("min(30px, calc(10px + 5%))", 30.0),
+        ("max(10px, 5%)", 25.0),
+        ("clamp(5px, calc(10px + 5%), 20px)", 20.0),
+        ("min(-10px, 5%)", 0.0),
+        ("calc(min(-10px, 5%) + 20px)", 10.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        doc.append_element(Some(html), "body", None::<&str>);
+        let mut rules = RuleTree::empty();
+        rules.add_stylesheet(
+            &format!(
+                "@page {{size:500px 400px; width:{source}; height:max(10px, 5%); margin:auto}}"
+            ),
+            Origin::Author,
+        );
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 500.0;
+        page.height = 400.0;
+        let margins = page_margins(&cascade, page);
+        assert_eq!(margins.left, (500.0 - width) / 2.0, "{source}");
+        assert_eq!(margins.right, (500.0 - width) / 2.0, "{source}");
+        assert_eq!(margins.top, 190.0, "{source}");
+        assert_eq!(margins.bottom, 190.0, "{source}");
+    }
+}
+
+#[test]
+fn page_calc_margin_sanitization_and_comparison_overflow_keep_geometry_finite() {
+    for (percent, px, expected) in [
+        (5.0, 10.0, 20.0),
+        (f32::NAN, 10.0, 10.0),
+        (5.0, f32::NAN, 10.0),
+    ] {
+        let value = LengthOrAuto::Calc(CalcLengthPercentage { percent, px });
+        assert_eq!(page_margin_length(&value, 200.0), expected);
+    }
+    let mut doc = Document::new();
+    doc.append_element(Some(0), "html", None::<&str>);
+    let mut rules = raikiri_style::RuleTree::empty();
+    rules.add_stylesheet(
+        "@page {width:max(3e38px,calc(3e38px + 3e38px + 5%))}",
+        raikiri_style::Origin::Author,
+    );
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    assert!(matches!(
+        cascade.page.declarations().get(&PropertyKey::Width),
+        Some(PropertyValue::Width(LengthOrAuto::Math(_)))
+    ));
+    assert_eq!(
+        page_dimension(cascade.page.declarations(), PropertyKey::Width, 500.0),
+        None
+    );
 }

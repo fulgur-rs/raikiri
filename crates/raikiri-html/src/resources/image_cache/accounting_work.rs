@@ -17,18 +17,18 @@ impl AccountingWork {
         }
     }
 
-    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+    #[cfg(feature = "cache-accounting-diagnostics")]
     pub(super) fn begin(&self, enabled: bool) {
         self.count.set(0);
         self.enabled.set(enabled);
     }
 
-    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+    #[cfg(feature = "cache-accounting-diagnostics")]
     pub(super) fn finish(&self) {
         self.enabled.set(false);
     }
 
-    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+    #[cfg(feature = "cache-accounting-diagnostics")]
     pub(super) fn value(&self) -> u64 {
         self.count.get()
     }

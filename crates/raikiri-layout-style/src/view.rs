@@ -3,6 +3,7 @@ use crate::values::LengthPercentage;
 use crate::*;
 use raikiri_layout_geometry::{Edges, Size};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P};
+use std::borrow::Cow;
 
 /// A lightweight query over borrowed computed values and prepared context.
 ///
@@ -22,6 +23,9 @@ pub struct LayoutStyleView<'a> {
     /// Whether an out-of-flow box takes its physical vertical alignment from
     /// `justify-self` and its physical horizontal one from `align-self`.
     pub(crate) swapped_oof_alignment: bool,
+    /// Whether the layout library is told nothing of the height of a table
+    /// that owns it (see [`Self::with_hidden_table_height`]).
+    hidden_table_height: bool,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -37,7 +41,7 @@ impl<'a> OverrideLayer<'a> {
     }
     fn get(self, index: usize) -> PropertyOverride<'a> {
         match self {
-            Self::Borrowed(values) => values[index],
+            Self::Borrowed(values) => values[index].as_borrowed(),
             Self::Owned(values) => values[index].as_borrowed(),
         }
     }
@@ -59,6 +63,7 @@ impl<'a> LayoutStyleView<'a> {
             scoped: OverrideLayer::Borrowed(scoped),
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
+            hidden_table_height: false,
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -77,6 +82,7 @@ impl<'a> LayoutStyleView<'a> {
             scoped: OverrideLayer::Owned(scoped),
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
+            hidden_table_height: false,
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -103,6 +109,46 @@ impl<'a> LayoutStyleView<'a> {
     pub const fn with_swapped_oof_alignment(mut self) -> Self {
         self.swapped_oof_alignment = true;
         self
+    }
+
+    /// Read an absolutely positioned table as the box the layout library
+    /// positions, which is the whole wrapper box: the grid and its caption.
+    ///
+    /// The `height` of a table is the height of its grid box, and the caption
+    /// sits on top of that (CSS Tables 3 section 3), so the library cannot
+    /// derive the wrapper's height from the `height`, `min-height` or
+    /// `max-height` of the table. The view leaves them out. The library then
+    /// measures the wrapper itself and places it by that height, and the
+    /// table's layout, which still reads its own `height` and limits, sizes the
+    /// grid box inside the wrapper. For a stretch height, the table also owns
+    /// the stretch-fit step: the positioner measures the result without
+    /// applying stretch sizing, deriving a new height from an aspect ratio,
+    /// or redistributing vertical auto margins again.
+    #[inline]
+    pub const fn with_hidden_table_height(mut self) -> Self {
+        self.hidden_table_height = true;
+        self
+    }
+
+    /// Whether the table resolves its authored stretch height before the
+    /// positioning library consumes this measurement-only view.
+    #[inline]
+    pub(crate) fn table_owns_stretch_height(&self) -> bool {
+        self.hidden_table_height
+            && matches!(
+                self.length(LengthProperty::Height).value.as_ref(),
+                L::Stretch
+            )
+    }
+
+    /// The length of the vertical size `property` as the layout library reads
+    /// it.
+    #[inline]
+    pub(crate) fn library_height(&self, property: LengthProperty) -> LengthValue<'a> {
+        if self.hidden_table_height {
+            return self.with_payload(Cow::Owned(L::Auto), property);
+        }
+        self.length(property)
     }
 
     /// The query-local context used by diagnostics and role-specific adapters.
@@ -154,6 +200,23 @@ impl<'a> LayoutStyleView<'a> {
             .into_iter()
             .flatten()
     }
+    /// Padding before the positioning pass installs used physical edges.
+    /// Intrinsic table measurements keep their own percentage basis; final
+    /// layout consumes the scoped edges supplied by the containing block.
+    pub fn intrinsic_table_padding(mut self) -> Edges<LengthPercentage> {
+        self.scoped = OverrideLayer::Owned(&[]);
+        self.has_overrides = self.pass.len() != 0;
+        self.padding()
+    }
+
+    pub(crate) fn scoped_length(&self, property: LengthProperty) -> Option<LengthValue<'a>> {
+        (0..self.scoped.len())
+            .rev()
+            .find_map(|index| match self.scoped.get(index).0 {
+                OverrideKind::Length(p, value) if p == property => Some(value),
+                _ => None,
+            })
+    }
     #[inline]
     pub(crate) fn flags(&self) -> StyleFlags {
         self.prepared.metadata.flags
@@ -178,10 +241,11 @@ impl<'a> LayoutStyleView<'a> {
     pub(crate) fn base_length(&self, property: LengthProperty) -> LengthValue<'a> {
         use LengthProperty::*;
         if self.flags().contains(StyleFlags::INLINE_BOX)
-            && let Some(value) = property.inline_box_value()
+            && let Some(value) =
+                property.inline_box_value(self.prepared.metadata.used_writing_mode.is_vertical())
         {
             return LengthValue {
-                value,
+                value: Cow::Owned(value),
                 payload: None,
                 resolved: false,
             };
@@ -212,14 +276,14 @@ impl<'a> LayoutStyleView<'a> {
         }
         let mut value = self.prepared.scalar(source);
         let intrinsic = matches!(
-            value,
+            value.as_ref(),
             L::MinContent | L::MaxContent | L::FitContent | L::FitContentOf(_)
         );
         let ignore = match property {
             Width => {
                 (flags.contains(StyleFlags::IGNORE_WIDTH_KEYWORD) && intrinsic)
                     || (flags.contains(StyleFlags::MIN_CONTENT_WIDTH_AUTO)
-                        && value == L::MinContent)
+                        && value.as_ref() == &L::MinContent)
             }
             Height => flags.contains(StyleFlags::IGNORE_HEIGHT_KEYWORD) && intrinsic,
             MinWidth | MinHeight | MaxWidth | MaxHeight => {
@@ -229,15 +293,15 @@ impl<'a> LayoutStyleView<'a> {
         } || (source == MinBlock
             && flags.contains(StyleFlags::IGNORE_LOGICAL_MIN_BLOCK));
         if ignore {
-            value = L::Auto;
+            value = Cow::Owned(L::Auto);
         }
         self.with_payload(value, source)
     }
     /// `value` with the calc owner prepared for `slot`, when it is a calc.
     #[inline]
-    fn with_payload(&self, value: L, slot: LengthProperty) -> LengthValue<'a> {
-        let payload = match value {
-            L::Calc(_) | L::FitContentOf(P::Calc(_)) => {
+    fn with_payload(&self, value: Cow<'a, L>, slot: LengthProperty) -> LengthValue<'a> {
+        let payload = match value.as_ref() {
+            L::Calc(_) | L::Math(_) | L::FitContentOf(P::Calc(_)) => {
                 Some(self.prepared.payload(CalcSlot::Property(slot)))
             }
             _ => None,

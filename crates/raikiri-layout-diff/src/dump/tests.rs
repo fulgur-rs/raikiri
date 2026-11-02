@@ -107,7 +107,7 @@ fn a_thousandth_of_a_pixel_shows_in_the_text() {
 fn the_page_api_is_written_for_every_page() {
     let text = text_of(RICH);
     assert!(
-        text.starts_with("pages: 5\nwarnings: 0\npage 0 name=None\n"),
+        text.starts_with("pages: 6\nwarnings: 0\npage 0 name=None\n"),
         "{text}"
     );
     for expected in [
@@ -136,7 +136,7 @@ fn the_page_api_is_written_for_every_page() {
     ] {
         assert!(text.contains(expected), "{expected:?} is missing:\n{text}");
     }
-    assert_eq!(text.matches("\npage ").count(), 5, "every page is listed");
+    assert_eq!(text.matches("\npage ").count(), 6, "every page is listed");
     assert!(text.contains("\ndocument 0 (first used by page 0)\nnodes: "));
     assert_eq!(text.matches("\ndocument ").count(), 1);
 }

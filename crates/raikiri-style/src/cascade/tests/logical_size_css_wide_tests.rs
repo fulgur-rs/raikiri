@@ -39,7 +39,11 @@ fn px(value: f32) -> Size {
 /// `(width, height, min-height)`, the sizes a horizontal box maps its
 /// `inline-size`, `block-size` and `min-block-size` to.
 fn horizontal(values: &ComputedValues) -> (Size, Size, Size) {
-    (values.width, values.height, values.min_height)
+    (
+        values.width.clone(),
+        values.height.clone(),
+        values.min_height.clone(),
+    )
 }
 
 #[test]

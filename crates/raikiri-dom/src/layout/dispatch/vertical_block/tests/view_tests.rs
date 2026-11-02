@@ -557,3 +557,58 @@ fn a_physical_read_of_a_vertical_box_keeps_the_physical_axes() {
     assert_eq!(physical.padding().right, LengthPercentage::length(3.0));
     assert_eq!(physical.border().bottom, LengthPercentage::length(2.0));
 }
+
+#[test]
+fn late_used_padding_keeps_resolved_sides_across_opposite_frames() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:block",
+        "display:block;padding:10%;width:31px;height:7px",
+    );
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    let entry = |px| {
+        (
+            key,
+            OwnedPropertyOverride::length(LengthProperty::PaddingTop, L::Px(px), true).unwrap(),
+        )
+    };
+    let outer = frame(&mut tree, parent, child, true);
+    with_transposed_frame(&mut tree, outer, |tree| {
+        resolve_child_padding(tree, 200.0);
+        let before = tree.query_style(child, ReadRole::Oof).padding();
+        assert_eq!(before.left, LengthPercentage::length(20.0));
+        tree.with_overrides(vec![entry(7.0)], |tree| {
+            let changed = tree.query_style(child, ReadRole::Oof).padding();
+            assert_eq!(changed.left, LengthPercentage::length(7.0));
+            assert_eq!(changed.right, before.right);
+            assert_eq!(changed.top, before.top);
+            assert_eq!(changed.bottom, before.bottom);
+            let inner = frame(tree, parent, child, false);
+            with_transposed_frame(tree, inner, |tree| {
+                resolve_child_padding(tree, 100.0);
+                let inner_before = tree.query_style(child, ReadRole::Oof).padding();
+                let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    tree.with_overrides(vec![entry(3.0)], |tree| {
+                        let padding = tree.query_style(child, ReadRole::Oof).padding();
+                        assert_eq!(padding.left, LengthPercentage::length(3.0));
+                        assert_eq!(padding.right, inner_before.right);
+                        panic!("late padding unwind");
+                    });
+                }));
+                assert!(failure.is_err());
+                assert_eq!(
+                    tree.query_style(child, ReadRole::Oof).padding(),
+                    inner_before
+                );
+            });
+            assert_eq!(tree.query_style(child, ReadRole::Oof).padding(), changed);
+        });
+        assert_eq!(tree.query_style(child, ReadRole::Oof).padding(), before);
+    });
+    assert_eq!(
+        tree.physical_style(child).padding().top,
+        LengthPercentage::percent(0.1)
+    );
+    assert_eq!(tree.override_checkpoint(), 0);
+}

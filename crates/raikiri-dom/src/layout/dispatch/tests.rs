@@ -4,6 +4,7 @@ use raikiri_layout_geometry::Size;
 use raikiri_layout_geometry::{Edges, Line, Point};
 use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 mod child_walk_tests;
+mod grid_static_position_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
 mod style_view_tests;

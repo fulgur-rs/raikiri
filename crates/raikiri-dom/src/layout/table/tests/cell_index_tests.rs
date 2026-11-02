@@ -290,7 +290,9 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
             body,
             "table",
             DisplayValue::Table,
-            &format!("display:table;table-layout:{mode};width:80px;border-collapse:collapse"),
+            &format!(
+                "display:table;table-layout:{mode};width:80px;border-collapse:collapse;box-sizing:border-box"
+            ),
         );
         let mut cells = Vec::new();
         for _ in 0..2 {
@@ -314,11 +316,13 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
         crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+        // The 4px borders of the cells at the edges are the table's own edge
+        // (Chromium: 80x32 for this table), so the rows add up to 18 + 18 - 4.
         assert_eq!(
             doc.nodes[table].layout.size,
             Size {
                 width: 80.0,
-                height: 40.0
+                height: 32.0
             }
         );
         for (i, cell) in cells.into_iter().enumerate() {
@@ -326,15 +330,15 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
             assert_eq!(
                 layout.size,
                 Size {
-                    width: 38.0,
+                    width: 42.0,
                     height: 18.0
                 }
             );
             assert_eq!(
                 layout.location,
                 Point {
-                    x: 4.0 + (i % 2) as f32 * 34.0,
-                    y: 4.0 + (i / 2) as f32 * 14.0
+                    x: (i % 2) as f32 * 38.0,
+                    y: (i / 2) as f32 * 14.0
                 }
             );
             let painted = doc.nodes[cell].collapsed_border().unwrap();
@@ -376,10 +380,12 @@ fn collapsed_boundary_search_work_grows_with_grid_area() {
         eprintln!("{side}x{side}: {visits} cell lookup steps");
         assert_eq!(lines.col_overlaps, vec![2.0; usize::from(side - 1)]);
         assert_eq!(lines.row_overlaps, vec![2.0; usize::from(side - 1)]);
-        assert_eq!(lines.outer_left, 2.0);
-        assert_eq!(lines.outer_right, 2.0);
-        assert_eq!(lines.outer_top, 2.0);
-        assert_eq!(lines.outer_bottom, 2.0);
+        // The table has no border of its own, and the 2px borders of the edge
+        // cells are part of the cells: nothing is left outside them.
+        assert_eq!(lines.outer_left, 0.0);
+        assert_eq!(lines.outer_right, 0.0);
+        assert_eq!(lines.outer_top, 0.0);
+        assert_eq!(lines.outer_bottom, 0.0);
         // Count both the linear and indexed work in the adaptive search.
         assert!(visits <= area * (2 * side.ilog2() as usize + 4) * 24);
     }
