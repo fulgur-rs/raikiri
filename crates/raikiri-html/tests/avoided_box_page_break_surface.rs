@@ -201,6 +201,48 @@ fn the_offset_of_the_child_below_the_top_edge_of_its_moved_parent_adds_up() {
 }
 
 #[test]
+fn the_margins_of_the_wrappers_between_the_parent_and_the_child_add_to_the_offset_too() {
+    // A margin on a wrapper without edges collapses with the one on the child,
+    // the larger of them stays below the edge of the parent; the edge of a
+    // wrapper separates its own margin from the child's.
+    let wrapped = |wrapper: &str, child: &str| {
+        format!(
+            "{SPACER}<div id=o style='width:300px;padding-top:20px'>\
+             <div style='{wrapper}'>\
+             <div id=i style='height:700px;break-inside:avoid;{child}'></div></div></div>"
+        )
+    };
+    for (wrapper, child, top) in [
+        ("margin-top:10px", "", 30),
+        ("margin-top:10px", "margin-top:15px", 35),
+        ("margin-top:10px", "margin-top:4px", 30),
+        ("margin-top:10px;padding-top:5px", "", 35),
+        ("margin-top:10px;border-top:5px solid", "", 35),
+    ] {
+        let body = wrapped(wrapper, child);
+        let name = format!("wrapper {wrapper:?} child {child:?}");
+        assert_eq!(
+            extents(&body, "o"),
+            [None, Some((0, 600)), Some((0, top - 20 + 120))],
+            "{name}"
+        );
+        assert_eq!(
+            extents(&body, "i"),
+            [None, Some((top, 600)), Some((0, top - 20 + 120))],
+            "{name}"
+        );
+    }
+    // Two wrappers collapse their margins into the larger.
+    let body = format!(
+        "{SPACER}<div id=o style='width:300px;padding-top:20px'>\
+         <div style='margin-top:10px'><div style='margin-top:20px'>\
+         <div id=i style='height:700px;break-inside:avoid'></div></div></div></div>"
+    );
+    assert_eq!(extents(&body, "o"), [None, Some((0, 600)), Some((0, 140))]);
+    assert_eq!(extents(&body, "i"), [None, Some((40, 600)), Some((0, 140))]);
+}
+
+#[test]
 fn the_sizes_of_the_parent_do_not_stop_it_from_moving() {
     // A min-height shows below the child, a fixed height or a max-height
     // shorter than the child lets the child overflow, and a clip cuts at the

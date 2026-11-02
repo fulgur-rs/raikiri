@@ -887,6 +887,25 @@ fn a_block_with_padding_moves_whole_with_an_avoid_box_taller_than_the_page() {
 fn a_margin_above_the_box_adds_to_the_offset_below_the_padding_of_a_moved_block() {
     let tall = "height:120px;break-inside:avoid;margin-top:10px";
     assert_eq!(wrapped_after(90, &[PADDED], tall), [100.0, 116.0]);
+    // So does one on a wrapper between them, which collapses with the margin
+    // of the box, and the edge of a wrapper keeps its own apart.
+    let tall = "height:120px;break-inside:avoid";
+    assert_eq!(
+        wrapped_after(90, &[PADDED, "margin-top:10px"], tall),
+        [100.0, 116.0, 116.0]
+    );
+    assert_eq!(
+        wrapped_after(
+            90,
+            &[PADDED, "margin-top:10px"],
+            "height:120px;break-inside:avoid;margin-top:15px"
+        ),
+        [100.0, 121.0, 121.0]
+    );
+    assert_eq!(
+        wrapped_after(90, &[PADDED, "margin-top:10px;padding-top:5px"], tall),
+        [100.0, 116.0, 121.0]
+    );
 }
 
 #[test]

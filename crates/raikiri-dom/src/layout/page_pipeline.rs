@@ -5423,19 +5423,43 @@ fn leading_holder(
     (holder, lead)
 }
 
-/// The block size of the border and padding above the content of the blocks
-/// from the parent of `node_id` up to `holder`, which a box that begins them
-/// lies below.
-fn leading_edges_between(document: &Document, node_id: usize, holder: usize) -> f32 {
-    let mut edges = 0.0;
+/// The block size of what a box that begins the blocks from its parent up to
+/// `holder` lies below inside them: the border and padding of those blocks and
+/// the margins between their edges. A margin collapses with the ones next to
+/// it until a border or padding separates it, so the largest of each such run
+/// counts, as in the normal flow. The margin above `holder` itself, and any
+/// that collapses through its top, lie outside it.
+///
+/// This is what the box's distance from `holder` (see [`leading_holder`]) is
+/// when nothing else comes before it. The walk of `leading_holder` cannot see
+/// what an anonymous block holds, so a larger distance means something is
+/// there that a break may fall after.
+fn leading_space_between(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    holder: usize,
+    own_margin_top: f32,
+    content_width: f32,
+) -> f32 {
+    let mut total = 0.0;
+    let mut margin = own_margin_top.max(0.0);
     for ancestor in document.layout_ancestors(node_id) {
+        if document.nodes[ancestor].display() == DisplayValue::Contents {
+            continue;
+        }
         let layout = &document.nodes[ancestor].layout;
-        edges += layout.border.top + layout.padding.top;
+        let edges = layout.border.top + layout.padding.top;
+        if edges > 0.0 {
+            total += margin + edges;
+            margin = 0.0;
+        }
         if ancestor == holder {
             break;
         }
+        margin = margin.max(break_margins(document, cascade, ancestor, content_width).0);
     }
-    edges
+    total
 }
 
 /// Whether the position of `node_id` does not follow its layout parent's in

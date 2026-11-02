@@ -18,7 +18,7 @@ use super::{
     forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
-    lead_below_ancestor, leading_edges_between, leading_edges_move, leading_holder,
+    lead_below_ancestor, leading_edges_move, leading_holder, leading_space_between,
     line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_table_header, margin_box_starts_page, materialize_y,
@@ -962,16 +962,21 @@ impl PaginationState {
             && !candidate.context.is_out_of_flow_descendant()
         {
             let (ancestor, lead) = leading_holder(document, cascade, body_id, node_id, true);
-            // Only the padding and border of those blocks and the margin of
-            // the box lie above it: anything else before it is a place to
-            // break at. And they begin on the page the box does; blocks that
-            // began on an earlier one have left it.
+            // Only the padding and border of those blocks and the margins
+            // between them lie above the box: anything else before it is a
+            // place to break at. And they begin on the page the box does;
+            // blocks that began on an earlier one have left it.
             (ancestor != node_id
                 && lead > 0.0
                 && lead
-                    <= leading_edges_between(document, node_id, ancestor)
-                        + own_margin_top.max(0.0)
-                        + 0.01
+                    <= leading_space_between(
+                        document,
+                        cascade,
+                        node_id,
+                        ancestor,
+                        own_margin_top,
+                        content_width,
+                    ) + 0.01
                 && effective_y - relative_offset - lead >= fit_page_start - 0.001)
                 .then(|| {
                     (
