@@ -1011,6 +1011,7 @@ impl LayoutSession<'_> {
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
+        let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
         if inputs.run_mode == RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
@@ -4357,10 +4358,85 @@ fn ratio_height(
         },
         ..inputs
     };
-    let content = without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
-        .size
-        .height;
+    // The height of an item of a flex column is its main size, which that
+    // container finds from the content of the item before the ratio gives it
+    // a height to fill: the items of the item count at their own heights then.
+    let stretches_items = tree
+        .taffy_parent_of(usize::from(node_id))
+        .is_none_or(|parent| {
+            tree.nodes[parent].layout_display() != Display::Flex
+                || tree.physical_style(parent).flex_direction_is_row()
+        });
+    let content = without_container_ratio(tree, node_id, |tree| {
+        if stretches_items {
+            intrinsic_scopes::with_ratio_height_probe(tree, node_id, |tree| {
+                sized(tree, node_id, probe)
+            })
+        } else {
+            sized(tree, node_id, probe)
+        }
+    })
+    .size
+    .height;
     Some(ratio_height.max(content.maybe_clamp(None, metrics.own_max.height)))
+}
+
+/// Answer the request for the hypothetical height of an item that a flex row
+/// container stretches, made while [`ratio_height`] measures the content of
+/// that container, with the `min-height` of the item.
+///
+/// The container takes the height its ratio gives it as the size across of its
+/// single line, and an item with an `auto` height that its alignment stretches
+/// fills that line; its own content and its own ratio do not raise the line, as
+/// they do where the container has no ratio. What raises the container is an
+/// item that the line does not stretch, or a `min-height` of a stretched one.
+///
+/// The height is imposed on the request, so the answer has its own key in the
+/// caches of the item and no other request reads it.
+fn with_ratio_probe_stretch_floor(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let Some(container) = tree.context.ratio_height_probe else {
+        return inputs;
+    };
+    if inputs.sizing_mode != SizingMode::ContentSize
+        || inputs.run_mode != RunMode::ComputeSize
+        || inputs.known_dimensions.width.is_none()
+        || inputs.known_dimensions.height.is_some()
+        || tree.taffy_parent_of(idx) != Some(container)
+        || tree.nodes[idx].layout_position() == Position::Absolute
+        || tree.has_vertical_writing_mode(idx)
+    {
+        return inputs;
+    }
+    let container_style = tree.physical_style(container);
+    let item = tree.physical_style(idx);
+    if tree.nodes[container].layout_display() != Display::Flex
+        || !container_style.flex_direction_is_row()
+        || container_style.flex_wraps()
+        || !item.size().height.is_auto()
+        || !content_limits::alignment_stretches(&container_style, &item, true)
+    {
+        return inputs;
+    }
+    let style = block_flow::style_input::physical(tree, idx);
+    let edges = replaced_size::padding_and_border(&style, inputs.parent_size.width).height;
+    let minimum = style
+        .min_size
+        .maybe_resolve(inputs.parent_size)
+        .height
+        .map(|minimum| {
+            if style.box_sizing == BoxSizing::ContentBox {
+                minimum + edges
+            } else {
+                minimum
+            }
+        });
+    inputs.known_dimensions.height = Some(minimum.unwrap_or(0.0).max(edges));
+    inputs.known_dimensions_are_definite.height = true;
+    inputs
 }
 
 /// [`grid_layout`] once the height of a container with an aspect ratio is

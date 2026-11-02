@@ -32,7 +32,7 @@ use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::BoxStyle as Style;
-use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_layout_style::{LayoutStyleView, LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::{PositionValue, TableLayoutValue};
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
@@ -1676,17 +1676,36 @@ fn stretched_cross_size(
     ) {
         return None;
     }
-    if cross.expand() != ExpandedDimension::Stretch {
-        let stretched = matches!(
-            item.align_self().or(Some(container.align_items())),
-            None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
-        );
-        if !stretched || start.is_auto() || end.is_auto() {
-            return None;
-        }
+    if cross.expand() != ExpandedDimension::Stretch
+        && !alignment_stretches(&container, &item, width)
+    {
+        return None;
     }
     let side = |side: LengthPercentageAuto| side.resolve(parent_size.width).unwrap_or(0.0);
     Some((room - side(start) - side(end)).max(0.0))
+}
+
+/// Whether the alignment of the flex item `item` of `container` stretches it
+/// across the main axis: `align-self`, or `align-items` of the container where
+/// that is `auto`, says `stretch` or `normal`, and neither margin across is
+/// `auto` (CSS Flexbox 1 §9.4). `width` is whether the main axis is the width,
+/// which makes the top and bottom margins the ones across.
+pub(super) fn alignment_stretches(
+    container: &LayoutStyleView<'_>,
+    item: &LayoutStyleView<'_>,
+    width: bool,
+) -> bool {
+    let margin = item.margin();
+    let (start, end) = if width {
+        (margin.top, margin.bottom)
+    } else {
+        (margin.left, margin.right)
+    };
+    matches!(
+        item.align_self().or(Some(container.align_items())),
+        None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
+    ) && !start.is_auto()
+        && !end.is_auto()
 }
 
 /// `minimum`, the content-based automatic minimum size of a flex item along
