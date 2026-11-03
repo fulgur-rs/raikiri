@@ -8,11 +8,15 @@ mod oof_inline_containing_block_tests;
 mod orthogonal_baseline_tests;
 mod percent_edge_tests;
 mod rtl_margin_tests;
+mod source_placement_tests;
 mod start_float_tests;
 mod static_position_tests;
 mod vertical_atomic_tests;
 mod vertical_bfc_tests;
 thread_local! {
+    pub(super) static SOURCE_INPUTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static SOURCE_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static SOURCE_DUPLICATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_ANCHOR_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_FALLBACK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_ANCHOR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -445,4 +449,27 @@ fn a_float_that_starts_its_line_goes_below_earlier_floats_before_the_line() {
     let (floats, line) = floats_then_text_positions();
     assert_eq!(floats, [(0.0, 0.0), (50.0, 0.0), (0.0, 20.0)]);
     assert_eq!(line, (50.0, 20.0));
+}
+
+// Test keys count actual hash-table equality work with deterministic hashing.
+#[derive(Eq)]
+pub(super) struct SourcePlacementId(usize);
+
+impl From<usize> for SourcePlacementId {
+    fn from(value: usize) -> Self {
+        Self(value)
+    }
+}
+
+impl std::hash::Hash for SourcePlacementId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.0, state);
+    }
+}
+
+impl PartialEq for SourcePlacementId {
+    fn eq(&self, other: &Self) -> bool {
+        SOURCE_COMPARISONS.with(|count| count.set(count.get() + 1));
+        self.0 == other.0
+    }
 }
