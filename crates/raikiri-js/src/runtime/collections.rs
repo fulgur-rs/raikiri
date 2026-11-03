@@ -76,11 +76,20 @@ struct CollectionCache {
 /// asked again only after each mutation, pays no more than the scan. The
 /// second lookup of the same nodes builds the first element of every name in
 /// one pass, and every later one is a hash lookup, so asking for each of the
-/// N names costs O(N) rather than O(N²).
+/// N names costs O(N) rather than O(N²). A change the host makes to ids, names
+/// or the tree starts the lookups over, as resolving the nodes again does.
 #[derive(Debug, Default)]
 struct NameLookups {
     scanned: bool,
-    first: Option<HashMap<String, usize>>,
+    first: Option<NameIndex>,
+}
+
+/// The first element of every name, and the native named-element version of
+/// the document it was read from.
+#[derive(Debug)]
+struct NameIndex {
+    version: raikiri_dom::document::NamedElementVersion,
+    first: HashMap<String, usize>,
 }
 
 impl NameLookups {
@@ -88,16 +97,28 @@ impl NameLookups {
     fn first_named(&mut self, doc: &Document, nodes: &[usize], name: &str) -> Option<usize> {
         #[cfg(test)]
         tests::NAME_LOOKUPS.with(|count| count.set(count.get() + 1));
-        if let Some(first) = &self.first {
-            return first.get(name).copied();
+        // Renaming an element or changing the tree natively, as a host does,
+        // does not move the script generation that resolved `nodes`, so the
+        // index also has to be read from the document as it is now.
+        let version = doc.named_element_version();
+        if self
+            .first
+            .as_ref()
+            .is_some_and(|index| index.version != *version)
+        {
+            *self = Self::default();
+        }
+        if let Some(index) = &self.first {
+            return index.first.get(name).copied();
         }
         if !std::mem::replace(&mut self.scanned, true) {
             return nodes.iter().copied().find(|&n| has_name(doc, n, name));
         }
-        self.first
-            .insert(first_by_name(doc, nodes))
-            .get(name)
-            .copied()
+        let index = NameIndex {
+            version: version.clone(),
+            first: first_by_name(doc, nodes),
+        };
+        self.first.insert(index).first.get(name).copied()
     }
 }
 

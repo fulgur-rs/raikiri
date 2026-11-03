@@ -818,6 +818,89 @@ fn the_name_index_follows_every_change_to_the_collection() {
     assert!(NAME_INDEX_BUILDS.get() > after_second);
 }
 
+/// Set an attribute of the element whose `id` is `id` the way a host does,
+/// through the document and without any change of the script generation.
+fn set_natively(rt: &mut DomRuntime, id: &str, attribute: &str, value: &str) {
+    with_state(rt.context_mut(), |s| {
+        let doc = s.host.document_mut();
+        let node = (0..doc.node_count())
+            .find(|&node| doc.element_attribute(node, "id") == Some(id))
+            .unwrap();
+        doc.set_element_attribute(node, attribute, value).unwrap();
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_name_index_follows_changes_the_host_makes_to_the_document_natively() {
+    let mut rt = collection_of(40);
+    rt.evaluate(
+        "refs.forEach(function (e) { e.className = 'x'; });          var t = root.getElementsByTagName('div'); var x = root.getElementsByClassName('x');          t.length; x.length;",
+    )
+    .unwrap();
+    let collections = ["c", "t", "x"];
+    // Two lookups of the same nodes build each index.
+    NAME_INDEX_BUILDS.set(0);
+    for collection in collections {
+        ok(
+            &mut rt,
+            &format!("{collection}.k0 === refs[0] && {collection}.k1 === refs[1]"),
+        );
+    }
+    assert_eq!(NAME_INDEX_BUILDS.get(), 3);
+    let generation_before = generation(&mut rt);
+    let steps = [
+        // Renaming an id, adding a name and making two elements share a name
+        // are all seen by an index built before the change.
+        (
+            ("k5", "id", "five"),
+            "K.five === refs[5] && K.k5 === undefined && K.namedItem('five') === refs[5]",
+        ),
+        (
+            ("k6", "name", "six"),
+            "K.six === refs[6] && K.k6 === refs[6]",
+        ),
+        (
+            ("k7", "id", "k8"),
+            "K.k8 === refs[7] && K.k7 === undefined && K.namedItem('k8') === refs[7]",
+        ),
+        (
+            ("k8", "id", "k7"),
+            "K.k7 === refs[7] && K.k8 === refs[8] && K.five === refs[5] && K.six === refs[6]",
+        ),
+    ];
+    for ((id, attribute, value), expectation) in steps {
+        // Let every collection build its index first, then change the
+        // document under it.
+        for collection in collections {
+            ok(&mut rt, &format!("{collection}.k0 === refs[0]"));
+            ok(&mut rt, &format!("{collection}.k2 === refs[2]"));
+        }
+        set_natively(&mut rt, id, attribute, value);
+        assert_eq!(generation(&mut rt), generation_before);
+        for collection in collections {
+            let expectation = expectation.replace('K', collection);
+            for _ in 0..3 {
+                ok(&mut rt, &expectation);
+            }
+        }
+    }
+    // The first lookup after a native change scans, as after a script change,
+    // and the second one builds, so one change per lookup never pays for an
+    // index.
+    set_natively(&mut rt, "k9", "id", "nine");
+    NAME_INDEX_BUILDS.set(0);
+    ok(&mut rt, "c.nine === refs[9]");
+    assert_eq!(NAME_INDEX_BUILDS.get(), 0);
+    ok(&mut rt, "c.k9 === undefined");
+    assert_eq!(NAME_INDEX_BUILDS.get(), 1);
+    set_natively(&mut rt, "nine", "id", "k9");
+    ok(&mut rt, "c.nine === undefined");
+    assert_eq!(NAME_INDEX_BUILDS.get(), 1);
+    ok(&mut rt, "c.k9 === refs[9]");
+    assert_eq!(NAME_INDEX_BUILDS.get(), 2);
+}
+
 #[test]
 fn the_first_element_of_a_name_in_collection_order_wins_in_the_index() {
     let mut rt = rt();
