@@ -373,3 +373,16 @@ fn rebreaking_lines_preserves_inside_marker_image_dimensions() {
         );
     }
 }
+
+#[test]
+fn outside_marker_leading_keeps_the_following_line_advance() {
+    let (mut root, mut cx) = root_of("", "aaaa bbbb");
+    root.outside_marker_height = Some(30.0);
+    let lines = break_lines(&root, &mut cx, 50.0);
+    assert_eq!(lines.lines.len(), 2);
+    assert_eq!(first_baseline(&lines), Some(30.0));
+    assert_eq!(last_baseline(&lines), Some(40.0));
+    assert_eq!(lines.lines[0].block_size(), 32.0);
+    assert_eq!(lines.lines[1].block_size(), 10.0);
+    assert_eq!(lines.height, 42.0);
+}
