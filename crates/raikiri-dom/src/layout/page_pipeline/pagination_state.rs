@@ -1,6 +1,6 @@
 //! What pagination carries from one candidate of the flow to the next.
 
-use super::candidates::FlowRoots;
+use super::candidates::{EdgesBreak, FlowRoots};
 use super::page_start::ChildPositions;
 use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
@@ -786,6 +786,90 @@ impl PaginationState {
             candidate.context.deferred_named_break_after(),
         );
 
+        Ok(())
+    }
+
+    /// Breaks the page before the bottom padding and border of a block when
+    /// they do not fit below its content on the page the content ends on, so
+    /// that they begin the next page instead of running on from the content
+    /// across the page edge: browsers do not split edges that way, and one
+    /// that cannot fit a page still starts at the top of one. The block grows
+    /// by the room left on the page, and the flow after it follows.
+    pub(super) fn break_before_edges(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        edges_break: &EdgesBreak,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            text_lines,
+            ..
+        } = *env;
+        if !self.saw_child {
+            return Ok(());
+        }
+        // The flow has left the content of the block: what its lines and
+        // boxes moved is settled before the edges are judged. A paragraph is
+        // left from outside it, as the box after it leaves it.
+        let node_id = edges_break.node_id;
+        let outside = if document.nodes[node_id].is_ifc_root() {
+            document.parent_of(node_id).unwrap_or(node_id)
+        } else {
+            node_id
+        };
+        if let Some(page) = self.deferred_shifts.apply_reached(
+            document,
+            text_lines,
+            outside,
+            None,
+            self.current_page,
+            &mut self.flow_shift,
+        ) {
+            self.current_page = self.current_page.max(page);
+        }
+        if let Some(page) = self
+            .subtree_shifts
+            .leave(document, outside, &mut self.flow_shift)
+        {
+            self.current_page = page;
+        }
+        let end = edges_break.raw_y + self.flow_shift;
+        let page = page_origins.page_index_for_end(end);
+        let page_end = page_origins.origin(page) + page_origins.step_at(page);
+        // The content must end below the top of its page, and the edges must
+        // reach past the bottom of it from a content end short of that. An end
+        // that is not a number fails every comparison and leaves the edges be.
+        let gap = page_end - end;
+        if !(end > page_origins.origin(page) + 0.001
+            && gap > 0.001
+            && edges_break.edges > gap + 0.001)
+        {
+            return Ok(());
+        }
+        let next_page = page.saturating_add(1);
+        reach_page(control, next_page)?;
+        document.nodes[edges_break.node_id].layout.size.height += gap;
+        grow_ancestors_for_shift(
+            document,
+            cascade,
+            edges_break.node_id,
+            gap,
+            body_id,
+            &mut self.subtree_shifts,
+            page,
+            &IfcBoxShifts::default(),
+        );
+        self.flow_shift += gap;
+        self.current_page = self.current_page.max(next_page);
+        self.record_pages(
+            control,
+            page_origins.end_page(page_end, edges_break.edges),
+            true,
+        )?;
         Ok(())
     }
 

@@ -10,14 +10,14 @@ use super::{
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
     candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
-    first_owned_text_line_top, has_block_leading_content, has_mandatory_break_inside,
-    height_follows_content, in_inset_out_of_flow_subtree, is_block_level_flow_box,
-    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
-    is_plain_block_box, is_plain_container_box, leading_holder, leading_piece_end,
-    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    content_bottom_edges, first_owned_text_line_top, has_block_leading_content,
+    has_mandatory_break_inside, height_follows_content, in_inset_out_of_flow_subtree,
+    is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
+    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -665,6 +665,22 @@ pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usiz
         .find(|&parent| document.nodes[parent].display() != DisplayValue::Contents)
 }
 
+/// The place in the flow where the bottom padding and border of a block begin,
+/// below its content: the page may break there, between the content and the
+/// edges, when they do not fit after it.
+#[derive(Clone, Copy)]
+pub(super) struct EdgesBreak {
+    /// The block whose edges follow.
+    pub(super) node_id: usize,
+    /// How many candidates come before the break in the order they are placed.
+    pub(super) before: usize,
+    /// Where the content of the block ends, in the coordinates of the
+    /// candidates.
+    pub(super) raw_y: f32,
+    /// The block size of the bottom padding and border.
+    pub(super) edges: f32,
+}
+
 /// Collects the page candidates of a laid-out subtree. Page membership is
 /// decided from source coordinates before local page offsets, so the
 /// recursion carries each node's inherited state in a [`CandidateFrame`].
@@ -688,6 +704,8 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     /// Whether some box forces a break after itself, so that a box after one
     /// may take it.
     forces_break_after: bool,
+    /// Where the edges of the blocks collected begin below their content.
+    edges_breaks: Vec<EdgesBreak>,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -731,6 +749,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         | raikiri_style::property::BreakBetween::Always
                 )
             }),
+            edges_breaks: Vec::new(),
         }
     }
 
@@ -739,13 +758,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// starts in the page flow.
     pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
         self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))?;
-        super::leading_inline::assign(self.document, self.out, self.control)
+        super::leading_inline::assign(
+            self.document,
+            self.out,
+            &mut self.edges_breaks,
+            self.control,
+        )
     }
 
     /// The edges of the clips that cut the text of the paragraphs collected,
-    /// by paragraph root, in the coordinates of the candidates.
-    pub(super) fn into_clip_edges(self) -> HashMap<usize, f32> {
-        self.clip_edges
+    /// by paragraph root, in the coordinates of the candidates, and where the
+    /// bottom edges of the blocks begin below their content.
+    pub(super) fn into_outputs(self) -> (HashMap<usize, f32>, Vec<EdgesBreak>) {
+        (self.clip_edges, self.edges_breaks)
     }
 
     #[inline(never)]
@@ -1879,6 +1904,23 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             },
                         },
                     )?;
+                }
+                // The padding and border at the bottom of a block whose height
+                // is that of its flow content begin where that content ends
+                // (at the top of the block when it holds none), and the page
+                // breaks before them when they do not fit below it on its
+                // page. A monolithic box, such as an image, keeps its edges.
+                if in_flow_block_level
+                    && !monolithic
+                    && let Some(edges) = content_bottom_edges(document, node_id)
+                    && candidate_raw_y + node.layout.size.height <= frame.clip_end
+                {
+                    self.edges_breaks.push(EdgesBreak {
+                        node_id,
+                        before: self.out.len(),
+                        raw_y: candidate_raw_y + node.layout.size.height - edges,
+                        edges,
+                    });
                 }
             }
             _ => {} // cov:ignore: non-rendered node kinds are filtered by the document invariant.

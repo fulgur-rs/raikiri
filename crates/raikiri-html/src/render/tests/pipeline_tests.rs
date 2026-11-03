@@ -1475,11 +1475,18 @@ fn pipeline_counts_the_body_after_the_root_margin() {
 
 #[test]
 fn pipeline_counts_the_block_end_padding_of_an_auto_height_body() {
-    for content in ["", "<div style='height:20px'>x</div>"] {
+    // The padding that does not fit under the content starts the next page, as
+    // Chromium prints it: an empty body takes 150px of the second page, one
+    // with a box in it has the padding run over the second page and the third.
+    for (content, pages) in [
+        ("", 2),
+        ("<div style='height:20px'>x</div>", 3),
+        ("<div style='height:90px'>x</div>", 3),
+    ] {
         let doc = parse(&format!(
             "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:150px}}</style>{content}"
         ));
-        assert_eq!(run(&doc).slices.len(), 2, "{content:?}");
+        assert_eq!(run(&doc).slices.len(), pages, "{content:?}");
     }
 }
 

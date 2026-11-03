@@ -416,3 +416,98 @@ fn options_vertical_error_restores_physical_style() {
         assert_eq!(size.height, Dimension::length(10.0));
     }
 }
+
+/// `body > [div(padding-bottom) > div(height), div(height:10px)?]` on pages
+/// 600px tall.
+fn padded_card_document(
+    height: u32,
+    padding: u32,
+    block_after: bool,
+) -> (Document, raikiri_style::CascadeResult) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let card = document.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;padding-bottom:{padding}px").as_str()),
+    );
+    document.append_element(
+        Some(card),
+        "div",
+        Some(format!("display:block;height:{height}px").as_str()),
+    );
+    if block_after {
+        document.append_element(Some(body), "div", Some("display:block;height:10px"));
+    }
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    (document, cascade)
+}
+
+#[test]
+fn options_page_limit_stops_the_flow_where_edges_start_the_next_page() {
+    // Without the limit the padding takes the second page; with it the flow
+    // stops there, whether a block follows the card or the card ends the flow.
+    for block_after in [false, true] {
+        let (mut document, cascade) = padded_card_document(560, 100, block_after);
+        let pages = layout_pages_with_options(
+            &mut document,
+            &cascade,
+            page_box_800x600(),
+            PageLayoutOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(pages.len(), 2, "{block_after}");
+
+        let (mut document, cascade) = padded_card_document(560, 100, block_after);
+        let control = PageLayoutControl::for_geometry_discovery(Some(1));
+        let pages = layout_pages_with_options(
+            &mut document,
+            &cascade,
+            page_box_800x600(),
+            PageLayoutOptions {
+                control: Some(&control),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(pages.len(), 1, "{block_after}");
+        assert!(control.page_limit_reached(), "{block_after}");
+    }
+}
+
+#[test]
+fn options_page_limit_stops_the_flow_inside_edges_that_cross_pages() {
+    // The 1500px of padding start the second page and end on the fourth: the
+    // limit of two pages lets the flow reach the second and no further.
+    let (mut document, cascade) = padded_card_document(560, 1500, false);
+    let control = PageLayoutControl::for_geometry_discovery(Some(2));
+    let pages = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        PageLayoutOptions {
+            control: Some(&control),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(pages.len(), 2);
+    assert!(control.page_limit_reached());
+
+    // A strict limit reports the page that only the pushed padding reaches:
+    // the card ends at 1200 without the push and at 1210 with it.
+    let (mut document, cascade) = padded_card_document(590, 610, false);
+    let control = PageLayoutControl::new(Some(2));
+    let result = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        PageLayoutOptions {
+            control: Some(&control),
+            ..Default::default()
+        },
+    );
+    assert!(matches!(result, Err(LayoutError::PageLimitExceeded { .. })));
+}

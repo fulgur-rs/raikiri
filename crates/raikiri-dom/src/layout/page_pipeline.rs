@@ -3931,6 +3931,25 @@ fn grow_spanning_column_ancestors(
     Ok(())
 }
 
+/// Breaks the page before the edges that follow the first `placed` candidates
+/// and have not been judged yet (see [`PaginationState::break_before_edges`]).
+/// Returns whether the page limit stopped the flow.
+fn break_before_edges(
+    state: &mut PaginationState,
+    document: &mut super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    edges_breaks: &mut std::iter::Peekable<std::vec::IntoIter<candidates::EdgesBreak>>,
+    placed: usize,
+) -> Result<bool, LayoutError> {
+    while let Some(edges_break) = edges_breaks.next_if(|found| found.before <= placed) {
+        if let Err(halt) = state.break_before_edges(document, env, &edges_break) {
+            halt.finish()?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_options`].
@@ -4063,7 +4082,7 @@ fn paginate_flow(
         control,
     );
     collector.collect_flow(root_flow_offset)?;
-    let clip_edges = collector.into_clip_edges();
+    let (clip_edges, edges_breaks) = collector.into_outputs();
     let table_headers = HeaderRepeats::prepare(
         document,
         cascade,
@@ -4121,23 +4140,36 @@ fn paginate_flow(
         page_box,
     };
     let mut candidates = candidates.into_iter();
+    let mut edges_breaks = edges_breaks.into_iter().peekable();
+    let mut placed = 0;
+    let mut halted = false;
     // Each candidate is placed while the page limit lets pagination reach the
-    // page the flow is on.
+    // page the flow is on. The page breaks before the edges of a block that
+    // follow the candidates before them, when they do not fit.
     while let Some(candidate) = candidates.next()
         && control.within_page_limit(state.current_page)?
     {
+        if break_before_edges(&mut state, document, &env, &mut edges_breaks, placed)? {
+            halted = true;
+            break;
+        }
+        placed += 1;
         let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
             continue;
         };
-        let placed = if candidate.context.is_text() {
+        let placed_candidate = if candidate.context.is_text() {
             state.place_text(document, &env, &candidate, &entry)
         } else {
             state.place_box(document, &env, &candidate, &entry)
         };
-        if let Err(halt) = placed {
+        if let Err(halt) = placed_candidate {
             halt.finish()?;
+            halted = true;
             break;
         }
+    }
+    if !halted {
+        break_before_edges(&mut state, document, &env, &mut edges_breaks, placed)?;
     }
     if let Err(halt) = state.keep_positioned_lines(document, &env, &clip_edges) {
         halt.finish()?;
@@ -7856,7 +7888,8 @@ fn unbreakable_box_moves(
 /// the next page. A break between boxes (a class A break point) is preferred
 /// to that one (class C, CSS Break 3 §4.1), as browsers do, so the last box
 /// moves along with the edges, even when the next page cannot hold the box
-/// with all of them: the edges run on past its end as they would anywhere.
+/// with all of them: the edges that still do not fit there start the page
+/// after it (see `PaginationState::break_before_edges`).
 /// The next page must hold the box itself, or moving it gains nothing; and a
 /// box that its page starts with would break from the edges on any page.
 ///
@@ -7964,6 +7997,24 @@ fn closing_edges_of(document: &super::context::LayoutSession<'_>, node_id: usize
         && moves_later_siblings(document, node_id)
         && height_follows_content(document, node_id))
     .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+}
+
+/// The block size of the bottom padding and border of the block `node_id`
+/// when they follow its flow content: it is a block container or a paragraph
+/// whose height is that of its content.
+fn content_bottom_edges(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    let edges = node.layout.padding.bottom + node.layout.border.bottom;
+    (edges > 0.0
+        && node.kind() == NodeKind::Element
+        && !node.used_writing_mode.is_vertical()
+        && node.multicol.is_none()
+        && height_follows_content(document, node_id)
+        && (node.is_ifc_root() || moves_later_siblings(document, node_id)))
+    .then_some(edges)
 }
 
 /// Where the block `node_id` sits in its parent along the block axis at its
@@ -8362,8 +8413,9 @@ fn nested_run_units(
 /// (class C) is not taken while one between lines (class B) honors `orphans`
 /// and `widows`, as in [`closing_edges_move`]: the page gives up `widows` lines
 /// when it keeps its `orphans` after that, and its last line when it cannot
-/// (see [`edge_break_lines`]). The edges run on past the end of the next page as
-/// they would anywhere; that page only has to hold the lines. `line_metrics`
+/// (see [`edge_break_lines`]). The edges that do not fit below the lines on the
+/// next page start the page after it (see `PaginationState::break_before_edges`);
+/// that page only has to hold the lines. `line_metrics`
 /// is as for [`widows_break_on_next_page`]. `None` when the lines or the edges
 /// do not run past the page end the way that needs, there is only one line,
 /// or the next page cannot hold the lines.
