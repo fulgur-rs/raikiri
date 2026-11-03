@@ -126,7 +126,8 @@ impl LayoutStyleView<'_> {
             )
         }
     }
-    /// Whether the box is a table in a block formatting context.
+    /// Whether the box is a block-level table (`display: table`) in a block
+    /// formatting context.
     pub fn is_table(&self) -> bool {
         self.flags().contains(StyleFlags::BLOCK_TABLE)
     }

@@ -552,6 +552,20 @@ pub(super) fn layout(
         let stretch_widths = content_limits::stretch_widths(tree, usize::from(child));
         // `Width`: the border-box width the child gets where an `auto` width
         // resolves to `stretch`. `Height`: its border-box height at `width`.
+        // A table of `auto` width is handed the room it was measured in and
+        // sizes itself from its columns there. Its columns are set in that
+        // room even where one of them is then removed by
+        // `visibility: collapse`, so the width left after the removal must not
+        // stand in for it, whether the table is measured or laid out.
+        let table_takes_the_room =
+            style.item_is_table && matches!(style.size.width.expand(), ExpandedDimension::Auto);
+        let laid_out_width = |width: f32, room: f32| {
+            if table_takes_the_room {
+                child_metrics.clamp_width(room.max(0.0))
+            } else {
+                width
+            }
+        };
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
                 let width = 'width: {
@@ -570,9 +584,18 @@ pub(super) fn layout(
                         ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
                         _ => AvailableSpace::Definite(stretch.max(0.0)),
                     };
-                    tree.compute_child_layout_with_block_ctx(child, measure, None)
+                    let natural = tree
+                        .compute_child_layout_with_block_ctx(child, measure, None)
                         .size
-                        .width
+                        .width;
+                    // A table takes the width its columns give it, but the
+                    // limits on its width still apply; the table then grows
+                    // back to what its columns cannot do without.
+                    if style.item_is_table {
+                        child_metrics.clamp_width(natural)
+                    } else {
+                        natural
+                    }
                 };
                 if stretch_widths.any() {
                     stretch_widths.clamp(
@@ -584,7 +607,8 @@ pub(super) fn layout(
                     width
                 }
             }
-            BoxProbe::Height { width } => {
+            BoxProbe::Height { width, stretch } => {
+                let width = laid_out_width(width, stretch);
                 let mut measure = child_input;
                 measure.run_mode = RunMode::ComputeSize;
                 measure.known_dimensions.width = Some(width);
@@ -666,6 +690,11 @@ pub(super) fn layout(
         );
         child_input.known_dimensions.width = Some(child_width);
         child_input.available_space.width = AvailableSpace::Definite(child_width);
+        if table_takes_the_room {
+            let room = laid_out_width(child_width, area_width);
+            child_input.known_dimensions.width = Some(room);
+            child_input.available_space.width = AvailableSpace::Definite(room);
+        }
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
         // Clearance refers to preceding floats. Descendant floats created
