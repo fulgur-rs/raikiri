@@ -1,5 +1,7 @@
 //! Whether the first letter of the text gathered so far is complete.
 
+use icu_properties::{CodePointMapData, props::GraphemeClusterBreak as G};
+
 /// What the text gathered so far is known to hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Gathered {
@@ -64,7 +66,7 @@ impl LetterScan {
         match self.gathered {
             Gathered::Closed => false,
             Gathered::Blank | Gathered::Punctuation | Gathered::Letter => {
-                if self.absorbs(&joined[start..]) {
+                if self.extends_cluster(joined, start) || self.absorbs(&joined[start..]) {
                     false
                 } else {
                     self.ask(joined)
@@ -72,6 +74,30 @@ impl LetterScan {
             }
             Gathered::Unknown => self.ask(joined),
         }
+    }
+
+    /// Whether the piece only extends the last cluster of a known letter.
+    fn extends_cluster(&self, joined: &str, start: usize) -> bool {
+        if self.gathered != Gathered::Letter {
+            return false;
+        }
+        let categories = CodePointMapData::<G>::new();
+        // GB4/5 takes precedence over GB9/9a: even extenders start a new
+        // cluster after a control. Keep that case with the full scan.
+        if joined[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| matches!(categories.get(ch), G::Control | G::CR | G::LF))
+        {
+            return false;
+        }
+        // Match the ICU grapheme categories used by shodo 0.0.38. The
+        // differential tests guard this shortcut against its full scan.
+        joined[start..].chars().all(|ch| {
+            #[cfg(test)]
+            super::tests::SCANNED_BYTES.with(|count| count.set(count.get() + ch.len_utf8()));
+            matches!(categories.get(ch), G::Extend | G::ZWJ | G::SpacingMark)
+        })
     }
 
     /// Whether `piece` only adds to the text what the text already ends in,
