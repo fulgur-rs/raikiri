@@ -9850,9 +9850,10 @@ struct SiblingMargins {
     /// Whether truncating a margin moved a box.
     moved_boxes: bool,
     /// The box that forces a break after it, which a float took to the new
-    /// page, until the in-flow box after the float is placed. That box starts
-    /// the new page as well, so the break sits before its margin.
-    break_taken_by_float: Option<usize>,
+    /// page, paired with that page's index, until the in-flow box after the
+    /// float is placed. The forced boundary sits before its margin; the next
+    /// page edge truncates it.
+    break_taken_by_float: Option<(usize, u32)>,
 }
 
 /// A box that starts on `natural_page`, below a page edge that may fall in the
@@ -9927,9 +9928,11 @@ impl SiblingMargins {
             return None;
         }
         let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
-        let taken_by_float = self
+        let float_break_page = self
             .break_taken_by_float
-            .is_some_and(|source| is_descendant_or_self(document, source, previous));
+            .filter(|&(source, _)| is_descendant_or_self(document, source, previous))
+            .map(|(_, page)| page);
+        let taken_by_float = float_break_page.is_some();
         let forced_before = at.forced_before || taken_by_float;
         let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
         // The page edge cuts the whole run of margins, which ends where the
@@ -9982,8 +9985,8 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (target_top, target_y) = page_origins.truncated_margin_target(
-            natural_page,
+        let (target_top, mut target_y) = page_origins.truncated_margin_target(
+            float_break_page.unwrap_or(natural_page),
             forced_before,
             at.margin_top,
             || {
@@ -9998,6 +10001,11 @@ impl SiblingMargins {
             },
             follows_forced_break,
         );
+        if let Some(page) = float_break_page {
+            // A relayout may already place the box at the next edge. Keep
+            // the margin from the float's forced boundary, not that edge.
+            target_y = target_y.min(page_origins.page_end(page));
+        }
         Some(MarginTruncation {
             delta: target_y - effective_y,
             underflow: (target_y < target_top).then_some(target_top - target_y),
@@ -10031,7 +10039,7 @@ impl SiblingMargins {
         let (previous, _) = self.gap_after_previous(document, at.node_id, at.raw_y)?;
         let taken_by_float = self
             .break_taken_by_float
-            .is_some_and(|source| is_descendant_or_self(document, source, previous));
+            .is_some_and(|(source, _)| is_descendant_or_self(document, source, previous));
         (!taken_by_float && !self.follows_forced_break(document, cascade, previous, at.node_id))
             .then_some((end, pulled))
     }
@@ -10050,9 +10058,9 @@ impl SiblingMargins {
         self.gap_after_previous(document, node_id, raw_y)
             .is_some_and(|(previous, _)| {
                 self.follows_forced_break(document, cascade, previous, node_id)
-                    || self
-                        .break_taken_by_float
-                        .is_some_and(|source| is_descendant_or_self(document, source, previous))
+                    || self.break_taken_by_float.is_some_and(|(source, _)| {
+                        is_descendant_or_self(document, source, previous)
+                    })
             })
     }
 

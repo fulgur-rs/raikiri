@@ -2225,6 +2225,26 @@ fn a_large_margin_after_a_page_start_float_does_not_insert_an_extra_blank_page()
 }
 
 #[test]
+fn a_retained_page_high_margin_does_not_open_an_extra_page_after_a_float() {
+    // RAIKIRI-1444: Chromium 152 prints both lines on page 2. The margin
+    // is retained on page 1 and truncated at its next unforced edge.
+    for side in ["left", "right"] {
+        for margin in [80, 99, 100, 101, 150, 200] {
+            let body = format!(
+                "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>\
+                 <div style='float:{side};width:40px;height:50px'></div>\
+                 <div style='margin-top:{margin}px'>XX XX XX XX</div>"
+            );
+            assert_eq!(
+                page_count_and_lines_repeated(&body, |text| text != "a", 2),
+                (3, vec![(2, 0.0, 5.0), (2, 0.0, 35.0)]),
+                "{side} float, margin {margin}px"
+            );
+        }
+    }
+}
+
+#[test]
 fn retained_margin_paragraphs_follow_their_opening_page_boundary() {
     let cases = [
         FloatMarginCase {
