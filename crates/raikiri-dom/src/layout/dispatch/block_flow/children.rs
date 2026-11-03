@@ -559,29 +559,38 @@ pub(super) fn layout(
         let stretch_widths = content_limits::stretch_widths(tree, usize::from(child));
         // `Width`: the border-box width the child gets where an `auto` width
         // resolves to `stretch`. `Height`: its border-box height at `width`.
-        // A table of `auto` width is handed the room it was measured in and
+        // A table of `auto` or `stretch` width is handed its measured room and
         // sizes itself from its columns there. Its columns are set in that
         // room even where one of them is then removed by
         // `visibility: collapse`, so the width left after the removal must not
         // stand in for it, whether the table is measured or laid out.
-        let table_takes_the_room =
-            style.item_is_table && matches!(style.size.width.expand(), ExpandedDimension::Auto);
+        let table_uses_slot_room = style.item_is_table
+            && matches!(
+                style.size.width.expand(),
+                ExpandedDimension::Auto | ExpandedDimension::Stretch
+            );
         let laid_out_width = |width: f32, room: f32| {
-            if table_takes_the_room {
+            if table_uses_slot_room {
                 child_metrics.clamp_width(room.max(0.0))
+            } else if style.item_is_table {
+                child_metrics.preferred.width.unwrap_or(width)
             } else {
                 width
             }
         };
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
+                // The table resolves its own width limits against its grid
+                // and caption minimum. Probe that used width before deciding
+                // whether its border box fits beside a float.
                 let width = 'width: {
-                    if let Some(preferred) = child_metrics.preferred.width
+                    if !style.item_is_table
+                        && let Some(preferred) = child_metrics.preferred.width
                         && !child_metrics.ratio_width
                     {
                         break 'width preferred;
                     }
-                    if stretches && !child_metrics.ratio_width {
+                    if !style.item_is_table && stretches && !child_metrics.ratio_width {
                         break 'width child_metrics.clamp_width(stretch.max(0.0));
                     }
                     let mut measure = child_input;
@@ -591,20 +600,11 @@ pub(super) fn layout(
                         ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
                         _ => AvailableSpace::Definite(stretch.max(0.0)),
                     };
-                    let natural = tree
-                        .compute_child_layout_with_block_ctx(child, measure, None)
+                    tree.compute_child_layout_with_block_ctx(child, measure, None)
                         .size
-                        .width;
-                    // A table takes the width its columns give it, but the
-                    // limits on its width still apply; the table then grows
-                    // back to what its columns cannot do without.
-                    if style.item_is_table {
-                        child_metrics.clamp_width(natural)
-                    } else {
-                        natural
-                    }
+                        .width
                 };
-                if stretch_widths.any() {
+                if !style.item_is_table && stretch_widths.any() {
                     stretch_widths.clamp(
                         width,
                         (child_metrics.min.width, child_metrics.max.width),
@@ -697,13 +697,9 @@ pub(super) fn layout(
             child_width,
             &mut margin,
         );
-        child_input.known_dimensions.width = Some(child_width);
-        child_input.available_space.width = AvailableSpace::Definite(child_width);
-        if table_takes_the_room {
-            let room = laid_out_width(child_width, area_width);
-            child_input.known_dimensions.width = Some(room);
-            child_input.available_space.width = AvailableSpace::Definite(room);
-        }
+        let assigned_width = laid_out_width(child_width, area_width);
+        child_input.known_dimensions.width = Some(assigned_width);
+        child_input.available_space.width = AvailableSpace::Definite(assigned_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
         // Clearance refers to preceding floats. Descendant floats created

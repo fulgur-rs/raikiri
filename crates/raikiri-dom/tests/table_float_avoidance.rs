@@ -364,6 +364,169 @@ fn an_auto_width_table_that_fits_beside_the_float_with_a_left_float() {
 }
 
 #[test]
+fn a_tables_intrinsic_floor_is_used_before_choosing_a_slot_beside_a_float() {
+    for side in ["left", "right"] {
+        for limit in ["width:50px", "max-width:50px"] {
+            for element in [
+                format!(
+                    "<div id=k style=\"display:table;{limit}\"><div style=\"width:150px;height:10px\"></div></div>"
+                ),
+                format!(
+                    "<table id=k style=\"border-spacing:0;{limit}\"><tr><td style=\"padding:0\"><div style=\"width:150px;height:10px\"></div></td></tr></table>"
+                ),
+            ] {
+                let float_x = if side == "left" { 0.0 } else { 100.0 };
+                check_horizontal(
+                    side,
+                    &element,
+                    [
+                        (float_x, 0.0, 100.0, 100.0),
+                        (0.0, 100.0, 150.0, 10.0),
+                        (0.0, 110.0, 200.0, 5.0),
+                        (0.0, 0.0, 200.0, 115.0),
+                    ],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_table_with_a_small_intrinsic_floor_still_fits_beside_the_float() {
+    for side in ["left", "right"] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        let table_x = if side == "left" { 100.0 } else { 0.0 };
+        check_horizontal(
+            side,
+            "<div id=k style=\"display:table;width:50px\"><div style=\"width:80px;height:10px\"></div></div>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (table_x, 0.0, 80.0, 10.0),
+                (0.0, 10.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 15.0),
+            ],
+        );
+    }
+}
+
+#[test]
+fn table_captions_edges_and_stretch_limits_are_resolved_before_float_avoidance() {
+    for side in ["left", "right"] {
+        for (element, width, height) in [
+            (
+                "<table id=k style=\"border-spacing:0;max-width:stretch\"><tr><td style=\"padding:0\"><div style=\"width:150px;height:10px\"></div></td></tr></table>",
+                150.0,
+                10.0,
+            ),
+            (
+                "<table id=k style=\"border-spacing:0;width:stretch\"><tr><td style=\"padding:0\"><div style=\"width:150px;height:10px\"></div></td></tr></table>",
+                200.0,
+                10.0,
+            ),
+            (
+                "<table id=k style=\"border-spacing:10px;width:50px\"><tr><td style=\"padding:0\"><div style=\"width:140px;height:10px\"></div></td></tr></table>",
+                160.0,
+                30.0,
+            ),
+            (
+                "<table id=k style=\"border-collapse:collapse;border:4px solid;width:50px\"><tr><td style=\"padding:0\"><div style=\"width:150px;height:10px\"></div></td></tr></table>",
+                158.0,
+                18.0,
+            ),
+        ] {
+            let float_x = if side == "left" { 0.0 } else { 100.0 };
+            check_horizontal(
+                side,
+                element,
+                [
+                    (float_x, 0.0, 100.0, 100.0),
+                    (0.0, 100.0, width, height),
+                    (0.0, 100.0 + height, 200.0, 5.0),
+                    (0.0, 0.0, 200.0, 105.0 + height),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_caption_minimum_places_the_whole_table_wrapper_below_the_float() {
+    for side in ["left", "right"] {
+        let body = format!(
+            "<div id=o style=\"width:200px\">\
+             <div style=\"float:{side};width:100px;height:100px\"></div>\
+             <table id=k style=\"border-spacing:0;width:50px\">\
+             <caption id=cap><div style=\"width:150px;height:10px\"></div></caption>\
+             <tr><td style=\"padding:0;height:10px\"></td></tr></table>\
+             <div id=after style=\"height:5px\"></div></div>"
+        );
+        // The table fragment describes the grid; the caption has its own fragment.
+        compare(
+            &body,
+            &[
+                ("cap", (0.0, 100.0, 150.0, 10.0)),
+                ("k", (0.0, 110.0, 150.0, 10.0)),
+                ("after", (0.0, 120.0, 200.0, 5.0)),
+                ("o", (0.0, 0.0, 200.0, 125.0)),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_fixed_layout_table_keeps_its_specified_width_when_its_content_overflows() {
+    for side in ["left", "right"] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        let table_x = if side == "left" { 100.0 } else { 0.0 };
+        check_horizontal(
+            side,
+            "<table id=k style=\"border-spacing:0;table-layout:fixed;width:50px\"><tr><td style=\"padding:0\"><div style=\"width:150px;height:10px\"></div></td></tr></table>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (table_x, 0.0, 50.0, 10.0),
+                (0.0, 10.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 15.0),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_specified_table_keeps_its_column_allocation_after_collapse() {
+    for side in ["left", "right"] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        check_horizontal(
+            side,
+            "<table id=k style=\"border-spacing:0;table-layout:fixed;width:180px\"><col><col style=\"visibility:collapse\"><col><tr><td style=\"padding:0;height:10px\"></td><td style=\"padding:0;height:10px\"></td><td style=\"padding:0;height:10px\"></td></tr></table>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (0.0, 100.0, 120.0, 10.0),
+                (0.0, 110.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 115.0),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_stretched_table_is_measured_and_laid_out_in_the_same_slot_room() {
+    for side in ["left", "right"] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        let table_x = if side == "left" { 100.0 } else { 0.0 };
+        check_horizontal(
+            side,
+            "<table id=k style=\"border-spacing:0;table-layout:fixed;width:stretch\"><col><col style=\"visibility:collapse\"><tr><td style=\"padding:0;height:10px\"></td><td style=\"padding:0;height:10px\"></td></tr></table>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (table_x, 0.0, 50.0, 10.0),
+                (0.0, 10.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 15.0),
+            ],
+        );
+    }
+}
+
+#[test]
 fn a_table_made_of_table_display_boxes_with_a_left_float() {
     check_horizontal(
         "left",
