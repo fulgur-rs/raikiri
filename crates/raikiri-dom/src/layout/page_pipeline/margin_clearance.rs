@@ -86,7 +86,13 @@ impl ClearanceFree {
                             && node.layout.location.y > limit.bottom + 0.001
                     })
                 });
-                if safe {
+                // A performed block layout can prove the hypothetical top
+                // already cleared the float, even in an escaping margin strut.
+                let measured_free = matches!(node.position(), PositionValue::Static)
+                    && !node.used_writing_mode.is_vertical()
+                    && !independent
+                    && document.context.block_clearance.get(&id) == Some(&false);
+                if safe || measured_free {
                     result.0.insert(id);
                 }
             }

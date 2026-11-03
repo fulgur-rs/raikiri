@@ -166,6 +166,13 @@ impl BlockContext<'_> {
         })
     }
 
+    /// The inherited leading strut joined with the preceding siblings' margins.
+    pub(crate) fn leading_margin_set(&self, margins: CollapsibleMarginSet) -> CollapsibleMarginSet {
+        self.state
+            .leading_strut
+            .map_or(margins, |strut| strut.margins.collapse_with_set(margins))
+    }
+
     pub(crate) fn snapshot(&self) -> BlockContextSnapshot {
         BlockContextSnapshot {
             floats: Arc::clone(&self.owner.floats),
