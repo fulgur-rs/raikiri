@@ -126,6 +126,336 @@ fn an_image_after_a_box_starts_the_next_page() {
 }
 
 #[test]
+fn a_column_flex_container_moves_with_its_first_replaced_item() {
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='display:flex;flex-direction:column;width:300px;height:400px'>\
+         {}</div>",
+        block_image(400)
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+}
+
+fn column_image(height: u32, css: &str) -> String {
+    format!("{IMAGE} style='display:block;width:300px;height:{height}px;flex-shrink:0;{css}'>")
+}
+
+fn column_after_lead(items: &str, css: &str) -> String {
+    format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='display:flex;flex-direction:column;width:300px;{css}'>{items}</div>"
+    )
+}
+
+#[test]
+fn a_leading_column_image_moves_following_items_and_outer_flow_once() {
+    for tail in [
+        "<div id=t style='height:20px;flex-shrink:0'></div>",
+        "<div id=t style='height:20px;flex-shrink:0'>T</div>",
+    ] {
+        let items = format!("{}{tail}", column_image(400, ""));
+        let body = format!(
+            "{}<div id=a style='height:10px'></div>",
+            column_after_lead(&items, "")
+        );
+        assert_eq!(extents_of("o", &body), [None, Some((0, 420))]);
+        assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+        assert_eq!(extents_of("t", &body), [None, Some((400, 420))]);
+        assert_eq!(extents_of("a", &body), [None, Some((420, 430))]);
+    }
+}
+
+#[test]
+fn column_image_placement_uses_order_and_reverse_visual_order() {
+    let early_image = format!(
+        "<div style='height:20px;order:1;flex-shrink:0'></div>{}",
+        column_image(400, "order:0")
+    );
+    let reverse_image = format!(
+        "<div style='height:20px;flex-shrink:0'></div>{}",
+        column_image(400, "")
+    );
+    for (items, css) in [
+        (early_image, ""),
+        (reverse_image, "flex-direction:column-reverse"),
+    ] {
+        let body = column_after_lead(&items, css);
+        assert_eq!(extents_of("o", &body), [None, Some((0, 420))]);
+        assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+    }
+    let late_image = format!(
+        "{}<div style='height:20px;order:0;flex-shrink:0'></div>",
+        column_image(400, "order:1")
+    );
+    let reverse_late = format!(
+        "{}<div style='height:20px;flex-shrink:0'></div>",
+        column_image(400, "")
+    );
+    for (items, css) in [
+        (late_image, ""),
+        (reverse_late, "flex-direction:column-reverse"),
+    ] {
+        let body = column_after_lead(&items, css);
+        assert_eq!(extents_of("o", &body)[0], Some((308, 600)));
+        assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+    }
+}
+
+#[test]
+fn a_column_image_can_begin_plain_blocks_and_contents_wrappers() {
+    for items in [
+        format!("<div>{}</div>", column_image(400, "")),
+        format!(
+            "<section style='display:contents'>{}</section>",
+            column_image(400, "")
+        ),
+    ] {
+        let body = column_after_lead(&items, "");
+        assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+        assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+    }
+    let body = format!(
+        "<div style='height:300px'></div><section id=w><div id=o style='display:flex;flex-direction:column;width:300px'>{}</div></section>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("w", &body), [None, Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+}
+
+#[test]
+fn earlier_content_and_leading_gaps_leave_the_column_in_place() {
+    for items in [
+        format!(
+            "<div style='height:20px;flex-shrink:0'></div>{}",
+            column_image(400, "")
+        ),
+        format!(
+            "<div><div style='height:0'></div>{}</div>",
+            column_image(400, "")
+        ),
+        format!("<div>A{}</div>", column_image(400, "")),
+        column_image(400, "margin-top:10px"),
+        column_image(400, "margin-top:-10px"),
+    ] {
+        let body = column_after_lead(&items, "");
+        assert_eq!(extents_of("o", &body)[0], Some((308, 600)), "{items}");
+    }
+    let body = column_after_lead(
+        &column_image(400, ""),
+        "height:420px;justify-content:center",
+    );
+    assert_eq!(extents_of("o", &body)[0], Some((308, 600)));
+}
+
+#[test]
+fn an_oversized_column_image_moves_once_and_keeps_the_declared_container_height() {
+    let image = column_image(750, "");
+    let body = column_after_lead(&image, "");
+    let split = [None, Some((0, 600)), Some((0, 150))];
+    assert_eq!(extents_of("o", &body), split);
+    assert_eq!(image_extents(&body), split);
+    let body = format!(
+        "{}<div id=a style='height:10px'></div>",
+        column_after_lead(&image, "height:400px")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400)), None]);
+    assert_eq!(image_extents(&body), split);
+    assert_eq!(extents_of("a", &body), [None, Some((400, 410)), None]);
+}
+
+#[test]
+fn a_column_image_that_fits_or_already_starts_the_page_stays() {
+    let body = format!(
+        "<div style='height:192px'></div><div id=o style='display:flex;flex-direction:column'>{}</div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [Some((200, 600))]);
+    assert_eq!(image_extents(&body), [Some((200, 600))]);
+    let body = format!(
+        "<style>body{{margin:0}}</style><div id=o style='display:flex;flex-direction:column'>{}</div>",
+        column_image(750, "")
+    );
+    assert_eq!(extents_of("o", &body), [Some((0, 600)), Some((0, 150))]);
+    assert_eq!(image_extents(&body), [Some((0, 600)), Some((0, 150))]);
+}
+
+#[test]
+fn relative_visual_offsets_do_not_change_a_column_images_break_position() {
+    let body = column_after_lead(&column_image(400, "position:relative;top:30px"), "");
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    assert_eq!(image_extents(&body), [None, Some((30, 430))]);
+}
+
+#[test]
+fn column_image_candidates_respect_parallel_and_clipping_ancestors() {
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
+        column_image(400, "")
+    );
+    for wrapper in [
+        format!(
+            "<div style='display:flex;break-before:avoid'><div style='width:20px;height:20px'></div>{column}</div>"
+        ),
+        format!("<div style='height:400px;overflow:hidden'>{column}</div>"),
+    ] {
+        let body = format!("<div style='height:300px'></div>{wrapper}");
+        assert_eq!(extents_of("o", &body)[0], Some((308, 600)), "{wrapper}");
+    }
+}
+
+#[test]
+fn an_initial_column_keeps_its_start_while_the_image_moves_past_a_margin() {
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
+        column_image(750, "")
+    );
+    for body in [column.clone(), format!("<div>{column}</div>")] {
+        assert_eq!(
+            extents_of("o", &body),
+            [Some((8, 600)), Some((0, 600)), Some((0, 150))]
+        );
+        assert_eq!(image_extents(&body), [None, Some((0, 600)), Some((0, 150))]);
+    }
+    let body = format!(
+        "<style>body{{margin:0}}</style><div style='margin-top:20px'><div id=o style='display:flex;flex-direction:column'>{}</div></div>",
+        column_image(590, "")
+    );
+    assert_eq!(extents_of("o", &body), [Some((20, 600)), Some((0, 590))]);
+    assert_eq!(image_extents(&body), [None, Some((0, 590))]);
+}
+
+#[test]
+fn plain_leading_edges_move_with_the_column_after_earlier_content() {
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
+        column_image(400, "")
+    );
+    let body =
+        format!("<div style='height:300px'></div><div id=w style='padding-top:6px'>{column}</div>");
+    assert_eq!(extents_of("w", &body), [None, Some((0, 406))]);
+    assert_eq!(extents_of("o", &body), [None, Some((6, 406))]);
+    assert_eq!(image_extents(&body), [None, Some((6, 406))]);
+    let body =
+        format!("<div style='height:300px'></div><div id=w style='margin-top:20px'>{column}</div>");
+    assert_eq!(extents_of("w", &body), [None, Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+}
+
+#[test]
+fn column_holder_fit_uses_the_image_piece_instead_of_the_whole_column() {
+    let items = format!(
+        "{}<div style='height:500px;flex-shrink:0'></div>",
+        column_image(400, "")
+    );
+    let body = format!(
+        "<div style='height:300px'></div><div id=w style='padding-top:6px'><div id=o style='display:flex;flex-direction:column'>{items}</div></div>"
+    );
+    assert_eq!(
+        extents_of("w", &body),
+        [None, Some((0, 600)), Some((0, 306))]
+    );
+    assert_eq!(
+        extents_of("o", &body),
+        [None, Some((6, 600)), Some((0, 306))]
+    );
+    assert_eq!(image_extents(&body), [None, Some((6, 406)), None]);
+}
+
+#[test]
+fn a_column_stays_when_only_its_later_content_crosses_the_page() {
+    let items = format!(
+        "{}<div style='height:500px;flex-shrink:0'></div>",
+        column_image(100, "")
+    );
+    let body = column_after_lead(&items, "");
+    assert_eq!(extents_of("o", &body), [Some((308, 600)), Some((0, 308))]);
+    assert_eq!(image_extents(&body), [Some((308, 408)), None]);
+}
+
+#[test]
+fn contents_chains_pass_only_their_first_free_boundary_to_a_column() {
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
+        column_image(400, "")
+    );
+    for wrapped in [
+        format!("<section style='display:contents;break-before:avoid'>{column}</section>"),
+        format!(
+            "<section style='display:contents'> \n<section style='display:contents'>{column}</section></section>"
+        ),
+    ] {
+        let body = format!("<div style='height:300px'></div><div id=w>{wrapped}</div>");
+        assert_eq!(extents_of("w", &body), [None, Some((0, 400))]);
+        assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    }
+    for before in ["A", "<div style='height:0'></div>"] {
+        let body = format!(
+            "<div style='height:300px'></div><div><section style='display:contents'>{before}{column}</section></div>"
+        );
+        assert!(extents_of("o", &body)[0].is_some(), "{before}");
+    }
+}
+
+#[test]
+fn column_boundary_inheritance_keeps_existing_avoided_breaks() {
+    // These native controls preserve the existing conservative avoided-break
+    // path; they are not an additional Chromium conformance claim.
+    for (lead, wrapper, image) in [
+        ("", "break-before:avoid", ""),
+        ("break-after:avoid", "", ""),
+        ("", "", "break-before:avoid"),
+    ] {
+        let body = format!(
+            "<div style='height:300px;{lead}'></div><div style='{wrapper}'><div id=o style='display:flex;flex-direction:column;{image}'>{}</div></div>",
+            column_image(400, "")
+        );
+        assert!(
+            extents_of("o", &body)[0].is_some(),
+            "{lead} / {wrapper} / {image}"
+        );
+    }
+}
+
+#[test]
+fn earlier_float_or_generated_content_stops_a_leading_column_chain() {
+    let items = format!(
+        "<div><div style='float:left;width:10px;height:10px'></div>{}</div>",
+        column_image(400, "")
+    );
+    assert!(extents_of("o", &column_after_lead(&items, ""))[0].is_some());
+    let body = format!(
+        "<style>#w::before{{content:'A';display:block;height:10px}}</style><div style='height:300px'></div><div id=w><div id=o style='display:flex;flex-direction:column'>{}</div></div>",
+        column_image(400, "")
+    );
+    assert!(extents_of("o", &body)[0].is_some());
+}
+
+#[test]
+fn a_columns_own_clip_keeps_an_image_whose_visible_part_fits() {
+    for overflow in [
+        "overflow:hidden",
+        "overflow:clip",
+        "overflow-x:hidden;overflow-y:visible",
+    ] {
+        let body = format!(
+            "{}<div id=a style='height:10px'></div>",
+            column_after_lead(&column_image(400, ""), &format!("height:100px;{overflow}"))
+        );
+        assert_eq!(extents_of("o", &body), [Some((308, 408))], "{overflow}");
+        assert_eq!(extents_of("a", &body), [Some((408, 418))], "{overflow}");
+    }
+}
+
+#[test]
+fn a_sticky_column_image_keeps_the_existing_pagination_path() {
+    // Sticky positioning is outside the new static/relative eligibility.
+    // This native guard control does not claim Chromium conformance.
+    let body = column_after_lead(&column_image(400, "position:sticky;top:0"), "");
+    assert_eq!(extents_of("o", &body)[0], Some((308, 600)));
+}
+
+#[test]
 fn an_image_alone_in_its_line_follows_the_same_rule() {
     let spacer = "<div style='height:300px'></div>";
     assert_eq!(

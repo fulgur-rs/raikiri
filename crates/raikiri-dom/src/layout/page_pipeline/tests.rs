@@ -17895,6 +17895,7 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
     let overflow = |table_row_lead: f32| BoxOverflow {
         page: false,
         unbreakable: false,
+        leading_column_replaced: false,
         moved_for_avoided_break: false,
         avoided_run: false,
         table_row: false,
@@ -18398,6 +18399,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         overflow: BoxOverflow {
             page: false,
             unbreakable: false,
+            leading_column_replaced: false,
             moved_for_avoided_break: false,
             avoided_run: false,
             table_row: false,
@@ -19569,6 +19571,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         overflow: BoxOverflow {
             page: !forced,
             unbreakable: false,
+            leading_column_replaced: false,
             moved_for_avoided_break: false,
             avoided_run: false,
             table_row: false,

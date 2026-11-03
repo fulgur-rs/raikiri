@@ -1,6 +1,7 @@
 //! What pagination carries from one candidate of the flow to the next.
 
 use super::candidates::FlowRoots;
+use super::page_start::ChildPositions;
 use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
     ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
@@ -9,7 +10,7 @@ use super::{
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
     PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
-    begins_page_below_leading_edges, block_effective_y, block_fits_page_step,
+    avoided_box_moves, begins_page_below_leading_edges, block_effective_y, block_fits_page_step,
     box_avoids_page_break_inside, box_changes_page_name, box_occupies_column, box_sets_page_name,
     break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
     collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
@@ -284,6 +285,7 @@ pub(super) struct PaginationState {
     pub(super) page_names: PageNames,
     pub(super) pending_break: PendingBreak,
     pub(super) sibling_margins: SiblingMargins,
+    column_page_starts: ChildPositions,
     pub(super) last_named: LastNamedBox,
     /// Whether any box was placed yet.
     pub(super) saw_child: bool,
@@ -323,6 +325,7 @@ impl PaginationState {
             page_names,
             pending_break: PendingBreak::default(),
             sibling_margins: SiblingMargins::default(),
+            column_page_starts: ChildPositions::default(),
             last_named: LastNamedBox::default(),
             saw_child: false,
             checked_paragraphs: CheckedParagraphs::default(),
@@ -975,16 +978,21 @@ impl PaginationState {
         // the walk over its ancestors is left to those.
         let crosses_page_end = effective_y - relative_offset + height + trailing_margin
             > fit_page_start + page_origins.step_at(fit_page);
-        let holder = if candidate.context.is_unbreakable()
+        let column_piece = candidate.context.leading_column_replaced_piece_end();
+        let column_crosses = column_piece.is_some_and(|end| {
+            effective_y - relative_offset + end > fit_page_start + page_origins.step_at(fit_page)
+        });
+        let holder = if (candidate.context.is_unbreakable() && crosses_page_end || column_crosses)
             && !keeps_margin_at_break
-            && crosses_page_end
             && is_block_flow_box(document, cascade, candidate)
             && !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant()
         {
             Some(leading_holder(document, cascade, body_id, node_id, true)).filter(
                 |&(holder, lead)| {
-                    holder != node_id && (lead <= 0.0 || lead + height <= next_page_step + 0.001)
+                    holder != node_id
+                        && (lead <= 0.0
+                            || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001)
                 },
             )
         } else {
@@ -1053,6 +1061,26 @@ impl PaginationState {
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
+        // A column can travel with its first replaced piece after earlier
+        // flow content. At the start of the flow, the column stays and its
+        // image moves on alone, even when body or wrapper margins remain.
+        overflow.leading_column_replaced = column_piece.is_some_and(|end| {
+            avoided_box_moves(
+                fit.flow_y - fit.holder_lead,
+                fit.holder_margin_top,
+                fit.flow_y + end,
+                fit.page_start,
+                fit.page_end,
+            ) && (document.layout_parent_of(node_id) == Some(body_id)
+                || !self.column_page_starts.begins_page_below_leading_edges(
+                    document,
+                    cascade,
+                    body_id,
+                    node_id,
+                    fit.page_start,
+                ))
+        });
+        overflow.page |= overflow.leading_column_replaced;
         let grid_row = candidate.context.first_grid_row();
         let grid_content_break =
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
@@ -1141,7 +1169,9 @@ impl PaginationState {
         // the page, and the box lands below the padding, border and margin
         // they keep above it where `begin_box` found room for it there. Else
         // the blocks that start where the box does move with it.
-        let (holder, holder_lead) = if (overflow.unbreakable || overflow.moved_for_avoided_break)
+        let (holder, holder_lead) = if (overflow.unbreakable
+            || overflow.moved_for_avoided_break
+            || overflow.leading_column_replaced)
             && !forced_transition
             && is_block_flow_box(document, cascade, candidate)
             && !candidate.context.is_float_descendant()
@@ -1149,7 +1179,7 @@ impl PaginationState {
         {
             page_break
                 .holder
-                .filter(|_| overflow.unbreakable)
+                .filter(|_| overflow.unbreakable || overflow.leading_column_replaced)
                 .unwrap_or_else(|| leading_holder(document, cascade, body_id, node_id, false))
         } else {
             (node_id, 0.0)
