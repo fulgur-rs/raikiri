@@ -1,6 +1,6 @@
 //! Lines of text that follow a block inside the same parent, and the lines of a
-//! paragraph that follows one, around the end of a page. The positions are the
-//! ones Chromium prints for the same documents.
+//! paragraph that follows one, around the end of a page. Positions follow
+//! Chromium except for the intentional Level 4 `always` compatibility cases.
 
 use raikiri_html::{
     FontCollectionBuilder, FragmentKind, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -27,6 +27,14 @@ fn lines(body: &str) -> Vec<(u32, f32, f32)> {
 
 /// The same for the lines whose first run `wanted` accepts.
 fn lines_of(body: &str, wanted: impl Fn(&str) -> bool) -> Vec<(u32, f32, f32)> {
+    page_count_and_lines_of(body, wanted).1
+}
+
+/// Page count and the selected lines, including pages with no selected text.
+fn page_count_and_lines_of(
+    body: &str,
+    wanted: impl Fn(&str) -> bool,
+) -> (u32, Vec<(u32, f32, f32)>) {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -62,7 +70,7 @@ fn lines_of(body: &str, wanted: impl Fn(&str) -> bool) -> Vec<(u32, f32, f32)> {
             }
         }
     }
-    lines
+    (result.page_count(), lines)
 }
 
 #[test]
@@ -1514,5 +1522,75 @@ fn out_of_flow_children_inside_an_inline_element_follow_the_lines_too() {
             [lines, marker, after],
             "{child} after a {height}px block, in {style}"
         );
+    }
+}
+
+fn assert_break_placement(
+    property: &str,
+    value: &str,
+    expected_pages: u32,
+    expected_lines: &[(u32, f32, f32)],
+) {
+    let lead_style = if property.ends_with("after") {
+        format!("height:30px;{property}:{value}")
+    } else {
+        "height:30px".to_owned()
+    };
+    let target_style = if property.ends_with("before") {
+        format!("{property}:{value}")
+    } else {
+        String::new()
+    };
+    let body = format!(
+        "<div id=lead style='{lead_style}'>a</div><div id=target style='{target_style}'>XX XX XX XX</div>"
+    );
+    let (pages, lines) = page_count_and_lines_of(&body, |text| text != "a");
+    assert_eq!(pages, expected_pages, "{property}:{value}: page count");
+    assert_eq!(
+        lines.as_slice(),
+        expected_lines,
+        "{property}:{value}: lines"
+    );
+}
+
+#[test]
+fn modern_always_retains_the_level_four_paged_break_contract() {
+    // Chromium 152 rejects modern `always`; these are the retained Level 4
+    // expectations, distinct from its measured page-0 lines at 35px and 65px.
+    for property in ["break-before", "break-after"] {
+        assert_break_placement(property, "always", 2, &[(1, 0.0, 5.0), (1, 0.0, 35.0)]);
+    }
+}
+
+#[test]
+fn page_and_legacy_always_keep_their_explicit_page_breaks() {
+    for (property, value) in [
+        ("break-before", "page"),
+        ("break-after", "page"),
+        ("page-break-before", "always"),
+        ("page-break-after", "always"),
+    ] {
+        assert_break_placement(property, value, 2, &[(1, 0.0, 5.0), (1, 0.0, 35.0)]);
+    }
+}
+
+#[test]
+fn auto_keeps_text_after_the_leading_block_on_the_same_page() {
+    for property in ["break-before", "break-after"] {
+        assert_break_placement(property, "auto", 1, &[(0, 0.0, 35.0), (0, 0.0, 65.0)]);
+    }
+}
+
+#[test]
+fn modern_always_targets_the_nearest_column_context() {
+    for value in ["always", "column"] {
+        let body = format!(
+            "<div style='columns:2;column-fill:auto;column-gap:0;width:100px;height:90px'>\
+             <div id=lead style='height:30px'>a</div>\
+             <div id=target style='break-before:{value}'>XX XX</div></div>"
+        );
+        let (pages, lines) = page_count_and_lines_of(&body, |text| text != "a");
+        assert_eq!(pages, 1, "{value}: the nearest context is a column");
+        assert_eq!(lines, [(0, 50.0, 5.0), (0, 50.0, 35.0)], "{value}");
     }
 }
