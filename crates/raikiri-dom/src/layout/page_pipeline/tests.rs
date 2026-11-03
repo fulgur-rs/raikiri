@@ -18427,6 +18427,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         collapses_with_previous_block: false,
         pending_break_applies: false,
         keeps_continuation_margin: false,
+        keeps_margin_at_break: false,
         holder: None,
     }
 }
@@ -19602,6 +19603,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         collapses_with_previous_block: true,
         pending_break_applies: forced,
         keeps_continuation_margin: false,
+        keeps_margin_at_break: forced,
         holder: None,
     }
 }

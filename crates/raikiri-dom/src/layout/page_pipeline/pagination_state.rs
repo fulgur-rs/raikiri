@@ -187,6 +187,8 @@ pub(super) struct BoxBreak {
     /// earlier layout made forced: the margin above the box is kept, as at a
     /// forced break.
     pub(super) keeps_continuation_margin: bool,
+    /// Whether an opening break preserves this box's used start margin.
+    pub(super) keeps_margin_at_break: bool,
     /// The ancestor that moves to the next page with this box when it would
     /// cross the page edge, and how far below the top of that ancestor the
     /// box starts (see [`leading_holder`]). `None` when the box moves alone.
@@ -302,6 +304,8 @@ pub(super) struct PaginationState {
     /// what is needed to keep the lines of the paragraph whole on a page once
     /// the flow is placed, when they are.
     positioned_paragraphs: HashMap<usize, Option<PositionedParagraph>>,
+    /// Opening page and used margin for boxes whose margin starts at its boundary.
+    retained_margin_starts: HashMap<usize, (u32, f32)>,
     /// Footnotes are collected in source order and stacked upward from the
     /// bottom edge of their anchor page. The normal-flow height is removed
     /// from `flow_shift`, leaving the box only in this page-local area.
@@ -341,6 +345,7 @@ impl PaginationState {
             saw_child: false,
             checked_paragraphs: CheckedParagraphs::default(),
             positioned_paragraphs: HashMap::new(),
+            retained_margin_starts: HashMap::new(),
             footnote_areas: FootnoteAreas::default(),
             column_contexts,
             preceding_flex_items: PrecedingFlexItems::default(),
@@ -753,6 +758,15 @@ impl PaginationState {
             page_origins,
         );
         effective_y += header_delta;
+        let page_start = page_origins.origin(self.current_page);
+        if page_break.keeps_margin_at_break
+            && page_break.margin_top > 0.0
+            && (effective_y - page_break.relative_offset - page_break.margin_top - page_start).abs()
+                <= 0.001
+        {
+            self.retained_margin_starts
+                .insert(node_id, (self.current_page, page_break.margin_top));
+        }
         self.flow_shift += header_delta;
 
         if box_sets_page_name(
@@ -1253,6 +1267,7 @@ impl PaginationState {
             margins_collapse_through,
             collapses_with_previous_block,
             pending_break_applies,
+            keeps_margin_at_break,
             keeps_continuation_margin: continuation_offset
                 .is_some_and(|offset| (offset - margin_top).abs() <= CONTINUATION_MARGIN_TOLERANCE),
             holder,
@@ -1876,7 +1891,26 @@ impl PaginationState {
                 // this page move it whatever its height: the page breaks
                 // before the block, not between its edges and its lines, even
                 // when they run over a page.
+                let retained_margin_opens_page = self
+                    .retained_margin_starts
+                    .get(&block_id)
+                    .is_some_and(|&(opening_page, margin)| {
+                        opening_page == page
+                            && (block_effective_y
+                                - accumulated_relative_offset_y(
+                                    document, cascade, body_id, block_id,
+                                )
+                                - margin
+                                - page_start)
+                                .abs()
+                                <= 0.001
+                    });
+                // A kept margin already consumes the opening break. Preserve
+                // a line that fits instead of breaking before that margin again.
                 let can_move_block = !moved_whole
+                    && !(retained_margin_opens_page
+                        && lines_can_move
+                        && line_fit.lines_before_break > 0)
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
