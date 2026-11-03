@@ -470,7 +470,15 @@ fn open_text_event_sources(
     traced: &[usize],
     events: &[ConsumerPropertyEvent],
 ) -> Vec<usize> {
-    let open = open_html_elements(&document.uncascaded.dom, traced);
+    text_event_sources_among(open_html_elements(&document.uncascaded.dom, traced), events)
+}
+
+/// The nodes of the text events in `events` that are among `open`, in the
+/// order of the events.
+fn text_event_sources_among(open: Vec<usize>, events: &[ConsumerPropertyEvent]) -> Vec<usize> {
+    // A deep stack of open elements with an event each asks one membership
+    // question per event.
+    let open: HashSet<usize> = open.into_iter().collect();
     events
         .iter()
         .filter(|event| matches!(event.value, ConsumerPropertyValue::Text(_)))
