@@ -9,6 +9,7 @@ use crate::layout;
 mod avoided_chain_tests;
 #[cfg(feature = "streaming-diagnostics")]
 mod diagnostics_tests;
+mod earlier_warnings_tests;
 mod head_checkpoint_tests;
 mod snapshot_reuse_tests;
 mod xhtml_tests;
@@ -1091,6 +1092,54 @@ impl PageSink for SharedEvents {
     fn finish(self, _summary: StreamSummary) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+fn property_event(node: usize, value: ConsumerPropertyValue) -> ConsumerPropertyEvent {
+    ConsumerPropertyEvent::new(
+        NodeId(node as u64),
+        None,
+        node as u32,
+        "bookmark-label",
+        value,
+    )
+}
+
+#[test]
+fn the_text_events_of_open_elements_are_the_ones_listed_in_order() {
+    let text = |node| property_event(node, ConsumerPropertyValue::Text(String::new()));
+    let events = [
+        text(9),
+        text(4),
+        // Not a text value, and an element that is not open.
+        property_event(4, ConsumerPropertyValue::Integer(1)),
+        text(7),
+        text(4),
+    ];
+    assert_eq!(text_event_sources_among(vec![4, 5, 9], &events), [9, 4, 4]);
+    assert_eq!(
+        text_event_sources_among(Vec::new(), &events),
+        Vec::<usize>::new()
+    );
+}
+
+#[test]
+fn the_text_events_of_a_deep_stack_of_open_elements_are_found_in_linear_time() {
+    let depth = 100_000;
+    let open: Vec<usize> = (1..=depth).collect();
+    let events: Vec<ConsumerPropertyEvent> = open
+        .iter()
+        .map(|&node| property_event(node, ConsumerPropertyValue::Text(String::new())))
+        .collect();
+    let start = std::time::Instant::now();
+    let sources = text_event_sources_among(open.clone(), &events);
+    let elapsed = start.elapsed();
+    assert_eq!(sources, open);
+    // Looking each event up among the open elements takes milliseconds;
+    // scanning them for every event takes seconds at this depth.
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "{elapsed:?} for {depth} open elements"
+    );
 }
 
 #[test]

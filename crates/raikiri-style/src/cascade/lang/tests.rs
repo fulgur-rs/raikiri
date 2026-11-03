@@ -5,6 +5,8 @@ use crate::computed::ComputedValues;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
+mod range_oracle_tests;
+
 #[test]
 fn lang_matches_own_lang_attribute() {
     let mut doc = TestDoc::new();

@@ -187,7 +187,7 @@ impl StyleFlags {
     pub const MULTICOL: Self = Self(1 << 17);
     /// Prepared text leaf classification.
     pub const TEXT: Self = Self(1 << 18);
-    /// The legacy block item table identity.
+    /// A block-level table (`display: table`) in a block formatting context.
     pub const BLOCK_TABLE: Self = Self(1 << 19);
     /// CSS table identity in out-of-flow layout.
     pub const OOF_TABLE: Self = Self(1 << 20);

@@ -106,6 +106,13 @@ pub(in crate::layout) fn node_metadata(
     } else {
         flags
     };
+    // A block-level table box keeps its border box clear of the floats of
+    // the block formatting context it sits in (CSS 2.1 section 9.5).
+    let flags = if node.display() == DisplayValue::Table {
+        flags.union(StyleFlags::BLOCK_TABLE)
+    } else {
+        flags
+    };
     StyleMetadata {
         flags,
         used_writing_mode: node.used_writing_mode,

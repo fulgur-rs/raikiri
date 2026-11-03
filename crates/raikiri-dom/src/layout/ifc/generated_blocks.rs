@@ -472,7 +472,7 @@ impl GeneratedBlock {
             self.clear,
             |probe| match probe {
                 BoxProbe::Width { stretch } => border_width(stretched(stretch)),
-                BoxProbe::Height { width } => height(width),
+                BoxProbe::Height { width, .. } => height(width),
             },
         );
         let stretch = stretched(slot.stretch_width);
