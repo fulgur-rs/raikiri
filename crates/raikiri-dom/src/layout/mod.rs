@@ -64,6 +64,7 @@ pub(crate) mod multicol;
 pub(crate) mod oof_containing_block;
 mod page;
 mod page_pipeline;
+pub(crate) use page_pipeline::normal_block_shifts::NormalBlockShifts;
 mod relative;
 mod root_box;
 pub(crate) mod sanitize;
