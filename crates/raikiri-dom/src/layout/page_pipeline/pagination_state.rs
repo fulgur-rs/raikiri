@@ -1926,6 +1926,7 @@ impl PaginationState {
                         0.0
                     },
                 );
+                line_fit.first_fragment = !moved_whole;
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
                 let block_effective_y = block_effective_y(
@@ -2180,7 +2181,7 @@ impl PaginationState {
         loop {
             let page_start = page_origins.origin(page);
             let page_step = page_origins.step_at(page);
-            let fit = ParagraphLineFit::measure(
+            let mut fit = ParagraphLineFit::measure(
                 &metrics,
                 text.effective_y,
                 page_start,
@@ -2189,6 +2190,7 @@ impl PaginationState {
                 cascade.computed[root].widows,
                 closing_edges,
             );
+            fit.first_fragment = !moved;
             let run_top = text.effective_y + metrics[0].0;
             let run_height = metrics[metrics.len() - 1].1 - metrics[0].0;
             // A run taller than a page moves whole only to keep its orphans,

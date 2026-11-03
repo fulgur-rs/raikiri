@@ -2251,7 +2251,8 @@ fn line_pieces(
 /// where it falls. The lines the page before gives up are laid out again from
 /// the top of the page after it, so the lines that then cross its end start the
 /// page after that. When the widows are more lines than a page holds, Chromium
-/// repairs only the first break of the paragraph, and so does this.
+/// repairs only the break from its first fragment. A whole-block move has
+/// already consumed that fragment when `fit.first_fragment` is false.
 ///
 /// `tail_edges` is the padding and border below the last line. They stay with
 /// the lines at the end of the last page: when they do not fit under it, the
@@ -2263,14 +2264,14 @@ fn paragraph_line_moves(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     current_page: u32,
-    orphans: usize,
-    widows: usize,
-    tail_edges: f32,
+    fit: &ParagraphLineFit,
     page_origins: &PageOrigins,
 ) -> Vec<LineBreakMove> {
     let (Some(&(_, last_bottom)), total) = (line_metrics.last(), line_metrics.len()) else {
         return Vec::new();
     };
+    let (orphans, widows, tail_edges, first_fragment) =
+        (fit.orphans, fit.widows, fit.tail_edges, fit.first_fragment);
     let kept_widows = usable_widows(total, orphans, widows);
     let mut pieces = line_pieces(
         line_metrics,
@@ -2280,10 +2281,10 @@ fn paragraph_line_moves(
         &[],
         0.0,
     );
-    // The widows lines fit a page, so that no break after the first needs
-    // more than the lines that follow it.
+    // Judge the declared widows, not the reduced count a short paragraph can
+    // spare. An impossible count is relaxed only at the opening fragment.
     let widows_fit = pieces.last().is_some_and(|last| {
-        let first_widow = total - kept_widows.clamp(1, total);
+        let first_widow = total - widows.clamp(1, total);
         last_bottom - line_metrics[first_widow].0 <= page_origins.step_at(last.page) + 0.001
     });
     let mut breaks: Vec<(usize, u32)> = pieces
@@ -2295,7 +2296,8 @@ fn paragraph_line_moves(
             let moved = kept_widows
                 .saturating_sub(remaining)
                 .min(before.count.saturating_sub(orphans));
-            (moved > 0 && (index == 0 || widows_fit)).then_some((after.first - moved, after.page))
+            (moved > 0 && ((first_fragment && index == 0) || widows_fit))
+                .then_some((after.first - moved, after.page))
         })
         .into_iter()
         .collect();
@@ -9760,6 +9762,8 @@ enum LineBreakFix {
 struct ParagraphLineFit {
     /// The number of lines the paragraph's text owns.
     total_lines: usize,
+    /// Whether no whole-block move has consumed the opening fragment yet.
+    first_fragment: bool,
     /// Whether the first line starts on the current page.
     starts_on_page: bool,
     /// The leading lines whose block-end edge is at or before the page end,
@@ -9844,15 +9848,7 @@ impl ParagraphLineFit {
             && (self.lines_before_break < self.total_lines || self.tail_overflows)
             && can_move_lines()
         {
-            paragraph_line_moves(
-                line_metrics,
-                effective_y,
-                current_page,
-                self.orphans,
-                self.widows,
-                self.tail_edges,
-                page_origins,
-            )
+            paragraph_line_moves(line_metrics, effective_y, current_page, self, page_origins)
         } else {
             Vec::new()
         };
@@ -9909,6 +9905,7 @@ impl ParagraphLineFit {
         let tail_overflows = tail_edges > 0.0 && edges_overflow;
         Self {
             total_lines,
+            first_fragment: true,
             starts_on_page,
             lines_before_break,
             orphans,

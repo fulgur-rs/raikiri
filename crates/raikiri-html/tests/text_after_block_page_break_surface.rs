@@ -2225,6 +2225,196 @@ fn a_large_margin_after_a_page_start_float_does_not_insert_an_extra_blank_page()
 }
 
 #[test]
+fn oversized_widows_follow_the_fragment_that_opened_the_paragraph() {
+    // Chromium 152 PDF positions with Ahem 20px/30px on 100px pages; the
+    // final case makes the following pages 140px tall.
+    let cases = [
+        (
+            "lines4-lead0-widows3",
+            "<div style=\"width:20px;widows:3\">z z z z</div>",
+            2,
+            vec![(0, 0.0, 5.0), (0, 0.0, 35.0), (1, 0.0, 5.0), (1, 0.0, 35.0)],
+        ),
+        (
+            "lines4-lead0-widows4",
+            "<div style=\"width:20px;widows:4\">z z z z</div>",
+            2,
+            vec![(0, 0.0, 5.0), (0, 0.0, 35.0), (1, 0.0, 5.0), (1, 0.0, 35.0)],
+        ),
+        (
+            "lines4-lead45-widows3",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:3\">z z z z</div>",
+            3,
+            vec![(1, 0.0, 5.0), (1, 0.0, 35.0), (2, 0.0, 5.0), (2, 0.0, 35.0)],
+        ),
+        (
+            "lines4-lead45-widows4",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:4\">z z z z</div>",
+            3,
+            vec![(1, 0.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0), (2, 0.0, 5.0)],
+        ),
+        (
+            "lines6-lead0-widows3",
+            "<div style=\"width:20px;widows:3\">z z z z z z</div>",
+            2,
+            vec![
+                (0, 0.0, 5.0),
+                (0, 0.0, 35.0),
+                (0, 0.0, 65.0),
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+            ],
+        ),
+        (
+            "lines6-lead0-widows4",
+            "<div style=\"width:20px;widows:4\">z z z z z z</div>",
+            3,
+            vec![
+                (0, 0.0, 5.0),
+                (0, 0.0, 35.0),
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+            ],
+        ),
+        (
+            "lines6-lead45-widows3",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:3\">z z z z z z</div>",
+            3,
+            vec![
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+                (2, 0.0, 65.0),
+            ],
+        ),
+        (
+            "lines6-lead45-widows4",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:4\">z z z z z z</div>",
+            3,
+            vec![
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+                (2, 0.0, 65.0),
+            ],
+        ),
+        (
+            "lines7-lead0-widows3",
+            "<div style=\"width:20px;widows:3\">z z z z z z z</div>",
+            3,
+            vec![
+                (0, 0.0, 5.0),
+                (0, 0.0, 35.0),
+                (0, 0.0, 65.0),
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+            ],
+        ),
+        (
+            "lines7-lead0-widows4",
+            "<div style=\"width:20px;widows:4\">z z z z z z z</div>",
+            3,
+            vec![
+                (0, 0.0, 5.0),
+                (0, 0.0, 35.0),
+                (0, 0.0, 65.0),
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+            ],
+        ),
+        (
+            "lines7-lead45-widows3",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:3\">z z z z z z z</div>",
+            4,
+            vec![
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+                (3, 0.0, 5.0),
+                (3, 0.0, 35.0),
+            ],
+        ),
+        (
+            "lines7-lead45-widows4",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:4\">z z z z z z z</div>",
+            4,
+            vec![
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+                (2, 0.0, 65.0),
+                (3, 0.0, 5.0),
+            ],
+        ),
+        (
+            "widows5",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;widows:5\">z z z z z z</div>",
+            3,
+            vec![
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+                (2, 0.0, 65.0),
+            ],
+        ),
+        (
+            "orphans1",
+            "<div style=\"height:45px\"></div><div style=\"width:20px;orphans:1;widows:4\">z z z z</div>",
+            2,
+            vec![
+                (0, 0.0, 50.0),
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (1, 0.0, 65.0),
+            ],
+        ),
+        (
+            "block-run",
+            "<div style=\"width:20px;widows:4\"><div style=\"height:45px\"></div>z z z z</div>",
+            3,
+            vec![(1, 0.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0), (2, 0.0, 5.0)],
+        ),
+        (
+            "taller-pages",
+            "<style>@page{size:100px 140px}@page:first{size:100px 100px}</style><div style=\"height:45px\"></div><div style=\"width:20px;widows:4\">z z z z z z</div>",
+            3,
+            vec![
+                (1, 0.0, 5.0),
+                (1, 0.0, 35.0),
+                (2, 0.0, 5.0),
+                (2, 0.0, 35.0),
+                (2, 0.0, 65.0),
+                (2, 0.0, 95.0),
+            ],
+        ),
+    ];
+    for (name, body, pages, expected) in cases {
+        assert_eq!(
+            page_count_and_lines_repeated(body, |_| true, 2),
+            (pages, expected),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn a_leading_padded_holder_keeps_a_fitting_line_when_orphans_cannot_be_met() {
     // Chromium 152 keeps the first line despite either line constraint.
     for (text, expected) in [
