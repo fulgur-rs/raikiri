@@ -1923,6 +1923,25 @@ fn paragraph_line_bounds(
     )
 }
 
+/// Whether the floats before the block `block_id` put the first line of its
+/// paragraph below themselves. `owned` holds the lines of the text that begins
+/// the paragraph, which must own its first line, and `offset` is how far that
+/// line sits below the top of the block's content (more than a rounding
+/// error). In a block of the normal flow whose lines can move, the floats
+/// before it are the one thing that leaves room above the first line: a block
+/// child before the line, or a float of its own that moves with it, would
+/// keep the lines from moving.
+fn floats_put_first_line_down(
+    document: &Document,
+    block_id: usize,
+    owned: Option<&IfcTextLines>,
+    offset: f32,
+) -> bool {
+    owned.is_some_and(|owned| owned.lines.first().is_some_and(|line| line.line == 0))
+        && offset > 0.5
+        && is_plain_block_box(document, block_id)
+}
+
 /// The height of the first line of the paragraph the text node `node_id`
 /// belongs to, or `None` when the node does not own that line (a line of an
 /// image comes before its first text, say) or it has no position.
