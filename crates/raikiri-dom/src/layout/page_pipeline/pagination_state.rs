@@ -1968,16 +1968,11 @@ impl PaginationState {
                 // this page move it whatever its height: the page breaks
                 // before the block, not between its edges and its lines, even
                 // when they run over a page.
-                // A first child's forced boundary is before its holder.
-                // Keep a fitting line below those leading edges instead of
-                // choosing that same boundary again to satisfy orphans.
-                let forced_leading_lines = lines_can_move
+                // The page already begins with the holder's leading edges.
+                // Keep a fitting first line instead of breaking before the
+                // first child again to satisfy orphans.
+                let leading_page_lines = lines_can_move
                     && line_fit.lines_before_break > 0
-                    && page_break_is_forced(
-                        document,
-                        block_id,
-                        cascade.computed[block_id].break_before,
-                    )
                     && self.child_positions.begins_page_below_leading_edges(
                         document, cascade, body_id, block_id, page_start,
                     );
@@ -1999,7 +1994,7 @@ impl PaginationState {
                 // a line that fits instead of breaking before that margin again.
                 let keep_first_fragment =
                     retained_margin_opens_page && lines_can_move && line_fit.lines_before_break > 0;
-                let can_move_block = !(moved_whole || forced_leading_lines || keep_first_fragment)
+                let can_move_block = !(moved_whole || leading_page_lines || keep_first_fragment)
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page

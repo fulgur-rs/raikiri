@@ -2225,6 +2225,67 @@ fn a_large_margin_after_a_page_start_float_does_not_insert_an_extra_blank_page()
 }
 
 #[test]
+fn a_leading_padded_holder_keeps_a_fitting_line_when_orphans_cannot_be_met() {
+    // Chromium 152 keeps the first line despite either line constraint.
+    for (text, expected) in [
+        ("z z", vec![(0, 0.0, 75.0), (1, 0.0, 5.0)]),
+        ("z z z", vec![(0, 0.0, 75.0), (1, 0.0, 5.0), (1, 0.0, 35.0)]),
+    ] {
+        for rules in ["", "orphans:3", "widows:3", "orphans:3;widows:3"] {
+            let body = format!(
+                "<div style='padding-top:70px'><div style='width:20px;{rules}'>{text}</div></div>"
+            );
+            assert_eq!(
+                page_count_and_lines_repeated(&body, |_| true, 2),
+                (2, expected.clone()),
+                "{text}: {rules}"
+            );
+        }
+    }
+    // The same leading space can belong to more than one plain holder.
+    assert_eq!(
+        page_count_and_lines_repeated(
+            "<div style='padding-top:20px'><div style='padding-top:50px'><div style='width:20px'>z z z</div></div></div>",
+            |_| true,
+            2,
+        ),
+        (2, vec![(0, 0.0, 75.0), (1, 0.0, 5.0), (1, 0.0, 35.0)])
+    );
+    // A page-start float can leave the same leading space inside a holder.
+    assert_eq!(
+        page_count_and_lines_repeated(
+            "<div style='float:left;width:20px;height:70px'></div><section><div style='width:20px'>z z</div></section>",
+            |_| true,
+            2,
+        ),
+        (2, vec![(0, 0.0, 75.0), (1, 0.0, 5.0)])
+    );
+}
+
+#[test]
+fn a_padded_holder_still_breaks_when_no_line_fits_or_content_precedes_it() {
+    for (text, expected) in [
+        ("z z", vec![(1, 0.0, 5.0), (1, 0.0, 35.0)]),
+        ("z z z", vec![(1, 0.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)]),
+    ] {
+        let body =
+            format!("<div style='padding-top:85px'><div style='width:20px'>{text}</div></div>");
+        assert_eq!(
+            page_count_and_lines_repeated(&body, |_| true, 2),
+            (2, expected)
+        );
+    }
+    assert_eq!(
+        page_count_and_lines_repeated(
+            "<div style='height:50px'></div><div style='padding-top:20px'><div style='width:20px'>z z</div></div>",
+            |_| true,
+            2,
+        ),
+        (2, vec![(1, 0.0, 25.0), (1, 0.0, 55.0)])
+    );
+}
+
+#[test]
 fn a_retained_page_high_margin_does_not_open_an_extra_page_after_a_float() {
     // RAIKIRI-1444: Chromium 152 prints both lines on page 2. The margin
     // is retained on page 1 and truncated at its next unforced edge.
