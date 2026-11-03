@@ -947,6 +947,9 @@ impl LayoutSession<'_> {
         if !self.context.recursion.enter(idx) {
             return LayoutOutput::HIDDEN;
         }
+        if let Some(height) = self.table_cell_replaced_height_basis(idx) {
+            inputs.parent_size.height = Some(height);
+        }
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
                 .context

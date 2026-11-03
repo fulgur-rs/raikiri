@@ -799,9 +799,7 @@
         1000
       ],
       "page_note": "A taller page records the complete table, cell and image instead of the 600px page fragments (592px and 591px)."
-    }
-  ],
-  "known_preexisting_differences": [
+    },
     {
       "label": "cell-own-block",
       "html": "<table id=t style=';border-spacing:0'><tr><td id=c style='height:200px'><img id=i src=\"https://stretch.test/portrait.png\" style=\"height:100%\"><div style='height:220px'>x</div></td></tr></table>",
@@ -830,5 +828,6 @@
       ],
       "issue": "RAIKIRI-1346"
     }
-  ]
+  ],
+  "known_preexisting_differences": []
 }

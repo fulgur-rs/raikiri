@@ -186,6 +186,35 @@ struct RowPassLayout {
 // ---------------------------------------------------------------------------
 
 impl LayoutSession<'_> {
+    /// A row measurement's percentage basis for a replaced descendant.
+    /// Inline and contents wrappers preserve the cell's containing block;
+    /// an intervening block or atomic inline establishes its own basis.
+    pub(super) fn table_cell_replaced_height_basis(&self, idx: usize) -> Option<f32> {
+        if self.context.table_cell_replaced_height_bases.is_empty()
+            || !crate::paint_rules::is_replaced_element(self.document, idx)
+        {
+            return None;
+        }
+        for parent in self.document.ancestors(idx) {
+            if let Some((_, height)) = self
+                .context
+                .table_cell_replaced_height_bases
+                .iter()
+                .rev()
+                .find(|(owner, _)| *owner == parent)
+            {
+                return Some(*height);
+            }
+            let node = &self.nodes[parent];
+            if node.display() != DisplayValue::Contents
+                && !node.flags.contains(crate::node::NodeFlags::IN_IFC_SUBTREE)
+            {
+                break;
+            }
+        }
+        None
+    }
+
     /// The style of a table box, row, column, caption, cell or cell child, on
     /// the physical axes the table algorithm works in.
     ///
@@ -4220,6 +4249,28 @@ fn share_span_deficit(heights: &mut [f32], fixed: &[bool], starts_span: &[bool],
     }
 }
 
+/// The cell's authored content height available to percentage-sized images.
+fn cell_replaced_height_basis(
+    doc: &LayoutSession<'_>,
+    cell: usize,
+    cell_width: f32,
+) -> Option<f32> {
+    let style = doc.table_style(cell);
+    let height = resolve_dimension(style.size().height, None)?;
+    let minimum = resolve_dimension(style.min_size().height.into(), None).unwrap_or(0.0);
+    let maximum = resolve_dimension(style.max_size().height.into(), None).unwrap_or(f32::INFINITY);
+    let height = height.min(maximum).max(minimum);
+    let edges = (style.padding().resolve_or_zero(Some(cell_width))
+        + style.border().resolve_or_zero(Some(cell_width)))
+    .sum_axes()
+    .height;
+    Some(if style.box_sizing() == BoxSizing::BorderBox {
+        (height - edges).max(0.0)
+    } else {
+        height
+    })
+}
+
 /// Lay `cell` out at `cell_width` with no definite height, and record what the
 /// rows and the final placement need of it: the lines it can keep, its height
 /// and its baseline. Returns the height it asks of its rows.
@@ -4227,6 +4278,12 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
     // Cell height floors the row rather than stretching the content used
     // for alignment. Preserve ordinary block border and margin sizing.
     let authored_height = doc.table_style(cell.node_id).size().height;
+    let basis_depth = doc.context.table_cell_replaced_height_bases.len();
+    if let Some(height) = cell_replaced_height_basis(doc, cell.node_id, cell_width) {
+        doc.context
+            .table_cell_replaced_height_bases
+            .push((cell.node_id, height));
+    }
     let measure = |doc: &mut LayoutSession<'_>| {
         #[cfg(test)]
         tests::cell_scope_tests::before_measure(doc, cell.node_id);
@@ -4274,6 +4331,9 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
             })
         }
     }));
+    doc.context
+        .table_cell_replaced_height_bases
+        .truncate(basis_depth);
     if !authored_height.is_auto() {
         doc.table_layout_node_mut(cell.node_id).cache.clear();
     }
