@@ -8,6 +8,7 @@ mod oof_inline_containing_block_tests;
 mod orthogonal_baseline_tests;
 mod percent_edge_tests;
 mod rtl_margin_tests;
+mod start_float_tests;
 mod static_position_tests;
 mod vertical_atomic_tests;
 mod vertical_bfc_tests;
@@ -21,6 +22,9 @@ thread_local! {
     pub(super) static OOF_PIECE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_PADDING_BOX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_OFFSET_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times the line loop asked the engine about a space whose
+    /// start differed from the one it asked about before.
+    pub(super) static ASKED_START_CHANGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 use crate::layout::ifc::flow::FlowGeometry;
