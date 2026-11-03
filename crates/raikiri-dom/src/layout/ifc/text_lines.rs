@@ -149,14 +149,14 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<Unplac
             .fragments()
             .any(|fragment| matches!(fragment, Fragment::Atomic(_)));
     let glyphless = !has_generated_text && !atomic;
-    let block_size = line.block_size();
+    let block_size = super::outside_marker::fit_height(line);
     // A generated block can leave one shodo line but extra block content.
     if glyphless
         && (!block_size.is_finite() || block_size <= 0.0 || !lines.placed_blocks.is_empty())
     {
         return None;
     }
-    let top = lines.line_top(0);
+    let top = lines.line_top(0) - super::outside_marker::fit_leading(doc, root, 0);
     Some(UnplacedLine {
         line: IfcTextLine {
             line: 0,
@@ -203,7 +203,7 @@ fn lines_of_counted<const COUNT: bool>(doc: &Document, node: usize) -> Option<If
             IfcTextLine {
                 line: index,
                 top,
-                bottom: top + line.block_size(),
+                bottom: top + super::outside_marker::fit_height(line),
             }
         })
         .collect();
@@ -257,7 +257,7 @@ impl Document {
             let owned = IfcTextLine {
                 line: index,
                 top,
-                bottom: top + line.block_size(),
+                bottom: top + super::outside_marker::fit_height(line),
             };
             if COUNT {
                 crate::continuation_diagnostics::text_line_visit();

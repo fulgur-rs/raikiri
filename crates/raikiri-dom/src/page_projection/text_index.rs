@@ -141,8 +141,9 @@ impl PageTextIndex {
                 let offset = view
                     .line_offset(index)
                     .expect("selected line has an offset");
-                let top = root.y + offset.1 + line.block_offset();
-                let bottom = top + line.block_size();
+                let top = root.y + offset.1 + line.block_offset()
+                    - crate::layout::ifc::outside_marker::fit_leading(document, root.node, index);
+                let bottom = top + crate::layout::ifc::outside_marker::fit_height(line);
                 if !same_axis {
                     for (position, page) in pages.iter().enumerate() {
                         work.charge(1)?;

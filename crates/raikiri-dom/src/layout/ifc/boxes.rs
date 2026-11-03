@@ -95,12 +95,15 @@ struct LineStart {
     first: bool,
     /// A line after a forced break or a block.
     after_forced: bool,
+    // Marker consumption survives fragmentainers independently of text-indent.
+    marker_pending: bool,
 }
 
 impl LineStart {
     const PARAGRAPH: Self = Self {
         first: true,
         after_forced: false,
+        marker_pending: true,
     };
 }
 
@@ -172,6 +175,7 @@ pub(crate) fn layout_with_boxes_in(
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
             object_text_prefixes: Default::default(),
+
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
@@ -338,6 +342,7 @@ fn group_padding(
     let saved = ctx.snapshot();
     let probe = run_boxes_segment(
         tree,
+        None,
         root,
         geometry,
         ctx,
@@ -371,6 +376,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     perform: bool,
 ) -> IfcLines {
     resolve_root_percentages(tree, idx, &geometry);
+    if perform {
+        tree.outside_marker_leading.clear(idx);
+    }
     let Some(root) = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -380,6 +388,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
             object_text_prefixes: Default::default(),
+
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
@@ -483,6 +492,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
         let mut outcome = run_boxes_segment(
             tree,
+            Some(idx),
             &root,
             column_geometry,
             &mut ctx,
@@ -677,8 +687,12 @@ fn run_boxes(
     top_margin_escapes: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
+    if perform {
+        tree.outside_marker_leading.clear(idx);
+    }
     let mut outcome = run_boxes_segment(
         tree,
+        Some(idx),
         root,
         geometry,
         ctx,
@@ -720,6 +734,7 @@ fn run_boxes(
 #[allow(clippy::too_many_arguments)]
 fn run_boxes_segment(
     tree: &mut LayoutSession<'_>,
+    owner: Option<usize>,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -737,6 +752,12 @@ fn run_boxes_segment(
     let FlowGeometry {
         width, top_edge, ..
     } = geometry;
+    let mut marker_pending = if start.marker_pending {
+        root.outside_marker_height
+    } else {
+        None
+    };
+    let mut candidate_leading = 0.0;
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
     // Atomic inlines are sized once, before any line: their width does not
@@ -852,6 +873,7 @@ fn run_boxes_segment(
         let line_options = with_group_align(line_options, &options);
         let mut constraint = line_constraint(root, width, asked, open_block.is_some());
         constraint.block_offset = line_y;
+        constraint.block_start_leading = candidate_leading;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
         // below lays out another node, which may be an ifc root itself.
@@ -985,6 +1007,16 @@ fn run_boxes_segment(
                     after_forced = false;
                     continue;
                 }
+                let baseline = line.baseline(shodo::geometry::BaselineKind::Alphabetic)
+                    - line.block_start_leading();
+                let baseline = open_block
+                    .as_ref()
+                    .map_or(baseline, |open| open.first_baseline(line_y, baseline));
+                let wanted = super::outside_marker::leading(marker_pending, baseline);
+                if candidate_leading != wanted {
+                    candidate_leading = wanted;
+                    continue;
+                }
                 // The line may span more of an outer float than the height it
                 // was assumed to have; lay it out again if the space for its
                 // real height differs.
@@ -1095,7 +1127,7 @@ fn run_boxes_segment(
                         tree,
                         ctx,
                         float,
-                        line_y,
+                        line_y + line.block_start_leading(),
                         geometry,
                         FragmentedFloatOutput {
                             perform,
@@ -1112,6 +1144,13 @@ fn run_boxes_segment(
                 calls = 0;
                 moves = 0;
                 y = line_y + height;
+                if marker_pending.is_some()
+                    && let Some(open) = open_block.as_mut()
+                {
+                    open.apply_marker_leading(line.block_start_leading());
+                }
+                marker_pending = None;
+                candidate_leading = 0.0;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
                 after_forced = line.break_reason() == shodo::BreakReason::Forced;
@@ -1268,8 +1307,26 @@ fn run_boxes_segment(
                         geometry,
                         perform,
                         top_margin_escapes && starts_paragraph,
+                        marker_pending,
                     )
                 };
+                if perform
+                    && marker_pending.is_some()
+                    && block.first_baseline.is_some()
+                    && let Some(owner) = owner
+                {
+                    let source = crate::page_projection::text_runs::first_line(
+                        tree,
+                        tree.style_views.cascade(),
+                        node.0 as usize,
+                    )
+                    .and_then(|line| line.source);
+                    super::outside_marker::record_child(tree, owner, block.marker_leading, source);
+                }
+                if block.first_baseline.is_some() {
+                    marker_pending = None;
+                    candidate_leading = 0.0;
+                }
                 oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
@@ -1371,6 +1428,7 @@ fn run_boxes_segment(
     let next_start = LineStart {
         first: start.first && lines.is_empty(),
         after_forced,
+        marker_pending: marker_pending.is_some(),
     };
     RunBoxesOutcome {
         lines: IfcLines {
@@ -2354,6 +2412,7 @@ struct BlockChild {
     /// The first baseline of the block, from the content-box top of the root,
     /// when it has one and the root lays out horizontal lines.
     first_baseline: Option<f32>,
+    marker_leading: f32,
 }
 
 impl BlockChild {
@@ -2368,6 +2427,7 @@ impl BlockChild {
             top_margin: None,
             collapses_through: true,
             first_baseline: None,
+            marker_leading: 0.0,
         }
     }
 }
@@ -2404,6 +2464,7 @@ fn layout_block_child(
     geometry: FlowGeometry,
     perform: bool,
     collapse_top: bool,
+    marker_height: Option<f32>,
 ) -> BlockChild {
     if geometry.axes.writing_mode() != WritingMode::HorizontalTb {
         return layout_vertical_block_child(
@@ -2427,6 +2488,7 @@ fn layout_block_child(
             geometry,
             perform,
             collapse_top,
+            marker_height,
         );
     }
     let mut margin = resolved_margins(tree, node, geometry.width);
@@ -2527,11 +2589,18 @@ fn layout_block_child(
             // border or height keep them in (taffy decides and returns them).
             vertical_margins_are_collapsible: Line::TRUE,
         };
-        let output = tree.compute_child_layout_with_block_ctx(
-            NodeId::from(node),
-            inputs,
-            Some(&mut child_ctx),
-        );
+        let mut measure = |tree: &mut LayoutSession<'_>| {
+            tree.compute_child_layout_with_block_ctx(
+                NodeId::from(node),
+                inputs,
+                Some(&mut child_ctx),
+            )
+        };
+        let output = if marker_height.is_some() {
+            tree.with_baseline_measure(node, measure)
+        } else {
+            measure(tree)
+        };
         let floats_bottom = child_ctx.floated_content_height_contribution();
         let adjoining = child_ctx.top_adjoining_floats();
         ctx.merge_adjoining_floats(adjoining);
@@ -2577,6 +2646,11 @@ fn layout_block_child(
             };
             (top, (top + output.size.height, bottom_set))
         };
+        let gap = output.baselines.first.map_or(0.0, |baseline| {
+            super::outside_marker::leading(marker_height, baseline)
+        });
+        let top = top + gap;
+        let after = (after.0 + gap, after.1);
         if let Some(snapshot) = &snapshot
             && ctx.has_floats()
             && (top - guess).abs() > 0.001
@@ -2621,6 +2695,9 @@ fn layout_block_child(
         }),
         collapses_through: !has_clearance && output.margins_can_collapse_through,
         first_baseline: output.baselines.first.map(|baseline| top + baseline),
+        marker_leading: output.baselines.first.map_or(0.0, |baseline| {
+            super::outside_marker::leading(marker_height, baseline)
+        }),
     }
 }
 
@@ -2654,8 +2731,9 @@ pub(crate) fn place_block_across(
     let mut ctx = bfc.root_block_context();
     let inline_insets = geometry.inline_axis_insets();
     ctx.set_width(geometry.width + inline_insets.0 + inline_insets.1);
-    let block =
-        layout_formatting_context_child(tree, &mut ctx, node, y, pending, geometry, perform, false);
+    let block = layout_formatting_context_child(
+        tree, &mut ctx, node, y, pending, geometry, perform, false, None,
+    );
     PlacedBlock {
         next_y: block.next_y,
         pending: block.pending,
@@ -3023,6 +3101,7 @@ fn layout_vertical_block_child(
         }),
         collapses_through,
         first_baseline: None,
+        marker_leading: 0.0,
     }
 }
 
@@ -3084,6 +3163,7 @@ fn layout_formatting_context_child(
     geometry: FlowGeometry,
     perform: bool,
     collapse_top: bool,
+    marker_height: Option<f32>,
 ) -> BlockChild {
     let margin = resolved_margins(tree, node, geometry.width);
     let style_margin = tree.physical_style(node).margin();
@@ -3119,72 +3199,92 @@ fn layout_formatting_context_child(
     // `(stretch width, border-box position, whether floats narrowed it)`.
 
     let own = own_inline_width(tree, node, &geometry);
-    let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
-        let slot = ctx
-            .find_box_slot(
-                min_y,
-                [margin.left, margin.right],
-                values::Direction::Ltr,
-                clear,
-                |probe| match probe {
-                    BoxProbe::Width { stretch } => {
-                        let stretch = stretch.max(-x_margins);
-                        clamp_block_width(
-                            tree,
-                            node,
-                            geometry.width,
-                            own.map_or(stretch, |own| own.at(stretch)),
-                        )
-                    }
-                    BoxProbe::Height { width } => {
-                        let inputs = formatting_context_inputs(
-                            &geometry,
-                            RunMode::ComputeSize,
-                            width,
-                            width,
-                        );
-                        tree.compute_child_layout(NodeId::from(node), inputs)
-                            .size
-                            .height
-                    }
+    let mut gap = 0.0;
+    let mut trials = 0;
+    let (stretch, position, beside_floats, output) = loop {
+        let candidate_y = min_y + gap;
+        let (stretch, position, beside_floats) = if ctx.has_active_floats(candidate_y) {
+            let slot = ctx
+                .find_box_slot(
+                    candidate_y,
+                    [margin.left, margin.right],
+                    values::Direction::Ltr,
+                    clear,
+                    |probe| match probe {
+                        BoxProbe::Width { stretch } => {
+                            let stretch = stretch.max(-x_margins);
+                            clamp_block_width(
+                                tree,
+                                node,
+                                geometry.width,
+                                own.map_or(stretch, |own| own.at(stretch)),
+                            )
+                        }
+                        BoxProbe::Height { width } => {
+                            let inputs = formatting_context_inputs(
+                                &geometry,
+                                RunMode::ComputeSize,
+                                width,
+                                width,
+                            );
+                            tree.compute_child_layout(NodeId::from(node), inputs)
+                                .size
+                                .height
+                        }
+                    },
+                )
+                .slot;
+            (
+                slot.stretch_width.max(-x_margins),
+                Point {
+                    x: slot.x,
+                    y: slot.y,
                 },
+                true,
             )
-            .slot;
-        (
-            slot.stretch_width.max(-x_margins),
-            Point {
-                x: slot.x,
-                y: slot.y,
-            },
-            true,
-        )
-    } else {
-        (
-            geometry.width - x_margins,
-            Point {
-                x: geometry.edges.0,
-                y: min_y,
-            },
-            false,
-        )
-    };
-    let width = clamp_block_width(
-        tree,
-        node,
-        geometry.width,
-        own.map_or(stretch, |own| own.at(stretch)),
-    );
-    let inputs = formatting_context_inputs(
-        &geometry,
-        if perform {
-            RunMode::PerformLayout
         } else {
-            RunMode::ComputeSize
-        },
-        width,
-        stretch,
-    );
-    let output = tree.compute_child_layout(NodeId::from(node), inputs);
+            (
+                geometry.width - x_margins,
+                Point {
+                    x: geometry.edges.0,
+                    y: candidate_y,
+                },
+                false,
+            )
+        };
+        let width = clamp_block_width(
+            tree,
+            node,
+            geometry.width,
+            own.map_or(stretch, |own| own.at(stretch)),
+        );
+        let inputs = formatting_context_inputs(
+            &geometry,
+            if perform {
+                RunMode::PerformLayout
+            } else {
+                RunMode::ComputeSize
+            },
+            width,
+            stretch,
+        );
+        let output = if marker_height.is_some() {
+            tree.with_baseline_measure(node, |tree| {
+                tree.compute_child_layout(NodeId::from(node), inputs)
+            })
+        } else {
+            tree.compute_child_layout(NodeId::from(node), inputs)
+        };
+        let wanted = output.baselines.first.map_or(0.0, |baseline| {
+            super::outside_marker::leading(marker_height, baseline)
+        });
+        if gap != wanted && trials < MAX_SPACE_RETRIES {
+            gap = wanted;
+            trials += 1;
+            continue;
+        }
+        break (stretch, position, beside_floats, output);
+    };
     // `auto` side margins share the room the box leaves; beside floats the
     // slot already holds the non-`auto` margins.
     let free = (stretch - output.size.width).max(0.0);
@@ -3246,6 +3346,9 @@ fn layout_formatting_context_child(
         top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
         first_baseline: output.baselines.first.map(|baseline| top + baseline),
+        marker_leading: output.baselines.first.map_or(0.0, |baseline| {
+            super::outside_marker::leading(marker_height, baseline)
+        }),
     }
 }
 

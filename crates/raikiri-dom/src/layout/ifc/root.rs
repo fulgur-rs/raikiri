@@ -51,6 +51,8 @@ pub(crate) struct IfcRoot {
     pub(crate) boxes: Vec<IfcBox>,
     /// Fixed-size image marker independent of the DOM box arena.
     pub(crate) marker_atomic: Option<(shodo::node::NodeId, shodo::AtomicSize)>,
+    /// The outside image marker contributes leading before the first baseline.
+    pub(crate) outside_marker_height: Option<f32>,
     /// Fixed-size images of `::before` and `::after` content, independent of
     /// the DOM box arena.
     pub(crate) generated_atomics: Vec<(shodo::node::NodeId, shodo::AtomicSize)>,
@@ -383,6 +385,7 @@ impl IfcRoot {
             lines: None,
             boxes: meta.boxes,
             marker_atomic: meta.marker_atomic,
+            outside_marker_height: meta.outside_marker_height,
             generated_atomics: meta.generated_atomics,
             generated_blocks: meta.generated_blocks.into(),
             generated_boxes: meta.generated_boxes.into(),
@@ -491,6 +494,7 @@ impl IfcRoot {
             lines: None,
             boxes: self.boxes.clone(),
             marker_atomic: self.marker_atomic,
+            outside_marker_height: self.outside_marker_height,
             generated_atomics: self.generated_atomics.clone(),
             generated_blocks: self.generated_blocks.clone(),
             generated_boxes: self.generated_boxes.clone(),

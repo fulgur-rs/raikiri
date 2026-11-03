@@ -188,6 +188,7 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc.document.box_style_data.invalidate_source();
     doc.document.layout_cache_context.publish_source();
     doc.context.table_cache.clear();
+    doc.document.outside_marker_leading = Default::default();
     // Keep the previous payloads alive while styles are rebuilt in place.
     // A later error or unwind may leave some styles with old handles and
     // others with newly appended handles, so only a complete successful

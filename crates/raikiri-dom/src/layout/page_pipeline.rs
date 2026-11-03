@@ -2530,8 +2530,12 @@ fn positioned_owned_text_line_bounds(
                             .map(|first| fragment.y - first.block_offset())
                     })
                     .unwrap_or(0.0);
-                let top = root_lines.line_top(line.line);
-                let height = root_lines.lines[line.line].block_size();
+                let top = root_lines.line_top(line.line)
+                    - crate::layout::ifc::outside_marker::fit_leading(
+                        document, owned.root, line.line,
+                    );
+                let height =
+                    crate::layout::ifc::outside_marker::fit_height(&root_lines.lines[line.line]);
                 (top + offset, top + height + offset)
             })
             .collect(),
@@ -3525,6 +3529,7 @@ fn layout_pages_attempt(
         session.fragment_tree.clear();
         session.column_rules.clear();
         session.page_projection.clear();
+        session.outside_marker_leading = Default::default();
         return Ok((
             vec![PageSlice {
                 page_index: 0,

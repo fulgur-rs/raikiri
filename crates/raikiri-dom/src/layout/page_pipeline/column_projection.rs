@@ -293,6 +293,7 @@ impl ParagraphProjectionBuilder {
         &mut self,
         positioned: &PositionedLines<'_>,
         columns: &LineColumns,
+        fit_leading: &impl Fn(usize) -> f32,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         for line in positioned.lines() {
@@ -302,8 +303,8 @@ impl ParagraphProjectionBuilder {
                     .saturating_add(line.markers.len())
                     .saturating_add(1),
             )?;
-            let top = line.offset.1 + line.line.block_offset();
-            let height = line.line.block_size();
+            let top = line.offset.1 + line.line.block_offset() - fit_leading(line.index);
+            let height = crate::layout::ifc::outside_marker::fit_height(line.line);
             for marker in line.markers {
                 let global = crate::PositionedMarker {
                     owner: marker.owner,
@@ -340,6 +341,7 @@ impl ParagraphProjectionBuilder {
         &mut self,
         positioned: &PositionedLines<'_>,
         columns: &LineColumns,
+        fit_leading: &impl Fn(usize) -> f32,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         for line in positioned.lines() {
@@ -349,8 +351,8 @@ impl ParagraphProjectionBuilder {
                     .saturating_add(line.content_images.len())
                     .saturating_add(1),
             )?;
-            let top = line.offset.1 + line.line.block_offset();
-            let height = line.line.block_size();
+            let top = line.offset.1 + line.line.block_offset() - fit_leading(line.index);
+            let height = crate::layout::ifc::outside_marker::fit_height(line.line);
             for image in line.content_images {
                 let global = crate::PositionedContentImage {
                     rect: raikiri_traits::PaintRect::new(
@@ -660,6 +662,7 @@ impl ParagraphProjectionBuilder {
         pieces: Vec<crate::layout::InlineBoxPiece>,
         split: &HashSet<usize>,
         block_nodes: &HashSet<usize>,
+        fit_leading: &impl Fn(usize) -> f32,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         for piece in pieces {
@@ -684,8 +687,8 @@ impl ParagraphProjectionBuilder {
                     piece,
                     offset,
                     shift,
-                    line.block_offset(),
-                    line.block_size(),
+                    line.block_offset() - fit_leading(piece.line),
+                    crate::layout::ifc::outside_marker::fit_height(line),
                     None,
                 );
                 self.generated.push(data);
@@ -815,13 +818,15 @@ impl ParagraphProjectionBuilder {
             columns: &columns,
             multicol,
         };
-        result.add_inline_pieces(&lines, pieces, &split, &block_nodes, work)?;
+        let fit_leading =
+            |index| crate::layout::ifc::outside_marker::fit_leading(document, root, index);
+        result.add_inline_pieces(&lines, pieces, &split, &block_nodes, &fit_leading, work)?;
         result.add_text_lines(&lines, document, root, work)?;
         if crate::generated_content::inside_marker_in_flow(cascade, root)
             && document.list_marker_image(root).is_some()
             && let Some(positioned) = &positioned
         {
-            result.add_marker_images(positioned, &columns, work)?;
+            result.add_marker_images(positioned, &columns, &fit_leading, work)?;
         }
         if node
             .ifc
@@ -829,7 +834,7 @@ impl ParagraphProjectionBuilder {
             .is_some_and(|ifc| !ifc.generated_atomics.is_empty())
             && let Some(positioned) = &positioned
         {
-            result.add_content_images(positioned, &columns, work)?;
+            result.add_content_images(positioned, &columns, &fit_leading, work)?;
         }
         // Pure inline paragraphs have no independent block/atomic subtrees.
         // Index their source edges by actual column ownership once, retaining

@@ -84,6 +84,8 @@ pub(crate) struct ProjectedMeta {
     pub(crate) boxes: Vec<IfcBox>,
     /// Fixed-size image marker inserted ahead of the root's ordinary content.
     pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
+    /// Minimum baseline supplied by a prepared outside image marker.
+    pub(crate) outside_marker_height: Option<f32>,
     /// Fixed-size images of `::before` and `::after` content.
     pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
     /// Block-level `::before` and `::after` boxes, in document order.
@@ -869,6 +871,7 @@ pub(crate) fn project_ifc_text_run_builder(
             indent,
             boxes: Vec::new(),
             marker_atomic: None,
+            outside_marker_height: None,
             generated_atomics: Vec::new(),
             generated_blocks: Vec::new(),
             generated_boxes: Vec::new(),
@@ -1496,6 +1499,7 @@ fn project_children_builder(
             indent,
             boxes,
             marker_atomic,
+            outside_marker_height: super::outside_marker::height(doc, cascade, root),
             generated_atomics: generated_images.atomics,
             generated_blocks: generated_images.blocks,
             generated_boxes: generated_images.boxes,

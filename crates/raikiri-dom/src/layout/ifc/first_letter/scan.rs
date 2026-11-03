@@ -91,7 +91,7 @@ impl LetterScan {
         {
             return false;
         }
-        // Match the ICU grapheme categories used by shodo 0.0.38. The
+        // Match the ICU grapheme categories used by shodo 0.0.39. The
         // differential tests guard this shortcut against its full scan.
         joined[start..].chars().all(|ch| {
             #[cfg(test)]

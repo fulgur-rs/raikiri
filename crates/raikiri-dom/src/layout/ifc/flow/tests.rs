@@ -135,6 +135,7 @@ fn place_lines_matches_break_all_without_floats() {
             &AtomicSizes::EMPTY,
             width,
             super::IfcAxes::new(root.writing_mode, shodo::geometry::Direction::Ltr),
+            None,
             |_, _| LineSpace {
                 inline_start: 0.0,
                 inline_size: width,
@@ -164,6 +165,7 @@ fn place_lines_asks_for_the_space_at_each_line_offset() {
         &AtomicSizes::EMPTY,
         50.0,
         super::IfcAxes::new(root.writing_mode, shodo::geometry::Direction::Ltr),
+        None,
         |y, height| {
             asked.push(y);
             let _ = height;

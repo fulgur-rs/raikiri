@@ -41,7 +41,13 @@ fn measure_in_flow_child(
         tree.compute_child_layout_with_block_ctx(child, inputs, context)
     };
     if inputs.run_mode == RunMode::ComputeSize
-        && tree.context.baseline_measure_owners.last() == Some(&usize::from(parent))
+        && (tree.context.baseline_measure_owners.last() == Some(&usize::from(parent))
+            || crate::layout::ifc::outside_marker::height(
+                tree,
+                tree.style_views.cascade(),
+                usize::from(parent),
+            )
+            .is_some())
     {
         // Block flow collects its baseline from an in-flow child's output,
         // just as native flex/grid do through their placement callbacks.
@@ -290,6 +296,14 @@ pub(super) fn layout(
     collapse_start: bool,
     collapse_end: bool,
 ) -> Flow {
+    if inputs.run_mode == RunMode::PerformLayout {
+        tree.outside_marker_leading.clear(usize::from(node));
+    }
+    let marker_height = crate::layout::ifc::outside_marker::height(
+        tree,
+        tree.style_views.cascade(),
+        usize::from(node),
+    );
     let content_width = (width - metrics.inset.horizontal_axis_sum()).max(0.0);
     let parent = Size {
         width: Some(content_width),
@@ -736,6 +750,14 @@ pub(super) fn layout(
             } else {
                 flow.end + pending.collapse_with_set(top_set).resolve()
             };
+            let top = top
+                + if flow.baselines.first.is_none() {
+                    output.baselines.first.map_or(0.0, |baseline| {
+                        crate::layout::ifc::outside_marker::leading(marker_height, baseline)
+                    })
+                } else {
+                    0.0
+                };
             if resolved && same && ctx.has_floats() && (!final_pass || (guess - top).abs() > 0.001)
             {
                 ctx.restore(&saved);
@@ -790,6 +812,20 @@ pub(super) fn layout(
         flow.overflow = flow
             .overflow
             .union(overflow(&style, child_metrics, &output, location));
+        if inputs.run_mode == RunMode::PerformLayout
+            && marker_height.is_some()
+            && flow.baselines.first.is_none()
+            && let Some(baseline) = output.baselines.first
+        {
+            let gap = crate::layout::ifc::outside_marker::leading(marker_height, baseline);
+            let source = crate::page_projection::text_runs::first_line(
+                tree,
+                tree.style_views.cascade(),
+                usize::from(child),
+            )
+            .and_then(|line| line.source);
+            crate::layout::ifc::outside_marker::record_child(tree, usize::from(node), gap, source);
+        }
         if let Some(baseline) = output.baselines.first {
             flow.baselines.first.get_or_insert(top + baseline);
         }
