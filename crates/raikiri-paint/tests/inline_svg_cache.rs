@@ -140,6 +140,74 @@ fn direct_public_cascade_changes_do_not_reuse_stale_rasters() {
 }
 
 #[test]
+fn a_declared_value_of_a_descendant_changed_in_the_public_cascade_is_not_served_stale() {
+    let layout = layout_body(
+        r#"<style>.c{color:blue}</style><svg width="20" height="20"><path class="c" d="M0 0H20V20H0Z" fill="currentColor"/></svg>"#,
+    );
+    let page = layout.page(0).unwrap();
+    let (document, cascade, page_box, _) = page.paint_inputs();
+    let mut cascade = cascade.clone();
+    let path = (0..document.node_count())
+        .find(|&id| document.get_node(id).unwrap().tag_name() == Some("path"))
+        .unwrap();
+    let generation = cascade.element_generation();
+    // The stylesheet gives the descendant declarations, which repaints check
+    // instead of collecting them again.
+    let blue = paint(document, &cascade, page_box);
+    assert!(std::ptr::eq(
+        blue.data.data().as_ptr(),
+        paint(document, &cascade, page_box).data.data().as_ptr()
+    ));
+    let declared = cascade.computed[path].color;
+    cascade.computed[path].color.r = 200;
+    assert_eq!(generation, cascade.element_generation());
+    let red = paint(document, &cascade, page_box);
+    assert_ne!(blue.data.data(), red.data.data());
+    assert_eq!(
+        red.data.data(),
+        paint(&document.clone(), &cascade, page_box).data.data()
+    );
+    assert!(std::ptr::eq(
+        red.data.data().as_ptr(),
+        paint(document, &cascade, page_box).data.data().as_ptr()
+    ));
+    // The raster of the earlier declarations is still kept, and is served
+    // again when they come back.
+    cascade.computed[path].color = declared;
+    assert!(std::ptr::eq(
+        blue.data.data().as_ptr(),
+        paint(document, &cascade, page_box).data.data().as_ptr()
+    ));
+}
+
+#[test]
+fn a_hidden_root_does_not_serve_a_raster_drawn_with_other_descendant_declarations() {
+    let layout = layout_body(
+        r#"<svg width="20" height="20" style="visibility:hidden"><path style="visibility:visible;stroke:red;stroke-width:1em" d="M0 0H10V10H0Z"/></svg>"#,
+    );
+    let page = layout.page(0).unwrap();
+    let (document, cascade, page_box, _) = page.paint_inputs();
+    let mut cascade = cascade.clone();
+    let path = (0..document.node_count())
+        .find(|&id| document.get_node(id).unwrap().tag_name() == Some("path"))
+        .unwrap();
+    let first = paint(document, &cascade, page_box);
+    assert!(std::ptr::eq(
+        first.data.data().as_ptr(),
+        paint(document, &cascade, page_box).data.data().as_ptr()
+    ));
+    // Only the descendant changes: the root stays hidden, so its own key is
+    // the same and the declarations of the descendant tell the rasters apart.
+    cascade.computed[path].font_size.0 += 10.0;
+    let wider = paint(document, &cascade, page_box);
+    assert_ne!(first.data.data(), wider.data.data());
+    assert_eq!(
+        wider.data.data(),
+        paint(&document.clone(), &cascade, page_box).data.data()
+    );
+}
+
+#[test]
 fn hidden_roots_visible_descendants_and_viewports_match_a_fresh_document() {
     let layout = layout_body(
         r#"<svg width="20" height="20" style="visibility:hidden"><path style="visibility:visible;stroke:red;stroke-width:1em" d="M0 0H10V10H0Z"/></svg>"#,
