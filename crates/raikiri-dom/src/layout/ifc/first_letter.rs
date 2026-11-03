@@ -8,12 +8,15 @@ use crate::{Document, generated_content::generated_node_id};
 use raikiri_style::property::{DisplayValue, FloatValue, PositionValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
+use rustc_hash::FxHashMap;
 use shodo::{
     ParagraphBuilder,
     font::FontCollection,
     node::{NodeId, TextSource},
 };
 use std::{collections::VecDeque, ops::Range};
+
+mod scan;
 
 #[derive(Clone, Debug)]
 pub(crate) struct LetterStyle {
@@ -40,6 +43,9 @@ pub(crate) struct FirstLetter {
     line_origins: Vec<usize>,
     pending: bool,
     continuation: VecDeque<(usize, Range<usize>)>,
+    /// How many entries of `continuation` each container holds, so that
+    /// whether one lies in another container is known without a scan.
+    continuation_containers: FxHashMap<Option<usize>, usize>,
     started: bool,
     open_boxes: usize,
     text_limit: Option<u64>,
@@ -89,6 +95,7 @@ impl FirstLetter {
             origins,
             line_origins,
             continuation: VecDeque::new(),
+            continuation_containers: FxHashMap::default(),
             started: false,
             open_boxes: 0,
             text_limit: limits.max_text_bytes,
@@ -102,6 +109,37 @@ impl FirstLetter {
     pub(crate) fn stop(&mut self) {
         self.pending = false;
         self.continuation.clear();
+        self.continuation_containers.clear();
+    }
+
+    fn queue_continuation(&mut self, doc: &Document, owner: usize, range: Range<usize>) {
+        *self
+            .continuation_containers
+            .entry(container_of(doc, owner))
+            .or_default() += 1;
+        self.continuation.push_back((owner, range));
+    }
+
+    fn pop_continuation(&mut self, doc: &Document) -> Option<Range<usize>> {
+        let (owner, range) = self.continuation.pop_front()?;
+        let container = container_of(doc, owner);
+        let count = self.continuation_containers.entry(container).or_default();
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.continuation_containers.remove(&container);
+        }
+        Some(range)
+    }
+
+    /// Whether a text still to take its part of the letter lies in a container
+    /// other than the one of `owner`.
+    fn continues_in_other_container(&self, doc: &Document, owner: usize) -> bool {
+        let same = self
+            .continuation_containers
+            .get(&container_of(doc, owner))
+            .copied()
+            .unwrap_or(0);
+        self.continuation.len() > same
     }
 
     fn adjacent_range(
@@ -134,6 +172,7 @@ impl FirstLetter {
         };
         let mut started = false;
         let mut joined = String::new();
+        let mut scan = scan::LetterScan::new();
         let mut pieces = Vec::new();
         while let Some(visit) = stack.pop() {
             let (id, value, barrier, source_preserves_breaks) = match visit {
@@ -263,10 +302,7 @@ impl FirstLetter {
             }));
             pieces.push((id, start..joined.len()));
             self.checked_through = Some(id);
-            if barrier
-                || shodo::first_letter_range(&joined, true)
-                    .is_some_and(|range| range.end < joined.len())
-            {
+            if barrier || scan.is_complete(&joined, start) {
                 break;
             }
         }
@@ -277,11 +313,12 @@ impl FirstLetter {
             if piece.start >= range.end {
                 break;
             }
-            self.continuation.push_back((
+            self.queue_continuation(
+                doc,
                 *id,
                 range.start.saturating_sub(piece.start).min(piece.len())
                     ..range.end.min(piece.end) - piece.start,
-            ));
+            );
         }
         Ok(Some(range.start.min(text.len())..range.end.min(text.len())))
     }
@@ -351,7 +388,7 @@ impl FirstLetter {
             .front()
             .is_some_and(|(owner, _)| *owner == source_owner)
         {
-            self.continuation.pop_front().map(|(_, range)| range)
+            self.pop_continuation(doc)
         } else if self.pending && !text.is_empty() {
             let range = shodo::first_letter_range(text, preserve_breaks);
             if lookahead && range.as_ref().is_none_or(|range| range.end == text.len()) {
@@ -431,15 +468,7 @@ impl FirstLetter {
                     edge_percents.margin.inline_start = 0.0;
                     edge_percents.padding.inline_start = 0.0;
                 }
-                let container = |owner| {
-                    crate::generated_content::generated_origin(owner)
-                        .map_or_else(|| doc.parent_of(owner), |_| Some(owner))
-                };
-                let crosses_box = self
-                    .continuation
-                    .iter()
-                    .any(|(owner, _)| container(*owner) != container(source_owner));
-                if crosses_box {
+                if self.continues_in_other_container(doc, source_owner) {
                     edges.margin.inline_end = 0.0;
                     edges.border.inline_end = 0.0;
                     edges.padding.inline_end = 0.0;
@@ -519,15 +548,9 @@ impl FirstLetter {
             // the unstyled whitespace preceding the typographic unit.
             builder.push_text(first_source, &text[range.clone()]);
             self.started = true;
-            let container = |owner| {
-                crate::generated_content::generated_origin(owner)
-                    .map_or_else(|| doc.parent_of(owner), |_| Some(owner))
-            };
-            if self
-                .continuation
-                .front()
-                .is_none_or(|(owner, _)| container(*owner) != container(source_owner))
-            {
+            if self.continuation.front().is_none_or(|(owner, _)| {
+                container_of(doc, *owner) != container_of(doc, source_owner)
+            }) {
                 for _ in 0..self.open_boxes {
                     builder.close_inline();
                 }
@@ -556,6 +579,15 @@ impl FirstLetter {
 
 #[cfg(test)]
 mod tests;
+
+/// The box that holds the text of `owner`: the element that is its parent, or
+/// the generated text itself, which has no parent of its own.
+fn container_of(doc: &Document, owner: usize) -> Option<usize> {
+    #[cfg(test)]
+    tests::CONTAINER_LOOKUPS.with(|count| count.set(count.get() + 1));
+    crate::generated_content::generated_origin(owner)
+        .map_or_else(|| doc.parent_of(owner), |_| Some(owner))
+}
 
 /// The blocks whose `::first-letter` and whose `::first-line` reach the
 /// first formatted line of paragraph `origin`, outermost first: `origin`
