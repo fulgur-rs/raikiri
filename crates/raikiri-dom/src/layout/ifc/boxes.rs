@@ -370,7 +370,6 @@ fn group_padding(
 }
 
 /// Lay an IFC root across horizontal fragmentainers with a fresh float context per column.
-// cov:ignore: fragmentainer-local IFC layout is exercised by the ignored flex-float WPT.
 pub(crate) fn layout_with_boxes_in_fragmentainers(
     tree: &mut LayoutSession<'_>,
     idx: usize,
@@ -455,6 +454,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         .saturating_add(context.column_count)
         .clamp(1, MAX_IFC_FRAGMENTAINERS);
     let mut source_float_placements = Vec::new();
+    let mut source_float_ids = SourcePlacementIds::default();
     // A generated block that a column ends inside goes on in the next.
     let mut carried_block = None;
     for offset in 0..column_budget {
@@ -545,14 +545,11 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         max_height = max_height.max(outcome.lines.height);
         beside_floats |= outcome.lines.beside_floats;
         escaping_margin = outcome.lines.escaping_margin;
-        for placement in &outcome.lines.fragment_box_placements {
-            if !source_float_placements
-                .iter()
-                .any(|source| source.node_id == placement.node_id)
-            {
-                source_float_placements.push(*placement);
-            }
-        }
+        remember_source_placements(
+            &mut source_float_placements,
+            &mut source_float_ids,
+            &outcome.lines.fragment_box_placements,
+        );
         fragment_box_placements.extend(carried_placements);
         fragment_box_placements.extend(outcome.lines.fragment_box_placements);
         oof_candidates.append(&mut outcome.lines.oof_candidates);
@@ -602,6 +599,36 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry, session_edges);
     }
     result
+}
+
+#[cfg(not(test))]
+type SourcePlacementIds = HashSet<usize>;
+#[cfg(test)]
+type SourcePlacementIds = HashSet<
+    tests::SourcePlacementId,
+    std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>,
+>;
+
+fn remember_source_placements(
+    sources: &mut Vec<IfcBoxFragment>,
+    ids: &mut SourcePlacementIds,
+    placements: &[IfcBoxFragment],
+) {
+    for placement in placements {
+        #[cfg(test)]
+        tests::SOURCE_INPUTS.with(|count| count.set(count.get() + 1));
+        let id = placement.node_id;
+        #[cfg(test)]
+        let id = tests::SourcePlacementId::from(id);
+        let fresh = ids.insert(id);
+        #[cfg(test)]
+        if !fresh {
+            tests::SOURCE_DUPLICATES.with(|count| count.set(count.get() + 1));
+        }
+        if fresh {
+            sources.push(*placement);
+        }
+    }
 }
 
 // cov:ignore: carried placements are exercised by the ignored flex-float WPT.
