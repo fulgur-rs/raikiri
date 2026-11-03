@@ -374,15 +374,13 @@ fn a_block_tied_to_a_box_below_the_top_of_its_page_stays_with_the_run() {
 }
 
 #[test]
-fn a_block_tied_to_a_run_that_cannot_fit_a_page_keeps_its_place_below_the_page_top() {
-    // The run of the box and the block is taller than a page, so the page does
-    // not keep it together and the box stays where it is. That box is not at
-    // the top of the page, so the avoided break before the block holds, and
-    // the block stays with it. (Browsers move the box on to the next page
-    // too, which is not done.)
+fn a_run_too_tall_only_because_of_closing_edges_moves_before_its_card_moves_alone() {
+    // The content fits the current page, but the card's closing edges do
+    // not. The run first moves to the next page; its head then starts that
+    // page, so the card can break away and start the following one.
     assert_eq!(
         card_after_leads_tied(&[(10, ""), (50, "break-after:avoid")], 30, "", ""),
-        [0.0, 10.0, 60.0, 60.0, 120.0]
+        [0.0, 100.0, 200.0, 200.0, 260.0]
     );
 }
 
