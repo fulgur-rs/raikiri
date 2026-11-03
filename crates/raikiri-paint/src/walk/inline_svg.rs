@@ -95,26 +95,13 @@ impl<'a> InlineSvg<'a> {
             .cached_svg_subtree(self.node_id)
             .ok()
             .flatten();
-        // The declarations the page's stylesheets give to the descendants, which
-        // the serialized source does not carry. A subtree whose declarations
-        // outgrow the size bound is drawn unstyled, as it always was.
-        let descendants = raikiri_dom::inline_svg_style::inline_svg_element_declarations(
-            self.document,
-            self.cascade,
-            self.node_id,
-        )
-        .unwrap_or_default();
-        // A root that is not visible shows only the descendants that set
-        // `visibility` themselves, so a source that never mentions it paints
-        // nothing.
-        if !visible && !mentions_visibility(source.as_deref(), &descendants) {
-            return None;
-        }
         // Compare all current rasterizer inputs exactly. Public cascade values
-        // are mutable without changing their generation, so styles are collected
-        // again on every paint rather than trusting a generation-only key.
+        // are mutable without changing their generation, so the declarations
+        // the page's stylesheets give to the descendants, which the serialized
+        // source does not carry, are checked against those of the cached raster
+        // on every paint rather than trusting a generation-only key.
         let style_key = format!(
-            "{:?}|{:?}|{:?}",
+            "{:?}|{:?}",
             self.root_style(visible),
             (
                 self.cv.font_size.0.to_bits(),
@@ -122,15 +109,55 @@ impl<'a> InlineSvg<'a> {
                 self.cv.font_style.as_css_str(),
                 raikiri_dom::inline_svg_style::svg_font_family(self.cv)
             ),
-            descendants
         );
         let viewport_key = (self.content.width.to_bits(), self.content.height.to_bits());
-        if let Some(raster) =
-            self.document
-                .cached_inline_svg_raster(self.node_id, viewport_key, &style_key)
-        {
-            return Some(raster);
-        }
+        let collect = || {
+            // A subtree whose declarations outgrow the size bound is drawn
+            // unstyled, as it always was.
+            raikiri_dom::inline_svg_style::inline_svg_element_declarations(
+                self.document,
+                self.cascade,
+                self.node_id,
+            )
+            .unwrap_or_default()
+        };
+        let descendants = if visible {
+            // The declarations are read as they are checked, so that a hit
+            // collects nothing.
+            if let Some(raster) = self.document.cached_inline_svg_raster(
+                self.node_id,
+                viewport_key,
+                &style_key,
+                |cached| {
+                    raikiri_dom::inline_svg_style::inline_svg_element_declarations_match(
+                        self.document,
+                        self.cascade,
+                        self.node_id,
+                        cached,
+                    )
+                },
+            ) {
+                return Some(raster);
+            }
+            collect()
+        } else {
+            let descendants = collect();
+            // A root that is not visible shows only the descendants that set
+            // `visibility` themselves, so a source that never mentions it
+            // paints nothing.
+            if !mentions_visibility(source.as_deref(), &descendants) {
+                return None;
+            }
+            if let Some(raster) = self.document.cached_inline_svg_raster(
+                self.node_id,
+                viewport_key,
+                &style_key,
+                |cached| cached == descendants,
+            ) {
+                return Some(raster);
+            }
+            descendants
+        };
         let Some(decoded) = source.and_then(|source| self.decode(&source, &descendants, visible))
         else {
             // Nothing was expected to show from a root that is not visible.
@@ -156,6 +183,7 @@ impl<'a> InlineSvg<'a> {
             self.node_id,
             viewport_key,
             style_key,
+            descendants,
             raster.clone(),
         );
         Some(raster)

@@ -1,12 +1,15 @@
 //! The declarations a page stylesheet gives to the descendants of an inline
 //! SVG, listed by the element's preorder index inside the SVG.
 
+use raikiri_dom::Document;
 use raikiri_dom::inline_svg_style::{
     InlineSvgElementDeclarations, inline_svg_element_declarations,
+    inline_svg_element_declarations_match,
 };
 use raikiri_html::{
     LayoutOptions, LayoutStatus, RenderResources, layout, parse_html_with_resources,
 };
+use raikiri_style::CascadeResult;
 use raikiri_traits::{LayoutConfig, NodeKind, PageDefaults};
 
 /// Declarations of the first `<svg>` of `html`. An id past the arena has none.
@@ -406,4 +409,193 @@ fn a_stroke_length_inherited_from_inside_a_used_definition_is_written_in_px() {
         declaration_of(&elements, 3),
         Some("font-size:10px!important;stroke-width:40px!important;")
     );
+}
+
+/// Runs `check` on the document, cascade and first inline `<svg>` of `html`.
+fn with_svg(html: &str, check: impl FnOnce(&Document, &CascadeResult, usize)) {
+    let resources = RenderResources::new();
+    let doc = parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("expected a complete layout");
+    };
+    let (document, cascade, _, _) = result.page(0).expect("page").paint_inputs();
+    let svg = (0..document.node_count())
+        .find(|&id| {
+            document
+                .get_node(id)
+                .is_some_and(|node| node.kind() == NodeKind::Element && node.is_inline_svg_root())
+        })
+        .expect("an inline svg");
+    check(document, cascade, svg);
+}
+
+/// SVGs whose declarations differ in what they hold: none, computed values,
+/// declared text, relative lengths, and subtrees a `use` element instantiates.
+const SVGS: [&str; 5] = [
+    "<svg width=20 height=20><rect /><g><rect /></g></svg>",
+    "<style>svg{color:red}.a{display:none}.b{color:blue}</style>\
+     <svg width=20 height=20><g><rect class=a /></g><rect class=b /><rect /></svg>",
+    "<style>rect{fill:blue;stroke:url(#g) red;fill-opacity:25%}.w{stroke-width:2px}svg{fill:green}</style>\
+     <svg width=20 height=20><rect class=w /><g><rect /></g></svg>",
+    "<svg width=50 height=50><g style='font-size:20px' stroke-width='2em' \
+     stroke-dasharray='2em 1ex'><path style='font-size:10px;stroke-width:inherit' /></g></svg>",
+    "<style>g{font-size:20px;stroke-width:2em}path{font-size:10px;stroke-width:inherit}</style>\
+     <svg width=50 height=50><defs><g id=d><path /></g></defs><use href='#d' /><path /></svg>",
+];
+
+#[test]
+fn the_declarations_a_collection_returns_match_it() {
+    for html in SVGS {
+        with_svg(html, |document, cascade, svg| {
+            let collected = inline_svg_element_declarations(document, cascade, svg).unwrap();
+            assert!(
+                inline_svg_element_declarations_match(document, cascade, svg, &collected),
+                "{html}"
+            );
+        });
+    }
+}
+
+#[test]
+fn any_other_declarations_do_not_match() {
+    for html in SVGS {
+        with_svg(html, |document, cascade, svg| {
+            let collected = inline_svg_element_declarations(document, cascade, svg).unwrap();
+            let differs = |other: &[InlineSvgElementDeclarations]| {
+                !inline_svg_element_declarations_match(document, cascade, svg, other)
+            };
+            let mut variants: Vec<Vec<InlineSvgElementDeclarations>> = Vec::new();
+            for at in 0..collected.len() {
+                // A changed, a shortened and a longer text, and a changed index.
+                let mut changed = collected.clone();
+                changed[at].declarations.replace_range(0..1, "#");
+                variants.push(changed);
+                let mut shorter = collected.clone();
+                shorter[at].declarations.pop();
+                variants.push(shorter);
+                let mut longer = collected.clone();
+                longer[at].declarations.push(';');
+                variants.push(longer);
+                let mut moved = collected.clone();
+                moved[at].element_index += 1;
+                variants.push(moved);
+                // A missing and a repeated element.
+                let mut without = collected.clone();
+                without.remove(at);
+                variants.push(without);
+                let mut twice = collected.clone();
+                twice.insert(at, collected[at].clone());
+                variants.push(twice);
+            }
+            variants.push(
+                collected
+                    .iter()
+                    .cloned()
+                    .chain([InlineSvgElementDeclarations {
+                        element_index: usize::MAX,
+                        declarations: "fill:red!important;".into(),
+                    }])
+                    .collect(),
+            );
+            if collected.is_empty() {
+                variants.push(vec![InlineSvgElementDeclarations {
+                    element_index: 1,
+                    declarations: String::new(),
+                }]);
+            } else {
+                // None of them, which a failed collection also reads as.
+                variants.push(Vec::new());
+            }
+            for variant in &variants {
+                assert!(differs(variant), "{html}: {variant:?}");
+            }
+        });
+    }
+}
+
+#[test]
+fn declarations_read_from_a_changed_cascade_match_only_the_changed_collection() {
+    with_svg(SVGS[1], |document, cascade, svg| {
+        let before = inline_svg_element_declarations(document, cascade, svg).unwrap();
+        // Public values may change without a new cascade generation. The
+        // `color:blue` element declares the computed color itself.
+        let blue = before
+            .iter()
+            .find(|element| element.declarations.contains("rgba(0,0,255,1.000000)"))
+            .expect("the blue rectangle")
+            .element_index;
+        let mut changed = cascade.clone();
+        let node = (0..document.node_count())
+            .filter(|&id| {
+                document
+                    .get_node(id)
+                    .is_some_and(|node| node.kind() == NodeKind::Element)
+            })
+            .filter(|&id| id >= svg)
+            .nth(blue)
+            .expect("the blue rectangle");
+        changed.computed[node].color = changed.computed[svg].color;
+        let after = inline_svg_element_declarations(document, &changed, svg).unwrap();
+        assert_ne!(before, after);
+        assert!(!inline_svg_element_declarations_match(
+            document, &changed, svg, &before
+        ));
+        assert!(inline_svg_element_declarations_match(
+            document, &changed, svg, &after
+        ));
+        assert!(!inline_svg_element_declarations_match(
+            document, cascade, svg, &after
+        ));
+    });
+}
+
+#[test]
+fn a_collection_over_the_size_bound_matches_only_no_declarations() {
+    // The bound counts the paint text twice for each rectangle that declares
+    // it, and together the rectangles outgrow it.
+    let paint = format!("url(#{}) red", "a".repeat(30_000));
+    let rects = "<rect />".repeat(600);
+    let html = format!("<style>rect{{fill:{paint}}}</style><svg width=20 height=20>{rects}</svg>");
+    with_svg(&html, |document, cascade, svg| {
+        assert!(inline_svg_element_declarations(document, cascade, svg).is_err());
+        assert!(inline_svg_element_declarations_match(
+            document,
+            cascade,
+            svg,
+            &[]
+        ));
+        let some = [InlineSvgElementDeclarations {
+            element_index: 1,
+            declarations: "fill:red!important;".into(),
+        }];
+        assert!(!inline_svg_element_declarations_match(
+            document, cascade, svg, &some
+        ));
+    });
+}
+
+#[test]
+fn nothing_matches_an_id_past_the_arena_but_no_declarations() {
+    with_svg(SVGS[1], |document, cascade, _| {
+        let past = document.node_count();
+        assert!(inline_svg_element_declarations_match(
+            document,
+            cascade,
+            past,
+            &[]
+        ));
+        let some = [InlineSvgElementDeclarations {
+            element_index: 1,
+            declarations: String::new(),
+        }];
+        assert!(!inline_svg_element_declarations_match(
+            document, cascade, past, &some
+        ));
+    });
 }

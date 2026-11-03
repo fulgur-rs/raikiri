@@ -10,6 +10,21 @@ fn fixture() -> (Document, usize, usize) {
     (document, svg, path)
 }
 
+fn declarations(text: &str) -> Vec<InlineSvgElementDeclarations> {
+    vec![InlineSvgElementDeclarations {
+        element_index: 1,
+        declarations: text.to_owned(),
+    }]
+}
+
+fn raster_of(byte: u8) -> InlineSvgRaster {
+    InlineSvgRaster {
+        width: 1,
+        height: 1,
+        rgba: Arc::new(vec![byte; 4]),
+    }
+}
+
 #[test]
 fn source_memo_is_shared_until_each_kind_of_source_mutation() {
     let (mut document, svg, path) = fixture();
@@ -66,24 +81,25 @@ fn source_memo_is_shared_until_each_kind_of_source_mutation() {
 #[test]
 fn raster_keys_are_exact_and_oversized_rasters_are_not_kept() {
     let (document, svg, _) = fixture();
-    let raster = InlineSvgRaster {
-        width: 1,
-        height: 1,
-        rgba: Arc::new(vec![0; 4]),
-    };
-    document.cache_inline_svg_raster(svg, (1, 2), "style".into(), raster.clone());
+    let raster = raster_of(0);
+    document.cache_inline_svg_raster(svg, (1, 2), "style".into(), Vec::new(), raster.clone());
     let got = document
-        .cached_inline_svg_raster(svg, (1, 2), "style")
+        .cached_inline_svg_raster(svg, (1, 2), "style", |found| found.is_empty())
         .unwrap();
     assert!(Arc::ptr_eq(&raster.rgba, &got.rgba));
     assert!(
         document
-            .cached_inline_svg_raster(svg, (1, 3), "style")
+            .cached_inline_svg_raster(svg, (1, 3), "style", |_| true)
             .is_none()
     );
     assert!(
         document
-            .cached_inline_svg_raster(svg, (1, 2), "STYLE")
+            .cached_inline_svg_raster(svg, (1, 2), "STYLE", |_| true)
+            .is_none()
+    );
+    assert!(
+        document
+            .cached_inline_svg_raster(svg + 1, (1, 2), "style", |_| true)
             .is_none()
     );
     let huge = InlineSvgRaster {
@@ -91,18 +107,122 @@ fn raster_keys_are_exact_and_oversized_rasters_are_not_kept() {
         height: 1,
         rgba: Arc::new(vec![0; MAX_BYTES + 1]),
     };
-    document.cache_inline_svg_raster(svg, (1, 2), "huge".into(), huge);
+    document.cache_inline_svg_raster(svg, (1, 2), "huge".into(), Vec::new(), huge);
     assert!(
         document
-            .cached_inline_svg_raster(svg, (1, 2), "huge")
+            .cached_inline_svg_raster(svg, (1, 2), "huge", |_| true)
             .is_none()
     );
     for at in 0..MAX_ENTRIES * 2 {
-        document.cache_inline_svg_raster(svg, (1, 2), at.to_string(), raster.clone());
+        document.cache_inline_svg_raster(svg, (1, 2), at.to_string(), Vec::new(), raster.clone());
     }
     let cache = document.inline_svg_cache.0.lock().unwrap();
     assert!(cache.rasters.len() <= MAX_ENTRIES);
     assert!(cache.bytes <= MAX_BYTES);
+}
+
+#[test]
+fn the_declarations_of_the_subtree_are_part_of_the_raster_key() {
+    let (document, svg, _) = fixture();
+    let (red, blue) = (raster_of(1), raster_of(2));
+    document.cache_inline_svg_raster(
+        svg,
+        (1, 2),
+        "s".into(),
+        declarations("fill:red"),
+        red.clone(),
+    );
+    document.cache_inline_svg_raster(
+        svg,
+        (1, 2),
+        "s".into(),
+        declarations("fill:blue"),
+        blue.clone(),
+    );
+    let asking = |text: &'static str| {
+        document.cached_inline_svg_raster(svg, (1, 2), "s", |found| found == declarations(text))
+    };
+    assert!(Arc::ptr_eq(&asking("fill:red").unwrap().rgba, &red.rgba));
+    assert!(Arc::ptr_eq(&asking("fill:blue").unwrap().rgba, &blue.rgba));
+    assert!(asking("fill:green").is_none());
+    assert_eq!(document.inline_svg_cache.0.lock().unwrap().rasters.len(), 2);
+    // The same key replaces its raster instead of adding another entry.
+    let newer = raster_of(3);
+    document.cache_inline_svg_raster(
+        svg,
+        (1, 2),
+        "s".into(),
+        declarations("fill:red"),
+        newer.clone(),
+    );
+    assert_eq!(document.inline_svg_cache.0.lock().unwrap().rasters.len(), 2);
+    assert!(Arc::ptr_eq(&asking("fill:red").unwrap().rgba, &newer.rgba));
+}
+
+#[test]
+fn candidates_are_asked_most_recently_used_first_and_a_hit_becomes_the_most_recent() {
+    let (document, svg, _) = fixture();
+    for (at, text) in ["a", "b", "c"].into_iter().enumerate() {
+        document.cache_inline_svg_raster(
+            svg,
+            (1, 2),
+            "s".into(),
+            declarations(text),
+            raster_of(at as u8),
+        );
+    }
+    let mut asked = Vec::new();
+    assert!(
+        document
+            .cached_inline_svg_raster(svg, (1, 2), "s", |found| {
+                asked.push(found[0].declarations.clone());
+                found[0].declarations == "a"
+            })
+            .is_some()
+    );
+    assert_eq!(asked, ["c", "b", "a"]);
+    // "a" was the oldest and is now the newest.
+    asked.clear();
+    document.cached_inline_svg_raster(svg, (1, 2), "s", |found| {
+        asked.push(found[0].declarations.clone());
+        false
+    });
+    assert_eq!(asked, ["a", "c", "b"]);
+}
+
+#[test]
+fn a_hit_on_an_entry_evicted_while_it_was_compared_still_returns_its_pixels() {
+    let (document, svg, _) = fixture();
+    let pixels = raster_of(7);
+    document.cache_inline_svg_raster(svg, (1, 2), "s".into(), declarations("x"), pixels.clone());
+    let got = document
+        .cached_inline_svg_raster(svg, (1, 2), "s", |_| {
+            // Another paint fills the memo while this comparison runs.
+            document.inline_svg_cache.0.lock().unwrap().rasters.clear();
+            true
+        })
+        .unwrap();
+    assert!(Arc::ptr_eq(&got.rgba, &pixels.rgba));
+    assert!(
+        document
+            .inline_svg_cache
+            .0
+            .lock()
+            .unwrap()
+            .rasters
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_declarations_of_an_entry_are_charged_to_the_memo() {
+    let (document, svg, _) = fixture();
+    document.cache_inline_svg_raster(svg, (1, 2), "s".into(), Vec::new(), raster_of(0));
+    let plain = document.inline_svg_cache.0.lock().unwrap().bytes;
+    let text = "x".repeat(10_000);
+    document.cache_inline_svg_raster(svg, (1, 2), "t".into(), declarations(&text), raster_of(0));
+    let charged = document.inline_svg_cache.0.lock().unwrap().bytes - plain;
+    assert!(charged >= 10_000, "{charged}");
 }
 
 #[test]
@@ -151,12 +271,12 @@ fn replacing_rasters_and_byte_pressure_release_only_cache_ownership() {
         height: 1,
         rgba: Arc::clone(&pixels),
     };
-    document.cache_inline_svg_raster(svg, (1, 2), "same".into(), raster.clone());
+    document.cache_inline_svg_raster(svg, (1, 2), "same".into(), Vec::new(), raster.clone());
     let bytes = document.inline_svg_cache.0.lock().unwrap().bytes;
-    document.cache_inline_svg_raster(svg, (1, 2), "same".into(), raster);
+    document.cache_inline_svg_raster(svg, (1, 2), "same".into(), Vec::new(), raster);
     assert_eq!(document.inline_svg_cache.0.lock().unwrap().bytes, bytes);
     let held = document
-        .cached_inline_svg_raster(svg, (1, 2), "same")
+        .cached_inline_svg_raster(svg, (1, 2), "same", |_| true)
         .unwrap();
     let large = InlineSvgRaster {
         width: 1,
@@ -164,11 +284,11 @@ fn replacing_rasters_and_byte_pressure_release_only_cache_ownership() {
         rgba: Arc::new(vec![0; MAX_BYTES / 2]),
     };
     for at in 0..3 {
-        document.cache_inline_svg_raster(svg, (1, 2), at.to_string(), large.clone());
+        document.cache_inline_svg_raster(svg, (1, 2), at.to_string(), Vec::new(), large.clone());
     }
     assert!(
         document
-            .cached_inline_svg_raster(svg, (1, 2), "same")
+            .cached_inline_svg_raster(svg, (1, 2), "same", |_| true)
             .is_none()
     );
     assert!(Arc::ptr_eq(&held.rgba, &pixels));

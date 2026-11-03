@@ -12,6 +12,7 @@ use raikiri_style::{CascadeResult, ComputedValues, StyleNodeId};
 use raikiri_traits::NodeKind;
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 const XLINK_NAMESPACE: &str = "http://www.w3.org/1999/xlink";
@@ -44,11 +45,106 @@ pub fn inline_svg_element_declarations(
     cascade: &CascadeResult,
     root: usize,
 ) -> Result<Vec<InlineSvgElementDeclarations>, String> {
-    let Some(root_node) = document.get_node(root) else {
-        return Ok(Vec::new());
-    };
     let mut elements = Vec::new();
-    let mut remaining_bytes = DECLARATION_BYTE_LIMIT;
+    walk_styled_elements(document, cascade, root, |element, work| {
+        let mut declarations = String::new();
+        element.write_to(&mut declarations, work)?;
+        elements.push(InlineSvgElementDeclarations {
+            element_index: element.element_index,
+            declarations,
+        });
+        Ok(true)
+    })?;
+    Ok(elements)
+}
+
+/// Whether [`inline_svg_element_declarations`] would return `expected` now,
+/// found without keeping what it spells out.
+///
+/// Every declaration is written as the collection writes it and checked
+/// against `expected` as it goes, so a match costs no allocation, and a
+/// mismatch stops at its first difference. A collection that fails, which
+/// reads as no declarations to a caller that draws the SVG unstyled, matches
+/// an empty `expected`.
+pub fn inline_svg_element_declarations_match(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    expected: &[InlineSvgElementDeclarations],
+) -> bool {
+    let mut next = 0;
+    let walked = walk_styled_elements(document, cascade, root, |element, work| {
+        let Some(entry) = expected
+            .get(next)
+            .filter(|entry| entry.element_index == element.element_index)
+        else {
+            return Ok(false);
+        };
+        next += 1;
+        let mut declarations = Expected(&entry.declarations);
+        Ok(element.write_to(&mut declarations, work)? && declarations.0.is_empty())
+    });
+    if matches!(walked, Ok(true)) {
+        return next == expected.len();
+    }
+    // Not shown to be the same. A collection that fails reads as no
+    // declarations, so only an empty `expected` can still match one: the walk
+    // may have ended at its first difference before the failure further on.
+    expected.is_empty() && inline_svg_element_declarations(document, cascade, root).is_err()
+}
+
+/// An element of an inline SVG that holds declarations.
+struct StyledElement<'a> {
+    /// Zero-based element preorder index, counting the root as zero.
+    element_index: usize,
+    style: &'a ComputedValues,
+    properties: &'a [SvgStyleProperty],
+    relative_attributes: &'a [SvgStyleProperty],
+    /// Whether the element is part of a subtree a `use` element instantiates.
+    in_instance: bool,
+}
+
+impl StyledElement<'_> {
+    /// Writes the declarations of the element to `out`. Says `false` when
+    /// `out` stopped taking them.
+    fn write_to(&self, out: &mut impl Declarations, work: &mut Work) -> Result<bool, String> {
+        write_node_declarations(
+            self.style,
+            self.properties,
+            self.relative_attributes,
+            self.in_instance,
+            &mut work.remaining_bytes,
+            &mut work.value,
+            out,
+        )
+    }
+}
+
+/// What the elements of one walk share while their declarations are written.
+struct Work {
+    /// The bytes left of the size bound.
+    remaining_bytes: usize,
+    /// Room for the text of a value that no declaration holds, kept from one
+    /// element to the next so that each does not allocate its own.
+    value: String,
+}
+
+/// Calls `visit` for each element of the inline SVG rooted at `root` that
+/// holds declarations, in document order. The walk ends when `visit` says
+/// `false` or fails, and says which.
+fn walk_styled_elements(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    mut visit: impl FnMut(StyledElement<'_>, &mut Work) -> Result<bool, String>,
+) -> Result<bool, String> {
+    let Some(root_node) = document.get_node(root) else {
+        return Ok(true);
+    };
+    let mut work = Work {
+        remaining_bytes: DECLARATION_BYTE_LIMIT,
+        value: String::new(),
+    };
     let use_targets = use_targets(document, root);
     // Each entry carries the nearest element above it, or itself, that a `use`
     // element instantiates, which stands for the subtree a renderer clones
@@ -98,16 +194,16 @@ pub fn inline_svg_element_declarations(
                     }
                     None => Cow::Borrowed(properties),
                 };
-                elements.push(InlineSvgElementDeclarations {
+                let element = StyledElement {
                     element_index,
-                    declarations: node_declarations(
-                        style,
-                        &properties,
-                        relative_attributes,
-                        instance_root.is_some(),
-                        &mut remaining_bytes,
-                    )?,
-                });
+                    style,
+                    properties: &properties,
+                    relative_attributes,
+                    in_instance: instance_root.is_some(),
+                };
+                if !visit(element, &mut work)? {
+                    return Ok(false);
+                }
             }
             element_index += 1;
         }
@@ -117,7 +213,7 @@ pub fn inline_svg_element_declarations(
                 .map(|node| (child, node, instance_root))
         }));
     }
-    Ok(elements)
+    Ok(true)
 }
 
 /// The ids that the `use` elements of the SVG rooted at `root` reference.
@@ -225,15 +321,105 @@ fn svg_presentation_name(key: PropertyKey) -> &'static str {
     key.svg_presentation_name().unwrap_or_default()
 }
 
-/// The declarations of one element. `in_instance` tells that the element is
-/// part of a subtree a `use` element instantiates.
-///
-/// A font-relative stroke length that an element outside such a subtree
-/// declares is written in px at that element's font size. A renderer copies
-/// the text of an `inherit` and resolves it at the inheriting element, which
-/// has another font size when it is instantiated below the `use` element.
-/// Inside an instantiated subtree the length is left as written, so that each
-/// instance resolves it against its own font size.
+/// Where the declarations of an element are written.
+trait Declarations {
+    /// Takes `text` as the next part of the declarations. Says `false` when
+    /// the declarations cannot go on.
+    fn push(&mut self, text: &str) -> bool;
+}
+
+impl Declarations for String {
+    fn push(&mut self, text: &str) -> bool {
+        self.push_str(text);
+        true
+    }
+}
+
+/// Declarations that are checked against the text they must spell out
+/// instead of being kept. What is left of that text is the field.
+struct Expected<'a>(&'a str);
+
+impl Declarations for Expected<'_> {
+    fn push(&mut self, text: &str) -> bool {
+        match self.0.strip_prefix(text) {
+            Some(rest) => {
+                self.0 = rest;
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Writes the declaration `name: value !important`.
+fn push_declaration(out: &mut impl Declarations, name: &str, value: &str) -> bool {
+    out.push(name) && out.push(":") && out.push(value) && out.push("!important;")
+}
+
+/// The name and value that `property` declares for an element with `style`,
+/// or `None` when it declares nothing the renderer needs. A value that is
+/// computed is written to `scratch`.
+fn declared<'a>(
+    style: &'a ComputedValues,
+    property: &'a SvgStyleProperty,
+    scratch: &'a mut String,
+) -> Option<(&'static str, &'a str)> {
+    let name = match property.property {
+        PropertyKey::Color => "color",
+        PropertyKey::Display => "display",
+        PropertyKey::Opacity => "opacity",
+        PropertyKey::Visibility => "visibility",
+        PropertyKey::FontSize => "font-size",
+        PropertyKey::FontFamily => "font-family",
+        PropertyKey::FontStyle => "font-style",
+        PropertyKey::FontWeight => "font-weight",
+        key if key.is_svg_presentation() => svg_presentation_name(key),
+        _ => return None,
+    };
+    if property.inherited {
+        // SVG renderers such as usvg copy an ancestor's raw `font-size`
+        // for `inherit` and apply it again, compounding a relative size.
+        // `100%` has the same computed value without that copy.
+        let value = if property.property == PropertyKey::FontSize {
+            "100%"
+        } else {
+            "inherit"
+        };
+        return Some((name, value));
+    }
+    // The declared text wins over the computed value.
+    if let Some(expression) = &property.expression {
+        return Some((name, expression));
+    }
+    scratch.clear();
+    // Writing to a `String` cannot fail.
+    let _ = match property.property {
+        PropertyKey::Color => {
+            let color = style.color;
+            write!(
+                scratch,
+                "rgba({},{},{},{:.6})",
+                color.r,
+                color.g,
+                color.b,
+                f32::from(color.a) / 255.0
+            )
+        }
+        PropertyKey::Display => return Some((name, style.display.as_css_str())),
+        PropertyKey::Opacity => write!(scratch, "{}", style.opacity),
+        PropertyKey::Visibility => return Some((name, style.visibility.as_css_str())),
+        PropertyKey::FontSize => write!(scratch, "{}px", style.font_size.0),
+        PropertyKey::FontFamily => scratch.write_str(&svg_font_family(style)),
+        PropertyKey::FontStyle => return Some((name, style.font_style.as_css_str())),
+        PropertyKey::FontWeight => write!(scratch, "{}", style.font_weight),
+        // Held by the declaration alone: no computed field carries them.
+        _ => return None,
+    };
+    Some((name, scratch))
+}
+
+/// The declarations of one element, kept.
+#[cfg(test)]
 fn node_declarations(
     style: &ComputedValues,
     properties: &[SvgStyleProperty],
@@ -242,6 +428,38 @@ fn node_declarations(
     remaining_bytes: &mut usize,
 ) -> Result<String, String> {
     let mut css = String::new();
+    write_node_declarations(
+        style,
+        properties,
+        relative_attributes,
+        in_instance,
+        remaining_bytes,
+        &mut String::new(),
+        &mut css,
+    )?;
+    Ok(css)
+}
+
+/// Writes the declarations of one element to `out`, and says `false` when
+/// `out` stopped taking them. `in_instance` tells that the element is part of
+/// a subtree a `use` element instantiates, and `value` is room for computed
+/// values.
+///
+/// A font-relative stroke length that an element outside such a subtree
+/// declares is written in px at that element's font size. A renderer copies
+/// the text of an `inherit` and resolves it at the inheriting element, which
+/// has another font size when it is instantiated below the `use` element.
+/// Inside an instantiated subtree the length is left as written, so that each
+/// instance resolves it against its own font size.
+fn write_node_declarations(
+    style: &ComputedValues,
+    properties: &[SvgStyleProperty],
+    relative_attributes: &[SvgStyleProperty],
+    in_instance: bool,
+    remaining_bytes: &mut usize,
+    value: &mut String,
+    out: &mut impl Declarations,
+) -> Result<bool, String> {
     // Bound metadata before allocating repeated declarations from the host CSS.
     let mut consume = |bytes: usize| {
         *remaining_bytes = remaining_bytes
@@ -266,80 +484,23 @@ fn node_declarations(
             128
         };
         consume(size)?;
-        let (name, value) = if property.inherited {
-            let name = match property.property {
-                PropertyKey::Color => "color",
-                PropertyKey::Display => "display",
-                PropertyKey::Opacity => "opacity",
-                PropertyKey::Visibility => "visibility",
-                PropertyKey::FontSize => "font-size",
-                PropertyKey::FontFamily => "font-family",
-                PropertyKey::FontStyle => "font-style",
-                PropertyKey::FontWeight => "font-weight",
-                key if key.is_svg_presentation() => svg_presentation_name(key),
-                _ => continue,
-            };
-            // SVG renderers such as usvg copy an ancestor's raw `font-size`
-            // for `inherit` and apply it again, compounding a relative size.
-            // `100%` has the same computed value without that copy.
-            let value = if property.property == PropertyKey::FontSize {
-                "100%"
-            } else {
-                "inherit"
-            };
-            (name, value.to_owned())
-        } else {
-            match property.property {
-                PropertyKey::Color => {
-                    let color = style.color;
-                    (
-                        "color",
-                        format!(
-                            "rgba({},{},{},{:.6})",
-                            color.r,
-                            color.g,
-                            color.b,
-                            f32::from(color.a) / 255.0
-                        ),
-                    )
-                }
-                PropertyKey::Display => ("display", style.display.as_css_str().to_owned()),
-                PropertyKey::Opacity => ("opacity", style.opacity.to_string()),
-                PropertyKey::Visibility => ("visibility", style.visibility.as_css_str().to_owned()),
-                PropertyKey::FontSize => ("font-size", format!("{}px", style.font_size.0)),
-                PropertyKey::FontFamily => ("font-family", svg_font_family(style)),
-                PropertyKey::FontStyle => ("font-style", style.font_style.as_css_str().to_owned()),
-                PropertyKey::FontWeight => ("font-weight", style.font_weight.to_string()),
-                // Held by the declaration alone: no computed field carries them.
-                key if key.is_svg_presentation() => {
-                    let Some(value) = &property.expression else {
-                        continue;
-                    };
-                    (svg_presentation_name(key), value.clone())
-                }
-                _ => continue,
-            }
+        let Some((name, text)) = declared(style, property, value) else {
+            continue;
         };
-        let value = property
-            .expression
-            .as_ref()
-            .filter(|_| !property.inherited)
-            .unwrap_or(&value);
         let in_px = if in_instance || property.inherited {
             None
         } else {
-            resolve_relative_svg_presentation_value(property.property, value, style.font_size.0)
+            resolve_relative_svg_presentation_value(property.property, text, style.font_size.0)
         };
         if let Some(in_px) = &in_px {
             // The declaration and the text it was converted from are counted
             // above; the new text is built once and copied once.
             consume(in_px.len().saturating_mul(2))?;
         }
-        let value = in_px.as_ref().unwrap_or(value);
-        css.push_str(name);
-        css.push(':');
-        css.push_str(value);
-        css.push_str("!important;");
+        let text = in_px.as_deref().unwrap_or(text);
+        if !push_declaration(out, name, text) {
+            return Ok(false);
+        }
     }
     for attribute in relative_attributes {
         let Some(expression) = &attribute.expression else {
@@ -357,12 +518,11 @@ fn node_declarations(
                 .saturating_add(expression.len())
                 .saturating_add(value.len().saturating_mul(2)),
         )?;
-        css.push_str(svg_presentation_name(attribute.property));
-        css.push(':');
-        css.push_str(&value);
-        css.push_str("!important;");
+        if !push_declaration(out, svg_presentation_name(attribute.property), &value) {
+            return Ok(false);
+        }
     }
-    Ok(css)
+    Ok(true)
 }
 
 fn resolve_relative_svg_presentation_value(
@@ -373,12 +533,19 @@ fn resolve_relative_svg_presentation_value(
     if !font_size.is_finite() {
         return None;
     }
+    // Most lengths are absolute and need no new text.
     match property {
         PropertyKey::StrokeWidth | PropertyKey::StrokeDashoffset => {
+            if !is_font_relative(expression) {
+                return None;
+            }
             let (value, changed) = resolve_relative_svg_length(expression, font_size)?;
             changed.then_some(value)
         }
         PropertyKey::StrokeDasharray => {
+            if !expression.split_ascii_whitespace().any(is_font_relative) {
+                return None;
+            }
             let mut changed = false;
             let values = expression
                 .split_ascii_whitespace()
@@ -392,6 +559,11 @@ fn resolve_relative_svg_presentation_value(
         }
         _ => None,
     }
+}
+
+/// Whether the length `value` is in `em` or `ex`.
+fn is_font_relative(value: &str) -> bool {
+    value.ends_with("em") || value.ends_with("ex")
 }
 
 fn resolve_relative_svg_length(value: &str, font_size: f32) -> Option<(String, bool)> {
