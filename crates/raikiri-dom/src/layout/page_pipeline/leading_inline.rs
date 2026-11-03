@@ -37,18 +37,17 @@ pub(super) fn assign(
     let mut removed = HashSet::new();
     let mut delegated = HashSet::new();
     for root in roots {
-        let Some(ifc) = document
+        let ifc = document
             .ifc_layout_node(root)
             .and_then(|node| node.ifc.as_ref())
-        else {
-            continue;
-        };
+            .expect("completed IFC root of a qualified atomic");
         if ifc.multicol_fragments.is_some() {
             continue;
         }
-        let Some(lines) = ifc.lines.as_ref() else {
-            continue;
-        };
+        let lines = ifc
+            .lines
+            .as_ref()
+            .expect("qualified atomic has shaped lines");
         for (line, shaped) in lines.lines.iter().enumerate() {
             control.check_aborted()?;
             let atoms: Vec<usize> = shaped
@@ -92,14 +91,12 @@ pub(super) fn assign(
                 }
                 continue;
             }
-            let Some(index) = atoms
+            let index = atoms
                 .iter()
                 .filter_map(|node| indexes.get(node))
                 .min()
                 .copied()
-            else {
-                continue;
-            };
+                .expect("a qualified atomic is an existing candidate");
             if let candidates::BoxContext::Element { attributes, .. } =
                 &mut candidates[index].context
             {

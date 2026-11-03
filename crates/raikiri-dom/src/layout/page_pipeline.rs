@@ -3542,7 +3542,7 @@ fn layout_pages_core(
     }
     // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
     Err(LayoutError::Internal {
-        message: "page layout did not stabilize".to_string(),
+        message: "page float resumption did not stabilize".to_string(),
     })
 }
 

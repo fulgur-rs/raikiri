@@ -1451,3 +1451,163 @@ fn a_spanning_first_piece_replans_following_groups_and_survives_relayout() {
         layout_pages(&mut doc, &styles, page).unwrap();
     }
 }
+
+#[test]
+fn a_pending_break_after_moves_a_delegated_atomic_line_together() {
+    let (mut first, mut wrapper, mut child, mut suffix) = (0, 0, 0, 0);
+    let (doc, pages) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:60px;break-after:page");
+        first = block(
+            doc,
+            body,
+            "display:inline-block;vertical-align:top;width:40px;height:10px",
+        );
+        wrapper = block(
+            doc,
+            body,
+            "display:inline-block;vertical-align:top;width:60px;padding-top:6px",
+        );
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        doc.append_element(Some(body), "br", None::<&str>);
+        suffix = doc.append_text(body, "q");
+    });
+    assert_eq!(
+        [first, wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [100.0, 100.0, 106.0]
+    );
+    assert_eq!(pages, 2);
+    let text = doc.ifc_text_lines(suffix).unwrap();
+    let top = page_flow_y(&doc, text.root) + text.lines[0].top;
+    assert!((126.0..200.0).contains(&top));
+}
+
+#[test]
+fn a_delegated_atomic_line_after_text_keeps_earlier_text_on_its_page() {
+    let (mut root, mut wrapper, mut child) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:80px");
+        root = block(
+            doc,
+            body,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;orphans:1;widows:1",
+        );
+        doc.append_text(root, "p");
+        doc.append_element(Some(root), "br", None::<&str>);
+        wrapper = block(doc, root, "display:inline-block;width:30px;padding-top:6px");
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        doc.append_text(child, "z");
+        doc.append_element(Some(root), "br", None::<&str>);
+        doc.append_text(root, "q");
+    });
+    assert_eq!(
+        [root, wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [80.0, 100.0, 106.0]
+    );
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap();
+    assert_eq!(lines.line_top(0), 0.0);
+    assert_eq!(lines.line_top(1), 20.0);
+    assert_eq!(lines.line_top(2), 46.0);
+}
+
+#[test]
+fn a_column_fragmented_paragraph_keeps_leading_atomics_in_their_columns() {
+    use raikiri_traits::PageBox;
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;width:100px"),
+    );
+    block(&mut doc, body, "display:block;height:60px");
+    let columns = block(
+        &mut doc,
+        body,
+        "display:block;columns:2;column-gap:0;height:40px;font-family:Ahem;font-size:10px;line-height:10px",
+    );
+    for text in ["z", "q"] {
+        let atomic = block(
+            &mut doc,
+            columns,
+            "display:inline-block;width:30px;padding-top:6px",
+        );
+        let child = block(
+            &mut doc,
+            atomic,
+            "display:block;height:20px;break-inside:avoid",
+        );
+        doc.append_text(child, text);
+    }
+    doc.mark_in_document_flags();
+    let styles = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &styles, page).unwrap();
+    assert!(
+        doc.nodes[columns]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .multicol_fragments
+            .is_some()
+    );
+    assert_eq!(pages.len(), 1);
+    doc.project_pages(&styles, page, &pages, &[]).unwrap();
+    let runs = doc.page_text_runs(&styles, 0);
+    let positions: Vec<_> = ["z", "q"]
+        .map(|text| runs.iter().find(|run| run.text == text).unwrap().origin)
+        .into();
+    assert_eq!(positions, [(0.0, 74.0), (50.0, 74.0)]);
+}
+
+#[test]
+fn a_delegated_tall_atomic_line_reports_a_page_limit_error() {
+    use raikiri_traits::PageBox;
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;width:100px"),
+    );
+    block(&mut doc, body, "display:block;height:60px");
+    let atomic = block(
+        &mut doc,
+        body,
+        "display:inline-block;width:100px;padding-top:6px",
+    );
+    block(
+        &mut doc,
+        atomic,
+        "display:block;height:20px;break-inside:avoid",
+    );
+    block(&mut doc, atomic, "display:block;height:120px");
+    doc.mark_in_document_flags();
+    let styles = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let control = PageLayoutControl::new(Some(2));
+    let result = layout_pages_with_options(
+        &mut doc,
+        &styles,
+        page,
+        PageLayoutOptions {
+            control: Some(&control),
+            ..Default::default()
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(LayoutError::PageLimitExceeded { limit: 2, .. })
+    ));
+}
