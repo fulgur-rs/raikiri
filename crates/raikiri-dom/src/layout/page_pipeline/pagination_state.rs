@@ -1907,10 +1907,9 @@ impl PaginationState {
                     });
                 // A kept margin already consumes the opening break. Preserve
                 // a line that fits instead of breaking before that margin again.
-                let can_move_block = !moved_whole
-                    && !(retained_margin_opens_page
-                        && lines_can_move
-                        && line_fit.lines_before_break > 0)
+                let keep_first_fragment =
+                    retained_margin_opens_page && lines_can_move && line_fit.lines_before_break > 0;
+                let can_move_block = !(moved_whole || keep_first_fragment)
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
