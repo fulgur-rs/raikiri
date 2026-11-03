@@ -16496,6 +16496,27 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     );
 }
 
+fn paragraph_line_moves(
+    lines: &[(f32, f32)],
+    effective_y: f32,
+    page: u32,
+    orphans: usize,
+    widows: usize,
+    tail_edges: f32,
+    pages: &PageOrigins,
+) -> Vec<LineBreakMove> {
+    let fit = ParagraphLineFit::measure(
+        lines,
+        effective_y,
+        pages.origin(page),
+        pages.page_end(page),
+        i32::try_from(orphans).unwrap(),
+        i32::try_from(widows).unwrap(),
+        tail_edges,
+    );
+    super::paragraph_line_moves(lines, effective_y, page, &fit, pages)
+}
+
 #[test]
 fn paragraph_line_moves_start_each_page_with_the_line_that_does_not_fit() {
     let pages = PageOrigins::new(&[], 100.0);
