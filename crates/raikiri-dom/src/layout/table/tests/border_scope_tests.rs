@@ -154,6 +154,7 @@ fn border_scope_in_place_panic_restores_remaining() {
                         &mut grid,
                         &[30.0, 30.0, 30.0],
                         (0.0, 0.0),
+                        None,
                     )
                 })
             })

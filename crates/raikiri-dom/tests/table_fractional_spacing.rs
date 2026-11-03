@@ -53,8 +53,16 @@ fn boxes(body: &str, scale: Option<f32>) -> Vec<(String, [f32; 4])> {
 
 #[test]
 fn raster_table_spacing_matches_chromium() {
-    let data: serde_json::Value =
-        serde_json::from_str(include_str!("data/table-fractional-spacing.json")).expect("oracle");
+    check_table_oracle(include_str!("data/table-fractional-spacing.json"));
+}
+
+#[test]
+fn vertical_rows_keep_their_own_block_extents_and_positions() {
+    check_table_oracle(include_str!("data/table-vertical-rows.json"));
+}
+
+fn check_table_oracle(source: &str) {
+    let data: serde_json::Value = serde_json::from_str(source).expect("oracle");
     let mut mismatches = Vec::new();
     for case in data["cases"].as_array().expect("cases") {
         let scale = case["device_scale"].as_f64().expect("scale") as f32;

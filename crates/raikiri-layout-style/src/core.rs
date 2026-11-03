@@ -131,7 +131,7 @@ impl LayoutStyleView<'_> {
     #[inline]
     pub fn size(&self) -> Size<Dimension> {
         self.size_axes(
-            self.length(LengthProperty::Width).dimension(),
+            self.library_width(LengthProperty::Width).dimension(),
             self.library_height(LengthProperty::Height).dimension(),
         )
     }
@@ -145,14 +145,17 @@ impl LayoutStyleView<'_> {
         } else {
             self.library_height(LengthProperty::MinHeight).auto(false)
         };
-        let min = self.size_axes(self.length(LengthProperty::MinWidth).auto(false), height);
+        let min = self.size_axes(
+            self.library_width(LengthProperty::MinWidth).auto(false),
+            height,
+        );
         self.with_held_cross_size(min, |held| held.min)
     }
     /// The maximum size.
     #[inline]
     pub fn max_size(&self) -> Size<LengthPercentageAuto> {
         let max = self.size_axes(
-            self.length(LengthProperty::MaxWidth).auto(false),
+            self.library_width(LengthProperty::MaxWidth).auto(false),
             self.library_height(LengthProperty::MaxHeight).auto(false),
         );
         self.with_held_cross_size(max, |held| held.max)
@@ -170,7 +173,7 @@ impl LayoutStyleView<'_> {
             return limit;
         };
         let stated = self.size_axes(
-            self.length(LengthProperty::Width).auto(false),
+            self.library_width(LengthProperty::Width).auto(false),
             self.library_height(LengthProperty::Height).auto(false),
         );
         match held.axis {
@@ -182,9 +185,12 @@ impl LayoutStyleView<'_> {
     /// The preferred aspect ratio after projection into the returned axes.
     #[inline]
     pub fn aspect_ratio(&self) -> Option<f32> {
-        // The measured table supplies this height; a width-to-height ratio
-        // transfer must not replace it before measurement.
-        if self.table_owns_stretch_height() || self.collapsing_table_height {
+        // The measured table supplies its owned size; a ratio transfer must
+        // not replace that size before measurement.
+        if self.table_owns_stretch_height()
+            || self.collapsing_table_height
+            || self.collapsing_table_width
+        {
             return None;
         }
         if matches!(
