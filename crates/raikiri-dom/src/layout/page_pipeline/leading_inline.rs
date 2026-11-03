@@ -136,7 +136,8 @@ pub(super) fn bounds(document: &Document, owner: LeadingInlineLine) -> (f32, f32
     let top = current_abs_y(document, owner.root)
         + node.layout.border.top
         + node.layout.padding.top
-        + lines.line_top(owner.line);
+        + lines.line_top(owner.line)
+        - crate::layout::ifc::outside_marker::fit_leading(document, owner.root, owner.line);
     let height = crate::layout::ifc::outside_marker::fit_height(&lines.lines[owner.line]);
     (top, height)
 }
