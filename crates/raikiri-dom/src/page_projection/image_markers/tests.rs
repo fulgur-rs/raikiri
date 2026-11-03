@@ -790,3 +790,88 @@ fn multicol_marker_alignment_respects_padding_and_preceding_content() {
         );
     }
 }
+
+#[test]
+fn a_plain_text_item_applies_marker_leading_only_to_its_first_line() {
+    let (doc, cascade, owner) = fixture_with_page(0, 30, 300.0, |doc, owner| {
+        let prefix = doc.nodes[owner].children[0];
+        doc.detach_from_parent(prefix);
+        doc.append_element(Some(owner), "br", None::<&str>);
+        doc.append_text(owner, "q");
+    });
+    let runs = doc.page_text_runs(&cascade, 0);
+    assert_eq!(
+        runs.iter()
+            .find(|run| run.text.contains('z'))
+            .unwrap()
+            .origin
+            .1,
+        30.0
+    );
+    assert_eq!(
+        runs.iter()
+            .find(|run| run.text.contains('q'))
+            .unwrap()
+            .origin
+            .1,
+        60.0
+    );
+    let root = doc.nodes[owner].ifc.as_ref().unwrap();
+    assert!(root.boxes.is_empty());
+    let lines = &root.lines.as_ref().unwrap().lines;
+    assert_eq!(lines[0].block_start_leading(), 9.0);
+    assert_eq!(lines[1].block_start_leading(), 0.0);
+}
+
+#[test]
+fn a_leading_child_consumes_the_marker_before_its_parents_later_text() {
+    for style in ["display:block", "display:flow-root"] {
+        let (doc, cascade, owner) = fixture_with_page(65, 30, 300.0, |doc, owner| {
+            let text = *doc.nodes[owner].children.last().unwrap();
+            doc.detach_from_parent(text);
+            let child = doc.append_element(Some(owner), "div", Some(style));
+            doc.append_text(child, "z");
+            doc.append_text(owner, "q");
+        });
+        let child = doc.nodes[owner].children[1];
+        let runs = doc.page_text_runs(&cascade, 0);
+        assert_eq!(
+            runs.iter()
+                .find(|run| run.text.contains('z'))
+                .unwrap()
+                .origin
+                .1,
+            95.0,
+            "{style}"
+        );
+        assert_eq!(
+            runs.iter()
+                .find(|run| run.text.contains('q'))
+                .unwrap()
+                .origin
+                .1,
+            125.0,
+            "{style}"
+        );
+        assert_eq!(doc.nodes[child].layout.location.y, 74.0, "{style}");
+        assert_eq!(doc.nodes[child].layout.size.height, 30.0, "{style}");
+        assert_eq!(
+            doc.page_marker_image(0, NodeId::new(owner as u64))
+                .unwrap()
+                .1
+                .y,
+            65.0,
+            "{style}"
+        );
+        let lines = &doc.nodes[owner]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ref()
+            .unwrap()
+            .lines;
+        assert_eq!(lines.len(), 1, "{style}");
+        assert_eq!(lines[0].block_start_leading(), 0.0, "{style}");
+    }
+}
