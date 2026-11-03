@@ -1732,7 +1732,7 @@ fn is_empty_closure(
     if line.is_empty() && line.block_size() == 0.0 {
         return true;
     }
-    if root.writing_mode != WritingMode::HorizontalTb {
+    if root.writing_mode != WritingMode::HorizontalTb || holds_unseen_text(line) {
         return false;
     }
     let mut vertical_edge = false;
@@ -1747,6 +1747,17 @@ fn is_empty_closure(
         _ => false,
     });
     only_boxes && vertical_edge
+}
+
+/// Whether the text of `line` has a character that makes no glyph, such as a
+/// hidden soft hyphen. It is text all the same and keeps the line: shodo has
+/// no fragment for it, so the fragments of the line say nothing. An anchor of
+/// an out-of-flow box stands in the text as U+FFFC and is not such a
+/// character.
+fn holds_unseen_text(line: &shodo::Line) -> bool {
+    line.text()
+        .get(line.text_range())
+        .is_some_and(|text| text.chars().any(|c| c != '\u{fffc}'))
 }
 
 /// Whether the inline box `node` has a padding or border on its top or bottom

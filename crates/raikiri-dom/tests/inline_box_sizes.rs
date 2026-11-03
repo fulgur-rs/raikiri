@@ -604,3 +604,79 @@ fn empty_vertical_atomic_and_orthogonal_inlines_keep_their_sizes() {
         }
     }
 }
+
+/// A block of 10px, then `rest`, in a container.
+fn after_a_block(rest: &str) -> String {
+    in_container(&format!(r#"<div style="height:10px"></div>{rest}"#), "")
+}
+
+#[test]
+fn a_hidden_soft_hyphen_keeps_its_line_whatever_vertical_edges_its_inline_box_has() {
+    for style in [
+        "padding-top:5px",
+        "padding-bottom:5px",
+        "border-top:5px solid",
+        "border-bottom:5px solid",
+    ] {
+        // Alone, and after a block.
+        check(
+            &in_container(&format!(r#"<span style="{style}">&shy;</span>"#), ""),
+            &container_height(10.0),
+        );
+        check(
+            &after_a_block(&format!(r#"<span style="{style}">&shy;</span>"#)),
+            &container_height(20.0),
+        );
+        // Around a block, and inside another inline box.
+        check(
+            &in_container(
+                &format!(r#"<span style="{style}"><div style="height:10px"></div>&shy;</span>"#),
+                "",
+            ),
+            &container_height(20.0),
+        );
+        check(
+            &after_a_block(&format!(
+                r#"<span style="{style}"><span>&shy;</span></span>"#
+            )),
+            &container_height(20.0),
+        );
+        // The line after it keeps its place.
+        check(
+            &after_a_block(&format!(
+                r#"<span style="{style}">&shy;</span><div style="height:10px"></div>"#
+            )),
+            &container_height(30.0),
+        );
+    }
+}
+
+#[test]
+fn only_text_that_is_kept_makes_the_line_of_an_inline_box_with_a_vertical_edge() {
+    let style = "padding-top:5px";
+    // Collapsible white space and an out-of-flow box make no line.
+    for rest in [
+        r#"<span style="padding-top:5px"> </span>"#,
+        r#" <span style="padding-top:5px"> </span> "#,
+        r#"<span style="padding-top:5px"><span style="position:absolute"></span></span>"#,
+    ] {
+        check(&after_a_block(rest), &container_height(10.0));
+    }
+    // Any other text does, even when it draws nothing.
+    for text in [
+        "&#8203;",
+        "&nbsp;",
+        " &shy; ",
+        r#"<span style="position:absolute"></span>&shy;"#,
+        r#"<span style="float:left"></span>&shy;"#,
+    ] {
+        check(
+            &after_a_block(&format!(r#"<span style="{style}">{text}</span>"#)),
+            &container_height(20.0),
+        );
+    }
+    check(
+        &after_a_block(r#"<span style="padding-top:5px;white-space:pre"> </span>"#),
+        &container_height(20.0),
+    );
+}
