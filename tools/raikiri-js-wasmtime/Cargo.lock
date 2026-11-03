@@ -1840,10 +1840,11 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raikiri-dom"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bitflags",
  "cssparser",
+ "icu_properties",
  "raikiri-layout-geometry",
  "raikiri-layout-style",
  "raikiri-style",
@@ -1862,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-js"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -1925,11 +1926,11 @@ dependencies = [
 
 [[package]]
 name = "raikiri-layout-geometry"
-version = "0.0.6"
+version = "0.0.7"
 
 [[package]]
 name = "raikiri-layout-style"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "raikiri-layout-geometry",
  "raikiri-style",
@@ -1938,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-style"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "cssparser",
  "precomputed-hash",
@@ -1950,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-traits"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bytes",
  "libc",
@@ -2379,9 +2380,9 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.15.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c8480887e8803986d96a7173729565520d4bbb721ad6b7ad6941a22897207aa"
+checksum = "31f7bd2d97198df05186f93a3a3c306845f40e8b3c22bf9279cdd7e5cf5fea7d"
 dependencies = [
  "serde",
  "slotmap",
