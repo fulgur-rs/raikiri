@@ -953,7 +953,13 @@ impl PaginationState {
             && collapses_with_previous_block
             && !document.nodes[node_id].used_writing_mode.is_vertical()
         {
-            own_margin_top + collapsed_start_margin_gain(document, cascade, node_id)
+            own_margin_top
+                + collapsed_start_margin_gain(
+                    document,
+                    cascade,
+                    node_id,
+                    &avoided_breaks.clearance_free,
+                )
         } else {
             own_margin_top
         };

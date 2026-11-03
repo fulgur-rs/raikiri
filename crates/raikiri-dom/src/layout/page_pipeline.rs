@@ -6183,7 +6183,7 @@ fn adjoining_margin(
     id: usize,
     start: bool,
 ) -> f32 {
-    adjoining_margin_extremes(document, cascade, id, start).0
+    adjoining_margin_extremes(document, cascade, id, start, None).0
 }
 
 /// The largest positive margin and the most negative one (zero when there is
@@ -6199,6 +6199,7 @@ fn adjoining_margin_extremes(
     cascade: &CascadeResult,
     id: usize,
     start: bool,
+    clearance_free: Option<&margin_clearance::ClearanceFree>,
 ) -> (f32, f32) {
     let layout = &document.nodes[id].layout;
     let margin = if start {
@@ -6235,9 +6236,11 @@ fn adjoining_margin_extremes(
         } else {
             child_layout.location.y + child_layout.size.height >= layout.size.height - 0.001
         };
-        // A box that clears a float may have been put below it, which keeps
-        // its margin from adjoining this edge once an earlier box is there.
-        let clears = cascade.computed[child].clear != ClearValue::None;
+        // A box with used clearance may have been put below a float, which
+        // keeps its margin from adjoining this edge once an earlier box is
+        // there. Use facts from before pagination moved the floats.
+        let clears = cascade.computed[child].clear != ClearValue::None
+            && !clearance_free.is_some_and(|facts| facts.contains(child));
         if document.nodes[child].kind() != NodeKind::Element
             || document.nodes[child].display().is_inline_level()
             || !touches
@@ -6256,7 +6259,7 @@ fn adjoining_margin_extremes(
             continue;
         }
         let (child_positive, child_negative) =
-            adjoining_margin_extremes(document, cascade, child, start);
+            adjoining_margin_extremes(document, cascade, child, start, clearance_free);
         positive = positive.max(child_positive);
         negative = negative.min(child_negative);
         break;
@@ -6430,8 +6433,10 @@ fn collapsed_start_margin_gain(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     id: usize,
+    clearance_free: &margin_clearance::ClearanceFree,
 ) -> f32 {
-    let (positive, negative) = adjoining_margin_extremes(document, cascade, id, true);
+    let (positive, negative) =
+        adjoining_margin_extremes(document, cascade, id, true, Some(clearance_free));
     positive + negative - document.nodes[id].layout.margin.top
 }
 
