@@ -5581,6 +5581,24 @@ fn leading_holder(
     node_id: usize,
     edges: bool,
 ) -> (usize, f32) {
+    leading_holder_with(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        edges,
+        renders_before_child,
+    )
+}
+
+fn leading_holder_with(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    edges: bool,
+    mut renders_before: impl FnMut(&Document, usize, usize) -> bool,
+) -> (usize, f32) {
     if has_unusual_coordinates(document, node_id) {
         return (node_id, 0.0);
     }
@@ -5591,7 +5609,7 @@ fn leading_holder(
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before_child(document, ancestor, child) {
+        if renders_before(document, ancestor, child) {
             break;
         }
         child = ancestor;
@@ -6319,6 +6337,17 @@ fn adjoining_margin_extremes(
     start: bool,
     clearance_free: Option<&margin_clearance::ClearanceFree>,
 ) -> (f32, f32) {
+    adjoining_margin_extremes_with_coordinates(document, cascade, id, start, clearance_free, None)
+}
+
+fn adjoining_margin_extremes_with_coordinates(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+    start: bool,
+    clearance_free: Option<&margin_clearance::ClearanceFree>,
+    flow_root: Option<usize>,
+) -> (f32, f32) {
     let layout = &document.nodes[id].layout;
     let margin = if start {
         layout.margin.top
@@ -6349,10 +6378,14 @@ fn adjoining_margin_extremes(
         // The child's margin adjoins only when its border box touches this
         // box's content edge, which a used height or a line before it would
         // prevent.
+        // A carried forced holder measures contact before relative offsets.
+        let child_y = flow_root.map_or(child_layout.location.y, |root| {
+            normal_flow_y(document, cascade, root, child)
+        });
         let touches = if start {
-            child_layout.location.y <= 0.001
+            child_y <= 0.001
         } else {
-            child_layout.location.y + child_layout.size.height >= layout.size.height - 0.001
+            child_y + child_layout.size.height >= layout.size.height - 0.001
         };
         // A box with used clearance may have been put below a float, which
         // keeps its margin from adjoining this edge once an earlier box is
@@ -6376,8 +6409,14 @@ fn adjoining_margin_extremes(
             negative = negative.min(child_negative);
             continue;
         }
-        let (child_positive, child_negative) =
-            adjoining_margin_extremes(document, cascade, child, start, clearance_free);
+        let (child_positive, child_negative) = adjoining_margin_extremes_with_coordinates(
+            document,
+            cascade,
+            child,
+            start,
+            clearance_free,
+            flow_root,
+        );
         positive = positive.max(child_positive);
         negative = negative.min(child_negative);
         break;
@@ -6555,6 +6594,26 @@ fn collapsed_start_margin_gain(
 ) -> f32 {
     let (positive, negative) =
         adjoining_margin_extremes(document, cascade, id, true, Some(clearance_free));
+    positive + negative - document.nodes[id].layout.margin.top
+}
+
+/// The collapsed start gain of a carried forced holder in normal flow.
+/// Relative offsets do not separate margins that adjoin before painting.
+fn collapsed_start_margin_gain_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    id: usize,
+    clearance_free: &margin_clearance::ClearanceFree,
+) -> f32 {
+    let (positive, negative) = adjoining_margin_extremes_with_coordinates(
+        document,
+        cascade,
+        id,
+        true,
+        Some(clearance_free),
+        Some(body_id),
+    );
     positive + negative - document.nodes[id].layout.margin.top
 }
 
@@ -10517,6 +10576,15 @@ fn move_line_block(
     (delta, consumed)
 }
 
+/// A validated first-child forced boundary that carries its plain holder.
+#[derive(Clone, Copy)]
+struct ForcedBreakHolder {
+    node: usize,
+    lead: f32,
+    margin_top: f32,
+    direct_body: bool,
+}
+
 /// How far a page transition moved a box and why.
 struct TransitionMove {
     /// How far the box itself moves down.
@@ -10530,6 +10598,8 @@ struct TransitionMove {
     /// The box that moves down, which is the candidate or the outermost
     /// ancestor that starts with it (see [`leading_holder`]).
     holder: usize,
+    /// The explicitly forced first-child boundary that chose this holder.
+    forced_holder: Option<ForcedBreakHolder>,
 }
 
 /// Moves the box `candidate` down by `moved.node_delta` for a page
@@ -10555,14 +10625,15 @@ fn move_box_for_transition(
         page_overflow,
         forced_transition,
         holder,
+        forced_holder,
     } = *moved;
     debug_assert!(
         is_descendant_or_self(document, node_id, holder),
         "the box that moves holds the candidate"
     );
     debug_assert!(
-        holder == node_id || (page_overflow && !forced_transition),
-        "only a box that moves for the page edge takes its ancestors along"
+        holder == node_id || forced_holder.is_some() || (page_overflow && !forced_transition),
+        "an ancestor moves for a page edge or its first child forced boundary"
     );
     document.nodes[holder].layout.location.y += node_delta;
     let followed_ifc_boxes = follow_moved_ifc_block(document, holder, node_delta);
@@ -10573,10 +10644,11 @@ fn move_box_for_transition(
     let mut moved_in_bounded_ancestor = false;
     let moves_in_flow_down =
         node_delta > 0.0 && !is_floating_box_for_pagination(document, cascade, node_id);
-    let nested_block = !candidate.context.is_direct_body_element() && moves_in_flow_down;
-    if (page_overflow || (forced_transition && candidate.context.is_direct_body_element()))
-        && moves_in_flow_down
-    {
+    let direct_body = forced_holder.map_or(candidate.context.is_direct_body_element(), |owner| {
+        owner.direct_body
+    });
+    let nested_block = !direct_body && moves_in_flow_down;
+    if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
         moved_in_bounded_ancestor = grow_ancestors_for_shift(
             document,
             cascade,
@@ -10598,7 +10670,12 @@ fn move_box_for_transition(
         // flow follow it, up to the first ancestor that does not stack its
         // children in block order. A box pulled back over the break by a
         // negative margin still leaves the flow after it at the break.
-        shift_block_flow_after(document, node_id, body_id, node_delta.max(shift_delta));
+        let following_delta = if forced_holder.is_some() {
+            node_delta
+        } else {
+            node_delta.max(shift_delta)
+        };
+        shift_block_flow_after(document, holder, body_id, following_delta);
     }
     moved_in_bounded_ancestor
 }
