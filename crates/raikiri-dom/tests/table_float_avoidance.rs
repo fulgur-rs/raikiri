@@ -364,6 +364,286 @@ fn an_auto_width_table_that_fits_beside_the_float_with_a_left_float() {
 }
 
 #[test]
+fn an_auto_width_table_shrinks_a_cells_preferred_width_to_the_float_slot() {
+    for side in ["left", "right"] {
+        for content in ["", "<div style=\"width:80px;height:10px\"></div>"] {
+            let float_x = if side == "left" { 0.0 } else { 100.0 };
+            let table_x = if side == "left" { 100.0 } else { 0.0 };
+            let table = format!(
+                "<table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0;width:150px;height:10px\">{content}</td></tr></table>"
+            );
+            check_horizontal(
+                side,
+                &table,
+                [
+                    (float_x, 0.0, 100.0, 100.0),
+                    (table_x, 0.0, 100.0, 10.0),
+                    (0.0, 10.0, 200.0, 5.0),
+                    (0.0, 0.0, 200.0, 15.0),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_cells_unbreakable_content_keeps_the_table_below_a_narrow_float_slot() {
+    for side in ["left", "right"] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        check_horizontal(
+            side,
+            "<table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0;width:150px\"><div style=\"width:150px;height:10px\"></div></td></tr></table>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (0.0, 100.0, 150.0, 10.0),
+                (0.0, 110.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 115.0),
+            ],
+        );
+    }
+}
+
+#[test]
+fn spanning_content_preserves_the_preferred_column_distribution() {
+    for side in ["left", "right"] {
+        for (second_style, first_width, second_width) in
+            [("", 150.0, 50.0), ("width:150px", 100.0, 100.0)]
+        {
+            let body = format!(
+                "<div id=o style=\"width:200px\">\
+                 <div style=\"float:{side};width:100px;height:100px\"></div>\
+                 <table id=k style=\"border-spacing:0\"><tr>\
+                 <td id=a style=\"padding:0;width:150px;height:10px\"></td>\
+                 <td id=b style=\"padding:0;height:10px;{second_style}\"></td></tr>\
+                 <tr><td colspan=2 style=\"padding:0\">\
+                 <div style=\"width:200px;height:10px\"></div></td></tr></table>\
+                 <div id=after style=\"height:5px\"></div></div>"
+            );
+            compare(
+                &body,
+                &[
+                    ("k", (0.0, 100.0, 200.0, 20.0)),
+                    ("a", (0.0, 100.0, first_width, 10.0)),
+                    ("b", (first_width, 100.0, second_width, 10.0)),
+                    ("after", (0.0, 120.0, 200.0, 5.0)),
+                    ("o", (0.0, 0.0, 200.0, 125.0)),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_spanning_minimum_fills_length_preferences_before_auto_columns() {
+    for side in ["left", "right"] {
+        for table_style in ["", "width:min-content"] {
+            for (text, row_height) in [("X X X X X", 20.0), ("X X X X X X X X X X", 40.0)] {
+                let body = format!(
+                    "<div id=o style=\"width:200px\">\
+                     <div style=\"float:{side};width:100px;height:100px\"></div>\
+                     <table id=k style=\"border-spacing:0;{table_style}\"><tr>\
+                     <td id=a style=\"padding:0;height:10px;width:150px\"></td>\
+                     <td id=b style=\"padding:0;height:10px\">{text}</td></tr>\
+                     <tr><td colspan=2 style=\"padding:0\">\
+                     <div style=\"width:200px;height:10px\"></div></td></tr></table>\
+                     <div id=after style=\"height:5px\"></div></div>"
+                );
+                compare(
+                    &body,
+                    &[
+                        ("k", (0.0, 100.0, 200.0, row_height + 10.0)),
+                        ("a", (0.0, 100.0, 150.0, row_height)),
+                        ("b", (150.0, 100.0, 50.0, row_height)),
+                        ("after", (0.0, 110.0 + row_height, 200.0, 5.0)),
+                        ("o", (0.0, 0.0, 200.0, 115.0 + row_height)),
+                    ],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_empty_spanning_cell_can_shrink_its_preferred_width() {
+    for (side, table_x) in [("left", 100.0), ("right", 0.0)] {
+        for (first_style, first_width, second_width) in
+            [("width:150px", 100.0, 0.0), ("", 50.0, 50.0)]
+        {
+            let body = format!(
+                "<div id=o style=\"width:200px\">\
+                 <div style=\"float:{side};width:100px;height:100px\"></div>\
+                 <table id=k style=\"border-spacing:0\"><tr>\
+                 <td id=a style=\"padding:0;height:10px;{first_style}\"></td>\
+                 <td id=b style=\"padding:0;height:10px\"></td></tr>\
+                 <tr><td colspan=2 style=\"padding:0;width:150px;height:10px\"></td></tr></table>\
+                 <div id=after style=\"height:5px\"></div></div>"
+            );
+            compare(
+                &body,
+                &[
+                    ("k", (table_x, 0.0, 100.0, 20.0)),
+                    ("a", (table_x, 0.0, first_width, 10.0)),
+                    ("b", (table_x + first_width, 0.0, second_width, 10.0)),
+                    ("after", (0.0, 20.0, 200.0, 5.0)),
+                    ("o", (0.0, 0.0, 200.0, 25.0)),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn cell_lengths_and_percentages_share_a_narrow_float_slot() {
+    for (side, table_x) in [("left", 100.0), ("right", 0.0)] {
+        let body = format!(
+            "<div id=o style=\"width:200px\">\
+             <div style=\"float:{side};width:100px;height:100px\"></div>\
+             <table id=k style=\"border-spacing:0\"><tr>\
+             <td id=a style=\"padding:0;height:10px;width:150px\"></td>\
+             <td id=b style=\"padding:0;height:10px;width:50%\"></td></tr></table>\
+             <div id=after style=\"height:5px\"></div></div>"
+        );
+        compare(
+            &body,
+            &[
+                ("k", (table_x, 0.0, 100.0, 10.0)),
+                ("a", (table_x, 0.0, 50.0, 10.0)),
+                ("b", (table_x + 50.0, 0.0, 50.0, 10.0)),
+                ("after", (0.0, 10.0, 200.0, 5.0)),
+                ("o", (0.0, 0.0, 200.0, 15.0)),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_column_width_and_fixed_layout_cell_width_remain_minimums() {
+    for side in ["left", "right"] {
+        for table in [
+            "<table id=k style=\"border-spacing:0\"><col style=\"width:150px\"><tr><td style=\"padding:0;height:10px\"></td></tr></table>",
+            "<table id=k style=\"border-spacing:0;table-layout:fixed;width:50px\"><tr><td style=\"padding:0;width:150px;height:10px\"></td></tr></table>",
+            "<table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0;width:150px;min-width:120px;height:10px\"></td></tr></table>",
+        ] {
+            let float_x = if side == "left" { 0.0 } else { 100.0 };
+            check_horizontal(
+                side,
+                table,
+                [
+                    (float_x, 0.0, 100.0, 100.0),
+                    (0.0, 100.0, 150.0, 10.0),
+                    (0.0, 110.0, 200.0, 5.0),
+                    (0.0, 0.0, 200.0, 115.0),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_cell_minimum_wins_over_a_conflicting_maximum() {
+    for side in ["left", "right"] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        check_horizontal(
+            side,
+            "<table id=k style=\"border-spacing:0\"><tr><td style=\"padding:0;height:10px;width:150px;min-width:120px;max-width:80px\"></td></tr></table>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (0.0, 100.0, 120.0, 10.0),
+                (0.0, 110.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 115.0),
+            ],
+        );
+    }
+}
+
+#[test]
+fn cell_edges_survive_while_a_preferred_width_shrinks() {
+    for side in ["left", "right"] {
+        for (box_sizing, height) in [("content-box", 40.0), ("border-box", 30.0)] {
+            let float_x = if side == "left" { 0.0 } else { 100.0 };
+            let table_x = if side == "left" { 100.0 } else { 0.0 };
+            let table = format!(
+                "<table id=k style=\"border-spacing:0\"><tr><td style=\"width:150px;height:10px;padding:10px;border:5px solid;box-sizing:{box_sizing}\"></td></tr></table>"
+            );
+            check_horizontal(
+                side,
+                &table,
+                [
+                    (float_x, 0.0, 100.0, 100.0),
+                    (table_x, 0.0, 100.0, height),
+                    (0.0, height, 200.0, 5.0),
+                    (0.0, 0.0, 200.0, height + 5.0),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_numeric_cell_minimum_uses_its_box_sizing_and_edges() {
+    for (side, table_x) in [("left", 100.0), ("right", 0.0)] {
+        for (box_sizing, width, height) in
+            [("content-box", 100.0, 40.0), ("border-box", 70.0, 30.0)]
+        {
+            let float_x = if side == "left" { 0.0 } else { 100.0 };
+            let table = format!(
+                "<table id=k style=\"border-spacing:0;width:min-content\"><tr>\
+                 <td style=\"width:150px;min-width:70px;height:10px;padding:10px;border:5px solid;box-sizing:{box_sizing}\"></td></tr></table>"
+            );
+            check_horizontal(
+                side,
+                &table,
+                [
+                    (float_x, 0.0, 100.0, 100.0),
+                    (table_x, 0.0, width, height),
+                    (0.0, height, 200.0, 5.0),
+                    (0.0, 0.0, 200.0, height + 5.0),
+                ],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_cell_maximum_can_limit_its_contribution_while_content_overflows() {
+    for (side, table_x) in [("left", 100.0), ("right", 0.0)] {
+        let float_x = if side == "left" { 0.0 } else { 100.0 };
+        check_horizontal(
+            side,
+            "<table id=k style=\"border-spacing:0\"><tr>\
+             <td style=\"padding:0;height:10px;width:150px;max-width:80px\">\
+             <div style=\"width:150px;height:10px\"></div></td></tr></table>",
+            [
+                (float_x, 0.0, 100.0, 100.0),
+                (table_x, 0.0, 80.0, 10.0),
+                (0.0, 10.0, 200.0, 5.0),
+                (0.0, 0.0, 200.0, 15.0),
+            ],
+        );
+    }
+}
+
+#[test]
+fn cell_preferred_widths_can_shrink_without_a_float() {
+    for (style, width) in [("", 100.0), ("width:min-content", 0.0)] {
+        let body = format!(
+            "<div id=o style=\"width:100px\">\
+             <table id=k style=\"border-spacing:0;{style}\"><tr>\
+             <td style=\"padding:0;width:150px;height:10px\"></td></tr></table>\
+             <div id=after style=\"height:5px\"></div></div>"
+        );
+        compare(
+            &body,
+            &[
+                ("k", (0.0, 0.0, width, 10.0)),
+                ("after", (0.0, 10.0, 100.0, 5.0)),
+                ("o", (0.0, 0.0, 100.0, 15.0)),
+            ],
+        );
+    }
+}
+
+#[test]
 fn a_tables_intrinsic_floor_is_used_before_choosing_a_slot_beside_a_float() {
     for side in ["left", "right"] {
         for limit in ["width:50px", "max-width:50px"] {
@@ -926,4 +1206,39 @@ fn a_collapsed_column_does_not_make_the_table_taller_than_its_room_does() {
             ("after", (0.0, 20.0, 300.0, 5.0)),
         ],
     );
+}
+
+#[test]
+fn the_tables_writing_mode_sets_whether_cell_width_can_shrink() {
+    for table_mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+        for cell_mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+            for side in ["none", "left", "right"] {
+                let (room, width) = if side == "none" { (40, 60) } else { (200, 150) };
+                let float = if side == "none" {
+                    String::new()
+                } else {
+                    format!("<div style='float:{side};width:100px;height:100px'></div>")
+                };
+                let body = format!(
+                    "<div style='width:{room}px'>{float}\
+                     <div id=t style='display:table;writing-mode:{table_mode}'>\
+                     <div style='display:table-row'>\
+                     <div id=c style='display:table-cell;writing-mode:{cell_mode};\
+                     width:{width}px;height:80px'></div></div></div></div>"
+                );
+                let expected = if table_mode == "horizontal-tb" {
+                    if side == "none" {
+                        (0.0, 0.0, 40.0, 80.0)
+                    } else {
+                        (if side == "left" { 100.0 } else { 0.0 }, 0.0, 100.0, 80.0)
+                    }
+                } else if side == "none" {
+                    (0.0, 0.0, 60.0, 80.0)
+                } else {
+                    (0.0, 100.0, 150.0, 80.0)
+                };
+                compare(&body, &[("t", expected), ("c", expected)]);
+            }
+        }
+    }
 }

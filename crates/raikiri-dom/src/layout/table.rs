@@ -1223,6 +1223,7 @@ fn compute_table_layout_checked(
                     },
                     border_spacing.0,
                     None,
+                    vertical_writing,
                 )
                 .iter()
                 .sum::<f32>()
@@ -1369,6 +1370,7 @@ fn compute_table_layout_checked(
             specified_width.or(stretch_ratio_width)
         };
         let pass = ColumnPass {
+            vertical_writing,
             overlap_width: overlap_w,
             table_layout,
             specified_width: column_basis_width,
@@ -3053,6 +3055,7 @@ fn constrain_cell_intrinsic_widths(
 
 /// What the column pass needs besides the grid and the room the tracks share.
 struct ColumnPass {
+    vertical_writing: bool,
     overlap_width: f32,
     table_layout: TableLayoutValue,
     specified_width: Option<f32>,
@@ -3112,6 +3115,7 @@ fn resolve_table_columns(
             insets,
             pass.border_spacing_x,
             percent_width_cap,
+            pass.vertical_writing,
         );
     }
     // Fixed with an indefinite (auto/percent-of-indefinite) table width
@@ -3135,6 +3139,7 @@ fn resolve_table_columns(
             insets,
             pass.border_spacing_x,
             percent_width_cap,
+            pass.vertical_writing,
         );
     };
     normalize_fixed_cells(doc, grid, avail, pass.border_spacing_x);
@@ -3210,6 +3215,20 @@ fn within_cell_width_limits(doc: &LayoutSession<'_>, cell: usize, width: f32) ->
         .map_or(capped, |minimum| capped.max(minimum))
 }
 
+/// A cell's numeric minimum in the border-box space of its intrinsic measure.
+fn cell_numeric_minimum(doc: &LayoutSession<'_>, cell: usize) -> Option<f32> {
+    let style = doc.table_style(cell);
+    let minimum = resolve_dimension(style.min_size().width.into(), None)?;
+    let padding = style.padding().resolve_or_zero(None);
+    let border = style.border().resolve_or_zero(None);
+    let edges = padding.left + padding.right + border.left + border.right;
+    Some(if style.box_sizing() == BoxSizing::ContentBox {
+        minimum + edges
+    } else {
+        minimum.max(edges)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Column sizing — ported from Blitz L3 (table layout design)
 // ---------------------------------------------------------------------------
@@ -3221,6 +3240,7 @@ fn resolve_column_widths(
     padding_border_size: Size<f32>,
     spacing: f32,
     percent_width_cap: Option<f32>,
+    vertical_writing: bool,
 ) -> Vec<f32> {
     #[cfg(test)]
     tests::COLUMN_RESOLUTIONS.with(|count| count.set(count.get() + 1));
@@ -3253,7 +3273,13 @@ fn resolve_column_widths(
                 AvailableSpace::MIN_CONTENT,
                 SizingMode::ContentSize,
             );
-            min_content = min_content.max(unbreakable);
+            // Physical width is the block extent in a vertical table, where
+            // the cell's stated extent still floors the table's width.
+            min_content = if vertical_writing {
+                min_content.max(unbreakable)
+            } else {
+                unbreakable.max(cell_numeric_minimum(doc, cell.node_id).unwrap_or(0.0))
+            };
             max_content = max_content.max(unbreakable);
         }
         let cell_space = match column_space {
@@ -3297,10 +3323,10 @@ fn resolve_column_widths(
     let mut col_min_full = col_min.clone();
     let mut col_max_full = col_max.clone();
 
-    // (C.2) colspan>1 excess distribution (smallest span first). A
-    // definite single-column width already constrains that track, so a
-    // spanning cell's excess is assigned to the remaining tracks whenever
-    // possible (CSS Tables track sizing, intrinsic minimum phase).
+    // (C.2) colspan>1 excess distribution (smallest span first). Minima grow
+    // tracks toward their preferences before assigning any remaining excess
+    // to tracks without authored cell lengths. Max-content excess retains
+    // that same priority for the remaining tracks.
     let mut spans: Vec<(usize, u16, u16)> = grid
         .cells
         .iter()
@@ -3326,10 +3352,15 @@ fn resolve_column_widths(
         let gaps = spacing * (e - s - 1) as f32;
         let cur_min: f32 = col_min_full[s..e].iter().sum::<f32>() + gaps;
         if cell_min[i] > cur_min {
-            let add = (cell_min[i] - cur_min) / cnt;
-            for column in &targets {
-                col_min_full[*column] += add;
-            }
+            // An intrinsic minimum does not resolve percentages against the span.
+            let minimums = distribute_columns_with_authored(
+                cell_min[i] - gaps,
+                &col_min_full[s..e],
+                &col_max_full[s..e],
+                &vec![0.0; e - s],
+                &authored_length[s..e],
+            );
+            col_min_full[s..e].copy_from_slice(&minimums);
         }
         let cur_max: f32 = col_max_full[s..e].iter().sum::<f32>() + gaps;
         if cell_max[i] > cur_max {
@@ -3349,7 +3380,7 @@ fn resolve_column_widths(
         }
     }
 
-    // (C.3) Per-column authored length: width:<px>
+    // (C.3) Cell length preferences, shared by each column.
     let mut col_len: Vec<Option<f32>> = vec![None; n];
     for cell in &grid.cells {
         let c = cell.col_start as usize;
@@ -3364,9 +3395,11 @@ fn resolve_column_widths(
     }
     for c in 0..n {
         if let Some(l) = col_len[c] {
-            col_min[c] = f32_max_compat(col_min[c], l);
+            if vertical_writing {
+                col_min[c] = f32_max_compat(col_min[c], l);
+                col_min_full[c] = f32_max_compat(col_min_full[c], l);
+            }
             col_max[c] = f32_max_compat(col_max[c], l);
-            col_min_full[c] = f32_max_compat(col_min_full[c], l);
             col_max_full[c] = f32_max_compat(col_max_full[c], l);
         }
     }
@@ -3558,13 +3591,22 @@ fn distribute_columns_with_authored(
                 }
             })
             .collect();
-        let gsum: f32 = grow.iter().sum();
-        if gsum > 0.0 {
-            let take = if remaining < gsum { remaining } else { gsum };
-            for i in 0..n {
-                w[i] += take * grow[i] / gsum;
+        // Satisfy cell length preferences before growing the auto columns.
+        // This also preserves Chromium's distribution of a spanning minimum.
+        for authored in [true, false] {
+            let gsum: f32 = (0..n)
+                .filter(|&i| authored_length[i] == authored)
+                .map(|i| grow[i])
+                .sum();
+            if gsum > 0.0 {
+                let take = remaining.min(gsum);
+                for i in 0..n {
+                    if authored_length[i] == authored {
+                        w[i] += take * grow[i] / gsum;
+                    }
+                }
+                remaining -= take;
             }
-            remaining -= take;
         }
         if remaining > 0.0 {
             let np: Vec<usize> = (0..n)
