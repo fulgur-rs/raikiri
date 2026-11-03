@@ -1180,7 +1180,7 @@ fn assert_avoiding_box_in_a_bounded_grid_stays(grid_css: &str) {
 }
 
 #[test]
-fn boxes_after_an_underflowing_forced_break_follow_the_break() {
+fn a_first_forced_child_keeps_its_collapsed_negative_margin_in_the_following_flow() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:80px");
@@ -1198,7 +1198,7 @@ fn boxes_after_an_underflowing_forced_break_follow_the_break() {
         ));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    assert_eq!(ys, vec![90.0, 120.0, 130.0]);
+    assert_eq!(ys, vec![90.0, 110.0, 120.0]);
 }
 
 #[test]
