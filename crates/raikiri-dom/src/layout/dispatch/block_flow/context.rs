@@ -16,8 +16,9 @@ pub(crate) enum BoxProbe {
     /// The border-box width of the box in a slot whose `auto` width resolves
     /// to `stretch`.
     Width { stretch: f32 },
-    /// The border-box height of the box when it is `width` wide.
-    Height { width: f32 },
+    /// The border-box height of the box when it is `width` wide in a slot
+    /// whose `auto` width resolves to `stretch`.
+    Height { width: f32, stretch: f32 },
 }
 
 /// The room [`BlockContext::find_box_slot`] found for a box, and the
@@ -352,7 +353,11 @@ impl BlockContext<'_> {
         let mut tallest = f32::NEG_INFINITY;
         let mut cycled = false;
         loop {
-            let measured = first.y + probe(BoxProbe::Height { width });
+            let measured = first.y
+                + probe(BoxProbe::Height {
+                    width,
+                    stretch: slot.stretch_width,
+                });
             tallest = tallest.max(measured);
             let mut narrowed = self.narrowed_across(
                 first,

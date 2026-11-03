@@ -169,9 +169,14 @@ fn block_view_oof_table_identity_is_independent() {
             fixture_with_styles("display:block", &format!("display:{display};width:31px"));
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-        assert!(!BI::is_table(&TaffyStyle::new(
-            tree.query_style(child, ReadRole::BlockItem)
-        )));
+        // Only a block-level table is a table in a block formatting context;
+        // an inline table is still a table when it is positioned out of flow.
+        assert_eq!(
+            BI::is_table(&TaffyStyle::new(
+                tree.query_style(child, ReadRole::BlockItem)
+            )),
+            display == "table"
+        );
         assert_eq!(
             OI::is_table(&TaffyStyle::new(tree.query_style(child, ReadRole::Oof))),
             display != "block"
