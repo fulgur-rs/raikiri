@@ -14,23 +14,22 @@ use super::{
     block_fits_page_step, box_avoids_page_break_inside, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
     collapsed_start_margin_gain, collapsed_start_margin_gain_in_flow, collapses_through,
-    collapses_with_previous_block, content_overflow_end, current_abs_y,
-    first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, follows_flow_content,
-    forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
-    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
-    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
-    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
-    lines_can_shift_inside, lines_move_grows_box, make_room_for_table_header,
-    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
-    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
-    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
-    positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, run_ends_paragraph, run_tail_move, shift_paragraph_lines,
-    shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name,
-    text_sets_page_name,
+    collapses_with_previous_block, content_overflow, current_abs_y, first_box_ancestor_at_start,
+    first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
+    floats_put_first_line_down, follows_flow_content, forced_line_breaks, forced_line_moves,
+    forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
+    has_fixed_height, has_footnote_ancestor, in_row_flex_container, is_floating_box_for_pagination,
+    is_unfixed_absolute_box, lead_below_ancestor, lead_below_edges, leading_edges_move,
+    leading_holder, line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
+    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
+    make_room_for_table_header, margin_box_starts_page, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
+    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
+    place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
+    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, run_ends_paragraph,
+    run_tail_move, shift_paragraph_lines, shift_text_candidate, starts_on_page_and_runs_past_it,
+    straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -2573,11 +2572,15 @@ impl PaginationState {
             // Pagination materialized the moved boxes in page coordinates,
             // which already include `root_flow_offset`; boxes it left alone
             // paint where their own coordinates put them.
-            let end =
-                content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
-            if end.is_finite() && end > 0.0 {
-                self.reach
-                    .include_checked(control, page_origins.page_index_for_end(end), false)?;
+            let overflow =
+                content_overflow(document, cascade, body_id, root_flow_offset, content_height);
+            let end_page = (overflow.end.is_finite() && overflow.end > 0.0)
+                .then(|| page_origins.page_index_for_end(overflow.end));
+            let start_page = overflow
+                .hidden_start_y
+                .map(|start| page_origins.page_index_for_y(start));
+            if let Some(page) = end_page.max(start_page) {
+                self.reach.include_checked(control, page, false)?;
             }
         }
         // Pages past the last one the normal flow reached hold only boxes

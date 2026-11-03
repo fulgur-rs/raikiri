@@ -141,10 +141,15 @@ impl ContentOverflowContext {
     }
 }
 
-/// The lowest block-end edge of the boxes that paint below the paginated
-/// flow: the body's own border box, nested absolutely positioned boxes, and
-/// content overflowing a box that offers no break points (for example a
-/// `contain: size` box). Measured from the body's coordinate space after
+struct ContentOverflow {
+    end: f32,
+    hidden_start_y: Option<f32>,
+}
+
+/// How boxes outside the paginated flow reach pages: their lowest block-end
+/// edge and the latest start of a wholly clipped positioned flow. This
+/// includes the body's own border box, nested positioned boxes, and overflow
+/// of a monolithic box. Coordinates are measured from the body after
 /// pagination moved the flow.
 ///
 /// Page-fixed boxes repeat and running elements leave the flow, so their
@@ -161,20 +166,23 @@ impl ContentOverflowContext {
 /// columns whose containing block is the container or one of its
 /// ancestors is not projected, though: it paints at its laid-out position
 /// and is measured there.
-fn content_overflow_end(
+fn content_overflow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     root_flow_offset: f32,
     page_area_height: f32,
-) -> f32 {
+) -> ContentOverflow {
     use raikiri_style::property::OverflowValue;
     // The body's overflow, or the root's, clips at the viewport, which
     // stays within the paginated flow.
     if super::viewport_overflow_source(document, cascade)
         .is_some_and(|id| cascade.computed[id].overflow.y != OverflowValue::Visible)
     {
-        return f32::NEG_INFINITY;
+        return ContentOverflow {
+            end: f32::NEG_INFINITY,
+            hidden_start_y: None,
+        };
     }
     // The records below each column fragment, and the container records
     // placed against their own node.
@@ -191,6 +199,7 @@ fn content_overflow_end(
         }
     }
     let mut end = f32::NEG_INFINITY;
+    let mut hidden_start_y: Option<f32> = None;
     // Within columns, track independently whether absolute and fixed boxes
     // still take their containing blocks from outside the column flow.
     let mut stack = vec![(
@@ -278,11 +287,12 @@ fn content_overflow_end(
             _ => context.flow_clip,
         };
         if positioned && in_columns.is_none() && clip.end.is_finite() {
-            // A hidden positioned flow opens its start page once, including
-            // a zero-height box. Keep the actual clip for its descendants;
+            // Keep a hidden start as a point, including for a zero-height
+            // box. Artificial extent could cross a nearby page boundary.
+            // Keep the actual clip for its descendants;
             // a fixed descendant may still escape through another CB stream.
             if y.is_finite() && y >= clip.end && !clip.positioned_started {
-                end = end.max(y + 1.0);
+                hidden_start_y = Some(hidden_start_y.map_or(y, |start| start.max(y)));
             }
             clip.positioned_started = true;
         }
@@ -361,7 +371,10 @@ fn content_overflow_end(
         context.update_containing_blocks(document, node_id, computed);
         stack.extend(node.children.iter().map(|&child| (child, context)));
     }
-    end
+    ContentOverflow {
+        end,
+        hidden_start_y,
+    }
 }
 
 /// Whether the element hides block-axis overflow when painted.

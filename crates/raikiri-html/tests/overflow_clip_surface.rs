@@ -822,3 +822,38 @@ fn fixed_can_escape_columns_from_an_absolute_box_in_the_column_flow() {
     let body = r#"<div style="transform:translateX(0)"><div style="columns:2;column-fill:auto;height:50px"><div style="position:relative;height:30px"><div style="position:absolute;top:0;left:0"><div style="position:fixed;top:0;left:0;width:50px;height:300px;background:red"></div></div></div></div></div>"#;
     assert_eq!(laid_out(body, "").page_count(), 3);
 }
+
+#[test]
+fn a_hidden_positioned_start_has_no_artificial_extent_at_a_page_edge() {
+    for (position, owner) in [
+        ("absolute", "position:relative"),
+        ("fixed", "transform:translateX(0)"),
+    ] {
+        for (top, pages) in [
+            ("99.5", 1),
+            ("99.75", 1),
+            ("100", 2),
+            ("199.5", 2),
+            ("200", 3),
+        ] {
+            let body = format!(
+                "<div style='{owner};overflow:hidden;height:50px'><div style='position:{position};top:{top}px;left:0;width:50px;height:30px;background:red'></div></div>"
+            );
+            assert_eq!(
+                laid_out(&body, "").page_count(),
+                pages,
+                "{position} top:{top}"
+            );
+        }
+    }
+    for (top, pages) in [("149.5", 1), ("150", 2)] {
+        let body = format!(
+            "<div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:{top}px;left:0;width:50px;height:30px;background:red'></div></div>"
+        );
+        assert_eq!(
+            laid_out(&body, "@page:first{size:200px 150px}").page_count(),
+            pages,
+            "first150 top:{top}"
+        );
+    }
+}
