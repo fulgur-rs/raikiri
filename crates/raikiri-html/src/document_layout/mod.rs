@@ -31,8 +31,10 @@ use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
 use crate::svg_rendering::SvgSettings;
 use crate::{ConsumerPropertyRegistration, HtmlDocument, RenderResources, SvgRendering};
 use raikiri_traits::{
-    ConsumerPropertyObserver, LayoutConfig, PageDefaults, RenderError, RenderWarning, WarningKind,
+    ConsumerPropertyObserver, LayoutConfig, NodeId, PageDefaults, RenderError, RenderWarning,
+    WarningKind,
 };
+use rustc_hash::FxHashSet;
 
 /// Result of [`layout`].
 #[non_exhaustive]
@@ -236,22 +238,14 @@ pub(crate) fn layout_resumed<'r>(
             .iter()
             .map(|continuation| (&continuation.document, &continuation.cascade)),
     );
-    let mut omitted = Vec::new();
-    let mut approximated = Vec::new();
+    let mut omitted = OncePerNode::default();
+    let mut approximated = OncePerNode::default();
     for (document, cascade) in layouts {
-        for entry in document.omitted_text_run_roots(cascade) {
-            if !omitted.iter().any(|(node, _)| *node == entry.0) {
-                omitted.push(entry);
-            }
-        }
-        for entry in document.paint_order_approximations(cascade) {
-            if !approximated.iter().any(|(node, _)| *node == entry.0) {
-                approximated.push(entry);
-            }
-        }
+        omitted.extend(document.omitted_text_run_roots(cascade));
+        approximated.extend(document.paint_order_approximations(cascade));
     }
     out.warnings
-        .extend(omitted.into_iter().map(|(node, reason)| {
+        .extend(omitted.entries.into_iter().map(|(node, reason)| {
             RenderWarning::new(
                 WarningKind::TextRunsOmitted,
                 format!("text runs are not reported for this paragraph: {reason}"),
@@ -259,7 +253,7 @@ pub(crate) fn layout_resumed<'r>(
             .node_id(Some(node))
         }));
     out.warnings
-        .extend(approximated.into_iter().map(|(node, reason)| {
+        .extend(approximated.entries.into_iter().map(|(node, reason)| {
             RenderWarning::new(
                 WarningKind::PaintOrderApproximated,
                 format!("paint order is approximated for this subtree: {reason}"),
@@ -291,6 +285,27 @@ pub(crate) fn layout_resumed<'r>(
         running_layouts,
         caches,
     })))
+}
+
+/// Reports about nodes, in the order first reported, with one report per
+/// node: the first one wins.
+#[derive(Default)]
+struct OncePerNode {
+    entries: Vec<(NodeId, &'static str)>,
+    /// The nodes of `entries`, for the question asked of every new entry.
+    /// Only [`Self::extend`] adds to either, so they stay the same set.
+    seen: FxHashSet<NodeId>,
+}
+
+impl OncePerNode {
+    /// Report the `entries` of a node that has no report yet.
+    fn extend(&mut self, entries: impl IntoIterator<Item = (NodeId, &'static str)>) {
+        for entry in entries {
+            if self.seen.insert(entry.0) {
+                self.entries.push(entry);
+            }
+        }
+    }
 }
 
 /// An owned, laid-out document.

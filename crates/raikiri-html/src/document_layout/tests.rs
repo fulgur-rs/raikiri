@@ -2285,3 +2285,78 @@ fn root_box_keeps_its_used_height_when_the_page_count_is_deferred() {
         250.0
     );
 }
+
+#[test]
+fn a_node_is_reported_once_with_its_first_reason() {
+    let mut once = OncePerNode::default();
+    once.extend([
+        (NodeId(3), "first"),
+        (NodeId(1), "other"),
+        (NodeId(3), "again"),
+    ]);
+    // Another layout reports node 3 again and node 2 for the first time.
+    once.extend([(NodeId(3), "later"), (NodeId(2), "new")]);
+    assert_eq!(
+        once.entries,
+        [
+            (NodeId(3), "first"),
+            (NodeId(1), "other"),
+            (NodeId(2), "new")
+        ]
+    );
+}
+
+#[test]
+fn reports_are_the_ones_a_scan_of_the_kept_entries_keeps() {
+    let mut seed: u64 = 0xD1B5_4A32_D192_ED03;
+    let mut next = move |below: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % below as u64) as usize
+    };
+    let reasons = ["a", "b", "c"];
+    let (mut dropped, mut kept) = (0, 0);
+    for _ in 0..1_000 {
+        let mut once = OncePerNode::default();
+        let mut by_scan: Vec<(NodeId, &'static str)> = Vec::new();
+        for _ in 0..next(4) {
+            let layout: Vec<_> = (0..next(12))
+                .map(|_| (NodeId(next(10) as u64), reasons[next(3)]))
+                .collect();
+            for entry in &layout {
+                if by_scan.iter().any(|(node, _)| *node == entry.0) {
+                    dropped += 1;
+                } else {
+                    by_scan.push(*entry);
+                }
+            }
+            once.extend(layout.iter().copied());
+        }
+        assert_eq!(once.entries, by_scan);
+        kept += by_scan.len();
+    }
+    assert!(
+        kept > 1_000 && dropped > 500,
+        "kept {kept}, dropped {dropped}"
+    );
+}
+
+#[test]
+fn the_reports_of_many_nodes_are_collected_in_linear_time() {
+    let count = 200_000;
+    let entries: Vec<(NodeId, &'static str)> = (0..count).map(|n| (NodeId(n), "reason")).collect();
+    let mut once = OncePerNode::default();
+    let start = std::time::Instant::now();
+    once.extend(entries.iter().copied());
+    // The next page layout reports every one of them again.
+    once.extend(entries.iter().copied());
+    let elapsed = start.elapsed();
+    assert_eq!(once.entries, entries);
+    // Looking each node up takes milliseconds; scanning the kept entries for
+    // every report takes seconds at this size.
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "{elapsed:?} for {count} nodes"
+    );
+}
