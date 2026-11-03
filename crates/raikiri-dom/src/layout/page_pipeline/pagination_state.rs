@@ -1540,7 +1540,10 @@ impl PaginationState {
             // A float that takes the break moves to the new page in the place
             // of the in-flow box that follows it.
             if is_floating_box_for_pagination(document, cascade, node_id) {
-                self.sibling_margins.break_taken_by_float = self.pending_break.source;
+                self.sibling_margins.break_taken_by_float = self
+                    .pending_break
+                    .source
+                    .map(|source| (source, target_page));
             }
             self.pending_break.clear();
         }
