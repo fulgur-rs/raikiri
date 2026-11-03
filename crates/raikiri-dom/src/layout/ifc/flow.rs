@@ -314,6 +314,8 @@ pub(crate) fn place_lines(
         object_text_prefixes: Default::default(),
         oof_candidates: OofCandidates::new(),
         beside_floats: false,
+        external_float_gap: 0.0,
+        discarded_float_gap: 0.0,
         escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),

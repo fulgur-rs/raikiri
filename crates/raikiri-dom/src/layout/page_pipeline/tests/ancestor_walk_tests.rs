@@ -183,7 +183,7 @@ fn sibling_adjacency_stops_at_a_node_without_a_parent() {
 }
 
 #[test]
-fn growth_through_two_contents_ancestors_keeps_the_moved_child() {
+fn a_first_forced_child_moves_its_plain_holder_through_contents() {
     let mut ids = [0; 7];
     let (doc, _) = paged_body(|doc, body| {
         doc.append_element(Some(body), "div", Some("display:block;height:60px"));
@@ -209,7 +209,8 @@ fn growth_through_two_contents_ancestors_keeps_the_moved_child() {
         ],
         [100.0, 160.0, 180.0, 190.0]
     );
-    assert_eq!(doc.nodes[ids[0]].layout.size.height, 130.0);
+    assert_eq!(page_flow_y(&doc, ids[0]), 100.0);
+    assert_eq!(doc.nodes[ids[0]].layout.size.height, 90.0);
 }
 
 #[test]

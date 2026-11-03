@@ -4,6 +4,7 @@ use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
 mod column_replaced;
+mod external_float_gap;
 pub(super) mod float_resumption;
 mod footnotes;
 mod fragment_sources;
@@ -4139,6 +4140,7 @@ fn paginate_flow(
         insets,
         page_box,
     };
+    state.prepare_float_gaps(document, cascade, body_id, &candidates);
     let mut candidates = candidates.into_iter();
     let mut edges_breaks = edges_breaks.into_iter().peekable();
     let mut placed = 0;
@@ -5330,7 +5332,7 @@ impl AvoidedBreaks {
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
         let avoided_end = if avoids_break_inside {
-            Some(page_box_end)
+            Some(flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin)
         } else {
             unplaced_line
                 .filter(|line| {
@@ -5611,6 +5613,24 @@ fn leading_holder(
     node_id: usize,
     edges: bool,
 ) -> (usize, f32) {
+    leading_holder_with(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        edges,
+        renders_before_child,
+    )
+}
+
+fn leading_holder_with(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    edges: bool,
+    mut renders_before: impl FnMut(&Document, usize, usize) -> bool,
+) -> (usize, f32) {
     if has_unusual_coordinates(document, node_id) {
         return (node_id, 0.0);
     }
@@ -5621,7 +5641,7 @@ fn leading_holder(
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before_child(document, ancestor, child) {
+        if renders_before(document, ancestor, child) {
             break;
         }
         child = ancestor;
@@ -6007,6 +6027,18 @@ fn follow_ifc_block(
     old_bottom: f32,
     delta: f32,
 ) -> IfcBoxShifts {
+    follow_ifc_block_with_oof(document, root, block, old_top, old_bottom, delta, None)
+}
+
+fn follow_ifc_block_with_oof(
+    document: &mut Document,
+    root: usize,
+    block: usize,
+    old_top: f32,
+    old_bottom: f32,
+    delta: f32,
+    allowed_oof: Option<&HashSet<usize>>,
+) -> IfcBoxShifts {
     let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
         return IfcBoxShifts::default();
     };
@@ -6041,6 +6073,7 @@ fn follow_ifc_block(
         let location = &mut document.nodes[b].layout.location;
         let follows = if kind == IfcBoxKind::OutOfFlow {
             location.y >= old_bottom - 0.01
+                && allowed_oof.is_none_or(|allowed| allowed.contains(&b))
         } else {
             later && location.y >= old_top - 0.01
         };
@@ -6336,6 +6369,17 @@ fn adjoining_margin_extremes(
     start: bool,
     clearance_free: Option<&margin_clearance::ClearanceFree>,
 ) -> (f32, f32) {
+    adjoining_margin_extremes_with_coordinates(document, cascade, id, start, clearance_free, None)
+}
+
+fn adjoining_margin_extremes_with_coordinates(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+    start: bool,
+    clearance_free: Option<&margin_clearance::ClearanceFree>,
+    flow_root: Option<usize>,
+) -> (f32, f32) {
     let layout = &document.nodes[id].layout;
     let margin = if start {
         layout.margin.top
@@ -6366,10 +6410,14 @@ fn adjoining_margin_extremes(
         // The child's margin adjoins only when its border box touches this
         // box's content edge, which a used height or a line before it would
         // prevent.
+        // A carried forced holder measures contact before relative offsets.
+        let child_y = flow_root.map_or(child_layout.location.y, |root| {
+            normal_flow_y(document, cascade, root, child)
+        });
         let touches = if start {
-            child_layout.location.y <= 0.001
+            child_y <= 0.001
         } else {
-            child_layout.location.y + child_layout.size.height >= layout.size.height - 0.001
+            child_y + child_layout.size.height >= layout.size.height - 0.001
         };
         // A box with used clearance may have been put below a float, which
         // keeps its margin from adjoining this edge once an earlier box is
@@ -6393,8 +6441,14 @@ fn adjoining_margin_extremes(
             negative = negative.min(child_negative);
             continue;
         }
-        let (child_positive, child_negative) =
-            adjoining_margin_extremes(document, cascade, child, start, clearance_free);
+        let (child_positive, child_negative) = adjoining_margin_extremes_with_coordinates(
+            document,
+            cascade,
+            child,
+            start,
+            clearance_free,
+            flow_root,
+        );
         positive = positive.max(child_positive);
         negative = negative.min(child_negative);
         break;
@@ -6572,6 +6626,26 @@ fn collapsed_start_margin_gain(
 ) -> f32 {
     let (positive, negative) =
         adjoining_margin_extremes(document, cascade, id, true, Some(clearance_free));
+    positive + negative - document.nodes[id].layout.margin.top
+}
+
+/// The collapsed start gain of a carried forced holder in normal flow.
+/// Relative offsets do not separate margins that adjoin before painting.
+fn collapsed_start_margin_gain_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    id: usize,
+    clearance_free: &margin_clearance::ClearanceFree,
+) -> f32 {
+    let (positive, negative) = adjoining_margin_extremes_with_coordinates(
+        document,
+        cascade,
+        id,
+        true,
+        Some(clearance_free),
+        Some(body_id),
+    );
     positive + negative - document.nodes[id].layout.margin.top
 }
 
@@ -8964,6 +9038,9 @@ struct DeferredShifts {
     /// shift once they are reached, and are on its page or after it; its texts
     /// before that line stay where they are.
     line_splits: Vec<LineSplit>,
+    /// Prefix corrections wait for their owner's first candidate. Moving a
+    /// holder can remove a descendant's prefix before earlier siblings visit.
+    pending_prefixes: BTreeMap<usize, Vec<PendingPrefix>>,
     /// What the flow after a paragraph gives back once pagination leaves it,
     /// when a text inside it took a whole line shift but its box grew by less:
     /// `(paragraph, correction, page the flow was on before that text)`.
@@ -8971,6 +9048,11 @@ struct DeferredShifts {
     /// The page the flow goes back to, at the earliest, at the next candidate
     /// in the flow after such a paragraph: the box ends before its moved lines.
     page_floor: Option<u32>,
+}
+
+struct PendingPrefix {
+    split: LineSplit,
+    ancestor_growth: Vec<(usize, f32)>,
 }
 
 /// Lines of a paragraph moved down inside it: see [`DeferredShifts`].
@@ -8992,6 +9074,23 @@ struct LineSplit {
 }
 
 impl DeferredShifts {
+    fn activate_prefixes(&mut self, rank: usize, shifts: &mut SubtreeShifts) {
+        while self
+            .pending_prefixes
+            .first_key_value()
+            .is_some_and(|(&first, _)| first <= rank)
+        {
+            let (_, prefixes) = self
+                .pending_prefixes
+                .pop_first()
+                .expect("a reached prefix exists");
+            for prefix in prefixes {
+                self.line_splits.push(prefix.split);
+                shifts.growth.extend(prefix.ancestor_growth);
+            }
+        }
+    }
+
     /// Adds to `flow_shift` every pending shift that `node_id` has reached,
     /// and drops them: the corrections of the paragraphs it left, then the
     /// line splits. Returns the last page that a line split it reached moved
@@ -10497,7 +10596,8 @@ fn move_line_block(
     page_start: f32,
     shifts: &mut SubtreeShifts,
     flow_page: u32,
-) -> f32 {
+    gaps: &mut external_float_gap::Index,
+) -> (f32, Vec<external_float_gap::Removal>) {
     let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
     let moved = if nested {
         first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start)
@@ -10510,6 +10610,7 @@ fn move_line_block(
     let delta = Some(target_y + relative - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
+    let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
@@ -10524,7 +10625,16 @@ fn move_line_block(
             &followed_ifc_boxes,
         );
     }
-    delta
+    (delta, consumed)
+}
+
+/// A validated first-child forced boundary that carries its plain holder.
+#[derive(Clone, Copy)]
+struct ForcedBreakHolder {
+    node: usize,
+    lead: f32,
+    margin_top: f32,
+    direct_body: bool,
 }
 
 /// How far a page transition moved a box and why.
@@ -10540,6 +10650,8 @@ struct TransitionMove {
     /// The box that moves down, which is the candidate or the outermost
     /// ancestor that starts with it (see [`leading_holder`]).
     holder: usize,
+    /// The explicitly forced first-child boundary that chose this holder.
+    forced_holder: Option<ForcedBreakHolder>,
 }
 
 /// Moves the box `candidate` down by `moved.node_delta` for a page
@@ -10565,14 +10677,15 @@ fn move_box_for_transition(
         page_overflow,
         forced_transition,
         holder,
+        forced_holder,
     } = *moved;
     debug_assert!(
         is_descendant_or_self(document, node_id, holder),
         "the box that moves holds the candidate"
     );
     debug_assert!(
-        holder == node_id || (page_overflow && !forced_transition),
-        "only a box that moves for the page edge takes its ancestors along"
+        holder == node_id || forced_holder.is_some() || (page_overflow && !forced_transition),
+        "an ancestor moves for a page edge or its first child forced boundary"
     );
     document.nodes[holder].layout.location.y += node_delta;
     let followed_ifc_boxes = follow_moved_ifc_block(document, holder, node_delta);
@@ -10583,10 +10696,11 @@ fn move_box_for_transition(
     let mut moved_in_bounded_ancestor = false;
     let moves_in_flow_down =
         node_delta > 0.0 && !is_floating_box_for_pagination(document, cascade, node_id);
-    let nested_block = !candidate.context.is_direct_body_element() && moves_in_flow_down;
-    if (page_overflow || (forced_transition && candidate.context.is_direct_body_element()))
-        && moves_in_flow_down
-    {
+    let direct_body = forced_holder.map_or(candidate.context.is_direct_body_element(), |owner| {
+        owner.direct_body
+    });
+    let nested_block = !direct_body && moves_in_flow_down;
+    if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
         moved_in_bounded_ancestor = grow_ancestors_for_shift(
             document,
             cascade,
@@ -10608,7 +10722,12 @@ fn move_box_for_transition(
         // flow follow it, up to the first ancestor that does not stack its
         // children in block order. A box pulled back over the break by a
         // negative margin still leaves the flow after it at the break.
-        shift_block_flow_after(document, node_id, body_id, node_delta.max(shift_delta));
+        let following_delta = if forced_holder.is_some() {
+            node_delta
+        } else {
+            node_delta.max(shift_delta)
+        };
+        shift_block_flow_after(document, holder, body_id, following_delta);
     }
     moved_in_bounded_ancestor
 }
@@ -10789,13 +10908,30 @@ fn shrink_ancestors_after_margin_truncation(
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
 ) {
-    if delta >= 0.0 || !delta.is_finite() {
+    shrink_ancestors_after_content_change(
+        document, cascade, node, delta, delta, flow_root, ifc_boxes, None,
+    );
+}
+
+/// Propagates a shortened content extent separately from its owned floats.
+/// Bounds can absorb either change before the containing flow is reached.
+#[allow(clippy::too_many_arguments)]
+fn shrink_ancestors_after_content_change(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node: usize,
+    delta: f32,
+    mut float_delta: f32,
+    flow_root: usize,
+    ifc_boxes: &IfcBoxShifts,
+    mut changes: Option<&mut Vec<(usize, f32)>>,
+) {
+    if (delta >= 0.0 && float_delta >= 0.0) || !delta.is_finite() {
         return;
     }
     let mut child = node;
     let mut flow_delta = delta;
     let mut size_delta = delta;
-    let mut float_delta = delta;
     let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
     while let Some(parent) = walk.current() {
         walk.advance(document);
@@ -10807,6 +10943,38 @@ fn shrink_ancestors_after_margin_truncation(
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
+        let followed = if changes.is_some() && flow_delta.abs() > 0.001 {
+            let layout = document.nodes[child].layout;
+            let top = pagination_child_parent_y(document, parent, child, layout.location.y);
+            let allowed_oof = document
+                .ifc_layout_node(parent)
+                .and_then(|node| node.ifc.as_ref())
+                .into_iter()
+                .flat_map(|ifc| &ifc.boxes)
+                .filter(|item| item.kind == IfcBoxKind::OutOfFlow)
+                .filter(|item| {
+                    out_of_flow_follow(document, cascade, parent, item.node)
+                        == Some(OutOfFlowFollow::OnLine)
+                })
+                .map(|item| item.node)
+                .collect();
+            follow_ifc_block_with_oof(
+                document,
+                parent,
+                child,
+                top,
+                top + layout.size.height - size_delta,
+                flow_delta,
+                Some(&allowed_oof),
+            )
+        } else {
+            IfcBoxShifts::default()
+        };
+        let ifc_boxes = if followed.boxes.is_empty() {
+            ifc_boxes
+        } else {
+            &followed
+        };
         shift_later_block_siblings(document, parent, child, flow_delta);
         let old_height = document.nodes[parent].layout.size.height;
         let Some(adjusted) = grown_auto_height(
@@ -10817,7 +10985,7 @@ fn shrink_ancestors_after_margin_truncation(
             flow_delta,
             size_delta,
             float_delta,
-            child == node,
+            changes.is_some() || child == node,
             flow_root,
             ifc_boxes,
         ) else {
@@ -10825,6 +10993,12 @@ fn shrink_ancestors_after_margin_truncation(
         };
         document.nodes[parent].layout.size.height = adjusted.height;
         let (old_flow, new_flow) = adjusted.flow_heights;
+        let passed = new_flow - old_flow;
+        if let Some(records) = changes.as_mut()
+            && (passed - flow_delta).abs() > 0.001
+        {
+            records.push((parent, passed - flow_delta));
+        }
         let owns_floats = holds_floats(document, cascade, parent);
         float_delta = if owns_floats {
             0.0

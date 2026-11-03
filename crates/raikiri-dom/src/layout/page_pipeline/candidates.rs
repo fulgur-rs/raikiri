@@ -11,7 +11,7 @@ use super::{
     box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
     candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
     content_bottom_edges, first_owned_text_line_top, has_block_leading_content,
-    has_mandatory_break_inside, height_follows_content, in_inset_out_of_flow_subtree,
+    has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
     is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
@@ -1307,9 +1307,21 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_float
                     && has_block_leading_content(document, node_id)
                     && !is_body
-                    && (free_to_break_before || node.display() == DisplayValue::InlineBlock)
+                    && (free_to_break_before
+                        || is_float
+                        || node.display() == DisplayValue::InlineBlock)
                     && !document.context.pagination_on_transposed_axes)
-                    .then(|| lineless_leading_piece_end(document, cascade, body_id, node_id))
+                    .then(|| {
+                        // A float's parallel flow keeps its first indivisible
+                        // piece even without leading edges. Its owner moves;
+                        // the children remain outside the outer candidate walk.
+                        if is_float {
+                            super::lineless_piece_end(document, cascade, body_id, node_id, 0)
+                                .map(|(end, _)| end)
+                        } else {
+                            lineless_leading_piece_end(document, cascade, body_id, node_id)
+                        }
+                    })
                     .flatten();
                 let column_replaced_piece = (in_flow_container
                     && !is_body
@@ -1649,11 +1661,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let last_in_flow = flow_flags
                     .iter()
                     .rposition(|&(in_flow, _)| in_flow.is_some());
-                // The lowest margin-box bottom of the floats of this block and
-                // of the blocks it ends, which reaches below the last box when
-                // the edges that follow it would break away from it: a float
-                // that crosses a page edge keeps the box where it is.
-                let floats_bottom = flow_flags
+                // The lowest normal-flow margin-box bottom of this block's
+                // floats. A float crossing a page edge keeps the last box
+                // where it is; inherited bounds constrain that fit too.
+                let owned_floats_bottom = flow_flags
                     .iter()
                     .zip(child_order.iter().copied())
                     .filter(|&(&(_, floated), _)| floated)
@@ -1665,14 +1676,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             + layout.margin.bottom
                             - accumulated_relative_offset_y(document, cascade, body_id, child_id)
                     })
-                    .fold(
-                        if inherited_edges > 0.0 {
-                            frame.float_bottom
-                        } else {
-                            f32::NEG_INFINITY
-                        },
-                        f32::max,
-                    );
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let floats_bottom = if inherited_edges > 0.0 {
+                    owned_floats_bottom.max(frame.float_bottom)
+                } else {
+                    owned_floats_bottom
+                };
+                let enclosed_float_end = (owned_floats_bottom.is_finite()
+                    && holds_floats(document, cascade, node_id))
+                .then(|| {
+                    owned_floats_bottom - raw_y
+                        + accumulated_relative_offset_y(document, cascade, body_id, node_id)
+                });
                 // The margin below the last box sits between it and the padding
                 // and border of this block, unless it collapses through that
                 // block (when it has neither) or through the box itself (when
@@ -1688,9 +1703,6 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             .map_or(0.0, |last_box| {
                                 document.nodes[last_box].layout.margin.bottom
                             });
-                        // A negative margin pulls the edges up under the box,
-                        // and may leave none below it.
-                        let edges = (edges + margin).max(0.0);
                         // Something else, such as a float that the block
                         // encloses, reaches below the last box: the edges
                         // follow that, not the box.
@@ -1702,11 +1714,24 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         let box_end = flow_flags[index].0.map_or(f32::INFINITY, |last_box| {
                             normal_flow_bottom(document, cascade, body_id, last_box) + margin
                         });
-                        if content_end > box_end + 0.001 {
-                            0.0
+                        let enclosed_gap = if content_end > box_end + 0.001 {
+                            // Only a float held by this block can move its
+                            // closing edges below the last flow box. The
+                            // inherited float bound also includes escaping
+                            // floats and is only a page-fit constraint.
+                            if enclosed_float_end
+                                .is_some_and(|end| (end - content_end).abs() <= 0.001)
+                            {
+                                content_end - box_end
+                            } else {
+                                return 0.0;
+                            }
                         } else {
-                            edges
-                        }
+                            0.0
+                        };
+                        // Keep negative margins until the complete tail has
+                        // been measured, including any enclosed float gap.
+                        (edges + margin + enclosed_gap).max(0.0)
                     })
                 };
                 let last_box_edges = last_in_flow.map_or(0.0, edges_after_box);

@@ -19,11 +19,77 @@ const EDGE_TOLERANCE: f32 = 0.001;
 #[derive(Default)]
 pub(super) struct ChildPositions {
     positions: HashMap<usize, HashMap<usize, usize>>,
+    forced_first_children: HashMap<usize, Option<usize>>,
     #[cfg(test)]
     pub(super) indexed_children: usize,
 }
 
 impl ChildPositions {
+    /// The first-child holder for a new forced boundary, without caching
+    /// positions or margins that pagination can change.
+    pub(super) fn forced_holder(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+    ) -> Option<(usize, f32)> {
+        let (holder, lead) = super::leading_holder_with(
+            document,
+            cascade,
+            body_id,
+            node_id,
+            true,
+            |document, parent, child| {
+                let first = self.forced_first_children.entry(parent).or_insert_with(|| {
+                    // Generated before content is not an arena child. Even a
+                    // zero-height generated box precedes the forced boundary.
+                    let before = cascade.pseudo.get(&(
+                        raikiri_style::StyleNodeId::new(parent as u64),
+                        raikiri_style::PseudoElem::Before,
+                    ));
+                    if before.is_some_and(|style| {
+                        style.display != DisplayValue::None
+                            && !matches!(
+                                style.position,
+                                super::PositionValue::Absolute | super::PositionValue::Fixed
+                            )
+                            && !style.content.is_empty()
+                            && !style.content.iter().any(|part| {
+                                matches!(part, raikiri_style::property::ContentComponent::None)
+                            })
+                    }) {
+                        return None;
+                    }
+                    // An IFC keeps its block tokens outside the box child
+                    // list. Its source children still give the leading order.
+                    let node = &document.nodes[parent];
+                    let children = if node.layout_children().is_empty()
+                        && document
+                            .ifc_layout_node(parent)
+                            .is_some_and(|node| node.ifc.is_some())
+                    {
+                        &node.children
+                    } else {
+                        node.layout_children()
+                    };
+                    children.iter().copied().find(|&sibling| {
+                        super::sibling_renders(document, sibling)
+                            && !(document.nodes[sibling].kind() == NodeKind::Element
+                                && matches!(
+                                    document.nodes[sibling].position(),
+                                    super::PositionValue::Absolute | super::PositionValue::Fixed
+                                ))
+                    })
+                });
+                *first != Some(child)
+            },
+        );
+        (holder != node_id
+            && lead <= super::leading_space_between(document, cascade, node_id, holder) + 0.01)
+            .then_some((holder, lead))
+    }
+
     /// Whether the page that starts at `page_start` holds nothing above
     /// `node_id` but the leading edges of the plain blocks around it: the box
     /// is the first thing in each of them, and whatever comes before the

@@ -16855,6 +16855,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         page_overflow,
         forced_transition,
         holder,
+        forced_holder: None,
     };
 
     // A forced break moves the box by its own delta and the boxes after it
@@ -17095,6 +17096,7 @@ fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height(
             page_overflow: true,
             forced_transition: false,
             holder,
+            forced_holder: None,
         },
         &mut shifts,
         0,
@@ -18427,7 +18429,9 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         collapses_with_previous_block: false,
         pending_break_applies: false,
         keeps_continuation_margin: false,
+        keeps_margin_at_break: false,
         holder: None,
+        forced_holder: None,
     }
 }
 
@@ -19602,7 +19606,9 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         collapses_with_previous_block: true,
         pending_break_applies: forced,
         keeps_continuation_margin: false,
+        keeps_margin_at_break: forced,
         holder: None,
+        forced_holder: None,
     }
 }
 

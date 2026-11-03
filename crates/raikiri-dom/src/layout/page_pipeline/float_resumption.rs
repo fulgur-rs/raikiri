@@ -1,4 +1,4 @@
-//! Reuse page-walk boundaries when an empty clearing box completes at a break.
+//! Reuse page-walk boundaries to reflow a float and its following block.
 
 use super::{
     CascadeResult, ClearValue, DisplayValue, FloatValue, NodeKind, collapses_through,
@@ -16,6 +16,12 @@ struct PrefixRun {
     offset: f32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum FlowStart {
+    Clearance(PrefixRun),
+    Margin,
+}
+
 /// The flow boundary and inherited visual offset selected by the page walk.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Boundary {
@@ -26,16 +32,17 @@ pub(crate) struct Boundary {
 /// A bounded re-layout's local placements and consumed clearance boundaries.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Plan {
-    groups: HashMap<(usize, usize), PrefixRun>,
+    groups: HashMap<(usize, usize), FlowStart>,
     floats: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
+    margin_flows: HashMap<usize, usize>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
 }
 
 impl Plan {
     pub(crate) fn is_empty(&self) -> bool {
-        self.floats.is_empty()
+        self.floats.is_empty() && self.margin_flows.is_empty()
     }
 
     pub(crate) fn float_top(&self, node: usize) -> Option<f32> {
@@ -44,6 +51,14 @@ impl Plan {
 
     pub(crate) fn flow_top(&self, node: usize) -> Option<f32> {
         self.flows.get(&node).copied()
+    }
+
+    pub(crate) fn has_margin_flows(&self) -> bool {
+        !self.margin_flows.is_empty()
+    }
+
+    pub(crate) fn margin_float(&self, flow: usize) -> Option<usize> {
+        self.margin_flows.get(&flow).copied()
     }
 
     pub(crate) fn completed_at(&self, node: usize, height: f32) -> Option<f32> {
@@ -63,13 +78,15 @@ impl Plan {
             if !matches!(document.nodes[float].position(), PositionValue::Static) {
                 continue;
             }
-            let Some(run) = document
+            let margin = plain_flow_margin(document, cascade, float, flow);
+            let Some(start) = document
                 .context
                 .float_resumptions
                 .groups
                 .get(&(float, flow))
                 .cloned()
-                .or_else(|| leading_clear_run(document, cascade, flow))
+                .or_else(|| leading_clear_run(document, cascade, flow).map(FlowStart::Clearance))
+                .or_else(|| margin.map(|_| FlowStart::Margin))
             else {
                 continue;
             };
@@ -77,8 +94,24 @@ impl Plan {
                 continue;
             };
             let border_top = current_abs_y(document, float);
-            let resume = boundary.page_origin + boundary.relative_offset + run.offset;
-            if !resume.is_finite() || !border_top.is_finite() {
+            let boundary_top = boundary.page_origin + boundary.relative_offset;
+            if !boundary_top.is_finite() || !border_top.is_finite() {
+                continue;
+            }
+            let run = match &start {
+                FlowStart::Clearance(run) => run,
+                FlowStart::Margin => {
+                    if margin.is_some() {
+                        // Source geometry may shrink before a later forced break.
+                        // Retain the relationship, not the old page's coordinates.
+                        plan.margin_flows.insert(flow, float);
+                        plan.groups.insert((float, flow), start);
+                    }
+                    continue;
+                }
+            };
+            let resume = boundary_top + run.offset;
+            if !resume.is_finite() {
                 continue;
             }
             // The margin box and the retained escaping strut are distinct
@@ -114,7 +147,7 @@ impl Plan {
                     origins.insert(id, resume);
                 }
             }
-            plan.groups.insert((float, flow), run);
+            plan.groups.insert((float, flow), start);
         }
         // Convert only after every planned parent has its final origin.
         // A nested completed chain then has local zeroes, independent of depth.
@@ -181,6 +214,43 @@ impl Plan {
         }
         true
     }
+}
+
+// Reflow only a flat IFC whose own margin is the complete retained strut.
+// Float-created gaps require a separate resumption strategy.
+// Cache the structural kind, while resolving the used margin on every attempt.
+fn plain_flow_margin(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    float: usize,
+    flow: usize,
+) -> Option<f32> {
+    let node = &document.nodes[flow];
+    let margin = node.layout.margin.top;
+    if node.display() != DisplayValue::Block
+        || !matches!(node.position(), PositionValue::Static)
+        || node.used_writing_mode.is_vertical()
+        || cascade.computed[flow].clear != ClearValue::None
+        || !margins_may_collapse_through(document, cascade, flow)
+        || document.layout_parent_of(float) != document.layout_parent_of(flow)
+        || !margin.is_finite()
+        || margin <= 0.0
+    {
+        return None;
+    }
+    let ifc = document.ifc_layout_node(flow)?.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
+    let mut end = 0.0;
+    (ifc.generated_blocks.is_empty()
+        && !lines.lines.is_empty()
+        && lines.placed_blocks.is_empty()
+        && lines.block_line_starts.is_empty()
+        && lines.lines.iter().all(|line| {
+            let follows = line.block_offset() <= end + 0.001;
+            end = line.block_offset() + line.block_size();
+            follows
+        }))
+    .then_some(margin)
 }
 
 fn hidden_or_positioned(document: &LayoutSession<'_>, id: usize) -> bool {
