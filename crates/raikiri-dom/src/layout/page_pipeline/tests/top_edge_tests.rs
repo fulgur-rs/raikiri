@@ -1116,3 +1116,338 @@ fn nested_empty_flex_items_keep_the_edges_only_when_the_first_piece_does_not_fit
         );
     }
 }
+
+fn padded_special_wrapper_after(lead: u32, wrapper_css: &str) -> [f32; 2] {
+    let (mut wrapper, mut child) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{lead}px"));
+        wrapper = block(
+            doc,
+            body,
+            &format!(
+                "display:block;padding-top:6px;font-family:Ahem;font-size:10px;line-height:10px;{wrapper_css}"
+            ),
+        );
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        doc.append_text(child, "z");
+    });
+    [wrapper, child].map(|id| page_flow_y(&doc, id))
+}
+
+#[test]
+fn a_padded_float_moves_with_its_first_avoiding_child() {
+    assert_eq!(
+        padded_special_wrapper_after(90, "float:left;width:100px"),
+        [100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_padded_multicol_moves_with_its_first_avoiding_child() {
+    assert_eq!(
+        padded_special_wrapper_after(90, "columns:2"),
+        [100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_padded_sticky_block_moves_with_its_first_avoiding_child() {
+    assert_eq!(
+        padded_special_wrapper_after(90, "position:sticky;top:0"),
+        [100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_padded_inline_block_moves_with_its_first_avoiding_child() {
+    assert_eq!(
+        padded_special_wrapper_after(90, "display:inline-block;width:100px"),
+        [100.0, 106.0]
+    );
+}
+
+const SPECIAL_LEADING_WRAPPERS: [&str; 4] = [
+    "float:left;width:100px",
+    "columns:2",
+    "position:sticky;top:0",
+    "display:inline-block;width:100px",
+];
+
+#[test]
+fn special_leading_wrappers_stay_at_page_start_and_when_the_first_piece_fits() {
+    for css in SPECIAL_LEADING_WRAPPERS {
+        for lead in [0, 60, 74] {
+            assert_eq!(
+                padded_special_wrapper_after(lead, css),
+                [lead as f32, lead as f32 + 6.0],
+                "{css}, lead={lead}"
+            );
+        }
+    }
+}
+
+#[test]
+fn special_leading_wrappers_move_when_the_first_piece_exceeds_the_page_by_one_pixel() {
+    for css in SPECIAL_LEADING_WRAPPERS {
+        assert_eq!(
+            padded_special_wrapper_after(75, css),
+            [100.0, 106.0],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn nested_special_leading_wrappers_have_their_own_break_candidates() {
+    let mut actual = Vec::new();
+    for css in SPECIAL_LEADING_WRAPPERS {
+        let (mut parent, mut wrapper, mut child) = (0, 0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:60px");
+            parent = block(doc, body, "display:block");
+            block(doc, parent, "display:block;height:30px");
+            wrapper = block(doc, parent, &format!("display:block;padding-top:6px;{css}"));
+            child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        });
+        actual.push([parent, wrapper, child].map(|id| page_flow_y(&doc, id)));
+    }
+    assert_eq!(actual, vec![[60.0, 100.0, 106.0]; 4]);
+}
+
+#[test]
+fn a_float_moved_with_its_first_piece_keeps_a_clearing_sibling_below_it() {
+    let (mut wrapper, mut child, mut clear) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        wrapper = block(doc, body, "float:left;width:100px;padding-top:6px");
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        clear = block(doc, body, "display:block;clear:both;height:10px");
+    });
+    assert_eq!(
+        [wrapper, child, clear].map(|id| page_flow_y(&doc, id)),
+        [100.0, 106.0, 126.0]
+    );
+}
+
+#[test]
+fn an_inline_block_first_piece_moves_once_with_text_on_its_line() {
+    let (mut wrapper, mut child) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        let line = block(
+            doc,
+            body,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(line, "x");
+        wrapper = block(doc, line, "display:inline-block;width:60px;padding-top:6px");
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        doc.append_text(child, "z");
+        doc.append_text(line, "q");
+    });
+    assert_eq!(
+        [wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [100.0, 106.0]
+    );
+}
+
+fn special_wrapper_with_trailing_content(css: &str) -> [f32; 2] {
+    let (mut wrapper, mut child) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        wrapper = block(doc, body, &format!("display:block;padding-top:6px;{css}"));
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        block(doc, wrapper, "display:block;height:120px");
+    });
+    [wrapper, child].map(|id| page_flow_y(&doc, id))
+}
+
+#[test]
+fn breakable_special_wrappers_stay_when_only_their_trailing_content_overflows() {
+    for css in &SPECIAL_LEADING_WRAPPERS[..3] {
+        assert_eq!(
+            special_wrapper_with_trailing_content(css),
+            [60.0, 66.0],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn an_inline_block_keeps_its_trailing_content_with_the_first_piece() {
+    assert_eq!(
+        special_wrapper_with_trailing_content("display:inline-block;width:100px"),
+        [100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_multicol_first_piece_uses_the_first_column_and_spanner_placement() {
+    for first_css in ["", "column-span:all"] {
+        let (mut wrapper, mut first, mut second) = (0, 0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:90px");
+            wrapper = block(doc, body, "display:block;columns:2;padding-top:6px");
+            first = block(
+                doc,
+                wrapper,
+                &format!("display:block;height:20px;break-inside:avoid;{first_css}"),
+            );
+            second = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        });
+        assert_eq!(
+            [wrapper, first].map(|id| page_flow_y(&doc, id)),
+            [100.0, 106.0],
+            "{first_css}"
+        );
+        if first_css.is_empty() {
+            assert_eq!(page_flow_y(&doc, second), 106.0);
+            assert!(doc.nodes[second].layout.location.x > doc.nodes[first].layout.location.x);
+        }
+    }
+}
+
+#[test]
+fn an_atomic_line_keeps_a_short_peer_with_the_padded_inline_block() {
+    let (mut first, mut wrapper, mut child) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        first = block(doc, body, "display:inline-block;width:40px;height:26px");
+        wrapper = block(doc, body, "display:inline-block;width:60px;padding-top:6px");
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+    });
+    assert_eq!(
+        [first, wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [100.0, 100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_paragraph_keeps_ownership_of_its_leading_atomic_line_and_float() {
+    let (mut parent, mut float, mut wrapper, mut child) = (0, 0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        parent = block(
+            doc,
+            body,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        float = block(doc, parent, "float:left;width:10px;height:20px");
+        wrapper = block(
+            doc,
+            parent,
+            "display:inline-block;width:60px;padding-top:6px",
+        );
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+    });
+    assert_eq!(
+        [parent, float, wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [100.0, 100.0, 100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_leading_atomic_line_uses_the_shift_from_a_prior_forced_break() {
+    let (mut before, mut parent, mut wrapper, mut child) = (0, 0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        before = block(doc, body, "display:block;height:20px;break-before:page");
+        parent = block(
+            doc,
+            body,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        wrapper = block(
+            doc,
+            parent,
+            "display:inline-block;width:60px;padding-top:6px",
+        );
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+    });
+    assert_eq!(
+        [before, parent, wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [100.0, 120.0, 120.0, 126.0]
+    );
+}
+
+#[test]
+fn a_delegated_atomic_line_preserves_the_alignment_of_unequal_peers() {
+    let (mut first, mut wrapper, mut child) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        first = block(
+            doc,
+            body,
+            "display:inline-block;vertical-align:top;width:40px;height:10px",
+        );
+        wrapper = block(
+            doc,
+            body,
+            "display:inline-block;vertical-align:top;width:60px;padding-top:6px",
+        );
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+    });
+    assert_eq!(
+        [first, wrapper, child].map(|id| page_flow_y(&doc, id)),
+        [100.0, 100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_delegated_atomic_line_moves_following_blocks_once() {
+    let (mut parent, mut wrapper, mut child, mut trailing, mut after) = (0, 0, 0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(
+            doc,
+            body,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        block(doc, parent, "display:block;height:30px");
+        wrapper = block(
+            doc,
+            parent,
+            "display:inline-block;width:60px;padding-top:6px",
+        );
+        child = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        doc.append_text(child, "z");
+        trailing = block(doc, parent, "display:block;height:10px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(
+        [parent, wrapper, child, trailing, after].map(|id| page_flow_y(&doc, id)),
+        [60.0, 100.0, 106.0, 126.0, 136.0]
+    );
+}
+
+#[test]
+fn a_spanning_first_piece_replans_following_groups_and_survives_relayout() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+    let (mut parent, mut wrapper, mut first, mut next, mut after) = (0, 0, 0, 0, 0);
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, "display:block");
+        block(doc, parent, "display:block;height:30px");
+        wrapper = block(doc, parent, "display:block;columns:2;padding-top:6px");
+        first = block(
+            doc,
+            wrapper,
+            "display:block;column-span:all;height:20px;break-inside:avoid",
+        );
+        next = block(doc, wrapper, "display:block;height:20px;break-inside:avoid");
+        after = block(doc, parent, "display:block;height:10px");
+    });
+    for _ in 0..2 {
+        assert_eq!(
+            [parent, wrapper, first, next, after].map(|id| page_flow_y(&doc, id)),
+            [60.0, 100.0, 106.0, 126.0, 146.0]
+        );
+        let rules = build_rule_tree(&doc);
+        let styles = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_pages(&mut doc, &styles, page).unwrap();
+    }
+}

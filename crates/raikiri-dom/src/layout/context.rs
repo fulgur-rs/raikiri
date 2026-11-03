@@ -143,6 +143,8 @@ pub(crate) struct LayoutContext {
     /// Whether the page walk moved any of those containers from where the
     /// pagination placed their columns, which are then in the wrong pages.
     pub(crate) page_filled_columns_moved: bool,
+    /// Accepted owner origins used to replan leading spanners from source layout.
+    pub(crate) spanning_page_origins: std::collections::HashMap<usize, f32>,
     /// How deeply the child layouts of this pass are nested, and whether that
     /// passed its limit.
     pub(crate) recursion: LayoutRecursion,
