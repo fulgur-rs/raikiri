@@ -61,6 +61,7 @@ struct FloatClearStyles<'a> {
     prefix: Option<&'a str>,
     cleared_after: Option<&'a str>,
     outer: Option<&'a str>,
+    last: &'a str,
 }
 
 impl Default for FloatClearStyles<'_> {
@@ -73,6 +74,7 @@ impl Default for FloatClearStyles<'_> {
             prefix: None,
             cleared_after: None,
             outer: None,
+            last: "display:block;height:20px;margin-top:10px",
         }
     }
 }
@@ -149,11 +151,7 @@ fn float_clear_fixture(
     if let Some(after_style) = styles.cleared_after {
         doc.append_element(Some(wrapper), "div", Some(after_style));
     }
-    let last = doc.append_element(
-        Some(wrapper),
-        "div",
-        Some("display:block;height:20px;margin-top:10px"),
-    );
+    let last = doc.append_element(Some(wrapper), "div", Some(styles.last));
     let text = doc.append_text(last, "X");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -177,6 +175,21 @@ fn a_clear_empty_child_keeps_its_own_margin_strut_below_clearance() {
     let (x, y, _, _) = crate::layout::test_support::absolute_rect(&doc, text);
     assert_eq!((x, y), (0.0, 75.0));
     assert_eq!(pages, 1);
+}
+
+#[test]
+fn an_independent_formatting_context_after_the_completed_clear_starts_beside_the_float() {
+    let (doc, pages, text) = float_clear_fixture(
+        0,
+        false,
+        true,
+        FloatClearStyles {
+            last: "display:flow-root;width:30px;height:20px;margin-top:10px",
+            ..Default::default()
+        },
+    );
+    assert_eq!(pages, 2);
+    assert_eq!(first_line_origin(&doc, text), (10.0, 100.0));
 }
 
 #[test]

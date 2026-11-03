@@ -280,3 +280,6 @@ fn leading_clear_run(
     }
     active.then_some(run)
 }
+
+#[cfg(test)]
+mod tests;

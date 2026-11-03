@@ -3506,6 +3506,7 @@ fn layout_pages_core(
         unpaged_plain_columns |= moved;
         resumptions = next;
     }
+    // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
     Err(LayoutError::Internal {
         message: "page float resumption did not stabilize".to_string(),
     })
