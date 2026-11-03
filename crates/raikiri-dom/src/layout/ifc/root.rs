@@ -175,6 +175,11 @@ pub(crate) struct IfcLines {
     /// True when some line was laid out beside a float (its space was
     /// narrower than the content box or did not start at the content start).
     pub(crate) beside_floats: bool,
+    /// Empty content-start space below inherited floats, with no owned
+    /// content above their exclusion end. Pagination may consume it once.
+    pub(crate) external_float_gap: f32,
+    /// Space already consumed when the paragraph moved whole to a new page.
+    pub(crate) discarded_float_gap: f32,
     /// Bottom margins of a last block child that collapse through the root's
     /// bottom edge with the root's own (CSS 2.1 8.3.1); not in `height`.
     pub(crate) escaping_margin: CollapsibleMarginSet,
