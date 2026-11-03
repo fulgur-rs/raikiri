@@ -476,17 +476,11 @@ fn draw_custom_highlights(
         |inline, block| (inline, block),
     );
     // A ruby annotation's text lies on a line of its own, which the
-    // paragraph's line layout does not hold.
-    let mut annotations: Vec<raikiri_dom::AnnotationRun<'_>> = Vec::new();
-    for annotation in runs.iter().filter_map(|run| run.annotation) {
-        // An annotation with several runs is drawn once.
-        if !annotations
-            .iter()
-            .any(|seen| std::ptr::eq(seen.line, annotation.line))
-        {
-            annotations.push(annotation);
-        }
-    }
+    // paragraph's line layout does not hold. An annotation with several runs
+    // is drawn once.
+    let annotations = first_of_each(runs.iter().filter_map(|run| run.annotation), |annotation| {
+        std::ptr::from_ref(annotation.line)
+    });
     for annotation in annotations {
         let layout = LineLayout::new(std::slice::from_ref(annotation.line));
         draw_line_highlights(
@@ -498,6 +492,21 @@ fn draw_custom_highlights(
             |inline, block| annotation.to_paragraph(inline, block),
         );
     }
+}
+
+/// The items of `items` whose `key` no earlier item has, in order.
+///
+/// A line with many ruby annotations would make a scan of the kept items for
+/// each item quadratic, so the keys seen so far are kept in a set.
+fn first_of_each<T, K: std::hash::Hash + Eq>(
+    items: impl IntoIterator<Item = T>,
+    key: impl Fn(&T) -> K,
+) -> Vec<T> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .filter(|item| seen.insert(key(item)))
+        .collect()
 }
 
 /// The custom highlights of one line of a paragraph and where they paint.
