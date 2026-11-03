@@ -2654,6 +2654,7 @@ dependencies = [
  "bitflags",
  "criterion",
  "cssparser",
+ "icu_properties",
  "raikiri-html",
  "raikiri-layout-geometry",
  "raikiri-layout-style",

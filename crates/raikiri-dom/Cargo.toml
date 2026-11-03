@@ -24,6 +24,7 @@ rustc-hash = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
 bitflags       = "2"
 cssparser      = { workspace = true }
+icu_properties = "2.2"
 shodo          = { workspace = true }
 skrifa         = { workspace = true }
 raikiri-style  = { workspace = true }

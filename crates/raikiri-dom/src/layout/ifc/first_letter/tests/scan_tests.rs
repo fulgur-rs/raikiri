@@ -55,6 +55,10 @@ const PIECES: &[&str] = &[
     "\u{203C}",
     "\u{200D}",
     "\u{301}",
+    "\u{903}",
+    "\u{200b}",
+    "\u{fe0f}",
+    "\u{1f3fb}",
     "\u{600}",
     "\u{1F469}",
     "\u{1F4BB}",
@@ -247,4 +251,43 @@ fn a_letter_that_follows_many_pieces_of_punctuation_takes_them_all() {
     let mut cx = shodo::LayoutContext::new();
     let paragraph = builder.build(&mut cx, &fonts).unwrap();
     assert_eq!(paragraph.text().len(), count + 2);
+}
+
+#[test]
+fn extender_pieces_after_a_letter_take_linear_work() {
+    for count in [256, 1024, 4096] {
+        SCANNED_BYTES.with(|bytes| bytes.set(0));
+        let mut joined = String::from("e");
+        let mut scan = LetterScan::new();
+        assert!(!scan.is_complete(&joined, 0));
+        for _ in 0..count {
+            let start = joined.len();
+            joined.push('\u{301}');
+            assert!(!scan.is_complete(&joined, start));
+        }
+        let start = joined.len();
+        joined.push_str("Ab");
+        assert!(scan.is_complete(&joined, start));
+        let scanned = SCANNED_BYTES.with(|bytes| bytes.get());
+        assert!(scanned < count * 16, "{scanned} bytes for {count} pieces");
+    }
+}
+
+#[test]
+fn extender_runs_preserve_cluster_boundaries() {
+    for head in PIECES {
+        for extender in ["\u{301}", "\u{903}", "\u{200d}", "\u{fe0f}", "\u{1f3fb}"] {
+            for tail in PIECES {
+                let mut pieces = vec![*head];
+                pieces.extend([extender; 8]);
+                pieces.push(tail);
+                pieces.push("Ab");
+                assert_eq!(
+                    scanned_by_piece(&pieces),
+                    scanned_every_time(&pieces),
+                    "{pieces:?}"
+                );
+            }
+        }
+    }
 }
