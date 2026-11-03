@@ -707,6 +707,151 @@ fn numeric_names_use_indexed_access_not_named() {
 
 thread_local! {
     pub(super) static NAME_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static NAME_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static NAME_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A runtime with `count` children `k0..` of `root`, whose collection is `c`
+/// and whose elements are `refs`.
+fn collection_of(count: usize) -> DomRuntime {
+    let mut rt = rt();
+    rt.evaluate(&format!(
+        "var root = document.createElement('div'); var refs = [];          for (var i = 0; i < {count}; i++) {{              var e = document.createElement('div'); e.id = 'k' + i;              root.appendChild(e); refs.push(e);          }} var c = root.children; c.length;"
+    ))
+    .unwrap();
+    rt
+}
+
+#[test]
+fn asking_for_every_name_compares_each_element_once_for_the_first_name_only() {
+    for count in [1000, 2000, 4000] {
+        let mut rt = collection_of(count);
+        NAME_COMPARISONS.set(0);
+        NAME_INDEX_BUILDS.set(0);
+        // The last name, a name nothing has, and then every name in turn.
+        ok(
+            &mut rt,
+            &format!("c.namedItem('k{}') === refs[{}]", count - 1, count - 1),
+        );
+        assert_eq!(NAME_COMPARISONS.get(), count);
+        ok(
+            &mut rt,
+            "c.namedItem('nothing') === null && c.nothing === undefined",
+        );
+        ok(
+            &mut rt,
+            &format!(
+                "var all = true; for (var i = 0; i < {count}; i++) {{                  all = all && c['k' + i] === refs[i] && c.namedItem('k' + i) === refs[i];              }} all"
+            ),
+        );
+        assert_eq!(NAME_COMPARISONS.get(), count);
+        assert_eq!(NAME_INDEX_BUILDS.get(), 1);
+    }
+}
+
+#[test]
+fn a_collection_asked_once_for_each_change_never_builds_the_name_index() {
+    let mut rt = collection_of(64);
+    NAME_COMPARISONS.set(0);
+    NAME_INDEX_BUILDS.set(0);
+    ok(
+        &mut rt,
+        "var ok = true; for (var i = 0; i < 8; i++) {              refs[0].id = 'renamed' + i;              ok = ok && c['renamed' + i] === refs[0] && c.k0 === undefined;              ok = ok && c.namedItem('k63') === refs[63];          } ok",
+    );
+    // Two lookups follow each change, so the second one builds on the sixteen
+    // changes after the first. What matters is that one change is never asked
+    // twice before a build.
+    assert!(NAME_INDEX_BUILDS.get() <= 8, "{}", NAME_INDEX_BUILDS.get());
+}
+
+#[test]
+fn the_name_index_follows_every_change_to_the_collection() {
+    let mut rt = collection_of(40);
+    rt.evaluate("c.k0; c.k1; c.k2;").unwrap();
+    NAME_INDEX_BUILDS.set(0);
+    rt.evaluate("c.k0; c.k1;").unwrap();
+    let after_second = NAME_INDEX_BUILDS.get();
+    // Each change of the tree, of an id and of a name is seen by the next
+    // two lookups (the second of which uses a rebuilt index).
+    let steps = [
+        (
+            "root.removeChild(refs[3]);",
+            "c.k3 === undefined && c.k4 === refs[4]",
+        ),
+        (
+            "root.insertBefore(refs[3], refs[0]);",
+            "c.k3 === refs[3] && c.k0 === refs[0]",
+        ),
+        (
+            "refs[5].id = 'five';",
+            "c.five === refs[5] && c.k5 === undefined",
+        ),
+        (
+            "refs[6].setAttribute('name', 'six');",
+            "c.six === refs[6] && c.k6 === refs[6]",
+        ),
+        (
+            "refs[7].removeAttribute('id');",
+            "c.k7 === undefined && c.k8 === refs[8]",
+        ),
+        (
+            "var dup = document.createElement('div'); dup.setAttribute('name', 'k9'); root.insertBefore(dup, refs[9]);",
+            "c.k9 === dup && c.namedItem('k9') === dup",
+        ),
+        (
+            "var late = document.createElement('div'); late.id = 'k9'; root.appendChild(late);",
+            "c.k9 === dup",
+        ),
+        ("root.removeChild(dup);", "c.k9 === refs[9]"),
+        (
+            "root.appendChild(refs[0]);",
+            "c.k0 === refs[0] && c.k39 === refs[39]",
+        ),
+    ];
+    for (change, expectation) in steps {
+        rt.evaluate(change).unwrap();
+        // The first lookup after a change scans and the second one builds.
+        ok(&mut rt, expectation);
+        ok(&mut rt, expectation);
+        ok(&mut rt, expectation);
+    }
+    assert!(NAME_INDEX_BUILDS.get() > after_second);
+}
+
+#[test]
+fn the_first_element_of_a_name_in_collection_order_wins_in_the_index() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; var made = [];          function el(id, name, ns) {              var e = ns ? document.createElementNS('http://www.w3.org/2000/svg', 'g')                         : document.createElement('div');              if (id) e.id = id; if (name) e.setAttribute('name', name);              made.push(e); b.appendChild(e); return e;          }          var byName = el('', 'x'); var byId = el('x', ''); var both = el('y', 'x');          var svgName = el('', 'z', true); var svgId = el('z', '', true);          var emptyId = el('', '');          var c = b.children; c.length;",
+    )
+    .unwrap();
+    // Look up repeatedly so the index answers.
+    for _ in 0..3 {
+        ok(
+            &mut rt,
+            "c.x === byName && c.namedItem('x') === byName && c.y === both              && c.z === svgId && c.namedItem('') === null",
+        );
+    }
+    // The SVG element's `name` does not count, only its `id`.
+    rt.evaluate("b.insertBefore(byId, byName);").unwrap();
+    for _ in 0..3 {
+        ok(&mut rt, "c.x === byId && c.y === both && c.z === svgId");
+    }
+}
+
+#[test]
+fn collections_over_the_same_nodes_keep_their_own_name_indexes() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var root = document.createElement('div');          for (var i = 0; i < 6; i++) { var e = document.createElement('p'); e.id = 'p' + i; root.appendChild(e); }          for (var i = 0; i < 3; i++) { var e = document.createElement('i'); e.id = 'i' + i; root.appendChild(e); }          var all = root.children; var ps = root.getElementsByTagName('p');",
+    )
+    .unwrap();
+    for _ in 0..3 {
+        ok(
+            &mut rt,
+            "all.p0 === root.firstChild && all.i1 !== undefined && ps.p0 === all.p0 && ps.i1 === undefined",
+        );
+    }
 }
 
 #[test]
@@ -717,6 +862,7 @@ fn hidden_reads_do_not_compare_collection_names() {
             "var root = document.createElement('div'); var refs = [];              for (var i = 0; i < {count}; i++) {{                  var e = document.createElement('div'); e.id = 'k' + i;                  root.appendChild(e); refs.push(e);              }} var c = root.children; c.extra = 42; c.length;"
         )).unwrap();
         NAME_COMPARISONS.set(0);
+        NAME_LOOKUPS.set(0);
         ok(
             &mut rt,
             &format!(
@@ -724,12 +870,16 @@ fn hidden_reads_do_not_compare_collection_names() {
             ),
         );
         assert_eq!(NAME_COMPARISONS.get(), 0);
+        assert_eq!(NAME_LOOKUPS.get(), 0);
         // Prove the counter observes real named lookup, including a last-node hit.
+        // Naming the expando above already looked names up twice, so the index
+        // answers this one without comparing.
         ok(
             &mut rt,
             &format!("c.k{} === refs[{}]", count - 1, count - 1),
         );
-        assert_eq!(NAME_COMPARISONS.get(), count);
+        assert_eq!(NAME_LOOKUPS.get(), 1);
+        assert_eq!(NAME_COMPARISONS.get(), 0);
     }
 }
 
