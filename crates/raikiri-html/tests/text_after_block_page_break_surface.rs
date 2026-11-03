@@ -1985,3 +1985,123 @@ fn a_retained_margin_can_move_a_short_line_into_a_floats_upper_edge() {
         (2, vec![(1, 0.0, 45.0)])
     );
 }
+
+#[test]
+fn page_start_float_keeps_its_own_margins_separate_from_the_paragraph_margin() {
+    // The reported single-margin cases finish on the float's initial page.
+    // Zero margins are controls; continued paragraphs are tracked separately.
+    let cases = [
+        FloatMarginCase {
+            label: "left-before0-flow0-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:0px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)],
+        },
+        FloatMarginCase {
+            label: "left-before0-flow10-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "left-before0-flow10-top20-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:20px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "left-before0-flow10-top0-bottom15",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:0px;margin-bottom:15px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "left-before30-flow0-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:0px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)],
+        },
+        FloatMarginCase {
+            label: "left-before30-flow10-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "left-before30-flow10-top20-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:20px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "left-before30-flow10-top0-bottom15",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:left;width:40px;height:50px;margin-top:0px;margin-bottom:15px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "right-before0-flow0-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:0px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)],
+        },
+        FloatMarginCase {
+            label: "right-before0-flow10-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "right-before0-flow10-top20-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:20px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "right-before0-flow10-top0-bottom15",
+            body: "<div style='break-after:page;height:30px;margin-bottom:0px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:0px;margin-bottom:15px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "right-before30-flow0-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:0px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)],
+        },
+        FloatMarginCase {
+            label: "right-before30-flow10-top0-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:0px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "right-before30-flow10-top20-bottom0",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:20px;margin-bottom:0px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)],
+        },
+        FloatMarginCase {
+            label: "right-before30-flow10-top0-bottom15",
+            body: "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div><div id=float style='float:right;width:40px;height:50px;margin-top:0px;margin-bottom:15px'></div><div id=target style='margin-top:10px'>XX XX XX XX</div>",
+            pages: 2,
+            lines: &[(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)],
+        },
+    ];
+    let mut mismatches = Vec::new();
+    for case in cases {
+        let (pages, mut lines) = page_count_and_lines_repeated(case.body, |text| text != "a", 2);
+        lines.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.2.total_cmp(&b.2))
+                .then(a.1.total_cmp(&b.1))
+        });
+        if pages != case.pages || lines.as_slice() != case.lines {
+            mismatches.push(format!(
+                "{}: got {pages} pages {lines:?}, expected {} pages {:?}",
+                case.label, case.pages, case.lines
+            ));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
