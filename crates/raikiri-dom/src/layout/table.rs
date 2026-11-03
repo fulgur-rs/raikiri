@@ -1707,13 +1707,7 @@ fn compute_table_layout_checked(
             )
         })?;
         if let Some(columns) = columns_in_place {
-            columns.measure_changed_cells(
-                doc,
-                &mut grid,
-                height_widths,
-                border_spacing,
-                measurement_rows,
-            )?;
+            columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
         }
         for (height, hidden) in row_heights.iter_mut().zip(&sharing_hidden_rows) {
             if *hidden {
@@ -6440,15 +6434,11 @@ impl ColumnsInPlace {
         grid: &mut TableGrid,
         column_widths: &[f32],
         spacing: (f32, f32),
-        vertical_rows: Option<RowTrackView<'_>>,
     ) -> Result<(), raikiri_traits::LayoutError> {
         for cell in &mut grid.cells {
             if self.in_place.used_widths(cell.node_id) != self.remaining.used_widths(cell.node_id) {
                 let columns = cell_column_range(cell, column_widths.len())?;
-                let width = vertical_rows.map_or_else(
-                    || spanned_size(&column_widths[columns], spacing.0),
-                    |rows| rows.cell_width(cell),
-                );
+                let width = spanned_size(&column_widths[columns], spacing.0);
                 measure_cell(doc, cell, width);
             }
         }

@@ -32,6 +32,7 @@ mod part_containing_block_tests;
 mod percent_column_width_tests;
 mod rowspan_tests;
 mod sparse_border_tests;
+mod vertical_row_measurement_tests;
 mod vertical_static_position_tests;
 mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;
