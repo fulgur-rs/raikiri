@@ -674,4 +674,40 @@ const ROWS_10PX_LINES: &[Row] = &[
         r#"<style>body{font:10px/10px Ahem}</style><div style="height:90px">S</div><div style="display:inline-block;vertical-align:top;width:40px;height:10px"></div><div style="display:inline-block;vertical-align:top;width:60px;padding-top:6px"><div style="height:20px;break-inside:avoid">z</div></div><div style="padding-bottom:95px;break-before:page"><div style="height:10px">D</div></div><div style="height:10px">Z</div>"#,
         &[(0, 0), (1, 6), (2, 0), (4, 0)],
     ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><div style="padding-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><div style="position:relative;top:-30px;padding-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><div style="position:relative;top:30px;padding-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><div style="position:relative;bottom:30px;padding-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;top:30px;padding-bottom:30px"><div style="height:80px">S</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 30), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;top:30px;padding-bottom:30px"><div style="height:80px;width:20px">S</div><div style="width:20px">aa</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 30), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;top:25px;"><div style="height:60px">S</div><div style="padding-bottom:30px"><div style="height:20px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 25), (1, 25), (1, 50)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;top:25px;"><div style="height:80px">S</div><div style="padding-bottom:30px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 25), (1, 30)],
+    ),
 ];

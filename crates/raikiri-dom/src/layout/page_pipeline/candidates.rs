@@ -1910,15 +1910,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // (at the top of the block when it holds none), and the page
                 // breaks before them when they do not fit below it on its
                 // page. A monolithic box, such as an image, keeps its edges.
+                // Like the page fit of the boxes, the end is that of the normal
+                // flow: a relative offset only moves the paint.
                 if in_flow_block_level
                     && !monolithic
                     && let Some(edges) = content_bottom_edges(document, node_id)
                     && candidate_raw_y + node.layout.size.height <= frame.clip_end
                 {
+                    let offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
                     self.edges_breaks.push(EdgesBreak {
                         node_id,
                         before: self.out.len(),
-                        raw_y: candidate_raw_y + node.layout.size.height - edges,
+                        raw_y: candidate_raw_y + node.layout.size.height - edges - offset,
                         edges,
                     });
                 }
