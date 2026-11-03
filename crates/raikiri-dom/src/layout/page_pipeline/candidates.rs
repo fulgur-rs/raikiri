@@ -1657,7 +1657,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     owned_floats_bottom
                 };
-                let enclosed_float_end = holds_floats(document, cascade, node_id).then(|| {
+                let enclosed_float_end = (owned_floats_bottom.is_finite()
+                    && holds_floats(document, cascade, node_id))
+                .then(|| {
                     owned_floats_bottom - raw_y
                         + accumulated_relative_offset_y(document, cascade, body_id, node_id)
                 });
