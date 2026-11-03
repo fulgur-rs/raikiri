@@ -10,13 +10,14 @@ use super::{
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
     candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
-    first_owned_text_line_top, has_mandatory_break_inside, height_follows_content,
-    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
-    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
-    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
-    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    first_owned_text_line_top, has_block_leading_content, has_mandatory_break_inside,
+    height_follows_content, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
+    is_plain_block_box, is_plain_container_box, leading_holder, leading_piece_end,
+    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
+    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -61,6 +62,8 @@ fn column_child_has_flow_box(document: &Document, cascade: &CascadeResult, id: u
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct ElementContext {
+    /// The atomic-only line this candidate places instead of its own box.
+    pub(super) leading_inline_line: Option<super::leading_inline::LeadingInlineLine>,
     pub(super) is_rendered_leaf: bool,
     pub(super) is_direct_body_element: bool,
     pub(super) is_table_row: bool,
@@ -99,7 +102,7 @@ pub(super) struct ElementContext {
     /// the edges do not stay behind alone (see [`super::leading_edges_move`]).
     pub(super) leading_piece_end: Option<f32>,
     pub(super) first_grid_row: Option<super::grid_rows::FirstRow>,
-    /// For a plain block with padding or border above a box that has no line:
+    /// For a block-like wrapper with edges above a box that has no line:
     /// how far below the border-box top the first piece of its content ends.
     /// The box moves to the next page when that crosses a page edge, whether
     /// or not the next page can hold the piece (see
@@ -173,6 +176,11 @@ impl BoxContext {
             Self::Text(_) => None,
             Self::Element { attributes, .. } => Some(attributes),
         }
+    }
+
+    pub(super) fn leading_inline_line(self) -> Option<super::leading_inline::LeadingInlineLine> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.leading_inline_line)
     }
 
     pub(super) fn is_text(self) -> bool {
@@ -730,7 +738,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// in source order. `root_flow_offset` is where the body's border box
     /// starts in the page flow.
     pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
-        self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))
+        self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))?;
+        super::leading_inline::assign(self.document, self.out, self.control)
     }
 
     /// The edges of the clips that cut the text of the paragraphs collected,
@@ -1264,12 +1273,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
-                // A plain block with padding or border above a box that has
-                // no line: a lone box that avoids breaks inside it, say.
+                // Keep leading edges with a first unbreakable block piece.
+                // Atomic inline placement is assigned to its owning line.
                 let leading_block_piece = (leading_piece.is_none()
-                    && in_flow_block
+                    && participates_in_flow
+                    && !inside_table
+                    && !inside_flex
+                    && !out_of_flow_subtree
+                    && !inside_float
+                    && has_block_leading_content(document, node_id)
                     && !is_body
-                    && free_to_break_before
+                    && (free_to_break_before || node.display() == DisplayValue::InlineBlock)
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| lineless_leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
@@ -1297,6 +1311,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || run_tail_base
                     || (avoided_unit.is_some() && !direct_body_child)
                     || (leading_piece.is_some() && !direct_body_child)
+                    || (leading_block_piece.is_some() && !direct_body_child)
                     || (column_replaced_piece.is_some() && !direct_body_child)
                     || (first_grid_row.is_some() && !direct_body_child);
                 // A forced break and a page name change the pages wherever the
@@ -1341,6 +1356,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let first_grid_row =
                     first_grid_row.filter(|_| direct_body_child || can_move_nested);
                 let leading_piece = leading_piece.filter(|_| direct_body_child || can_move_nested);
+                let leading_block_piece =
+                    leading_block_piece.filter(|_| direct_body_child || can_move_nested);
                 let column_replaced_piece =
                     column_replaced_piece.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
@@ -1408,6 +1425,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || run_tail_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
+                        || leading_block_piece.is_some()
                         || column_replaced_piece.is_some()
                         || first_grid_row.is_some()
                         || is_tall_direct_absolute
@@ -1438,6 +1456,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 lines_closing_edges: 0.0,
                             },
                             ElementContext {
+                                leading_inline_line: None,
                                 is_rendered_leaf,
                                 is_direct_body_element: direct_body_child,
                                 is_table_row: table_row_candidate,

@@ -1047,3 +1047,38 @@ fn child_marker_translation_preserves_descendant_float_clearance() {
 fn child_marker_translation_preserves_the_float_containing_height() {
     assert_child_float_after_marker_translation("height");
 }
+
+#[test]
+fn a_delegated_atomic_line_keeps_its_original_fit_after_parent_marker_leading() {
+    let (mut root, mut atomic) = (0, 0);
+    let (doc, _, owner) = fixture_with_page(65, 50, 100.0, |doc, owner| {
+        let text = *doc.nodes[owner].children.last().unwrap();
+        doc.detach_from_parent(text);
+        root = doc.append_element(
+            Some(owner),
+            "div",
+            Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        doc.append_element(Some(root), "div", Some("display:block;height:5px"));
+        atomic = doc.append_element(
+            Some(root),
+            "div",
+            Some("display:inline-block;width:30px;padding-top:6px"),
+        );
+        doc.append_element(
+            Some(atomic),
+            "div",
+            Some("display:block;height:20px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(
+        crate::layout::ifc::outside_marker::fit_leading(&doc, root, 0),
+        19.0
+    );
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, atomic).1,
+        89.0
+    );
+    let (_, marker) = doc.page_marker_image(0, NodeId::new(owner as u64)).unwrap();
+    assert_eq!(marker.y, 65.0);
+}

@@ -8,6 +8,7 @@ pub(super) mod float_resumption;
 mod footnotes;
 mod fragment_sources;
 mod grid_rows;
+mod leading_inline;
 mod leading_margins;
 mod line_ranges;
 mod link_events;
@@ -3514,8 +3515,9 @@ fn layout_pages_core(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     let mut resumptions = float_resumption::Plan::default();
     let mut unpaged_plain_columns = false;
+    let mut spanning_origins = HashMap::new();
     for _ in 0..3 {
-        let (slices, moved, next) = layout_pages_attempt(
+        let next = layout_pages_attempt(
             document,
             cascade,
             page_box,
@@ -3525,13 +3527,18 @@ fn layout_pages_core(
             PageAttempt {
                 unpaged_plain_columns,
                 resumptions: &resumptions,
+                spanning_origins: &spanning_origins,
             },
         )?;
-        if !moved && next == resumptions {
-            return Ok(slices);
+        if !next.moved_columns
+            && next.resumptions == resumptions
+            && next.spanning_origins == spanning_origins
+        {
+            return Ok(next.slices);
         }
-        unpaged_plain_columns |= moved;
-        resumptions = next;
+        unpaged_plain_columns |= next.moved_columns;
+        resumptions = next.resumptions;
+        spanning_origins = next.spanning_origins;
     }
     // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
     Err(LayoutError::Internal {
@@ -3542,12 +3549,20 @@ fn layout_pages_core(
 struct PageAttempt<'a> {
     unpaged_plain_columns: bool,
     resumptions: &'a float_resumption::Plan,
+    spanning_origins: &'a HashMap<usize, f32>,
 }
 
-/// Lay out and break `document` into pages once, and whether pagination
-/// moved a multicol container whose columns it had filled page by page, which
-/// leaves `slices` empty. With `unpaged_plain_columns`, no container has its
-/// columns filled that way.
+struct PageAttemptResult {
+    slices: Vec<PageSlice>,
+    moved_columns: bool,
+    resumptions: float_resumption::Plan,
+    spanning_origins: HashMap<usize, f32>,
+}
+
+/// Lay out and break `document` into pages once, retaining the reasons to
+/// retry from source layout. Moving columns filled page by page leaves the
+/// slices empty; a changed spanning origin requests a new group plan.
+/// With `unpaged_plain_columns`, plain columns are not filled page by page.
 fn layout_pages_attempt(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -3556,13 +3571,14 @@ fn layout_pages_attempt(
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
     attempt: PageAttempt<'_>,
-) -> Result<(Vec<PageSlice>, bool, float_resumption::Plan), LayoutError> {
+) -> Result<PageAttemptResult, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
     let mut session = super::context::LayoutSession::with_cascade(document, cascade);
     session.context.unpaged_plain_columns = attempt.unpaged_plain_columns;
     session.context.float_resumptions = attempt.resumptions.clone();
-    if !attempt.resumptions.is_empty() {
+    session.context.spanning_page_origins = attempt.spanning_origins.clone();
+    if !attempt.resumptions.is_empty() || !attempt.spanning_origins.is_empty() {
         session.layout_dirty = true;
     }
     // A root with `display: none` generates no boxes, so there is nothing to
@@ -3576,15 +3592,16 @@ fn layout_pages_attempt(
         session.column_rules.clear();
         session.page_projection.clear();
         session.outside_marker_leading = Default::default();
-        return Ok((
-            vec![PageSlice {
+        return Ok(PageAttemptResult {
+            slices: vec![PageSlice {
                 page_index: 0,
                 content_origin_y: 0.0,
                 page_name: None,
             }],
-            false,
-            float_resumption::Plan::default(),
-        ));
+            moved_columns: false,
+            resumptions: float_resumption::Plan::default(),
+            spanning_origins: HashMap::new(),
+        });
     }
     layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
@@ -3645,11 +3662,12 @@ fn layout_pages_attempt(
     // same limit.
     take_recursion_failure(&mut session)?;
     let resumptions = float_resumption::Plan::collect(&session, cascade);
-    Ok((
+    Ok(PageAttemptResult {
         slices,
-        session.context.page_filled_columns_moved,
+        moved_columns: session.context.page_filled_columns_moved,
         resumptions,
-    ))
+        spanning_origins: session.context.spanning_page_origins.clone(),
+    })
 }
 
 /// The direction in which the pages of `document` continue, when they follow
@@ -3973,11 +3991,27 @@ fn paginate_flow(
     // So are the moves of the boxes after each owner, which are applied to a
     // parent's children before they are read.
     let mut sibling_shifts = sibling_shifts::SiblingShifts::default();
+    let mut leading_spanning_origins = Vec::new();
     for (_, owner) in spanning_owners {
-        let owner_y = root_flow_offset
+        let source_y = root_flow_offset
             + current_abs_y(document, owner)
             + sibling_shifts.offset(document, owner);
         sibling_shifts.apply(document, &mut fragment_edits, owner);
+        let owner_y = document
+            .context
+            .spanning_page_origins
+            .get(&owner)
+            .copied()
+            .unwrap_or(source_y);
+        let tracked = document.context.spanning_page_origins.contains_key(&owner)
+            || (lineless_leading_piece_end(document, cascade, body_id, owner).is_some()
+                && document
+                    .children_through_contents(owner)
+                    .iter()
+                    .any(|&child| document.nodes[child].column_span_all));
+        if tracked {
+            leading_spanning_origins.push((owner, owner_y));
+        }
         let delta = paginate_spanning_columns(
             document,
             &mut fragment_edits,
@@ -4107,6 +4141,18 @@ fn paginate_flow(
     }
     if let Err(halt) = state.keep_positioned_lines(document, &env, &clip_edges) {
         halt.finish()?;
+    }
+
+    // Replan all groups of a leading spanner owner from source geometry when
+    // the outer flow accepted a different origin than the planner used.
+    for (owner, planned_y) in leading_spanning_origins {
+        let accepted_y = root_flow_offset + current_abs_y(document, owner);
+        if (accepted_y - planned_y).abs() > 1e-3 {
+            document
+                .context
+                .spanning_page_origins
+                .insert(owner, accepted_y);
+        }
     }
 
     // A container the walk moved has its columns filled for another place,
@@ -7599,7 +7645,7 @@ fn leading_piece_end(
 /// end to count as running past it.
 const CUT_ANYWHERE_PIECE: f32 = 0.01;
 
-/// How far below the border-box top of the plain block `node_id` the first
+/// How far below the border-box top of the wrapper `node_id` the first
 /// piece of its content ends, when padding or border sit above that content,
 /// on `node_id` or on a box it begins, and the first boxes inside it, down to
 /// the one that decides, hold no line to keep with those edges. A box that
@@ -7607,7 +7653,7 @@ const CUT_ANYWHERE_PIECE: f32 = 0.01;
 /// and an empty box can be cut anywhere, so it only counts when it begins past
 /// the page end (see [`first_piece_end`]). Lines are left to the rules for
 /// lines, and a box with no edges above it to the rules for boxes that avoid
-/// a break.
+/// a break. An eligible atomic inline keeps its entire box with that piece.
 fn lineless_leading_piece_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -7616,10 +7662,35 @@ fn lineless_leading_piece_end(
 ) -> Option<f32> {
     lineless_piece_end(document, cascade, body_id, node_id, 0)
         .filter(|&(_, has_edges)| has_edges)
-        .map(|(end, _)| end)
+        .map(|(end, _)| {
+            if document.nodes[node_id].display() == DisplayValue::InlineBlock {
+                document.nodes[node_id].layout.size.height
+            } else {
+                end
+            }
+        })
 }
 
-/// The end of the first piece of the plain block `node_id` that holds no line,
+/// Whether the root box can keep its leading edges with block content.
+/// This does not change the block classification used for margin or run rules.
+fn has_block_leading_content(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.kind() == NodeKind::Element
+        && matches!(
+            node.display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::InlineBlock
+        )
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
+        && !node.used_writing_mode.is_vertical()
+}
+
+/// The end of the first piece of the block-like root `node_id` that holds no line,
 /// from its border-box top, and whether padding or border sit above the
 /// content that decides it (see [`lineless_leading_piece_end`]).
 fn lineless_piece_end(
@@ -7630,10 +7701,14 @@ fn lineless_piece_end(
     depth: usize,
 ) -> Option<(f32, bool)> {
     if depth > FIRST_PIECE_DEPTH
-        || !is_plain_block_box(document, node_id)
-        || document.nodes[node_id].is_multicol_container()
+        || !(if depth == 0 {
+            has_block_leading_content(document, node_id)
+        } else {
+            is_plain_block_box(document, node_id)
+                && !document.nodes[node_id].is_multicol_container()
+                && !is_floating_box_for_pagination(document, cascade, node_id)
+        })
         || document.nodes[node_id].has_before_or_after_content
-        || is_floating_box_for_pagination(document, cascade, node_id)
     {
         return None;
     }
@@ -9394,7 +9469,13 @@ fn follows_line_of_paragraph(
         .and_then(|ifc| ifc.lines.as_ref())
         .zip(block)
         .is_some_and(|(lines, block)| {
-            lines
+            (document.nodes[block].display().is_atomic_inline_level()
+                || is_replaced_for_pagination(document, block))
+                && lines.lines.iter().enumerate().any(|(index, shaped)| {
+                index >= line && shaped.fragments().any(|fragment| {
+                    matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == block)
+                })
+            }) || lines
                 .block_line_starts
                 .iter()
                 .any(|&(child, after)| child == block && after > line)

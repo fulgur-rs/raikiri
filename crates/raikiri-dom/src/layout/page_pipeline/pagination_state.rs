@@ -581,6 +581,64 @@ impl PaginationState {
         Some(grown)
     }
 
+    /// Places one delegated atomic-only line without applying box margins or
+    /// moving its paragraph's earlier blocks. Later flow takes its growth.
+    fn place_leading_atomic_line(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        owner: super::leading_inline::LeadingInlineLine,
+    ) -> Result<(), Halt> {
+        let (top, height) = super::leading_inline::bounds(document, owner);
+        let relative =
+            accumulated_relative_offset_y(document, env.cascade, env.body_id, owner.root);
+        let flow_top = top - relative;
+        let natural = env.page_origins.page_index_for_y(flow_top);
+        let start = env.page_origins.origin(natural);
+        let end = start + env.page_origins.step_at(natural);
+        let pending = self.pending_break.applies_to(document, candidate.node_id);
+        let target = if pending && self.saw_child {
+            forced_target_page(self.current_page, natural)
+        } else if flow_top > start + 0.001 && flow_top + height > end + 0.001 {
+            natural.saturating_add(1)
+        } else {
+            natural
+        };
+        reach_page(env.control, target)?;
+        let shift = (env.page_origins.origin(target) - flow_top).max(0.0);
+        if shift > 0.0 {
+            let growth = super::leading_inline::move_line(
+                document,
+                env.cascade,
+                env.body_id,
+                owner,
+                shift,
+                &mut self.subtree_shifts,
+                entry.page_before_candidate,
+            );
+            self.deferred_shifts.line_splits.push(LineSplit {
+                root: owner.root,
+                first_moved: owner.line,
+                shift,
+                growth,
+                page: target,
+            });
+        }
+        if pending {
+            self.pending_break.clear();
+        }
+        self.saw_child = true;
+        self.current_page = self.current_page.max(target);
+        self.record_pages(
+            env.control,
+            Some(env.page_origins.page_index_for_end(top + shift + height)),
+            true,
+        )?;
+        Ok(())
+    }
+
     /// Places the box `candidate` after its start: keeps a footnote in the
     /// page-local area of its anchor, or begins the box, starts it on its page,
     /// records it among its siblings, makes room for the header of the table
@@ -593,6 +651,9 @@ impl PaginationState {
         candidate: &PageCandidate,
         entry: &CandidateEntry,
     ) -> Result<(), Halt> {
+        if let Some(owner) = candidate.context.leading_inline_line() {
+            return self.place_leading_atomic_line(document, env, candidate, entry, owner);
+        }
         let FlowEnv {
             cascade,
             page_origins,
