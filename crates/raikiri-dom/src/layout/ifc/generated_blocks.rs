@@ -326,6 +326,7 @@ impl GeneratedBlock {
             lines_before: 0,
             content_top: None,
             flow_top: 0.0,
+            border_top: 0.0,
             top_set: CollapsibleMarginSet::ZERO,
             starts_paragraph: false,
             has_clearance: false,
@@ -695,6 +696,8 @@ pub(crate) struct OpenBlock {
     /// below the margins collapsed at its top. A float may push the box's
     /// first line further down, but not the box (CSS 2.1 9.5).
     flow_top: f32,
+    // Border-box origin used when a marker aligns the first line.
+    border_top: f32,
     /// The margins collapsed at the box's top: those above it with its own.
     top_set: CollapsibleMarginSet,
     /// The box starts the paragraph: nothing is above it.
@@ -720,6 +723,16 @@ pub(crate) struct OpenBlock {
 }
 
 impl OpenBlock {
+    pub(crate) fn first_baseline(&self, line_top: f32, baseline: f32) -> f32 {
+        line_top - self.border_top + baseline
+    }
+
+    pub(crate) fn apply_marker_leading(&mut self, leading: f32) {
+        self.content_top = Some(self.content_top.unwrap_or(self.flow_top) + leading);
+        self.flow_top += leading;
+        self.border_top += leading;
+    }
+
     /// The box after `lines` lines of the paragraph: once one of them is the
     /// box's, its first line is laid out.
     pub(crate) fn after(self, lines: usize) -> Self {
@@ -899,6 +912,7 @@ pub(crate) fn open(
         lines_before: flow.lines.len(),
         content_top,
         flow_top,
+        border_top: content_top.map_or(flow_top, |top| top - edges.top),
         top_set,
         starts_paragraph: flow.at_start,
         // Margins that escape above the paragraph move the floats that adjoin

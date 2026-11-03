@@ -135,6 +135,7 @@ fn place_lines_matches_break_all_without_floats() {
             &AtomicSizes::EMPTY,
             width,
             super::IfcAxes::new(root.writing_mode, shodo::geometry::Direction::Ltr),
+            None,
             |_, _| LineSpace {
                 inline_start: 0.0,
                 inline_size: width,
@@ -164,6 +165,7 @@ fn place_lines_asks_for_the_space_at_each_line_offset() {
         &AtomicSizes::EMPTY,
         50.0,
         super::IfcAxes::new(root.writing_mode, shodo::geometry::Direction::Ltr),
+        None,
         |y, height| {
             asked.push(y);
             let _ = height;
@@ -370,4 +372,17 @@ fn rebreaking_lines_preserves_inside_marker_image_dimensions() {
             (8.0, 8.0)
         );
     }
+}
+
+#[test]
+fn outside_marker_leading_keeps_the_following_line_advance() {
+    let (mut root, mut cx) = root_of("", "aaaa bbbb");
+    root.outside_marker_height = Some(30.0);
+    let lines = break_lines(&root, &mut cx, 50.0);
+    assert_eq!(lines.lines.len(), 2);
+    assert_eq!(first_baseline(&lines), Some(30.0));
+    assert_eq!(last_baseline(&lines), Some(40.0));
+    assert_eq!(lines.lines[0].block_size(), 32.0);
+    assert_eq!(lines.lines[1].block_size(), 10.0);
+    assert_eq!(lines.height, 42.0);
 }

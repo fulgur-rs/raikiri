@@ -599,7 +599,11 @@ fn block_border_box_end(
             let offset = if in_ifc {
                 offset
             } else {
-                offset + layout.location.y - relative_shift
+                // The marker moves the box's paint and flow advance, while
+                // escaped float exclusions retain their normal coordinates.
+                offset + layout.location.y
+                    - relative_shift
+                    - super::ifc::outside_marker::box_leading(document, child)
             };
             children.extend(
                 node.children
@@ -2531,8 +2535,12 @@ fn positioned_owned_text_line_bounds(
                             .map(|first| fragment.y - first.block_offset())
                     })
                     .unwrap_or(0.0);
-                let top = root_lines.line_top(line.line);
-                let height = root_lines.lines[line.line].block_size();
+                let top = root_lines.line_top(line.line)
+                    - crate::layout::ifc::outside_marker::fit_leading(
+                        document, owned.root, line.line,
+                    );
+                let height =
+                    crate::layout::ifc::outside_marker::fit_height(&root_lines.lines[line.line]);
                 (top + offset, top + height + offset)
             })
             .collect(),
@@ -3548,6 +3556,7 @@ fn layout_pages_attempt(
         session.fragment_tree.clear();
         session.column_rules.clear();
         session.page_projection.clear();
+        session.outside_marker_leading = Default::default();
         return Ok((
             vec![PageSlice {
                 page_index: 0,
@@ -6936,7 +6945,7 @@ fn visit_same_bfc_floats_in_subtree(
     let branch_offset = branch_top
         - layout_relative_offset_y(document, cascade, body_id, branch)
         - if document.contributes_layout_offset(branch) {
-            0.0
+            super::ifc::outside_marker::box_leading(document, branch)
         } else {
             document.nodes[branch].layout.location.y
         };
@@ -6995,7 +7004,9 @@ fn visit_same_bfc_floats_in_subtree(
         }
         let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
         let child_offset = if document.contributes_layout_offset(child) {
-            offset + layout.location.y - relative_offset
+            offset + layout.location.y
+                - relative_offset
+                - super::ifc::outside_marker::box_leading(document, child)
         } else {
             offset - relative_offset
         };

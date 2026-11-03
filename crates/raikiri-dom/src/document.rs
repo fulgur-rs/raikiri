@@ -240,6 +240,8 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) inline_svg_cache: crate::inline_svg_cache::InlineSvgCache,
     pub(crate) nodes: crate::node::arena::NodeArena,
+    /// Accepted parent marker gaps and the first lines they moved.
+    pub(crate) outside_marker_leading: crate::layout::ifc::outside_marker::LeadingStore,
     /// The style facts pagination reads, by layout key, while it runs on
     /// transposed axes (see `LayoutSession::block_axis`); empty otherwise.
     pub(crate) pagination_block_styles: Vec<crate::layout::block_axis_style::BlockAxisStyle>,
@@ -551,6 +553,7 @@ impl Document {
             focus_hidden: false,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
+            outside_marker_leading: Default::default(),
             content_images: Default::default(),
             margin_box_images: Default::default(),
             counter_snapshot_cache: std::sync::OnceLock::new(),
@@ -2039,6 +2042,7 @@ impl Document {
             focus_hidden,
             canvas_bitmap_bytes: _,
             list_marker_images,
+            outside_marker_leading: _,
             content_images,
             margin_box_images,
             counter_snapshot_cache: _,

@@ -1587,6 +1587,9 @@ fn compute_ifc_root(
     mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    if inputs.run_mode == RunMode::PerformLayout {
+        tree.outside_marker_leading.clear(idx);
+    }
     if tree.nodes[idx]
         .ifc
         .as_ref()

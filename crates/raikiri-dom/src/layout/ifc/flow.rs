@@ -223,6 +223,7 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
                 Direction::Ltr
             },
         ),
+        root.outside_marker_height,
         |_, _| LineSpace {
             inline_start: 0.0,
             inline_size: width,
@@ -234,6 +235,7 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
 
 /// Lay the paragraph out line by line. `space(y, height)` gives the space
 /// available to a line that starts at block offset `y` and is `height` tall.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn place_lines(
     paragraph: &Paragraph,
     options: &LineOptions,
@@ -241,6 +243,7 @@ pub(crate) fn place_lines(
     atomics: &AtomicSizes,
     content_width: f32,
     axes: IfcAxes,
+    outside_marker_height: Option<f32>,
     mut space: impl FnMut(f32, f32) -> LineSpace,
 ) -> IfcLines {
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -250,6 +253,7 @@ pub(crate) fn place_lines(
     loop {
         let mut assumed_height = 0.0_f32;
         let mut retries = 0;
+        let mut leading = 0.0;
         let line = loop {
             let available = space(y, assumed_height);
             first_width.get_or_insert(available.inline_size);
@@ -263,8 +267,21 @@ pub(crate) fn place_lines(
                 axes.direction(),
             );
             constraint.block_offset = y;
+            constraint.block_start_leading = leading;
             match paragraph.next_line(cx, token, options, &constraint, atomics) {
                 LineResult::Line(line) => {
+                    let wanted = if lines.is_empty() {
+                        super::outside_marker::leading(
+                            outside_marker_height,
+                            line.baseline(BaselineKind::Alphabetic) - line.block_start_leading(),
+                        )
+                    } else {
+                        0.0
+                    };
+                    if wanted != leading {
+                        leading = wanted;
+                        continue;
+                    }
                     let height = line.block_size();
                     // The line may span more of a float than the height it
                     // was assumed to have; lay it out again if the space for
@@ -286,13 +303,13 @@ pub(crate) fn place_lines(
             }
         };
         let Some(line) = line else { break };
-        y += line.block_size();
+        y = line.block_offset() + line.block_size();
         token = line.break_token();
         lines.push(line);
     }
     IfcLines {
         width: first_width.unwrap_or(0.0),
-        height: lines.iter().map(|line| line.block_size()).sum(),
+        height: y,
         lines: std::sync::Arc::new(lines),
         object_text_prefixes: Default::default(),
         oof_candidates: OofCandidates::new(),

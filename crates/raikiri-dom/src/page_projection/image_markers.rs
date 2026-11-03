@@ -151,7 +151,17 @@ pub(super) fn prepare(
             first_lines.insert(*owner, line);
             line
         };
-        *offset_y = line.map_or(0.0, |line| line.baseline - size.height);
+        *offset_y = line.map_or(0.0, |line| {
+            let top = line.baseline - size.height;
+            // An oversized outside marker stays above the column flow's
+            // text, but not above the item's content-box start.
+            if document.nodes[*owner].multicol.is_some() {
+                let layout = document.nodes[*owner].layout;
+                top.max(layout.border.top + layout.padding.top)
+            } else {
+                top
+            }
+        });
         let first = first_pages.get(&NodeId::new(*owner as u64)).copied();
         let selected = super::text_runs::marker_page(
             line.filter(|_| counts[owner] == 1)

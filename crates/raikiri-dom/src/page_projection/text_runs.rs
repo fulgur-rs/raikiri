@@ -1055,7 +1055,8 @@ pub(super) fn omission(
 /// `owner`'s first formatted line, from its border edge, where pagination
 /// draws it.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct FirstLine {
+pub(crate) struct FirstLine {
+    pub(crate) source: Option<(usize, usize)>,
     pub(super) baseline: f32,
     /// Whether the selected line metrics can align an image along physical Y.
     pub(super) horizontal: bool,
@@ -1074,7 +1075,7 @@ pub(super) struct FirstLine {
 /// flex container orders its items itself, so its first line is the first
 /// baseline its layout recorded; a grid container takes the line of an item
 /// in its first row.
-pub(super) fn first_line(
+pub(crate) fn first_line(
     document: &Document,
     cascade: &CascadeResult,
     owner: usize,
@@ -1104,6 +1105,7 @@ pub(super) fn first_line(
     ) && !node.is_ifc_root()
     {
         return node.table_first_baseline.map(|baseline| FirstLine {
+            source: None,
             baseline,
             center: baseline,
             horizontal: !node.used_writing_mode.is_vertical(),
@@ -1119,7 +1121,7 @@ pub(super) fn first_line(
         // line has the baseline; when none matches, the baseline stands
         // in.
         let baseline = node.flex_first_baseline?;
-        let (center, horizontal) = node
+        let (center, horizontal, source) = node
             .layout_children()
             .iter()
             .filter(|&&child| laid_out(child))
@@ -1127,11 +1129,15 @@ pub(super) fn first_line(
                 let line = first_line(document, cascade, child)?;
                 let top = document.nodes[child].layout.location.y
                     - layout_applied_relative_offset_y(document, cascade, child);
-                ((top + line.baseline - baseline).abs() < 0.01)
-                    .then_some((top + line.center, line.horizontal))
+                ((top + line.baseline - baseline).abs() < 0.01).then_some((
+                    top + line.center,
+                    line.horizontal,
+                    line.source,
+                ))
             })
-            .unwrap_or((baseline, false));
+            .unwrap_or((baseline, false, None));
         return Some(FirstLine {
+            source,
             baseline,
             center,
             horizontal: horizontal && !node.used_writing_mode.is_vertical(),
@@ -1163,6 +1169,7 @@ pub(super) fn first_line(
             let y = document.nodes[child].layout.location.y
                 - layout_applied_relative_offset_y(document, cascade, child);
             return Some(FirstLine {
+                source: line.source,
                 baseline: y + line.baseline,
                 center: y + line.center,
                 horizontal: line.horizontal,
@@ -1175,10 +1182,14 @@ pub(super) fn first_line(
     let layout = node.layout;
     let top = layout.border.top + layout.padding.top + lines.shift_of(0);
     lines.lines.first().map(|line| FirstLine {
+        source: Some((owner, 0)),
         baseline: top
             + line.block_offset()
             + line.baseline(shodo::geometry::BaselineKind::Alphabetic),
-        center: top + line.block_offset() + line.block_size() / 2.0,
+        center: top
+            + line.block_offset()
+            + crate::layout::ifc::outside_marker::fit_height(line) / 2.0
+            - crate::layout::ifc::outside_marker::fit_leading(document, owner, 0),
         horizontal: line.writing_mode() == WritingMode::HorizontalTb,
     })
 }
@@ -1240,12 +1251,14 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
                 line.center = line.center.clamp(0.0, bottom);
             }
             FirstLine {
+                source: line.source,
                 baseline: top + line.baseline,
                 center: top + line.center,
                 horizontal: line.horizontal && !vertical,
             }
         }
         None => FirstLine {
+            source: None,
             baseline: top + bottom,
             center: top + bottom,
             horizontal: false,
