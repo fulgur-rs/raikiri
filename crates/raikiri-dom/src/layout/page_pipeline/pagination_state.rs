@@ -10,10 +10,10 @@ use super::{
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
     PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
-    avoided_box_moves, begins_page_below_leading_edges, block_effective_y, block_fits_page_step,
-    box_avoids_page_break_inside, box_changes_page_name, box_occupies_column, box_sets_page_name,
-    break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
-    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
+    avoided_box_moves, block_effective_y, block_fits_page_step, box_avoids_page_break_inside,
+    box_changes_page_name, box_occupies_column, box_sets_page_name, break_margins,
+    closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain, collapses_through,
+    collapses_with_previous_block, content_overflow_end, current_abs_y,
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
     forced_line_moves, forced_target_page, grow_ancestors_for_shift,
@@ -285,7 +285,7 @@ pub(super) struct PaginationState {
     pub(super) page_names: PageNames,
     pub(super) pending_break: PendingBreak,
     pub(super) sibling_margins: SiblingMargins,
-    column_page_starts: ChildPositions,
+    child_positions: ChildPositions,
     pub(super) last_named: LastNamedBox,
     /// Whether any box was placed yet.
     pub(super) saw_child: bool,
@@ -325,7 +325,7 @@ impl PaginationState {
             page_names,
             pending_break: PendingBreak::default(),
             sibling_margins: SiblingMargins::default(),
-            column_page_starts: ChildPositions::default(),
+            child_positions: ChildPositions::default(),
             last_named: LastNamedBox::default(),
             saw_child: false,
             checked_paragraphs: CheckedParagraphs::default(),
@@ -1072,7 +1072,7 @@ impl PaginationState {
                 fit.page_start,
                 fit.page_end,
             ) && (document.layout_parent_of(node_id) == Some(body_id)
-                || !self.column_page_starts.begins_page_below_leading_edges(
+                || !self.child_positions.begins_page_below_leading_edges(
                     document,
                     cascade,
                     body_id,
@@ -1092,16 +1092,17 @@ impl PaginationState {
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
         // page. The forced break sits before the box's margin box, so the
-        // test uses its block-start margin edge.
+        // test uses its block-start margin edge. The child positions it reads
+        // stay valid because a pass never changes child lists.
         let forced_break_at_page_start = forced_before
             && (margin_box_starts_page(
                 page_origins,
                 effective_y - margin_top.max(0.0),
                 self.current_page,
                 page_start,
-            ) || begins_page_below_leading_edges(
-                document, cascade, body_id, node_id, page_start,
-            ));
+            ) || self
+                .child_positions
+                .begins_page_below_leading_edges(document, cascade, body_id, node_id, page_start));
 
         // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
         // truncated, while a forced break keeps the block-start margin of the

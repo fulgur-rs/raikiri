@@ -25,7 +25,6 @@ use fragment_sources::{
     place_sources, restore_crossing_tops,
 };
 pub(crate) use link_events::page_fragment_events_from_pages;
-use page_start::begins_page_below_leading_edges;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
@@ -5336,28 +5335,42 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
 /// or an absolutely positioned box. It already sits on this page, so moving
 /// `parent` would take it along.
 fn renders_before_child(document: &Document, parent: usize, child: usize) -> bool {
-    let siblings = document.nodes[parent].layout_children();
-    let child_index = siblings.iter().position(|&sibling| sibling == child);
-    siblings.iter().enumerate().any(|(index, &sibling)| {
-        let node = &document.nodes[sibling];
-        let renders = match node.kind() {
-            NodeKind::Element => {
-                node.is_in_document()
-                    && !node.is_non_rendered_html_element()
-                    && document.nodes[sibling].display() != DisplayValue::None
-            }
-            _ => node
-                .text_content()
-                .is_some_and(|text| !text.trim().is_empty()),
-        };
-        renders
-            && (child_index.is_none_or(|child_index| index < child_index)
-                || node.kind() == NodeKind::Element
-                    && matches!(
-                        document.nodes[sibling].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    ))
-    })
+    // A sibling counts if it comes before `child` (every sibling does when the
+    // parent does not list `child`), or if it is placed out of the flow and may
+    // be placed against `parent` later. One pass, so that the cost follows how
+    // far the first of those is rather than where `child` sits.
+    let mut before_child = true;
+    document.nodes[parent]
+        .layout_children()
+        .iter()
+        .any(|&sibling| {
+            #[cfg(test)]
+            tests::PARENT_CHILD_STEPS.with(|count| count.set(count.get() + 1));
+            before_child &= sibling != child;
+            sibling_renders(document, sibling)
+                && (before_child
+                    || document.nodes[sibling].kind() == NodeKind::Element
+                        && matches!(
+                            document.nodes[sibling].position(),
+                            PositionValue::Absolute | PositionValue::Fixed
+                        ))
+        })
+}
+
+/// Whether a child of a box renders something: an element that is in the
+/// document and has a box, or text that is not only white space.
+fn sibling_renders(document: &Document, sibling: usize) -> bool {
+    let node = &document.nodes[sibling];
+    match node.kind() {
+        NodeKind::Element => {
+            node.is_in_document()
+                && !node.is_non_rendered_html_element()
+                && node.display() != DisplayValue::None
+        }
+        _ => node
+            .text_content()
+            .is_some_and(|text| !text.trim().is_empty()),
+    }
 }
 
 /// The outermost box that `block` starts, together with the ancestors that
