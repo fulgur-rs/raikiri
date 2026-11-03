@@ -620,3 +620,205 @@ fn the_clip_of_a_box_does_not_reach_the_absolute_boxes_of_the_next_one() {
     );
     assert_eq!(result.page_count(), 5);
 }
+
+#[test]
+fn an_empty_absolute_box_escapes_a_clip_below_the_initial_containing_block() {
+    let result = laid_out(
+        "<div style='overflow:hidden;height:50px;width:100px'><div style='position:absolute;top:0;left:0;width:50px;height:300px;background:red'></div></div>",
+        "",
+    );
+    assert_eq!(result.page_count(), 3);
+}
+
+#[test]
+fn an_empty_absolute_box_escapes_a_clip_below_its_positioned_containing_block() {
+    let result = laid_out(
+        "<div style='position:relative;height:50px;width:100px'><div style='overflow:hidden;height:50px'><div style='position:absolute;top:0;left:0;width:50px;height:300px;background:red'></div></div></div>",
+        "",
+    );
+    assert_eq!(result.page_count(), 3);
+}
+
+#[test]
+fn an_empty_absolute_box_past_its_clip_keeps_the_page_it_starts_on() {
+    let result = laid_out(
+        "<div style='position:relative;overflow:hidden;height:50px;width:100px'><div style='position:absolute;top:120px;left:0;width:50px;height:30px;background:red'></div></div>",
+        "",
+    );
+    assert_eq!(result.page_count(), 2);
+}
+
+#[test]
+fn empty_absolute_boxes_keep_the_clips_of_their_containing_blocks() {
+    const BOX: &str =
+        "<div style='position:absolute;top:0;left:0;width:50px;height:300px;background:red'></div>";
+    for overflow in ["hidden", "auto", "scroll", "clip"] {
+        let body = format!(
+            "<div style='position:relative;overflow:{overflow};height:50px;width:100px'>{BOX}</div>"
+        );
+        assert_eq!(laid_out(&body, "").page_count(), 1, "{overflow}");
+    }
+    for (body, expected) in [
+        (BOX.to_string(), 3),
+        (format!("<div style='transform:translateX(0);overflow:hidden;height:50px'>{BOX}</div>"), 1),
+        (format!("<div style='overflow:hidden;height:50px'><div style='position:relative;height:30px'>{BOX}</div></div>"), 1),
+        ("<div style='overflow:hidden;height:50px'><div style='height:300px;background:red'></div></div>".to_string(), 1),
+    ] {
+        assert_eq!(laid_out(&body, "").page_count(), expected, "{body}");
+    }
+}
+
+#[test]
+fn hidden_empty_absolute_boxes_count_the_box_start_before_padding_and_border() {
+    for (top, extra, pages) in [
+        (40, "", 1),
+        (50, "", 1),
+        (60, "", 1),
+        (100, "", 2),
+        (120, "", 2),
+        (300, "", 4),
+        (120, "padding-top:200px", 2),
+        (120, "border-top:200px solid blue", 2),
+        (120, "height:0", 2),
+    ] {
+        let body = format!(
+            "<div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:{top}px;left:0;width:50px;height:30px;{extra};background:red'></div></div>"
+        );
+        assert_eq!(laid_out(&body, "").page_count(), pages, "{body}");
+    }
+}
+
+#[test]
+fn a_clipped_positioned_subtree_does_not_reopen_a_hidden_descendants_page() {
+    for height in [5, 300] {
+        let body = format!(
+            "<div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:40px;height:{height}px'><div style='position:absolute;top:120px;left:0;width:50px;height:300px;background:red'></div></div></div>"
+        );
+        assert_eq!(laid_out(&body, "").page_count(), 1, "height:{height}");
+    }
+    let child = "<div style='position:absolute;top:120px;left:0;width:50px;height:30px;background:red'></div>";
+    for (body, expected) in [
+        ("<div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:120px;height:30px'><div style='position:absolute;top:300px;left:0;width:50px;height:300px;background:red'></div></div></div>".to_string(), 2),
+        (format!("<div style='position:absolute;overflow:hidden;top:0;left:0;height:50px;width:100px'>{child}</div>"), 2),
+        (format!("<div style='position:absolute;top:0;height:50px'><div style='position:relative;overflow:hidden;height:50px'>{child}</div></div>"), 2),
+        (format!("<div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:0;height:300px'><div style='position:relative;height:30px'>{child}</div></div></div>"), 1),
+    ] {
+        assert_eq!(laid_out(&body, "").page_count(), expected, "{body}");
+    }
+}
+
+#[test]
+fn empty_positioned_boxes_use_inline_containing_blocks_without_changing_coordinates() {
+    let child =
+        "<div style='position:absolute;top:0;left:0;width:50px;height:300px;background:red'></div>";
+    for (body, expected) in [
+        (
+            format!(
+                "<div style='overflow:hidden;height:50px'><span style='position:relative'>{child}</span></div>"
+            ),
+            1,
+        ),
+        (
+            format!(
+                "<span style='position:relative'><div style='overflow:hidden;height:50px'>{child}</div></span>"
+            ),
+            3,
+        ),
+    ] {
+        assert_eq!(laid_out(&body, "").page_count(), expected, "{body}");
+    }
+}
+
+#[test]
+fn empty_fixed_boxes_use_the_fixed_containing_block_for_clipping() {
+    let child =
+        "<div style='position:fixed;top:0;left:0;width:50px;height:300px;background:red'></div>";
+    for (body, expected) in [
+        (format!("<div style='overflow:hidden;height:50px'>{child}</div>"), 1),
+        (format!("<div style='transform:translateX(0);overflow:hidden;height:50px'>{child}</div>"), 1),
+        (format!("<div style='transform:translateX(0);height:50px'><div style='overflow:hidden;height:50px'>{child}</div></div>"), 3),
+        (format!("<div style='transform:translateX(0);height:50px'><div style='position:relative;overflow:hidden;height:50px'>{child}</div></div>"), 3),
+        (format!("<div style='transform:translateX(0);height:50px'><div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:120px;height:30px'>{child}</div></div></div>"), 3),
+        ("<div style='transform:translateX(0);overflow:hidden;height:50px'><div style='position:fixed;top:120px;left:0;width:50px;height:30px;background:red'></div></div>".to_string(), 2),
+        ("<div style='transform:translateX(0);height:50px'><div style='position:relative;overflow:hidden;height:50px'><div style='position:absolute;top:40px;height:300px'><div style='position:fixed;top:120px;left:0;width:50px;height:30px;background:red'></div></div></div></div>".to_string(), 2),
+    ] {
+        assert_eq!(laid_out(&body, "").page_count(), expected, "{body}");
+    }
+}
+
+#[test]
+fn positioned_clip_outsets_paint_without_adding_fragmentation_pages() {
+    const CASES: &[(&str, u32)] = &[
+        (
+            r#"<div style="position:relative;overflow:clip;overflow-clip-margin:100px;height:50px;width:100px"><div style="width:50px;height:300px;background:red"></div></div>"#,
+            2,
+        ),
+        (
+            r#"<div style="position:relative;overflow:clip;overflow-clip-margin:100px;height:50px;width:100px"><div style="position:absolute;top:0;left:0;width:50px;height:300px;background:red"></div></div>"#,
+            1,
+        ),
+        (
+            r#"<div style="position:absolute;top:0;left:0;overflow:clip;overflow-clip-margin:100px;height:50px;width:100px"><div style="height:300px;background:red"></div></div>"#,
+            1,
+        ),
+        (
+            r#"<div style="position:absolute;top:0;left:0;overflow:clip;overflow-clip-margin:100px;height:50px;width:100px"><div style="position:absolute;top:0;left:0;height:300px;width:50px;background:red"></div></div>"#,
+            1,
+        ),
+        (
+            r#"<div style="position:relative;overflow:clip;overflow-clip-margin:100px;height:50px;width:100px"><div style="position:absolute;top:40px;height:5px"><div style="position:absolute;top:200px;height:5px"><div style="position:absolute;top:-240px;left:0;width:50px;height:300px;background:red"></div></div></div></div>"#,
+            1,
+        ),
+        (
+            r#"<div style="position:relative;overflow:clip;overflow-clip-margin:100px;height:50px;width:100px"><div style="position:absolute;top:40px;height:5px"><div style="position:absolute;top:200px;height:5px"></div></div></div>"#,
+            1,
+        ),
+    ];
+    for &(body, pages) in CASES {
+        assert_eq!(laid_out(body, "").page_count(), pages, "{body}");
+    }
+}
+
+#[test]
+fn fixed_boxes_in_columns_follow_their_fixed_containing_blocks() {
+    const CASES: &[(&str, u32)] = &[
+        (
+            r#"<div style="transform:translateX(0)"><div style="columns:2;column-fill:auto;height:50px"><div style="position:fixed;top:0;left:0;width:50px;height:300px;background:red"></div></div></div>"#,
+            3,
+        ),
+        (
+            r#"<div style="transform:translateX(0)"><div style="columns:2;column-fill:auto;height:50px"><div style="position:relative;height:30px"><div style="position:fixed;top:0;left:0;width:50px;height:300px;background:red"></div></div></div></div>"#,
+            3,
+        ),
+        (
+            r#"<div style="columns:2;column-fill:auto;height:50px"><div style="transform:translateX(0);height:30px"><div style="position:fixed;top:0;left:0;width:50px;height:300px;background:red"></div></div></div>"#,
+            1,
+        ),
+    ];
+    for &(body, pages) in CASES {
+        assert_eq!(laid_out(body, "").page_count(), pages, "{body}");
+    }
+}
+
+#[test]
+fn inline_filters_establish_the_fixed_containing_block_at_the_clip_boundary() {
+    const CASES: &[(&str, u32)] = &[
+        (
+            r#"<div style="overflow:hidden;height:50px"><span style="filter:blur(0px)"><div style="position:fixed;top:120px;left:0;width:50px;height:30px;background:red"></div></span></div>"#,
+            2,
+        ),
+        (
+            r#"<span style="filter:blur(0px)"><div style="overflow:hidden;height:50px"><div style="position:fixed;top:0;left:0;width:50px;height:300px;background:red"></div></div></span>"#,
+            3,
+        ),
+    ];
+    for &(body, pages) in CASES {
+        assert_eq!(laid_out(body, "").page_count(), pages, "{body}");
+    }
+}
+
+#[test]
+fn fixed_can_escape_columns_from_an_absolute_box_in_the_column_flow() {
+    let body = r#"<div style="transform:translateX(0)"><div style="columns:2;column-fill:auto;height:50px"><div style="position:relative;height:30px"><div style="position:absolute;top:0;left:0"><div style="position:fixed;top:0;left:0;width:50px;height:300px;background:red"></div></div></div></div></div>"#;
+    assert_eq!(laid_out(body, "").page_count(), 3);
+}

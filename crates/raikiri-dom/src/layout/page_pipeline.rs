@@ -62,15 +62,94 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
     child_parent_y
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct OverflowClipLimit {
+    end: f32,
+    positioned_end: f32,
+    // A nested positioned box cannot open another hidden start page under
+    // the clip that already bounds its positioned ancestor.
+    positioned_started: bool,
+}
+
+impl OverflowClipLimit {
+    const UNBOUNDED: Self = Self {
+        end: f32::INFINITY,
+        positioned_end: f32::INFINITY,
+        positioned_started: false,
+    };
+
+    fn for_positioned(self) -> Self {
+        Self {
+            end: self.positioned_end,
+            ..self
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ColumnContainingBlocks {
+    absolute_outside: bool,
+    fixed_outside: bool,
+}
+
+impl ColumnContainingBlocks {
+    fn descendants(
+        self,
+        document: &Document,
+        id: usize,
+        computed: &raikiri_style::ComputedValues,
+    ) -> Self {
+        Self {
+            absolute_outside: self.absolute_outside
+                && !super::fixed::establishes_absolute_containing_block(document, id, computed),
+            fixed_outside: self.fixed_outside
+                && !super::fixed::establishes_fixed_containing_block_for_layout(
+                    document, id, computed,
+                ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ContentOverflowContext {
+    parent_y: f32,
+    in_columns: Option<ColumnContainingBlocks>,
+    inside_positioned_flow: bool,
+    flow_clip: OverflowClipLimit,
+    absolute_clip: OverflowClipLimit,
+    fixed_clip: OverflowClipLimit,
+}
+
+impl ContentOverflowContext {
+    fn update_containing_blocks(
+        &mut self,
+        document: &Document,
+        id: usize,
+        computed: &raikiri_style::ComputedValues,
+    ) {
+        let clip = self.flow_clip.for_positioned();
+        if clip != self.absolute_clip
+            && super::fixed::establishes_absolute_containing_block(document, id, computed)
+        {
+            self.absolute_clip = clip;
+        }
+        if clip != self.fixed_clip
+            && super::fixed::establishes_fixed_containing_block_for_layout(document, id, computed)
+        {
+            self.fixed_clip = clip;
+        }
+    }
+}
+
 /// The lowest block-end edge of the boxes that paint below the paginated
 /// flow: the body's own border box, nested absolutely positioned boxes, and
 /// content overflowing a box that offers no break points (for example a
 /// `contain: size` box). Measured from the body's coordinate space after
 /// pagination moved the flow.
 ///
-/// Fixed boxes repeat on every page and running elements leave the flow, so
-/// their subtrees do not extend the document. A box that clips its
-/// block-axis overflow contributes its own border box but not its content.
+/// Page-fixed boxes repeat and running elements leave the flow, so their
+/// subtrees do not extend the document. Overflow clips bound normal content,
+/// while a positioned box bypasses clips below its containing block.
 /// Inline elements are located by their paragraph's lines, which take part
 /// in pagination directly, so only the boxes inside them are measured.
 ///
@@ -78,8 +157,8 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
 /// so its unfragmented layout position says nothing about the page it paints
 /// on. Where a column layout cut that content into fragments, the fragments
 /// are measured instead: a box that cannot break and is taller than its
-/// column overflows it (CSS Fragmentation 3, 4.4). An absolutely positioned
-/// box in the columns whose containing block is the container or one of its
+/// column overflows it (CSS Fragmentation 3, 4.4). A positioned box in the
+/// columns whose containing block is the container or one of its
 /// ancestors is not projected, though: it paints at its laid-out position
 /// and is measured there.
 fn content_overflow_end(
@@ -112,11 +191,22 @@ fn content_overflow_end(
         }
     }
     let mut end = f32::NEG_INFINITY;
-    // `Some(true)` marks the in-flow content of a multicol container where an
-    // absolutely positioned box still takes its containing block from
-    // outside the columns, `Some(false)` content where it does not.
-    let mut stack = vec![(body_id, 0.0_f32, None::<bool>)];
-    while let Some((node_id, parent_y, in_columns)) = stack.pop() {
+    // Within columns, track independently whether absolute and fixed boxes
+    // still take their containing blocks from outside the column flow.
+    let mut stack = vec![(
+        body_id,
+        ContentOverflowContext {
+            parent_y: 0.0,
+            in_columns: None,
+            inside_positioned_flow: false,
+            flow_clip: OverflowClipLimit::UNBOUNDED,
+            absolute_clip: OverflowClipLimit::UNBOUNDED,
+            fixed_clip: OverflowClipLimit::UNBOUNDED,
+        },
+    )];
+    while let Some((node_id, mut context)) = stack.pop() {
+        let parent_y = context.parent_y;
+        let in_columns = context.in_columns;
         let node = &document.nodes[node_id];
         if !node.is_in_document()
             || node.is_display_none()
@@ -131,17 +221,13 @@ fn content_overflow_end(
         // in the root's coordinate space.
         let computed = &cascade.computed[node_id];
         if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
-            let in_columns = in_columns.map(|outside| {
-                outside
-                    && !super::fixed::establishes_absolute_containing_block(
-                        document, node_id, computed,
-                    )
-            });
-            stack.extend(
-                node.children
-                    .iter()
-                    .map(|&child| (child, parent_y, in_columns)),
-            );
+            let in_columns =
+                in_columns.map(|outside| outside.descendants(document, node_id, computed));
+            // An inline keeps its paragraph's coordinates, but can still be
+            // the containing block of a positioned descendant.
+            context.update_containing_blocks(document, node_id, computed);
+            context.in_columns = in_columns;
+            stack.extend(node.children.iter().map(|&child| (child, context)));
             continue;
         }
         if super::fixed::is_page_fixed(document, cascade, node_id)
@@ -155,17 +241,27 @@ fn content_overflow_end(
             // overflow must not extend the document's normal-flow pages.
             continue;
         }
-        // Inside columns only an absolutely positioned box placed against a
-        // containing block outside them is measured, with its subtree.
+        // In columns only positioned boxes whose containing blocks are
+        // outside are measured. Still visit a column-flow box's descendants:
+        // a fixed descendant may use a containing block outside the columns.
         // A `display: contents` element generates no positioned box, so its
         // children stay in the column flow.
-        let positioned = matches!(document.nodes[node_id].position(), PositionValue::Absolute)
-            && document.nodes[node_id].display() != DisplayValue::Contents;
+        let positioned = matches!(
+            document.nodes[node_id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) && document.nodes[node_id].display() != DisplayValue::Contents;
         let in_columns = match in_columns {
-            Some(true) if positioned => None,
-            Some(false) if positioned => continue,
+            Some(outside) if positioned => {
+                let escapes = if document.nodes[node_id].position() == &PositionValue::Fixed {
+                    outside.fixed_outside
+                } else {
+                    outside.absolute_outside
+                };
+                if escapes { None } else { Some(outside) }
+            }
             other => other,
         };
+        context.inside_positioned_flow |= positioned;
         // Layout places some boxes without their relative offset, which
         // the painter adds to the box and its subtree.
         let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
@@ -176,6 +272,20 @@ fn content_overflow_end(
         } else {
             parent_y + node.layout.location.y + paint_offset
         };
+        let mut clip = match document.nodes[node_id].position() {
+            PositionValue::Absolute if positioned => context.absolute_clip,
+            PositionValue::Fixed if positioned => context.fixed_clip,
+            _ => context.flow_clip,
+        };
+        if positioned && in_columns.is_none() && clip.end.is_finite() {
+            // A hidden positioned flow opens its start page once, including
+            // a zero-height box. Keep the actual clip for its descendants;
+            // a fixed descendant may still escape through another CB stream.
+            if y.is_finite() && y >= clip.end && !clip.positioned_started {
+                end = end.max(y + 1.0);
+            }
+            clip.positioned_started = true;
+        }
         let bottom = if node_id == body_id {
             block_border_box_end(
                 document,
@@ -190,49 +300,66 @@ fn content_overflow_end(
         } else {
             f32::NEG_INFINITY
         };
-        if bottom.is_finite() {
-            end = end.max(bottom);
+        if bottom.is_finite() && y < clip.end {
+            end = end.max(bottom.min(clip.end));
         }
         // A `display: contents` element generates no box and clips nothing,
         // as in painting.
         let clips = node_id != body_id && element_clips_overflow(document, cascade, node_id);
         if clips {
-            continue;
+            let paint_end = clip_block_end(document, cascade, node_id, y);
+            let positioned_end = paint_end.min(y + node.layout.size.height);
+            clip.positioned_end = clip.positioned_end.min(positioned_end);
+            // A clip's outset extends ordinary fragmented flow, but paint
+            // overflow alone does not add pages to a positioned flow.
+            clip.end = clip.end.min(if context.inside_positioned_flow {
+                positioned_end
+            } else {
+                paint_end
+            });
         }
         // Generated block content and overflowing lines have no source box
         // to visit. Measure retained paragraph flow even when an authored
         // height or max-height limits its ordinary containing box.
         if in_columns.is_none()
+            && y < clip.end
             && node.multicol.is_none()
             && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
         {
-            end = end
-                .max(y + node.layout.border.top + node.layout.padding.top + lines.shifted_height());
+            end = end.max(
+                (y + node.layout.border.top + node.layout.padding.top + lines.shifted_height())
+                    .min(clip.end),
+            );
         }
-        if in_columns.is_none() {
+        if in_columns.is_none() && y < clip.end {
             let roots = fragment_roots.get(&node_id).map_or(&[][..], Vec::as_slice);
-            end = end.max(fragment_tree_end(
-                fragments,
-                &fragment_children,
-                roots,
-                y,
-                |node_id| element_clips_overflow(document, cascade, node_id),
-                |node_id| painted_relative_offset_y(document, cascade, body_id, node_id),
-            ));
+            end = end.max(
+                fragment_tree_end(
+                    fragments,
+                    &fragment_children,
+                    roots,
+                    y,
+                    |node_id| element_clips_overflow(document, cascade, node_id),
+                    |node_id| painted_relative_offset_y(document, cascade, body_id, node_id),
+                )
+                .min(clip.end),
+            );
         }
         let in_columns = if let Some(outside) = in_columns {
-            Some(
-                outside
-                    && !super::fixed::establishes_absolute_containing_block(
-                        document, node_id, computed,
-                    ),
-            )
+            Some(outside.descendants(document, node_id, computed))
         } else if node.multicol.is_some() {
-            Some(true)
+            Some(ColumnContainingBlocks {
+                absolute_outside: true,
+                fixed_outside: true,
+            })
         } else {
             None
         };
-        stack.extend(node.children.iter().map(|&child| (child, y, in_columns)));
+        context.parent_y = y;
+        context.in_columns = in_columns;
+        context.flow_clip = clip;
+        context.update_containing_blocks(document, node_id, computed);
+        stack.extend(node.children.iter().map(|&child| (child, context)));
     }
     end
 }
