@@ -4382,10 +4382,41 @@ fn avoided_row_groups(
     avoided_row_groups
 }
 
+/// The painted end of an avoided run and an optional direct-flow alternative
+/// whose content fits before the closing edges of its last box.
+struct AvoidedRunEnd {
+    end: f32,
+    closing: Option<ClosingRun>,
+}
+
+/// Normal-flow spans from a direct sibling run's first border-box top.
+struct ClosingRun {
+    height: f32,
+    content_height: f32,
+}
+
+impl ClosingRun {
+    /// Closing edges can displace the run when only those edges overflow.
+    /// Once the run reaches the next page, its last box can move alone.
+    fn moves(&self, fit: &BoxFit) -> bool {
+        self.content_height.is_finite()
+            && self.content_height > 0.0
+            && fit.flow_y + self.content_height <= fit.page_end + 0.001
+            && self.content_height + fit.margin_top.max(0.0) <= fit.next_page_step + 0.001
+            && avoided_box_moves(
+                fit.flow_y,
+                fit.margin_top,
+                fit.flow_y + self.height,
+                fit.page_start,
+                fit.page_end,
+            )
+    }
+}
+
 /// Connected class-A sibling runs have a legal break before their first
-/// box. Pagination moves a run only when it fits in one page, otherwise it
-/// relaxes the run's avoidance constraints so an oversized run still makes
-/// progress.
+/// box. Pagination moves a run when it fits in one page, or when only the
+/// closing edges of its last lone box overflow. Otherwise it relaxes the
+/// run's avoidance constraints so an oversized run still makes progress.
 ///
 /// Returns the block end of each run, including its last box's block-end
 /// margin, keyed by its first box. A box inside a block that starts a run among
@@ -4399,7 +4430,7 @@ fn avoided_run_ends(
     row_groups: &HashMap<usize, (f32, f32)>,
     body_id: usize,
     content_width: f32,
-) -> HashMap<usize, f32> {
+) -> HashMap<usize, AvoidedRunEnd> {
     let first_row_ends = first_row_ends(document, cascade, candidates, table_headers, row_groups);
     // The last box of each run, keyed by the run's first box, and the margin
     // below it.
@@ -4476,7 +4507,7 @@ fn avoided_run_ends(
         }
     }
     let join_ties = !super::page::has_named_pages(cascade);
-    let mut ends: HashMap<usize, f32> = run_lasts
+    let mut ends: HashMap<usize, AvoidedRunEnd> = run_lasts
         .into_iter()
         .map(|(start, (last, margin_bottom))| {
             // The last box of the run stays with the box before it only as far
@@ -4489,11 +4520,30 @@ fn avoided_run_ends(
                 }
                 None => avoided_run_head(document, cascade, body_id, last.node_id, join_ties).end,
             };
-            let end = match head {
-                Some(head) if head < last.height - 0.001 => last.raw_y + head,
-                _ => last.raw_y + last.height + margin_bottom,
+            let (end, whole) = match head {
+                Some(head) if head < last.height - 0.001 => (last.raw_y + head, false),
+                _ => (last.raw_y + last.height + margin_bottom, true),
             };
-            (start, end)
+            // Only direct sibling runs gain this alternative. A run inside
+            // a wrapper still uses its existing fragment-level constraints.
+            let closing = whole
+                .then(|| {
+                    lone_box_with_floats(document, cascade, body_id, last.node_id, false, false)
+                })
+                .flatten()
+                .filter(|lone| lone.tail > 0.001)
+                .map(|lone| {
+                    let flow_top = |id| {
+                        current_abs_y(document, id)
+                            - accumulated_relative_offset_y(document, cascade, body_id, id)
+                    };
+                    let span = flow_top(last.node_id) - flow_top(start) + last.height;
+                    ClosingRun {
+                        height: span,
+                        content_height: span - lone.tail + lone.float_reach,
+                    }
+                });
+            (start, AvoidedRunEnd { end, closing })
         })
         .collect();
     // A box that holds a run of its own at its start, or starts a run among
@@ -4503,8 +4553,14 @@ fn avoided_run_ends(
         if let Some(unit) = candidate.context.avoided_unit() {
             let end = candidate.raw_y + unit;
             ends.entry(candidate.node_id)
-                .and_modify(|known| *known = known.max(end))
-                .or_insert(end);
+                .and_modify(|known| {
+                    known.end = known.end.max(end);
+                    if let Some(closing) = &mut known.closing {
+                        closing.height = closing.height.max(unit);
+                        closing.content_height = closing.content_height.max(unit);
+                    }
+                })
+                .or_insert(AvoidedRunEnd { end, closing: None });
         }
     }
     ends
@@ -4842,7 +4898,7 @@ struct AvoidedBreaks {
     /// The block end of each run of boxes joined by avoided breaks, keyed by
     /// the box that starts it among the boxes of its parent or holds it at the
     /// start of its own (see [`avoided_run_ends`]).
-    run_ends: HashMap<usize, f32>,
+    run_ends: HashMap<usize, AvoidedRunEnd>,
     /// How far below its table's top edge the first row of each table
     /// starts (see [`table_row_leads`]).
     row_leads: HashMap<usize, f32>,
@@ -5099,13 +5155,16 @@ impl AvoidedBreaks {
         } = *fit;
         let avoided_run = self.run_ends.get(&node_id).is_some_and(|end| {
             avoided_run_moves(
-                *end - raw_y,
+                end.end - raw_y,
                 margin_top,
                 effective_y,
                 page_start,
                 page_end,
                 next_page_step,
-            )
+            ) || end
+                .closing
+                .as_ref()
+                .is_some_and(|closing| closing.moves(fit))
         });
         let page_box_end = flow_y + height + trailing_margin;
         let unplaced_line = candidate.context.unplaced_line();

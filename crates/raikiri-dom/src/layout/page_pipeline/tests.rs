@@ -17287,7 +17287,13 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
 
     // The first box of a run of avoided breaks moves with the run, judged
     // where the box sits with its relative offset.
-    breaks.run_ends.insert(plain, 140.0);
+    breaks.run_ends.insert(
+        plain,
+        AvoidedRunEnd {
+            end: 140.0,
+            closing: None,
+        },
+    );
     let overflow = measure(&breaks, plain, Default::default(), &fit);
     assert!(overflow.avoided_run && overflow.moves_box());
     assert!(!measure(&breaks, plain, Default::default(), &offset_up).avoided_run);

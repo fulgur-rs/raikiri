@@ -53,6 +53,231 @@ fn extents(body: &str, id: &str) -> Vec<Option<(i32, i32)>> {
 
 const SPACER: &str = "<div style='height:300px'></div>";
 
+fn small_pages(body: &str, id: &str) -> Vec<Option<(i32, i32)>> {
+    extents(
+        &format!(
+            "<style>@page{{size:200px 200px;margin:0}}body{{margin:0;font:8px/10px Ahem}}</style>{body}"
+        ),
+        id,
+    )
+}
+
+#[test]
+fn an_avoided_chain_moves_before_a_cards_closing_edges_even_when_the_run_is_too_tall() {
+    for (card, content, after) in [
+        (
+            "padding-bottom:30px",
+            "<div id=c style='height:60px'>C</div>",
+            90,
+        ),
+        (
+            "border-bottom:30px solid",
+            "<div id=c style='height:60px'>C</div>",
+            90,
+        ),
+        (
+            "padding-bottom:30px;break-inside:avoid",
+            "<div id=c style='height:60px'>C</div>",
+            90,
+        ),
+        (
+            "padding-bottom:15px",
+            "<div style='padding-bottom:15px'><div id=c style='height:60px'>C</div></div>",
+            90,
+        ),
+        (
+            "padding-bottom:30px;margin-bottom:20px",
+            "<div id=c style='height:60px'>C</div>",
+            110,
+        ),
+        (
+            "padding-bottom:10px",
+            "<div id=c style='height:60px;margin-bottom:20px'>C</div>",
+            90,
+        ),
+    ] {
+        let body = format!(
+            "<div style='height:10px'>T</div>\
+            <div id=s style='height:130px;break-after:avoid'>S</div>\
+            <div id=o style='{card}'>{content}</div>\
+            <div id=z style='height:20px'>Z</div>"
+        );
+        assert_eq!(
+            small_pages(&body, "s"),
+            [None, Some((0, 130)), None],
+            "{card} / {content}"
+        );
+        assert_eq!(
+            small_pages(&body, "c"),
+            [None, None, Some((0, 60))],
+            "{card} / {content}"
+        );
+        assert_eq!(
+            small_pages(&body, "z"),
+            [None, None, Some((after, after + 20))],
+            "{card} / {content}"
+        );
+    }
+}
+
+#[test]
+fn closing_edges_do_not_make_every_oversized_run_move() {
+    for (head, card, content, top, height) in [
+        (
+            "height:130px",
+            "",
+            "<div style='height:60px'>C</div>",
+            10,
+            130,
+        ),
+        (
+            "height:130px",
+            "padding-bottom:30px",
+            "<div style='height:100px'>C</div>",
+            10,
+            130,
+        ),
+        (
+            "height:100px",
+            "padding-bottom:30px",
+            "<div style='height:60px'>C</div>",
+            10,
+            100,
+        ),
+        (
+            "height:130px",
+            "padding-top:10px;padding-bottom:30px",
+            "<div style='height:60px'>C</div>",
+            10,
+            130,
+        ),
+        (
+            "height:130px;margin-top:20px",
+            "padding-bottom:30px",
+            "<div style='height:60px'>C</div>",
+            30,
+            130,
+        ),
+        (
+            "height:150px;position:relative;top:10px",
+            "padding-bottom:30px",
+            "<div style='height:60px'>C</div>",
+            20,
+            150,
+        ),
+        (
+            "height:150px",
+            "padding-bottom:30px;position:relative;top:-10px",
+            "<div style='height:60px'>C</div>",
+            10,
+            150,
+        ),
+        (
+            "height:130px",
+            "padding-bottom:30px",
+            "<div style='height:30px'>C</div><div style='height:30px'>D</div>",
+            10,
+            130,
+        ),
+        (
+            "height:130px",
+            "padding-bottom:30px",
+            "<div style='padding-bottom:20px'><div style='float:left;width:10px;height:70px'></div><div style='height:60px'>C</div></div>",
+            10,
+            130,
+        ),
+    ] {
+        let body = format!(
+            "<div style='height:10px'>T</div>\
+            <div id=s style='{head};break-after:avoid'>S</div>\
+            <div style='{card}'>{content}</div><div style='height:20px'>Z</div>"
+        );
+        assert_eq!(
+            small_pages(&body, "s")[0],
+            Some((top, top + height)),
+            "{head} / {card} / {content}"
+        );
+    }
+}
+
+#[test]
+fn a_closing_edge_exception_requires_the_content_and_its_floats_to_fit_the_current_page() {
+    for (lead, head, floated, moved) in [
+        (40, 130, false, false),
+        (10, 140, false, false),
+        (10, 120, true, true),
+    ] {
+        let content = if floated {
+            "<div style='padding-bottom:20px'><div style='float:left;width:10px;height:70px'></div><div id=c style='height:60px'>C</div></div>"
+        } else {
+            "<div id=c style='height:60px'>C</div>"
+        };
+        let body = format!(
+            "<div style='height:{lead}px'>T</div>\
+            <div id=s style='height:{head}px;break-after:avoid'>S</div>\
+            <div style='padding-bottom:30px'>{content}</div><div style='height:20px'>Z</div>"
+        );
+        if moved {
+            assert_eq!(small_pages(&body, "s"), [None, Some((0, head)), None]);
+            assert_eq!(small_pages(&body, "c"), [None, None, Some((0, 60))]);
+        } else {
+            assert_eq!(small_pages(&body, "s")[0], Some((lead, lead + head)));
+        }
+    }
+}
+
+#[test]
+fn a_trailing_margin_or_a_forced_child_break_does_not_move_the_chain() {
+    for (card, child) in [
+        ("padding-bottom:10px;margin-bottom:100px", "height:40px"),
+        ("padding-bottom:30px", "height:60px;break-before:page"),
+    ] {
+        let body = format!(
+            "<div style='height:10px'>T</div>\
+            <div id=s style='height:130px;break-after:avoid'>S</div>\
+            <div style='{card}'><div style='{child}'>C</div></div><div style='height:20px'>Z</div>"
+        );
+        assert_eq!(
+            small_pages(&body, "s")[0],
+            Some((10, 140)),
+            "{card} / {child}"
+        );
+    }
+}
+
+#[test]
+fn the_head_of_the_direct_chain_can_hold_an_avoided_run_of_its_own() {
+    let body = "<div style='height:10px'>T</div>\
+        <div id=s style='height:130px;break-after:avoid'>\
+        <div style='height:60px;break-after:avoid'>A</div><div style='height:70px'>B</div></div>\
+        <div style='padding-bottom:30px'><div id=c style='height:60px'>C</div></div>\
+        <div style='height:20px'>Z</div>";
+    assert_eq!(small_pages(body, "s"), [None, Some((0, 130)), None]);
+    assert_eq!(small_pages(body, "c"), [None, None, Some((0, 60))]);
+}
+
+#[test]
+fn a_chain_at_the_page_start_still_releases_the_card_alone() {
+    let body = "<div id=s style='height:130px;break-after:avoid'>S</div>\
+        <div style='padding-bottom:30px'><div id=c style='height:60px'>C</div></div>\
+        <div id=z style='height:20px'>Z</div>";
+    assert_eq!(small_pages(body, "s"), [Some((0, 130)), None]);
+    assert_eq!(small_pages(body, "c"), [None, Some((0, 60))]);
+    assert_eq!(small_pages(body, "z"), [None, Some((90, 110))]);
+    let shifted = body.replace("height:130px", "height:130px;position:relative;top:10px");
+    assert_eq!(small_pages(&shifted, "s"), [Some((10, 140)), None]);
+}
+
+#[test]
+fn a_wrapper_does_not_gain_the_direct_sibling_closing_edge_exception() {
+    let body = "<div style='height:40px'>X</div>\
+        <div style='padding-bottom:20px'>\
+        <div id=s style='height:130px;break-after:avoid'>S</div>\
+        <div style='padding-bottom:30px'><div style='height:60px'>C</div></div></div>\
+        <div style='height:20px'>Z</div>";
+    assert_eq!(small_pages(body, "s")[0], Some((40, 170)));
+}
+
 /// A parent `o` with the style `parent`, and a child `i` that is `height`
 /// tall and avoids a break inside it, after a spacer.
 fn avoiding_child(parent: &str, height: u32) -> String {
