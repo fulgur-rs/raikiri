@@ -1637,8 +1637,12 @@ fn the_lines_of_a_paragraph_in_a_float_keep_their_place() {
 }
 
 #[test]
-fn a_paragraph_with_a_block_among_its_lines_keeps_its_last_lines() {
+fn the_lines_after_a_block_move_whole_to_the_next_page_with_the_edges_below_them() {
     // The lines run in two runs around a block, which the page breaks at.
+    // The three lines after the block fit the page, but the padding below
+    // them does not. Giving up the two widows would leave one line, fewer
+    // than the orphans, so the run goes on whole to the next page and the
+    // parent grows by the 60px that are left on the first page.
     let (mut parent, mut paragraph) = (0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         parent = block(doc, body, "display:block;padding-bottom:40px");
@@ -1652,7 +1656,7 @@ fn a_paragraph_with_a_block_among_its_lines_keeps_its_last_lines() {
         block(doc, paragraph, "display:block;height:10px");
         doc.append_text(paragraph, "ccc ddd eee");
     });
-    assert_eq!(doc.nodes[parent].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 170.0);
 }
 
 #[test]
@@ -1713,7 +1717,9 @@ fn boxes_that_are_not_in_the_block_flow_of_the_parent_stay() {
 }
 
 #[test]
-fn the_edges_of_the_body_are_not_closing_edges() {
+fn the_edges_of_the_body_are_closing_edges_like_those_of_any_block() {
+    // The 20px box would end 10px short of the padding below it, so it goes
+    // on the next page with the padding, as in a block of the body.
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -1733,7 +1739,7 @@ fn the_edges_of_the_body_are_not_closing_edges() {
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    assert_eq!(page_flow_y(&doc, last), 70.0);
+    assert_eq!(page_flow_y(&doc, last), 100.0);
 }
 
 /// `body > [div(parent_css) > [div(30px), div(inner_css) > boxes], div(10px)]`
