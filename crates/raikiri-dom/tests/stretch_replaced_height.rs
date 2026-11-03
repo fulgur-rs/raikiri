@@ -59,7 +59,7 @@ fn border_boxes_with_page_size(
     assert_eq!(
         result.page_count(),
         1,
-        "unfragmented geometry oracle requires one page; set page_size for taller fixtures"
+        "unfragmented geometry oracle requires one page; set page_size for taller fixtures: {body}"
     );
     first_page_border_boxes(&result)
 }
@@ -480,3 +480,8 @@ fn stretched_image_ratios_follow_the_containing_inline_size() {
 
 #[path = "stretch_replaced_height/rowspan_geometry_tests.rs"]
 mod rowspan_geometry_tests;
+
+#[test]
+fn an_authored_cell_height_sizes_percentage_images_during_row_measurement() {
+    check_image_oracle(include_str!("data/table-cell-authored-height.json"));
+}
