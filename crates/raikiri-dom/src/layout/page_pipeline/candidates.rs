@@ -1153,9 +1153,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // would break away from it stays with them: it is a nested
                 // candidate that moves to the next page when they do not fit
                 // after it.
-                let closing_edges_base_shape = (in_flow_block || in_flow_container)
-                    && !direct_body_child
-                    && frame.closing_edges > 0.0;
+                let closing_edges_base_shape =
+                    (in_flow_block || in_flow_container) && frame.closing_edges > 0.0;
                 // A paragraph that avoided breaks tie to the boxes before it,
                 // all the way to the first, has no break between boxes to
                 // take, not even the one that gives way for the last box of a
@@ -1557,7 +1556,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The closing edges of this block, and of the blocks that it
                 // ends in turn, follow its last box in the flow: a float after
                 // a box keeps it from being the last.
-                let own_closing_edges = closing_edges_of(document, node_id, body_id);
+                let own_closing_edges = closing_edges_of(document, node_id);
                 // The edges of the blocks this one ends are not below a box that
                 // only starts a run of boxes tied by avoided breaks: the rest
                 // of the run lies between.
