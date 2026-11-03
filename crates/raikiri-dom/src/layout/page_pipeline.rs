@@ -598,7 +598,11 @@ fn block_border_box_end(
             let offset = if in_ifc {
                 offset
             } else {
-                offset + layout.location.y - relative_shift
+                // The marker moves the box's paint and flow advance, while
+                // escaped float exclusions retain their normal coordinates.
+                offset + layout.location.y
+                    - relative_shift
+                    - super::ifc::outside_marker::box_leading(document, child)
             };
             children.extend(
                 node.children
@@ -6907,7 +6911,7 @@ fn visit_same_bfc_floats_in_subtree(
     let branch_offset = branch_top
         - layout_relative_offset_y(document, cascade, body_id, branch)
         - if document.contributes_layout_offset(branch) {
-            0.0
+            super::ifc::outside_marker::box_leading(document, branch)
         } else {
             document.nodes[branch].layout.location.y
         };
@@ -6966,7 +6970,9 @@ fn visit_same_bfc_floats_in_subtree(
         }
         let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
         let child_offset = if document.contributes_layout_offset(child) {
-            offset + layout.location.y - relative_offset
+            offset + layout.location.y
+                - relative_offset
+                - super::ifc::outside_marker::box_leading(document, child)
         } else {
             offset - relative_offset
         };

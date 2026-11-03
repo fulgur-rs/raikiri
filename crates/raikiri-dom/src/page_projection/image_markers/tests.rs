@@ -574,7 +574,7 @@ fn a_childs_marker_leading_does_not_change_page_fit_of_its_first_line() {
 }
 
 #[test]
-fn a_marker_gap_rechecks_a_child_box_against_later_float_bands() {
+fn a_marker_gap_keeps_the_child_slot_beside_a_float_margin() {
     let (doc, cascade, owner) = fixture_with_page(0, 30, 300.0, |doc, owner| {
         let list = doc.nodes[owner].parent.unwrap();
         let body = doc.nodes[list].parent.unwrap();
@@ -611,6 +611,10 @@ fn a_child_marker_gap_only_changes_the_first_line_fit_and_survives_cached_layout
     });
     let child = *doc.nodes[owner].children.last().unwrap();
     assert_eq!(
+        crate::layout::ifc::outside_marker::box_leading(&doc, child),
+        9.0
+    );
+    assert_eq!(
         crate::layout::ifc::outside_marker::fit_leading(&doc, child, 0),
         9.0
     );
@@ -623,6 +627,10 @@ fn a_child_marker_gap_only_changes_the_first_line_fit_and_survives_cached_layout
     page.height = 100.0;
     let slices = crate::layout_pages(&mut doc, &cascade, page).unwrap();
     doc.project_pages(&cascade, page, &slices, &[]).unwrap();
+    assert_eq!(
+        crate::layout::ifc::outside_marker::box_leading(&doc, child),
+        9.0
+    );
     assert_eq!(
         doc.page_marker_image(0, NodeId::new(owner as u64))
             .unwrap()
@@ -656,6 +664,10 @@ fn moving_a_child_out_of_a_hidden_marker_owner_drops_its_old_gap() {
         doc.append_text(child, "z");
     });
     let child = *doc.nodes[owner].children.last().unwrap();
+    assert_eq!(
+        crate::layout::ifc::outside_marker::box_leading(&doc, child),
+        9.0
+    );
     let body = doc.nodes[doc.nodes[owner].parent.unwrap()].parent.unwrap();
     assert_eq!(
         crate::layout::ifc::outside_marker::fit_leading(&doc, child, 0),
@@ -672,6 +684,10 @@ fn moving_a_child_out_of_a_hidden_marker_owner_drops_its_old_gap() {
     page.height = 300.0;
     let slices = crate::layout_pages(&mut doc, &cascade, page).unwrap();
     doc.project_pages(&cascade, page, &slices, &[]).unwrap();
+    assert_eq!(
+        crate::layout::ifc::outside_marker::box_leading(&doc, child),
+        0.0
+    );
     assert_eq!(
         crate::layout::ifc::outside_marker::fit_leading(&doc, child, 0),
         0.0
@@ -874,4 +890,160 @@ fn a_leading_child_consumes_the_marker_before_its_parents_later_text() {
         assert_eq!(lines.len(), 1, "{style}");
         assert_eq!(lines[0].block_start_leading(), 0.0, "{style}");
     }
+}
+
+fn two_float_band_item(ifc: bool, bfc_child: bool) -> (Document, CascadeResult, usize) {
+    fixture_with_page(0, 30, 300.0, |doc, owner| {
+        let list = doc.nodes[owner].parent.unwrap();
+        let body = doc.nodes[list].parent.unwrap();
+        doc.set_element_attribute(
+            body,
+            "style",
+            "display:block;margin:0;width:100px;font:20px/30px Ahem",
+        )
+        .unwrap();
+        for style in [
+            "display:block;float:left;width:10px;height:35px",
+            "display:block;float:left;clear:left;width:60px;height:30px",
+        ] {
+            let float = doc.append_element(Some(body), "div", Some(style));
+            doc.detach_from_parent(float);
+            doc.insert_child_before(body, list, float);
+        }
+        for child in doc.nodes[owner].children.clone() {
+            doc.detach_from_parent(child);
+        }
+        let style = if bfc_child {
+            "display:flow-root"
+        } else {
+            "display:block"
+        };
+        let child = doc.append_element(Some(owner), "div", Some(style));
+        doc.append_text(child, if bfc_child { "z" } else { "zzz" });
+        if ifc {
+            doc.append_text(owner, "q");
+        }
+    })
+}
+
+fn assert_two_float_band_item(ifc: bool, bfc_child: bool) {
+    let (doc, cascade, owner) = two_float_band_item(ifc, bfc_child);
+    assert_eq!(doc.nodes[owner].ifc.is_some(), ifc);
+    let child = doc.nodes[owner].children[0];
+    let layout = doc.nodes[child].layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 9.0));
+    assert_eq!((layout.size.width, layout.size.height), (60.0, 30.0));
+    let runs = doc.page_text_runs(&cascade, 0);
+    assert_eq!(
+        runs.iter()
+            .find(|run| run.text.contains('z'))
+            .unwrap()
+            .origin
+            .1,
+        30.0
+    );
+    assert_eq!(
+        doc.page_marker_image(0, NodeId::new(owner as u64))
+            .unwrap()
+            .1
+            .y,
+        0.0
+    );
+    if ifc {
+        assert_eq!(
+            runs.iter()
+                .find(|run| run.text.contains('q'))
+                .unwrap()
+                .origin
+                .1,
+            60.0
+        );
+    }
+}
+
+#[test]
+fn two_float_bands_keep_the_native_bfc_childs_pre_leading_slot() {
+    assert_two_float_band_item(false, true);
+}
+
+#[test]
+fn two_float_bands_keep_the_ifc_bfc_childs_pre_leading_slot() {
+    assert_two_float_band_item(true, true);
+}
+
+#[test]
+fn marker_leading_does_not_relayout_a_native_shared_child_into_a_float_band() {
+    assert_two_float_band_item(false, false);
+}
+
+#[test]
+fn marker_leading_does_not_relayout_an_ifc_shared_child_into_a_float_band() {
+    assert_two_float_band_item(true, false);
+}
+
+fn assert_child_float_after_marker_translation(case: &str) {
+    let (doc, cascade, owner) = fixture_with_page(0, 30, 300.0, |doc, owner| {
+        for child in doc.nodes[owner].children.clone() {
+            doc.detach_from_parent(child);
+        }
+        let child = doc.append_element(Some(owner), "div", Some("display:block"));
+        doc.append_element(
+            Some(child),
+            "div",
+            Some("display:block;float:left;width:20px;height:50px"),
+        );
+        doc.append_text(child, "z");
+        if case == "height" {
+            let list = doc.nodes[owner].parent.unwrap();
+            let body = doc.nodes[list].parent.unwrap();
+            let container = doc.append_element(Some(body), "div", Some("display:flow-root"));
+            doc.detach_from_parent(list);
+            doc.attach_child(container, list);
+        } else {
+            let style = if case == "clear" {
+                "display:block;clear:both;height:0"
+            } else {
+                "display:block;height:16px"
+            };
+            doc.append_element(Some(owner), "div", Some(style));
+            doc.append_text(owner, "q");
+        }
+    });
+    let child = doc.nodes[owner].children[0];
+    let float = doc.nodes[child].children[0];
+    assert_eq!(doc.nodes[child].layout.location.y, 9.0);
+    assert_eq!(doc.nodes[child].layout.size.height, 30.0);
+    assert_eq!(doc.layout_origin_of(float).unwrap().y, 9.0);
+    let runs = doc.page_text_runs(&cascade, 0);
+    let first = runs.iter().find(|run| run.text.contains('z')).unwrap();
+    assert_eq!(first.origin, (60.0, 30.0));
+    if case == "height" {
+        let list = doc.nodes[owner].parent.unwrap();
+        let container = doc.nodes[list].parent.unwrap();
+        assert_eq!(doc.nodes[container].layout.size.height, 50.0);
+        assert_eq!(doc.nodes[owner].layout.size.height, 39.0);
+    } else {
+        let last = runs.iter().find(|run| run.text.contains('q')).unwrap();
+        let baseline = if case == "clear" { 71.0 } else { 76.0 };
+        assert_eq!(last.origin, (40.0, baseline));
+        if case == "clear" {
+            let cleared = doc.nodes[owner].children[1];
+            assert_eq!(doc.nodes[cleared].layout.location.y, 50.0);
+        }
+    }
+}
+
+#[test]
+fn child_marker_translation_preserves_descendant_float_exclusions() {
+    assert_child_float_after_marker_translation("line");
+}
+
+#[test]
+fn child_marker_translation_preserves_descendant_float_clearance() {
+    assert_child_float_after_marker_translation("clear");
+}
+
+#[test]
+fn child_marker_translation_preserves_the_float_containing_height() {
+    assert_child_float_after_marker_translation("height");
 }

@@ -30,31 +30,56 @@ pub(crate) fn fit_height(line: &shodo::Line) -> f32 {
     line.block_size() - line.block_start_leading()
 }
 
-// Only the accepted first line records a parent's gap. Other lines keep
-// their full advance; cached parent layouts retain this sparse record.
+// Accepted translations index both the first line's fit coordinates and
+// the receiving box's normal float geometry. Cached layouts retain them.
+#[derive(Clone, Debug)]
+struct ChildLeading {
+    child: usize,
+    source: Option<(usize, usize)>,
+    gap: f32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LeadingStore {
-    owners: std::collections::HashMap<usize, ((usize, usize), f32)>,
+    owners: std::collections::HashMap<usize, ChildLeading>,
     lines: std::collections::HashMap<(usize, usize), (f32, usize)>,
+    boxes: std::collections::HashMap<usize, (f32, usize)>,
 }
 
 impl LeadingStore {
     pub(crate) fn clear(&mut self, owner: usize) {
-        if let Some((source, gap)) = self.owners.remove(&owner) {
-            let value = self.lines.get_mut(&source).expect("recorded marker line");
-            value.0 -= gap;
+        if let Some(applied) = self.owners.remove(&owner) {
+            if let Some(source) = applied.source {
+                let value = self.lines.get_mut(&source).expect("recorded marker line");
+                value.0 -= applied.gap;
+                value.1 -= 1;
+                if value.1 == 0 {
+                    self.lines.remove(&source);
+                }
+            }
+            let value = self
+                .boxes
+                .get_mut(&applied.child)
+                .expect("recorded marker box");
+            value.0 -= applied.gap;
             value.1 -= 1;
             if value.1 == 0 {
-                self.lines.remove(&source);
+                self.boxes.remove(&applied.child);
             }
         }
     }
 
-    fn record(&mut self, owner: usize, source: (usize, usize), gap: f32) {
+    fn record(&mut self, owner: usize, child: usize, gap: f32, source: Option<(usize, usize)>) {
         self.clear(owner);
         if gap > 0.0 {
-            self.owners.insert(owner, (source, gap));
-            let value = self.lines.entry(source).or_default();
+            self.owners
+                .insert(owner, ChildLeading { child, source, gap });
+            if let Some(source) = source {
+                let value = self.lines.entry(source).or_default();
+                value.0 += gap;
+                value.1 += 1;
+            }
+            let value = self.boxes.entry(child).or_default();
             value.0 += gap;
             value.1 += 1;
         }
@@ -64,12 +89,19 @@ impl LeadingStore {
 pub(crate) fn record_child(
     doc: &mut Document,
     owner: usize,
+    child: usize,
     gap: f32,
     source: Option<(usize, usize)>,
 ) {
-    if let Some(source) = source {
-        doc.outside_marker_leading.record(owner, source, gap);
-    }
+    doc.outside_marker_leading.record(owner, child, gap, source);
+}
+
+/// Translation of a child box excluded from its escaped floats' normal geometry.
+pub(crate) fn box_leading(doc: &Document, child: usize) -> f32 {
+    doc.outside_marker_leading
+        .boxes
+        .get(&child)
+        .map_or(0.0, |value| value.0)
 }
 
 pub(crate) fn fit_leading(doc: &Document, root: usize, line: usize) -> f32 {

@@ -779,14 +779,6 @@ pub(super) fn layout(
             } else {
                 flow.end + pending.collapse_with_set(top_set).resolve()
             };
-            let top = top
-                + if flow.baselines.first.is_none() {
-                    output.baselines.first.map_or(0.0, |baseline| {
-                        crate::layout::ifc::outside_marker::leading(marker_height, baseline)
-                    })
-                } else {
-                    0.0
-                };
             if resolved && same && ctx.has_floats() && (!final_pass || (guess - top).abs() > 0.001)
             {
                 ctx.restore(&saved);
@@ -804,6 +796,16 @@ pub(super) fn layout(
                 adjoining,
             );
         };
+        // Chromium translates the accepted child after ordinary float and
+        // margin placement; feeding marker leading back into it can cycle.
+        let marker_gap = if flow.baselines.first.is_none() {
+            output.baselines.first.map_or(0.0, |baseline| {
+                crate::layout::ifc::outside_marker::leading(marker_height, baseline)
+            })
+        } else {
+            0.0
+        };
+        let top = top + marker_gap;
         if held_margins {
             tree.context.held_margins.pop();
         }
@@ -841,19 +843,20 @@ pub(super) fn layout(
         flow.overflow = flow
             .overflow
             .union(overflow(&style, child_metrics, &output, location));
-        if inputs.run_mode == RunMode::PerformLayout
-            && marker_height.is_some()
-            && flow.baselines.first.is_none()
-            && let Some(baseline) = output.baselines.first
-        {
-            let gap = crate::layout::ifc::outside_marker::leading(marker_height, baseline);
+        if inputs.run_mode == RunMode::PerformLayout && marker_gap > 0.0 {
             let source = crate::page_projection::text_runs::first_line(
                 tree,
                 tree.style_views.cascade(),
                 usize::from(child),
             )
             .and_then(|line| line.source);
-            crate::layout::ifc::outside_marker::record_child(tree, usize::from(node), gap, source);
+            crate::layout::ifc::outside_marker::record_child(
+                tree,
+                usize::from(node),
+                usize::from(child),
+                marker_gap,
+                source,
+            );
         }
         if let Some(baseline) = output.baselines.first {
             flow.baselines.first.get_or_insert(top + baseline);
