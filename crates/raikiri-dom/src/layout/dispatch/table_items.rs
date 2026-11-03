@@ -1,6 +1,6 @@
 //! Retain the size that collapsed rows leave in a stretched table item.
 //!
-//! Authored heights are measured by the table itself. This pass only handles
+//! Authored dimensions are measured by the table itself. This pass handles
 //! external stretch assignments which still overwrite the returned grid size
 //! or leave a reversed flex cross-start at the old position.
 
@@ -98,8 +98,10 @@ pub(super) fn layout(
     let replay = flex
         && parent.flex_direction_is_row()
         && parent.flex_lines_are_reversed()
-        && super::TaffyChildIter::new_for_session(tree, idx)
-            .any(|child| crate::layout::table::item_owns_height(tree, child));
+        && super::TaffyChildIter::new_for_session(tree, idx).any(|child| {
+            crate::layout::table::item_owns_height(tree, child)
+                || crate::layout::table::item_owns_width(tree, child)
+        });
     tree.context.table_item_captures.push(Capture {
         container: idx,
         sizes: HashMap::new(),
@@ -148,22 +150,23 @@ fn normalize_grid(
                 && tree.nodes[child].layout_position() != Position::Absolute
         })
         .collect();
-    let inline = super::grid_baseline::runs_vertically(tree, idx);
+    let vertical_parent = super::grid_baseline::runs_vertically(tree, idx);
     let parent = tree.query_style(idx, ReadRole::GridContainer);
-    let reversed = inline && parent.direction() == Direction::Rtl;
-    let default_align = if inline {
-        parent.justify_items()
-    } else {
-        parent.align_items()
-    };
+    let direction = parent.direction();
+    let align_items = parent.align_items();
+    let justify_items = parent.justify_items();
     let mut shifts = Vec::new();
     for &child in &items {
         let Some(measured) = sizes.get(&child) else {
             continue;
         };
-        if !crate::layout::table::item_owns_height(tree, child) {
+        let owns_width = crate::layout::table::item_owns_width(tree, child);
+        if !owns_width && !crate::layout::table::item_owns_height(tree, child) {
             continue;
         }
+        let inline = vertical_parent != owns_width;
+        let reversed = inline && direction == Direction::Rtl;
+        let default_align = if inline { justify_items } else { align_items };
         let style = crate::layout::table::item_style(tree, child, ReadRole::GridItem);
         let alignment = if inline {
             style.bridge_justify_self()
@@ -227,7 +230,9 @@ fn normalize_flex(
         let Some(measured) = sizes.get(&child) else {
             continue;
         };
-        if !crate::layout::table::item_owns_height(tree, child) {
+        if !crate::layout::table::item_owns_height(tree, child)
+            && !crate::layout::table::item_owns_width(tree, child)
+        {
             continue;
         }
         let offered = if row {

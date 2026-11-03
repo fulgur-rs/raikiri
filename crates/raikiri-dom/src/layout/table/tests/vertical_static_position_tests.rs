@@ -169,10 +169,14 @@ fn an_invalid_vertical_track_keeps_pending_candidates() {
             let result = super::super::reposition_cells_for_vertical_writing(
                 session,
                 &mut grid,
-                &[height],
-                10.0,
-                Point::ZERO,
-                0.0,
+                super::super::VerticalPlacement {
+                    inline_tracks: &[height],
+                    rows: super::super::VerticalRows::new(vec![], &[], &[], 0.0, 0.0).visible(&[]),
+                    row_origins: &[],
+                    origin: Point::ZERO,
+                    spacing: 0.0,
+                    reverse: true,
+                },
                 vec![(absolute, pending)],
             );
             assert_eq!(result.to_vec(), vec![candidate]);

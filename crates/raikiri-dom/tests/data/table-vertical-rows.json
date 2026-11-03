@@ -1,0 +1,3429 @@
+{
+  "source": "Chromium152.0.7977.82, window800x600 with hidden scrollbars, standards/body8, explicit Ahem10px/10px load, td padding0, device scale1",
+  "cases": [
+    {
+      "label": "vertical-rl-equal",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          38,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-unequal",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:40px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:60px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          115,
+          29
+        ],
+        [
+          "a",
+          78,
+          11,
+          40,
+          10
+        ],
+        [
+          "b",
+          78,
+          24,
+          40,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          60,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          60,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-stated-cell-widths",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a  style=\"width:40px\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"width:40px\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"width:60px\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"width:60px\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          115,
+          29
+        ],
+        [
+          "a",
+          78,
+          11,
+          40,
+          10
+        ],
+        [
+          "b",
+          78,
+          24,
+          40,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          60,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          60,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-table-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          85.5,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-table-narrow",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:30px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          38,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-table-height",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;height:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          150
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "b",
+          38,
+          84.5,
+          20,
+          70.5
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "d",
+          13,
+          84.5,
+          20,
+          70.5
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-rowspan",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          80,
+          10
+        ],
+        [
+          "b",
+          63,
+          24,
+          30,
+          10
+        ],
+        [
+          "c",
+          13,
+          24,
+          45,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-colspan",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a colspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          115,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          80,
+          23
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-three-rows",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr><tr><td id=e  style=\"\"><div style=\"width:40px;height:10px\">x</div></td><td id=f  style=\"\"><div style=\"width:40px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          110,
+          29
+        ],
+        [
+          "a",
+          93,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          93,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          58,
+          11,
+          30,
+          10
+        ],
+        [
+          "d",
+          58,
+          24,
+          30,
+          10
+        ],
+        [
+          "e",
+          13,
+          11,
+          40,
+          10
+        ],
+        [
+          "f",
+          13,
+          24,
+          40,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-collapse-first",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          30,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-fixed-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;table-layout:fixed;width:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          85.5,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-fixed-height",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;table-layout:fixed;height:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          150
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "b",
+          38,
+          84.5,
+          20,
+          70.5
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "d",
+          13,
+          84.5,
+          20,
+          70.5
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-equal",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          38,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-unequal",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:40px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:60px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          115,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          40,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          40,
+          10
+        ],
+        [
+          "c",
+          58,
+          11,
+          60,
+          10
+        ],
+        [
+          "d",
+          58,
+          24,
+          60,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-stated-cell-widths",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a  style=\"width:40px\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"width:40px\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"width:60px\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"width:60px\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          115,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          40,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          40,
+          10
+        ],
+        [
+          "c",
+          58,
+          11,
+          60,
+          10
+        ],
+        [
+          "d",
+          58,
+          24,
+          60,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-table-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-table-narrow",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:30px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          38,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-table-height",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;height:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          150
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "b",
+          13,
+          84.5,
+          20,
+          70.5
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "d",
+          38,
+          84.5,
+          20,
+          70.5
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-rowspan",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          80,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          30,
+          10
+        ],
+        [
+          "c",
+          48,
+          24,
+          45,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-colspan",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a colspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          115,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          80,
+          23
+        ],
+        [
+          "c",
+          98,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          98,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-three-rows",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr><tr><td id=e  style=\"\"><div style=\"width:40px;height:10px\">x</div></td><td id=f  style=\"\"><div style=\"width:40px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          110,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          30,
+          10
+        ],
+        [
+          "d",
+          38,
+          24,
+          30,
+          10
+        ],
+        [
+          "e",
+          73,
+          11,
+          40,
+          10
+        ],
+        [
+          "f",
+          73,
+          24,
+          40,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-collapse-first",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          30,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-fixed-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;table-layout:fixed;width:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-fixed-height",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;table-layout:fixed;height:150px\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          150
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "b",
+          13,
+          84.5,
+          20,
+          70.5
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          70.5
+        ],
+        [
+          "d",
+          38,
+          84.5,
+          20,
+          70.5
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-unequal-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:40px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:60px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          99,
+          11,
+          54,
+          10
+        ],
+        [
+          "b",
+          99,
+          24,
+          54,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          81,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          81,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-min-content",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:min-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          38,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-minimum-keyword",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:30px;min-width:min-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          38,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-maximum-keyword",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;max-width:max-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          85.5,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-fixed-maximum-keyword",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;table-layout:fixed;width:150px;max-width:max-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          85.5,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-horizontal-text",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          38,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-horizontal-text-narrow",
+      "html": "<div style=\"width:40px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          38,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-horizontal-text-stated",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:60px\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          38,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-unequal-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:40px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:60px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          54,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          54,
+          10
+        ],
+        [
+          "c",
+          72,
+          11,
+          81,
+          10
+        ],
+        [
+          "d",
+          72,
+          24,
+          81,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-min-content",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:min-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          38,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-minimum-keyword",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:30px;min-width:min-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          38,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-maximum-keyword",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;max-width:max-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-fixed-maximum-keyword",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;table-layout:fixed;width:150px;max-width:max-content;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-horizontal-text",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          13,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          108,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-horizontal-text-narrow",
+      "html": "<div style=\"width:40px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          13,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          108,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-horizontal-text-stated",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:60px\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          13,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          108,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-horizontal-text-min-content",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:min-content;\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          38,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-horizontal-text-min-content",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:min-content;\"><tr><td id=a style=\"writing-mode:horizontal-tb\">X X X X X</td></tr><tr><td id=c style=\"writing-mode:horizontal-tb\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          125,
+          16
+        ],
+        [
+          "a",
+          13,
+          11,
+          90,
+          10
+        ],
+        [
+          "c",
+          108,
+          11,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-cell-oof",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a style=\"position:relative\"><div style=\"width:20px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c style=\"position:relative\"><div style=\"width:20px;height:10px\">x</div><div id=q style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "p",
+          38,
+          11,
+          5,
+          5
+        ],
+        [
+          "b",
+          38,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "q",
+          13,
+          11,
+          5,
+          5
+        ],
+        [
+          "d",
+          13,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-rowspan-row-oof",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr style=\"position:relative\"><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div><div id=q style=\"position:absolute;left:100%;top:0;width:5px;height:5px\"></div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          80,
+          10
+        ],
+        [
+          "p",
+          63,
+          11,
+          5,
+          5
+        ],
+        [
+          "q",
+          93,
+          11,
+          5,
+          5
+        ],
+        [
+          "b",
+          63,
+          24,
+          30,
+          10
+        ],
+        [
+          "c",
+          13,
+          24,
+          45,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-cell-oof",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a style=\"position:relative\"><div style=\"width:20px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c style=\"position:relative\"><div style=\"width:20px;height:10px\">x</div><div id=q style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          20,
+          10
+        ],
+        [
+          "p",
+          13,
+          11,
+          5,
+          5
+        ],
+        [
+          "b",
+          13,
+          24,
+          20,
+          10
+        ],
+        [
+          "c",
+          38,
+          11,
+          20,
+          10
+        ],
+        [
+          "q",
+          38,
+          11,
+          5,
+          5
+        ],
+        [
+          "d",
+          38,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-rowspan-row-oof",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr style=\"position:relative\"><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div><div id=q style=\"position:absolute;left:100%;top:0;width:5px;height:5px\"></div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          90,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          80,
+          10
+        ],
+        [
+          "p",
+          13,
+          11,
+          5,
+          5
+        ],
+        [
+          "q",
+          43,
+          11,
+          5,
+          5
+        ],
+        [
+          "b",
+          13,
+          24,
+          30,
+          10
+        ],
+        [
+          "c",
+          48,
+          24,
+          45,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-collapse-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-collapse-all",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          10,
+          29
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-collapse-wide",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-collapse-all",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          10,
+          29
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-rowspan-collapse-first",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "c",
+          13,
+          24,
+          45,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-rowspan-collapse-last",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          30,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-collapse-first",
+      "html": "<div style=\"display:flex;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-collapse-last",
+      "html": "<div style=\"display:flex;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-collapse-first",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-collapse-last",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-rowspan-collapse-first",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          55,
+          29
+        ],
+        [
+          "c",
+          13,
+          24,
+          45,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-rowspan-collapse-last",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a rowspan=2 style=\"\"><div style=\"width:80px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:30px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          30,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-collapse-first",
+      "html": "<div style=\"display:flex;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-collapse-last",
+      "html": "<div style=\"display:flex;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-collapse-first",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-collapse-last",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;\"><tr><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr style=\"visibility:collapse\"><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "a",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "b",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-column-collapse-first",
+      "html": "<div style=\"display:flex;flex-direction:column;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-column-collapse-first",
+      "html": "<div style=\"display:flex;flex-direction:column;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-authored-collapse",
+      "html": "<div style=\"display:flex;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:100px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-parent-vertical-rl-flex-row-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-rl;flex-direction:row;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          80.5,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-parent-vertical-rl-flex-column-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-parent-vertical-lr-flex-row-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-lr;flex-direction:row;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-parent-vertical-lr-flex-column-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-authored-collapse",
+      "html": "<div style=\"display:flex;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:100px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-parent-vertical-rl-flex-row-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-rl;flex-direction:row;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          80.5,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-parent-vertical-rl-flex-column-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-parent-vertical-lr-flex-row-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-lr;flex-direction:row;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-parent-vertical-lr-flex-column-collapse",
+      "html": "<div style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;width:150px;height:29px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;flex:1;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          150,
+          29
+        ],
+        [
+          "c",
+          13,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          13,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-authored-center",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-auto-end",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;justify-self:end;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          128,
+          8,
+          30,
+          29
+        ],
+        [
+          "c",
+          133,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          133,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-authored-margins",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;margin-left:auto;margin-right:auto;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-column-authored-center",
+      "html": "<div style=\"display:flex;flex-direction:column;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;align-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-column-auto-end",
+      "html": "<div style=\"display:flex;flex-direction:column;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;align-self:end;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          128,
+          8,
+          30,
+          29
+        ],
+        [
+          "c",
+          133,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          133,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-flex-column-reverse-oof",
+      "html": "<div style=\"display:flex;flex-direction:column;flex-wrap:wrap-reverse;width:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"position:relative;\"><div style=\"width:20px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          80.5,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "p",
+          85.5,
+          11,
+          5,
+          5
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-rtl-oof",
+      "html": "<div style=\"display:grid;grid-template-columns:150px;direction:rtl\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;direction:ltr;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"position:relative;\"><div style=\"width:20px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          714.5,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          719.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "p",
+          719.5,
+          11,
+          5,
+          5
+        ],
+        [
+          "d",
+          719.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-authored-center",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-auto-end",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;justify-self:end;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          128,
+          8,
+          30,
+          29
+        ],
+        [
+          "c",
+          133,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          133,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-authored-margins",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;margin-left:auto;margin-right:auto;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-column-authored-center",
+      "html": "<div style=\"display:flex;flex-direction:column;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;align-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-column-auto-end",
+      "html": "<div style=\"display:flex;flex-direction:column;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;align-self:end;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          128,
+          8,
+          30,
+          29
+        ],
+        [
+          "c",
+          133,
+          11,
+          20,
+          10
+        ],
+        [
+          "d",
+          133,
+          24,
+          20,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-flex-column-reverse-oof",
+      "html": "<div style=\"display:flex;flex-direction:column;flex-wrap:wrap-reverse;width:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"position:relative;\"><div style=\"width:20px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          80.5,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          85.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "p",
+          85.5,
+          11,
+          5,
+          5
+        ],
+        [
+          "d",
+          85.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-rtl-oof",
+      "html": "<div style=\"display:grid;grid-template-columns:150px;direction:rtl\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;direction:ltr;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"position:relative;\"><div style=\"width:20px;height:10px\">x</div><div id=p style=\"position:absolute;left:0;top:0;width:5px;height:5px\"></div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          714.5,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          719.5,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "p",
+          719.5,
+          11,
+          5,
+          5
+        ],
+        [
+          "d",
+          719.5,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-owned-max",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;max-width:100px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          56.75,
+          8,
+          52.5,
+          29
+        ],
+        [
+          "c",
+          61.75,
+          11,
+          42.5,
+          10
+        ],
+        [
+          "d",
+          61.75,
+          24,
+          42.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-owned-padding",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:150px;padding:10px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          39.25,
+          8,
+          87.5,
+          49
+        ],
+        [
+          "c",
+          54.25,
+          21,
+          57.5,
+          10
+        ],
+        [
+          "d",
+          54.25,
+          34,
+          57.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-owned-stretch",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:stretch;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-grid-owned-stretch-margins",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;width:stretch;margin:0 5px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          46.75,
+          8,
+          72.5,
+          29
+        ],
+        [
+          "c",
+          51.75,
+          11,
+          62.5,
+          10
+        ],
+        [
+          "d",
+          51.75,
+          24,
+          62.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-owned-max",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;max-width:100px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          56.75,
+          8,
+          52.5,
+          29
+        ],
+        [
+          "c",
+          61.75,
+          11,
+          42.5,
+          10
+        ],
+        [
+          "d",
+          61.75,
+          24,
+          42.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-owned-padding",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:150px;padding:10px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          39.25,
+          8,
+          87.5,
+          49
+        ],
+        [
+          "c",
+          54.25,
+          21,
+          57.5,
+          10
+        ],
+        [
+          "d",
+          54.25,
+          34,
+          57.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-owned-stretch",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:stretch;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          44.25,
+          8,
+          77.5,
+          29
+        ],
+        [
+          "c",
+          49.25,
+          11,
+          67.5,
+          10
+        ],
+        [
+          "d",
+          49.25,
+          24,
+          67.5,
+          10
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-grid-owned-stretch-margins",
+      "html": "<div style=\"display:grid;grid-template-columns:150px\"><table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;width:stretch;margin:0 5px;justify-self:center;\"><tr style=\"visibility:collapse\"><td id=a  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"\"><div style=\"width:20px;height:10px\">x</div></td></tr></table></div>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          46.75,
+          8,
+          72.5,
+          29
+        ],
+        [
+          "c",
+          51.75,
+          11,
+          62.5,
+          10
+        ],
+        [
+          "d",
+          51.75,
+          24,
+          62.5,
+          10
+        ]
+      ]
+    }
+  ],
+  "known_preexisting_differences": [
+    {
+      "label": "vertical-rl-vertical-text-height",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;height:30px\"><tr><td id=a>X X X X X</td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          85,
+          30
+        ],
+        [
+          "a",
+          38,
+          11,
+          50,
+          24
+        ],
+        [
+          "c",
+          13,
+          11,
+          20,
+          24
+        ]
+      ],
+      "note": "Existing before this row-track fix: inline-size-dependent text measurement or vertical collapsed-border normalization. Full Chromium expectations are retained; before/after geometry is recorded in Plane."
+    },
+    {
+      "label": "vertical-lr-vertical-text-height",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;height:30px\"><tr><td id=a>X X X X X</td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          85,
+          30
+        ],
+        [
+          "a",
+          13,
+          11,
+          50,
+          24
+        ],
+        [
+          "c",
+          68,
+          11,
+          20,
+          24
+        ]
+      ],
+      "note": "Existing before this row-track fix: inline-size-dependent text measurement or vertical collapsed-border normalization. Full Chromium expectations are retained; before/after geometry is recorded in Plane."
+    },
+    {
+      "label": "vertical-rl-collapsed-border-multi",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;border-collapse:collapse;\"><tr><td id=a  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          47,
+          30
+        ],
+        [
+          "a",
+          30.5,
+          9,
+          23,
+          13
+        ],
+        [
+          "b",
+          30.5,
+          22,
+          23,
+          14
+        ],
+        [
+          "c",
+          8.5,
+          9,
+          22,
+          13
+        ],
+        [
+          "d",
+          8.5,
+          22,
+          22,
+          14
+        ]
+      ],
+      "note": "Existing before this row-track fix: inline-size-dependent text measurement or vertical collapsed-border normalization. Full Chromium expectations are retained; before/after geometry is recorded in Plane."
+    },
+    {
+      "label": "vertical-rl-collapsed-border-single",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:3px 5px;border-collapse:collapse;\"><tr><td id=a  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          24,
+          30
+        ],
+        [
+          "a",
+          8.5,
+          9,
+          22,
+          13
+        ],
+        [
+          "b",
+          8.5,
+          22,
+          22,
+          14
+        ]
+      ],
+      "note": "Existing before this row-track fix: inline-size-dependent text measurement or vertical collapsed-border normalization. Full Chromium expectations are retained; before/after geometry is recorded in Plane."
+    },
+    {
+      "label": "vertical-lr-collapsed-border-multi",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;border-collapse:collapse;\"><tr><td id=a  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td><td id=d  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          47,
+          30
+        ],
+        [
+          "a",
+          8.5,
+          9,
+          22,
+          13
+        ],
+        [
+          "b",
+          8.5,
+          22,
+          22,
+          14
+        ],
+        [
+          "c",
+          30.5,
+          9,
+          23,
+          13
+        ],
+        [
+          "d",
+          30.5,
+          22,
+          23,
+          14
+        ]
+      ],
+      "note": "Existing before this row-track fix: inline-size-dependent text measurement or vertical collapsed-border normalization. Full Chromium expectations are retained; before/after geometry is recorded in Plane."
+    },
+    {
+      "label": "vertical-lr-collapsed-border-single",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:3px 5px;border-collapse:collapse;\"><tr><td id=a  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td><td id=b  style=\"border-left:1px solid;border-right:3px solid;border-top:2px solid;border-bottom:4px solid\"><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          24,
+          30
+        ],
+        [
+          "a",
+          8.5,
+          9,
+          22,
+          13
+        ],
+        [
+          "b",
+          8.5,
+          22,
+          22,
+          14
+        ]
+      ],
+      "note": "Existing before this row-track fix: inline-size-dependent text measurement or vertical collapsed-border normalization. Full Chromium expectations are retained; before/after geometry is recorded in Plane."
+    }
+  ]
+}

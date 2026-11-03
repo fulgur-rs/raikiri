@@ -1808,9 +1808,7 @@
           10
         ]
       ]
-    }
-  ],
-  "known_preexisting_differences": [
+    },
     {
       "label": "vertical-rl-0.3px 2.7px",
       "html": "<table id=t style=\"border-spacing:0.3px 2.7px;writing-mode:vertical-rl\"><tr><td id=a><div style=\"width:20px;height:10px\">x</div></td><td id=b><div style=\"width:20px;height:10px\">x</div></td></tr><tr><td id=c><div style=\"width:20px;height:10px\">x</div></td><td id=d><div style=\"width:20px;height:10px\">x</div></td></tr></table>",
@@ -2075,5 +2073,6 @@
       ],
       "issue": "RAIKIRI-1351"
     }
-  ]
+  ],
+  "known_preexisting_differences": []
 }
