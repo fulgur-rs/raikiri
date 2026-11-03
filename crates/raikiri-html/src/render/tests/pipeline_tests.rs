@@ -1491,6 +1491,38 @@ fn pipeline_counts_the_block_end_padding_of_an_auto_height_body() {
 }
 
 #[test]
+fn pipeline_does_not_count_the_edges_that_a_clip_hides_as_pages() {
+    // The padding below the box that a clipped container holds is cut away
+    // with the rest of it: only the one page is printed, where the same box
+    // without the clip has its padding run over the pages after it.
+    for (content, pages) in [
+        (
+            "<div style='height:50px;overflow:hidden'><div style='padding-bottom:30px'>\
+             <div style='height:20px'></div><div style='height:170px'></div></div></div>\
+             <div style='height:10px'>x</div>",
+            1,
+        ),
+        (
+            "<div style='height:50px;overflow:hidden'><div style='padding-bottom:130px'>\
+             <div style='height:20px'></div><div style='height:30px'></div></div></div>\
+             <div style='height:10px'>x</div>",
+            1,
+        ),
+        (
+            "<div style='padding-bottom:30px'>\
+             <div style='height:20px'></div><div style='height:170px'></div></div>\
+             <div style='height:10px'>x</div>",
+            3,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} body{{margin:0}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content:?}");
+    }
+}
+
+#[test]
 fn pipeline_named_page_after_paper_fit_box_ignores_absolute_boxes() {
     // The 90px box overflows the 80px page area into the page padding but
     // fits the paper, so it stays on the first page without opening the

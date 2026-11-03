@@ -710,4 +710,72 @@ const ROWS_10PX_LINES: &[Row] = &[
         r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;top:25px;"><div style="height:80px">S</div><div style="padding-bottom:30px"></div></div><div style="height:10px">Z</div>"#,
         &[(0, 25), (1, 30)],
     ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><button style="display:block;width:50px;border:0;margin:0;padding:0 0 30px;font:10px/10px Ahem;background:none">B</button><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><button style="display:block;width:50px;border:0;margin:0;padding:0 0 130px;font:10px/10px Ahem;background:none">B</button><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (2, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><button style="display:block;width:50px;border:0;margin:0;padding:0 0 130px;font:10px/10px Ahem;background:none">B</button><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><button style="display:block;width:50px;border:0;margin:0;padding:0 0 30px;font:10px/10px Ahem;background:none">B</button><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:80px">S</div><img style="display:block;width:20px;height:10px;padding-bottom:130px"><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:50px;overflow:hidden"><div style="padding-bottom:30px"><div style="height:80px">S</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 50)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:flow-root;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:5px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 85)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:flow-root;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:0px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 80)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:flow-root;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:5px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 85)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:flow-root;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:20px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 40), (1, 40)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:block;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:0px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 80)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:block;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:5px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 80)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:block;padding-bottom:30px"><div style="height:40px">A</div><div style="height:50px">B</div><div style="float:left;width:20px;height:20px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 40), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:50px;overflow:hidden"><div style="padding-bottom:30px"><div style="height:20px">S</div><div style="height:70px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 20), (0, 50)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:50px;overflow:hidden"><div style="padding-bottom:30px"><div style="height:20px">S</div><div style="height:50px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 20), (0, 50)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:50px;overflow:hidden"><div style="padding-bottom:30px"><div style="height:20px">S</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 50)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="height:60px;overflow:hidden"><div style="height:20px">S</div><div style="padding-bottom:30px"><div style="height:30px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 20), (0, 60)],
+    ),
 ];
