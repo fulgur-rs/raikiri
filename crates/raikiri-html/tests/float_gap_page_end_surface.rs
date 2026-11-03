@@ -411,14 +411,14 @@ fn an_avoiding_box_keeps_authored_height_when_its_float_prefix_disappears() {
 
 #[test]
 fn nested_avoiding_boxes_move_with_their_wrapper_without_external_float_space() {
-    for outer in ["", "min-height:60px", "padding-top:5px"] {
+    for outer in ["", "height:60px", "min-height:60px", "padding-top:5px"] {
         let rest = format!(
             "<section style='{outer}'>{}</section>{}",
             narrow("break-inside:avoid", "Y"),
             narrow("", "Z")
         );
         let top = if outer == "padding-top:5px" { 5.0 } else { 0.0 };
-        let after = if outer == "min-height:60px" {
+        let after = if matches!(outer, "height:60px" | "min-height:60px") {
             60.0
         } else {
             top + 30.0

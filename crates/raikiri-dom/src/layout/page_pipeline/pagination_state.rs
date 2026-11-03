@@ -1602,24 +1602,37 @@ impl PaginationState {
                     entry.page_before_candidate,
                     &mut self.float_gaps,
                 );
-                self.flow_shift += delta;
-                text.effective_y += delta;
-                for (root, removed, growth) in consumed {
-                    if root == block_id {
-                        text.effective_y -= removed;
-                        text.first_line_shift -= removed;
-                    }
-                    self.deferred_shifts.line_splits.push(LineSplit {
-                        root,
-                        first_moved: 0,
-                        shift: -removed,
-                        growth,
-                        page: target_page,
-                    });
-                }
+                self.note_line_block_move(text, block_id, delta, consumed, target_page);
             }
         }
         Ok(())
+    }
+
+    /// Applies a whole-box move to the current text and defers prefix
+    /// changes for later candidates of the flow.
+    fn note_line_block_move(
+        &mut self,
+        text: &mut TextPosition,
+        block_id: usize,
+        delta: f32,
+        consumed: Vec<(usize, f32, f32)>,
+        page: u32,
+    ) {
+        self.flow_shift += delta;
+        text.effective_y += delta;
+        for (root, removed, growth) in consumed {
+            if root == block_id {
+                text.effective_y -= removed;
+                text.first_line_shift -= removed;
+            }
+            self.deferred_shifts.line_splits.push(LineSplit {
+                root,
+                first_moved: 0,
+                shift: -removed,
+                growth,
+                page,
+            });
+        }
     }
 
     /// Keeps the lines of the text from breaking badly at the end of the
@@ -1913,21 +1926,7 @@ impl PaginationState {
                                 entry.page_before_candidate,
                                 &mut self.float_gaps,
                             );
-                            self.flow_shift += delta;
-                            text.effective_y += delta;
-                            for (root, removed, growth) in consumed {
-                                if root == block_id {
-                                    text.effective_y -= removed;
-                                    text.first_line_shift -= removed;
-                                }
-                                self.deferred_shifts.line_splits.push(LineSplit {
-                                    root,
-                                    first_moved: 0,
-                                    shift: -removed,
-                                    growth,
-                                    page,
-                                });
-                            }
+                            self.note_line_block_move(text, block_id, delta, consumed, page);
                         }
                         moved_whole = true;
                     }
