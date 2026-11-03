@@ -590,8 +590,8 @@ fn branch_float_end(
     top: f32,
 ) -> f32 {
     if super::holds_floats(document, cascade, child)
+        // cov:ignore: abs/fixed hold floats above; running positions are normalized by cascade.
         || !matches!(
-            // cov:ignore: abs/fixed hold floats above; running positions are normalized by cascade.
             document.nodes[child].position(),
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
         )
