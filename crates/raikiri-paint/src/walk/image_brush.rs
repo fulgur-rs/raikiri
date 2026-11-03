@@ -20,6 +20,8 @@ pub(crate) struct ImageBrushCache {
     /// The root element's transform, which the document paints through
     /// once the page's own decorations are drawn.
     root_transform: Cell<Affine>,
+    /// What painting a paragraph in parts prepares from all of its lines.
+    paragraphs: crate::ifc_text::ParagraphPreparations,
 }
 
 struct CachedBrush {
@@ -55,7 +57,13 @@ impl ImageBrushCache {
             base_url: document.base_url().cloned(),
             device_scale: None,
             root_transform: Cell::new(Affine::IDENTITY),
+            paragraphs: crate::ifc_text::ParagraphPreparations::default(),
         }
+    }
+
+    /// The preparations of the paragraphs painted in parts in this paint call.
+    pub(crate) fn paragraphs(&self) -> &crate::ifc_text::ParagraphPreparations {
+        &self.paragraphs
     }
 
     /// This cache for a raster output with `device_scale` device pixels per
