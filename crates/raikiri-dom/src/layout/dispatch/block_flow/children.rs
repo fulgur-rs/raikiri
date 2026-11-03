@@ -317,6 +317,7 @@ pub(super) fn layout(
     };
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut pending = CollapsibleMarginSet::ZERO;
+    let mut pending_has_clearance = false;
     let mut leading = true;
     if !collapse_start {
         ctx.commit_strut();
@@ -812,17 +813,33 @@ pub(super) fn layout(
             }
         } else {
             flow.end = top + output.size.height;
-            pending = bottom_set;
+            if clearance && output.margins_can_collapse_through {
+                // Clearance separates earlier margins, but this empty box's
+                // own margins still collapse with each other and following
+                // siblings. Its border stays at the cleared position.
+                flow.end -= top_set.resolve();
+                pending = top_set.collapse_with_set(bottom_set);
+                pending_has_clearance = true;
+            } else {
+                pending = bottom_set;
+                pending_has_clearance = false;
+            }
             leading = false;
             flow.through = false;
             ctx.commit_strut();
         }
     }
-    flow.trailing = pending;
+    // A margin adjoining an empty box with clearance cannot escape through
+    // the parent's bottom edge (CSS 2.1 8.3.1).
+    flow.trailing = if pending_has_clearance {
+        CollapsibleMarginSet::ZERO
+    } else {
+        pending
+    };
     // Margins that collapsed through every child have joined the top margin of
     // this box, so they lie outside of it and leave no room below the content.
     let collapsed_into_start = leading && collapse_start;
-    if !(collapse_end || collapsed_into_start) {
+    if pending_has_clearance || !(collapse_end || collapsed_into_start) {
         flow.end += pending.resolve();
     }
     flow
