@@ -4,7 +4,6 @@ use super::*;
 
 /// Consumes only a proven empty prefix below inherited floats. Owned boxes
 /// keep their layout relative to the full-width lines below that prefix.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn discard(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -12,7 +11,6 @@ pub(super) fn discard(
     delta: f32,
     body_id: usize,
     shifts: &mut SubtreeShifts,
-    flow_page: u32,
 ) -> (f32, f32) {
     let gap = document
         .ifc_layout_node(root)
@@ -62,7 +60,7 @@ pub(super) fn discard(
         -removed,
         body_id,
         &IfcBoxShifts::default(),
-        Some((shifts, flow_page)),
+        Some(shifts),
     );
     (removed, growth)
 }
@@ -222,7 +220,6 @@ impl Index {
     }
 
     /// Removes only prefixes whose floats remain outside the moving holder.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn discard_in_holder(
         &mut self,
         document: &mut super::super::context::LayoutSession<'_>,
@@ -231,7 +228,6 @@ impl Index {
         delta: f32,
         body_id: usize,
         shifts: &mut SubtreeShifts,
-        flow_page: u32,
     ) -> Vec<(usize, f32, f32)> {
         self.prepare(document, cascade, body_id);
         if self.roots.is_empty() {
@@ -284,8 +280,7 @@ impl Index {
                 .map_or(0.0, |lines| lines.external_float_gap);
             let moved_by = delta + current_abs_y(document, root) - original_top;
             let allowed = moved_by.min(gap - retained).max(0.0);
-            let (removed, growth) =
-                discard(document, cascade, root, allowed, body_id, shifts, flow_page);
+            let (removed, growth) = discard(document, cascade, root, allowed, body_id, shifts);
             if gap - removed <= 0.001 {
                 self.roots.remove(&order);
             }

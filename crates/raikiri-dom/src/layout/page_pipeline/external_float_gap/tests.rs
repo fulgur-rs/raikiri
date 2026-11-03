@@ -42,7 +42,6 @@ fn retained_float_ends_are_read_once_when_many_roots_share_a_moving_holder() {
             40.0,
             body,
             &mut SubtreeShifts::default(),
-            0,
         );
         assert!(consumed.is_empty());
         assert_eq!(index.roots.len(), count);
@@ -85,7 +84,6 @@ fn absolute_children_that_need_resizing_reject_uniform_gap_removal() {
             40.0,
             body,
             &mut SubtreeShifts::default(),
-            0,
         );
         assert!(consumed.is_empty());
         assert_eq!(

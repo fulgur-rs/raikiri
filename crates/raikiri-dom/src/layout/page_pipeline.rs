@@ -10435,8 +10435,7 @@ fn move_line_block(
     let delta = Some(target_y + relative - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
-    let consumed =
-        gaps.discard_in_holder(document, cascade, moved, delta, body_id, shifts, flow_page);
+    let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id, shifts);
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
@@ -10732,7 +10731,7 @@ fn shrink_ancestors_after_content_change(
     mut float_delta: f32,
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
-    mut changes: Option<(&mut SubtreeShifts, u32)>,
+    mut changes: Option<&mut SubtreeShifts>,
 ) {
     if (delta >= 0.0 && float_delta >= 0.0) || !delta.is_finite() {
         return;
@@ -10772,7 +10771,7 @@ fn shrink_ancestors_after_content_change(
         };
         shift_later_block_siblings(document, parent, child, flow_delta);
         let old_height = document.nodes[parent].layout.size.height;
-        let adjusted = grown_auto_height(
+        let Some(adjusted) = grown_auto_height(
             document,
             cascade,
             parent,
@@ -10783,19 +10782,13 @@ fn shrink_ancestors_after_content_change(
             changes.is_some() || child == node,
             flow_root,
             ifc_boxes,
-        );
-        let Some(adjusted) = adjusted else {
-            if let Some((records, _)) = changes.as_mut()
-                && flow_delta.abs() > 0.001
-            {
-                records.growth.push((parent, -flow_delta));
-            }
+        ) else {
             break;
         };
         document.nodes[parent].layout.size.height = adjusted.height;
         let (old_flow, new_flow) = adjusted.flow_heights;
         let passed = new_flow - old_flow;
-        if let Some((records, _)) = changes.as_mut()
+        if let Some(records) = changes.as_mut()
             && (passed - flow_delta).abs() > 0.001
         {
             records.growth.push((parent, passed - flow_delta));

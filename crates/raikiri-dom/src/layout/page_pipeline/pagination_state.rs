@@ -1345,7 +1345,6 @@ impl PaginationState {
                     landing.node_delta,
                     body_id,
                     &mut self.subtree_shifts,
-                    entry.page_before_candidate,
                 ) {
                     self.deferred_shifts.line_splits.push(LineSplit {
                         root,
