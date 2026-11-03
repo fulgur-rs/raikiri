@@ -13,6 +13,7 @@
 //! later content would have to change pages already delivered: that content
 //! is left out and reported, as [`StreamingLayout`] lists.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
@@ -24,6 +25,7 @@ use raikiri_traits::{
     LimitKind, Method, NetworkError, NetworkProvider, NodeId, NodeKind, PageDefaults, ParseError,
     RenderError, RenderWarning, Request, WarningKind,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AnchorIndex, DocumentLayout, LayoutOptions, LayoutStatus, Page, RunningElementLayout,
@@ -1411,19 +1413,48 @@ impl EarlierWarnings {
     /// which `left_out` holds, in place of those that earlier layouts
     /// reported about the content it laid out again.
     fn record(&mut self, laid_out: &DocumentLayout, left_out: &LeftOut) {
-        let resolved = &laid_out.out.replaced_resources;
+        self.record_warnings(
+            &laid_out.out.replaced_resources,
+            laid_out.warnings(),
+            left_out,
+        );
+    }
+
+    /// [`Self::record`] for the `warnings` of a layout and the outcomes of
+    /// the replaced resources it `resolved`.
+    fn record_warnings(
+        &mut self,
+        resolved: &[(url::Url, Vec<RenderWarning>)],
+        warnings: &[RenderWarning],
+        left_out: &LeftOut,
+    ) {
+        // A layout with many resources, or with warnings about many elements,
+        // asks one question about each of them, so the answers come from
+        // sets and indexes rather than from scans of these lists.
+        let resolved_urls: FxHashSet<&url::Url> = resolved.iter().map(|(url, _)| url).collect();
         self.sources.retain(|(source, _)| match source {
             WarningSource::Node(node) => left_out.holds(*node),
-            WarningSource::Resource(url) => !resolved.iter().any(|(resolved, _)| resolved == url),
+            WarningSource::Resource(url) => !resolved_urls.contains(url),
         });
-        for warning in laid_out.warnings() {
+        let mut position: FxHashMap<NodeId, usize> = FxHashMap::default();
+        for (index, (source, _)) in self.sources.iter().enumerate() {
+            if let WarningSource::Node(node) = source {
+                position.entry(*node).or_insert(index);
+            }
+        }
+        for warning in warnings {
             let Some(node) = warning.node_id else {
                 continue;
             };
-            let source = WarningSource::Node(node);
-            match self.sources.iter_mut().find(|(held, _)| *held == source) {
-                Some((_, warnings)) => warnings.push(warning.clone()),
-                None => self.sources.push((source, vec![warning.clone()])),
+            match position.entry(node) {
+                Entry::Occupied(held) => {
+                    self.sources[*held.get()].1.push(warning.clone());
+                }
+                Entry::Vacant(free) => {
+                    free.insert(self.sources.len());
+                    self.sources
+                        .push((WarningSource::Node(node), vec![warning.clone()]));
+                }
             }
         }
         self.sources.extend(
