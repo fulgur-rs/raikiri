@@ -4110,3 +4110,31 @@ fn an_avoiding_paragraph_with_a_height_of_its_own_moves_whole_with_the_edges() {
     );
     assert_eq!((y, box_height, parent_height), (10.0, 60.0, 100.0));
 }
+
+#[test]
+fn the_edges_of_a_block_in_a_grid_column_leave_the_items_beside_it_where_they_are() {
+    // The items of a grid of two columns start the page together. The padding
+    // below the 80px box of the first one does not fit under it, but the flow
+    // does not advance for it: the second item, with the same top as the first,
+    // is not pushed down by it. A grid of one column stacks its items, so the
+    // block in its one item still pushes the flow after it.
+    for (columns, beside, after) in [("50px 50px", 0.0, 110.0), ("50px", 130.0, 150.0)] {
+        let (mut second, mut last) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let grid = block(
+                doc,
+                body,
+                &format!("display:grid;grid-template-columns:{columns};align-items:start"),
+            );
+            let first = block(doc, grid, "display:block;padding-bottom:30px");
+            block(doc, first, "display:block;height:80px");
+            second = block(doc, grid, "display:block;height:20px");
+            last = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(
+            (page_flow_y(&doc, second), page_flow_y(&doc, last)),
+            (beside, after),
+            "{columns}"
+        );
+    }
+}

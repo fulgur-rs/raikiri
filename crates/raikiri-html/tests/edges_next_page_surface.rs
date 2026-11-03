@@ -778,4 +778,32 @@ const ROWS_10PX_LINES: &[Row] = &[
         r#"<style>body{font:10px/10px Ahem}</style><div style="height:60px;overflow:hidden"><div style="height:20px">S</div><div style="padding-bottom:30px"><div style="height:30px">T</div></div></div><div style="height:10px">Z</div>"#,
         &[(0, 0), (0, 20), (0, 60)],
     ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;padding-bottom:30px"><div style="height:80px">S</div><div style="position:absolute;bottom:0;left:0;height:10px;width:10px">A</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;padding-bottom:30px"><div style="height:60px">S</div><div style="position:absolute;bottom:0;left:0;height:10px;width:10px">A</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 80), (0, 90)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;padding-bottom:30px"><div style="height:80px">S</div><div style="position:absolute;top:0;left:0;height:10px;width:10px">A</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="position:relative;padding-bottom:30px"><div style="height:80px">S</div><div style="position:absolute;bottom:20px;left:0;height:10px;width:10px">A</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 80), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:grid"><div style="padding-bottom:30px"><div style="height:80px">S</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div>"#,
+        &[(0, 0)],
+    ),
+    (
+        r#"<style>body{font:10px/10px Ahem}</style><div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px"><div style="height:10px">T</div><div style="height:10px">U</div></div></div>"#,
+        &[(0, 0), (0, 10)],
+    ),
 ];
