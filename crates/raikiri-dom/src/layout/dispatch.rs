@@ -1529,6 +1529,8 @@ mod float_container_tests;
 #[cfg(test)]
 mod grid_baseline_tests;
 #[cfg(test)]
+mod inline_baseline_tests;
+#[cfg(test)]
 mod item_width_tests;
 #[cfg(test)]
 mod self_alignment_tests;

@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use super::inline_baseline;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{LayoutInput, LayoutOutput, NodeId, RunMode};
 use crate::layout::style_views::ReadRole;
@@ -13,6 +14,7 @@ use crate::layout::taffy_adapter::algorithms::{FlexReplayCall, flex_baseline_sou
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::values::{AlignItemsKeyword, Direction, Position, ResolveOrZero};
+use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
 pub(in crate::layout) struct Capture {
@@ -303,24 +305,18 @@ fn finish(
     }
     // Local out-of-flow layout runs after this pass. Only the candidates
     // already translated by the grid need to follow their moved item now.
-    let horizontal: Vec<_> = shifts
-        .iter()
-        .map(|&(child, shift)| (child, shift.x))
-        .collect();
-    let vertical: Vec<_> = shifts
-        .iter()
-        .map(|&(child, shift)| (child, shift.y))
-        .collect();
+    let moved: FxHashMap<usize, Point<f32>> = shifts.iter().copied().collect();
     output.oof_candidates.for_each_mut(|candidate| {
         let node = usize::from(candidate.node);
-        if let Some(shift) = super::inline_baseline::shift_of(tree, idx, &horizontal, node) {
-            candidate.static_position.x.area.start += shift;
-            candidate.static_position.x.area.end += shift;
-        }
-        if let Some(shift) = super::inline_baseline::shift_of(tree, idx, &vertical, node) {
-            candidate.static_position.y.area.start += shift;
-            candidate.static_position.y.area.end += shift;
-        }
+        let Some(shift) =
+            inline_baseline::item_holding(tree, idx, node).and_then(|item| moved.get(&item))
+        else {
+            return;
+        };
+        candidate.static_position.x.area.start += shift.x;
+        candidate.static_position.x.area.end += shift.x;
+        candidate.static_position.y.area.start += shift.y;
+        candidate.static_position.y.area.end += shift.y;
     });
     output.scrollable_overflow_rect = overflow(tree, idx, inputs, items, output.size);
 }

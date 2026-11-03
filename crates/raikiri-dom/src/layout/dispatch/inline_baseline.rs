@@ -39,6 +39,7 @@ use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{BaselineSet, Direction, Display, Position, ResolveOrZero};
 use raikiri_style::property::WritingMode;
+use rustc_hash::FxHashMap;
 
 /// The physical axis the items are aligned along.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +84,7 @@ impl Axis {
 }
 
 /// The baseline-sharing group an item belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Group {
     /// The grid column the group is in; zero in a flex container.
     track: u16,
@@ -289,44 +290,46 @@ impl Container {
         members: &[Member],
         candidates: &mut OofCandidates,
     ) -> Option<Edges<f32>> {
-        let mut overflow = None;
-        let mut shifts = Vec::new();
-        for (index, member) in members.iter().enumerate() {
-            if members[..index].iter().any(|m| m.group == member.group) {
-                continue;
-            }
-            let group = || members.iter().filter(|m| m.group == member.group);
-            // How far the baselines of the group reach from the edge it packs
-            // against, counting the margins: the farthest one, which every
-            // item of the group shares, whatever room it is aligned in.
-            let depth = if member.group.towards_end {
-                group()
-                    .map(|m| m.size - m.baseline + m.margin.1)
-                    .fold(f32::NEG_INFINITY, f32::max)
+        // How far the baselines of each group reach from the edge it packs
+        // against, counting the margins: the farthest one, which every item of
+        // the group shares, whatever room it is aligned in.
+        let mut depths: FxHashMap<Group, f32> = FxHashMap::default();
+        for member in members {
+            #[cfg(test)]
+            crate::layout::test_support::INLINE_BASELINE_MEMBER_VISITS
+                .with(|count| count.set(count.get() + 1));
+            let reach = if member.group.towards_end {
+                member.size - member.baseline + member.margin.1
             } else {
-                group()
-                    .map(|m| m.margin.0 + m.baseline)
-                    .fold(f32::NEG_INFINITY, f32::max)
+                member.margin.0 + member.baseline
             };
-            for placed in group() {
-                // The position along the axis that the baseline of the item
-                // takes in its own room.
-                let position = if member.group.towards_end {
-                    placed.room.1 - depth
-                } else {
-                    placed.room.0 + depth
-                };
-                let start = position - placed.baseline + placed.offset;
-                let mut layout = tree.nodes[placed.child].layout;
-                let shift = start - self.axis.coordinate(layout.location);
-                if shift != 0.0 {
-                    shifts.push((placed.child, shift));
-                }
-                layout.location = self.axis.moved(layout.location, start);
-                tree.set_unrounded_layout(NodeId::from(placed.child), &layout);
-                let reach = reach_of(layout.location, layout.scrollable_overflow_rect);
-                overflow = Some(overflow.map_or(reach, |seen: Edges<f32>| seen.union(reach)));
+            let depth = depths.entry(member.group).or_insert(f32::NEG_INFINITY);
+            *depth = depth.max(reach);
+        }
+        let mut overflow = None;
+        let mut shifts = Shifts::default();
+        for placed in members {
+            #[cfg(test)]
+            crate::layout::test_support::INLINE_BASELINE_MEMBER_VISITS
+                .with(|count| count.set(count.get() + 1));
+            let depth = depths[&placed.group];
+            // The position along the axis that the baseline of the item
+            // takes in its own room.
+            let position = if placed.group.towards_end {
+                placed.room.1 - depth
+            } else {
+                placed.room.0 + depth
+            };
+            let start = position - placed.baseline + placed.offset;
+            let mut layout = tree.nodes[placed.child].layout;
+            let shift = start - self.axis.coordinate(layout.location);
+            if shift != 0.0 {
+                shifts.insert(placed.child, shift);
             }
+            layout.location = self.axis.moved(layout.location, start);
+            tree.set_unrounded_layout(NodeId::from(placed.child), &layout);
+            let reach = reach_of(layout.location, layout.scrollable_overflow_rect);
+            overflow = Some(overflow.map_or(reach, |seen: Edges<f32>| seen.union(reach)));
         }
         match self.follow(tree, idx, &shifts, candidates) {
             Some(reach) => overflow.map(|seen| seen.union(reach)),
@@ -337,14 +340,14 @@ impl Container {
     /// Carry the out-of-flow boxes whose static position lies inside a moved
     /// item along with it, as the box that is their static parent: those that
     /// the container `idx` has laid out, and the `candidates` that continue
-    /// to bubble up. `shifts` lists each moved item with the distance it
-    /// moved. Returns the scrollable overflow that the laid out boxes that
-    /// moved reach, relative to the container.
+    /// to bubble up. `shifts` gives the distance each moved item moved.
+    /// Returns the scrollable overflow that the laid out boxes that moved
+    /// reach, relative to the container.
     fn follow(
         &self,
         tree: &mut LayoutSession<'_>,
         idx: usize,
-        shifts: &[(usize, f32)],
+        shifts: &Shifts,
         candidates: &mut OofCandidates,
     ) -> Option<Edges<f32>> {
         if shifts.is_empty() {
@@ -396,22 +399,31 @@ fn reach_of(location: Point<f32>, overflow: Edges<f32>) -> Edges<f32> {
     }
 }
 
+/// How far each item of a container that moved went, by the item.
+type Shifts = FxHashMap<usize, f32>;
+
+/// The item of the container `idx` that holds `node`, which is the last box on
+/// the way up from `node` before the container; `None` when `node` is not
+/// inside it.
+pub(super) fn item_holding(tree: &LayoutSession<'_>, idx: usize, node: usize) -> Option<usize> {
+    std::iter::successors(Some(node), |&current| tree.taffy_parent_of(current))
+        .take_while(|&current| current != idx)
+        .inspect(|_| {
+            #[cfg(test)]
+            crate::layout::test_support::INLINE_BASELINE_SHIFT_PROBES
+                .with(|count| count.set(count.get() + 1));
+        })
+        .last()
+}
+
 /// The distance the item of the container `idx` that holds `node` moved, when
 /// it did.
-pub(super) fn shift_of(
-    tree: &LayoutSession<'_>,
-    idx: usize,
-    shifts: &[(usize, f32)],
-    node: usize,
-) -> Option<f32> {
-    // The item is the last box on the way up from `node` before the container.
-    let item = std::iter::successors(Some(node), |&current| tree.taffy_parent_of(current))
-        .take_while(|&current| current != idx)
-        .last()?;
-    shifts
-        .iter()
-        .find(|&&(moved, _)| moved == item)
-        .map(|&(_, shift)| shift)
+fn shift_of(tree: &LayoutSession<'_>, idx: usize, shifts: &Shifts, node: usize) -> Option<f32> {
+    let item = item_holding(tree, idx, node)?;
+    #[cfg(test)]
+    crate::layout::test_support::INLINE_BASELINE_SHIFT_PROBES
+        .with(|count| count.set(count.get() + 1));
+    shifts.get(&item).copied()
 }
 
 /// Align the items of the grid container `idx` that align by a baseline, once
