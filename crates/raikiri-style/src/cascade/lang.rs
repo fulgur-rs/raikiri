@@ -240,7 +240,7 @@ pub(crate) fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Optio
 /// match).
 ///
 /// [`is_well_formed_language_tag`] and [`is_well_formed_extended_language_range`]
-/// implement well-formedness; [`canonicalize_primary_language_subtag`]
+/// implement well-formedness; [`canonical_primary_language_subtag`]
 /// implements the canonicalization step that matters for matching
 /// correctness (deprecated-subtag replacement). Both are applied to `range`
 /// and `content_language` before the extended-filtering algorithm below
@@ -321,55 +321,54 @@ pub(crate) fn language_range_matches(range: &str, content_language: &str) -> boo
         return range == content_language;
     }
 
-    let range_subtags: Vec<&str> = range.split('-').collect();
-    let tag_subtags: Vec<&str> = content_language.split('-').collect();
-
     // Selectors L4 §7.2 (quoted above): ill-formed tags/ranges never match.
-    if !is_well_formed_extended_language_range(&range_subtags)
-        || !is_well_formed_language_tag(&tag_subtags)
+    if !is_well_formed_extended_language_range(range)
+        || !is_well_formed_language_tag(content_language)
     {
         return false;
     }
 
     // Selectors L4 §7.2 (quoted above): canonicalize before extended
-    // filtering. `subtags_match`/the loop below only ever read these
-    // through `.eq_ignore_ascii_case`/`== "*"`, so owning `String`s here
-    // (needed to overwrite the primary language subtag in place) costs
-    // nothing but an allocation per subtag, on a selector-matching path
-    // this crate does not treat as hot.
-    let mut range_subtags: Vec<String> = range_subtags.into_iter().map(String::from).collect();
-    let mut tag_subtags: Vec<String> = tag_subtags.into_iter().map(String::from).collect();
-    canonicalize_primary_language_subtag(&mut range_subtags);
-    canonicalize_primary_language_subtag(&mut tag_subtags);
+    // filtering. Only the primary language subtag is ever replaced, and the
+    // loop below only reads subtags through `.eq_ignore_ascii_case`/`== "*"`,
+    // so both sides stay borrowed from their strings, split on `-` as they
+    // are read: a comparison allocates nothing.
+    let mut range_subtags = range.split('-');
+    let mut tag_subtags = content_language.split('-').peekable();
+    // `split` yields at least one item, and an empty string returned above.
+    let range_primary = range_subtags.next().unwrap_or_default();
+    let tag_primary = tag_subtags.next().unwrap_or_default();
 
     // Step 2: first subtag must match (range's first subtag may itself be
     // `*`, e.g. the bare wildcard range `:lang(*)` — `subtags_match` already
     // handles that).
-    if !subtags_match(&range_subtags[0], &tag_subtags[0]) {
+    if !subtags_match(
+        canonical_primary_language_subtag(range_primary),
+        canonical_primary_language_subtag(tag_primary),
+    ) {
         return false;
     }
-    let mut ri = 1;
-    let mut ti = 1;
 
-    // Step 3.
-    while ri < range_subtags.len() {
-        let r = &range_subtags[ri];
+    // Step 3. `r` is the range subtag being matched; it stays while 3.E
+    // moves on through the tag's subtags.
+    let mut range_next = range_subtags.next();
+    while let Some(r) = range_next {
         if r == "*" {
-            ri += 1; // 3.A
+            range_next = range_subtags.next(); // 3.A
             continue;
         }
-        let Some(t) = tag_subtags.get(ti) else {
+        let Some(&t) = tag_subtags.peek() else {
             return false; // 3.B
         };
         if subtags_match(r, t) {
-            ri += 1;
-            ti += 1; // 3.C
+            range_next = range_subtags.next();
+            tag_subtags.next(); // 3.C
             continue;
         }
         if is_singleton(t) {
             return false; // 3.D
         }
-        ti += 1; // 3.E
+        tag_subtags.next(); // 3.E
     }
     true // Step 4.
 }
@@ -389,9 +388,8 @@ fn is_well_formed_alphanum_subtag(subtag: &str) -> bool {
     (1..=8).contains(&subtag.len()) && subtag.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-/// Is `subtags` (already split on `-`, guaranteed non-empty by
-/// [`language_range_matches`]'s empty-string early return) well-formed as a
-/// BCP47 **`Language-Tag`**? RFC 5646 §2.1's top-level production is
+/// Is `tag` (split on `-` here) well-formed as a BCP47 **`Language-Tag`**?
+/// The empty string is not (its one subtag is empty). RFC 5646 §2.1's top-level production is
 /// `Language-Tag = langtag / privateuse / grandfathered`; this function
 /// implements the first two alternatives (`grandfathered` is not
 /// recognized as its own alternative — see [`language_range_matches`]'s
@@ -412,21 +410,19 @@ fn is_well_formed_alphanum_subtag(subtag: &str) -> bool {
 /// [`is_well_formed_alphanum_subtag`]'s shared envelope; see that
 /// function's doc, and [`language_range_matches`]'s doc for the list of
 /// `langtag` subtag *sequences* this does not validate.
-fn is_well_formed_language_tag(subtags: &[&str]) -> bool {
-    let first = subtags[0];
+fn is_well_formed_language_tag(tag: &str) -> bool {
+    let mut subtags = tag.split('-');
+    let first = subtags.next().unwrap_or_default();
     let first_ok = if first.eq_ignore_ascii_case("x") {
-        subtags.len() >= 2
+        subtags.clone().next().is_some()
     } else {
         (2..=8).contains(&first.len()) && first.bytes().all(|b| b.is_ascii_alphabetic())
     };
-    first_ok
-        && subtags[1..]
-            .iter()
-            .all(|s| is_well_formed_alphanum_subtag(s))
+    first_ok && subtags.all(is_well_formed_alphanum_subtag)
 }
 
-/// Is `subtags` (already split on `-`, guaranteed non-empty by
-/// [`language_range_matches`]'s empty-string early return) well-formed as
+/// Is `range` (split on `-` here; the empty string is not, as its one
+/// subtag is empty) well-formed as
 /// an RFC 4647 §2.2 "extended language range"?
 ///
 /// > extended-language-range = (1\*8ALPHA / "\*")
@@ -442,14 +438,12 @@ fn is_well_formed_language_tag(subtags: &[&str]) -> bool {
 /// with a valid subtag" clause, which would require backtracking over
 /// every possible wildcard-to-subtag substitution; see
 /// [`language_range_matches`]'s doc for the scope this leaves out.
-fn is_well_formed_extended_language_range(subtags: &[&str]) -> bool {
-    let first = subtags[0];
+fn is_well_formed_extended_language_range(range: &str) -> bool {
+    let mut subtags = range.split('-');
+    let first = subtags.next().unwrap_or_default();
     let first_ok = first == "*"
         || ((1..=8).contains(&first.len()) && first.bytes().all(|b| b.is_ascii_alphabetic()));
-    first_ok
-        && subtags[1..]
-            .iter()
-            .all(|&s| s == "*" || is_well_formed_alphanum_subtag(s))
+    first_ok && subtags.all(|s| s == "*" || is_well_formed_alphanum_subtag(s))
 }
 
 /// The deprecated **2-letter** (`Type: language`) primary language subtags
@@ -471,28 +465,26 @@ const DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS: &[(&str, &str)] = &[
     ("mo", "ro"),
 ];
 
-/// Canonicalizes `subtags`' primary language subtag (index 0; `subtags` is
-/// guaranteed non-empty by [`language_range_matches`]'s empty-string early
-/// return) to its registry `Preferred-Value` when it matches (ASCII
+/// The primary language subtag `subtag` canonicalized to
+/// its registry `Preferred-Value` when it matches (ASCII
 /// case-insensitively — subtags are case-insensitive per RFC 5646 §2.1.1)
 /// one of [`DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS`], per RFC 5646 §4.5 step 3
 /// ("Subtags are replaced by their 'Preferred-Value', if there is one").
 /// The replacement is written out in the registry's own lowercase form,
 /// which is harmless here because [`language_range_matches`]'s extended
-/// filtering comparison is itself ASCII-case-insensitive.
+/// filtering comparison is itself ASCII-case-insensitive. Any other subtag
+/// comes back as it is.
 ///
 /// Only the primary language subtag is ever replaced — this crate's
 /// documented subset has no extlang, script, region, variant, extension,
 /// or grandfathered/redundant-tag `Preferred-Value` entries, so RFC 5646
 /// §4.5's other canonicalization steps are not implemented; see
 /// [`language_range_matches`]'s doc for the list.
-fn canonicalize_primary_language_subtag(subtags: &mut [String]) {
-    for &(deprecated, preferred) in DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS {
-        if subtags[0].eq_ignore_ascii_case(deprecated) {
-            subtags[0] = preferred.to_string();
-            break;
-        }
-    }
+fn canonical_primary_language_subtag(subtag: &str) -> &str {
+    DEPRECATED_PRIMARY_LANGUAGE_SUBTAGS
+        .iter()
+        .find(|(deprecated, _)| subtag.eq_ignore_ascii_case(deprecated))
+        .map_or(subtag, |&(_, preferred)| preferred)
 }
 
 // cov:ignore: pure test-code relocation (no logic changed). patch-coverage's git-diff-based line classifier treats every moved
