@@ -942,3 +942,51 @@ fn hidden_length_scaling_probe() {
         }
     }
 }
+
+#[test]
+fn collections_read_from_the_tree_keep_no_name_index_between_lookups() {
+    use super::{CollectionCache, CollectionSource, HtmlCollectionSource};
+    let mut rt = rt();
+    rt.evaluate(
+        "var root = document.createElement('div'); var a = document.createElement('p');          a.id = 'a'; root.appendChild(a); document.body.appendChild(root);",
+    )
+    .unwrap();
+    let (root, a) = with_state(rt.context_mut(), |s| {
+        let doc = s.host.document();
+        let a = (0..doc.node_count())
+            .find(|&node| doc.element_attribute(node, "id") == Some("a"))
+            .unwrap();
+        (doc.parent_of(a).unwrap(), a)
+    })
+    .unwrap();
+    for source in [
+        CollectionSource::Static(vec![a]),
+        CollectionSource::ChildNodes(root),
+    ] {
+        let collection = HtmlCollectionSource {
+            source,
+            cache: CollectionCache::default(),
+        };
+        let context = rt.context_mut();
+        // Enough lookups to have built an index had one been kept.
+        for _ in 0..3 {
+            assert_eq!(collection.first_named("a", context).unwrap(), Some(a));
+        }
+        with_state(context, |s| {
+            s.host
+                .document_mut()
+                .set_element_attribute(a, "id", "b")
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(collection.first_named("a", context).unwrap(), None);
+        assert_eq!(collection.first_named("b", context).unwrap(), Some(a));
+        with_state(context, |s| {
+            s.host
+                .document_mut()
+                .set_element_attribute(a, "id", "a")
+                .unwrap();
+        })
+        .unwrap();
+    }
+}
