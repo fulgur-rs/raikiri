@@ -1,5 +1,49 @@
 use super::*;
+use crate::layout::page_pipeline::page_start::ChildPositions;
 use crate::layout::page_pipeline::page_start::begins_page_below_leading_edges;
+
+#[test]
+fn cached_page_start_queries_read_current_preceding_geometry() {
+    let (mut previous, mut child) = (0, 0);
+    let (mut doc, cascade, body) = laid_out(|doc, body| {
+        previous = block(doc, body, "display:block;height:30px;break-after:page");
+        let wrapper = block(doc, body, "display:block;padding-top:5px");
+        child = block(doc, wrapper, "display:block;height:20px;break-before:page");
+    });
+    let mut positions = ChildPositions::default();
+    assert!(positions.begins_page_below_leading_edges(&doc, &cascade, body, child, 100.0));
+    let indexed = positions.indexed_children;
+    doc.nodes[previous].layout.size.height = 130.0;
+    assert!(!positions.begins_page_below_leading_edges(&doc, &cascade, body, child, 100.0));
+    doc.nodes[previous].layout.size.height = 30.0;
+    assert!(positions.begins_page_below_leading_edges(&doc, &cascade, body, child, 100.0));
+    assert_eq!(positions.indexed_children, indexed);
+}
+
+#[test]
+fn cached_page_start_index_work_does_not_multiply_wrapper_count_by_query_count() {
+    for count in [32, 128, 512] {
+        let mut children = Vec::new();
+        let (doc, cascade, body) = laid_out(|doc, body| {
+            for _ in 0..count {
+                let wrapper = block(doc, body, "display:block");
+                children.push(block(doc, wrapper, "display:block;height:1px"));
+            }
+        });
+        let mut positions = ChildPositions::default();
+        for &child in &children {
+            positions.begins_page_below_leading_edges(&doc, &cascade, body, child, 0.0);
+        }
+        let indexed = positions.indexed_children;
+        assert!(indexed > 0 && indexed <= count * 2);
+        for page_start in [0.0, 100.0, 200.0] {
+            for &child in &children {
+                positions.begins_page_below_leading_edges(&doc, &cascade, body, child, page_start);
+            }
+        }
+        assert_eq!(positions.indexed_children, indexed);
+    }
+}
 
 /// Lays out the document the closure builds on 100px pages, and returns it with
 /// its cascade and its body.

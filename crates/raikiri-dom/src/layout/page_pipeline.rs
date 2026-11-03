@@ -3,6 +3,7 @@ use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
+mod column_replaced;
 mod footnotes;
 mod fragment_sources;
 mod grid_rows;
@@ -4988,6 +4989,9 @@ struct BoxOverflow {
     /// also counted in `page`. It does so even as the first box of the flow
     /// when a margin above it keeps it from starting the page.
     unbreakable: bool,
+    /// The column moves with its leading replaced piece. Unlike an
+    /// unbreakable box, it does not move as the first box of the flow.
+    leading_column_replaced: bool,
     /// The box avoids a break inside it (`break-inside`) and moves to the next
     /// page for that, which is also counted in `page`. A line of generated
     /// text that is kept whole, or a box that moves for the edges that close
@@ -5211,6 +5215,7 @@ impl AvoidedBreaks {
         BoxOverflow {
             page,
             unbreakable,
+            leading_column_replaced: false,
             moved_for_avoided_break: avoids_break_inside && moves_for_avoided_end,
             avoided_run,
             table_row,
