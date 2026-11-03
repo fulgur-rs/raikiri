@@ -57,6 +57,7 @@ use raikiri_style::{
     CascadeResult, ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
 };
 use raikiri_traits::NodeKind;
+use rustc_hash::FxHashSet;
 
 use crate::document_layout::DocumentLayout;
 
@@ -197,12 +198,16 @@ pub(crate) fn open_html_elements(document: &Document, traced: &[usize]) -> Vec<u
 fn open_elements(document: &Document, traced: &[usize]) -> Vec<usize> {
     let root = document.root_index();
     let mut open: Vec<usize> = Vec::new();
+    // The same ids as `open`, for the membership questions: a deep stack of
+    // open elements asks one per handle.
+    let mut kept: FxHashSet<usize> = FxHashSet::default();
     for &id in traced {
-        if open.contains(&id) {
+        if kept.contains(&id) {
             continue;
         }
         let parent = document.parent_of(id);
-        if parent == Some(root) || parent.is_some_and(|parent| open.contains(&parent)) {
+        if parent == Some(root) || parent.is_some_and(|parent| kept.contains(&parent)) {
+            kept.insert(id);
             open.push(id);
         }
     }

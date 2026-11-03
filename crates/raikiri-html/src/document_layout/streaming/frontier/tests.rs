@@ -288,3 +288,118 @@ thread_local! {
 pub(super) fn record_sibling_visit() {
     SIBLING_VISITS.with(|visits| visits.set(visits.get() + 1));
 }
+
+/// A chain of `depth` nested `div`s under the document. Returns the document
+/// and the ids from the outermost.
+fn chain_of_open_elements(depth: usize) -> (raikiri_dom::Document, Vec<usize>) {
+    let mut document = raikiri_dom::Document::new();
+    let mut parent = document.root_index();
+    let mut chain = Vec::new();
+    for _ in 0..depth {
+        parent = document.append_element(Some(parent), "div", None::<&str>);
+        chain.push(parent);
+    }
+    (document, chain)
+}
+
+#[test]
+fn the_open_elements_of_a_deep_stack_are_found_in_linear_time() {
+    let depth = 40_000;
+    let (document, chain) = chain_of_open_elements(depth);
+    let start = std::time::Instant::now();
+    let open = open_elements(&document, &chain);
+    let elapsed = start.elapsed();
+    assert_eq!(open, chain);
+    // Looking each handle up among the kept ones takes milliseconds; scanning
+    // them for every handle takes seconds at this depth.
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "{elapsed:?} for {depth} open elements"
+    );
+}
+
+#[test]
+fn a_handle_is_open_when_its_parent_is_the_document_or_an_open_element() {
+    let mut document = raikiri_dom::Document::new();
+    let root = document.root_index();
+    let html = document.append_element(Some(root), "html", None::<&str>);
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
+    let outer = document.append_element(Some(body), "div", None::<&str>);
+    let inner = document.append_element(Some(outer), "span", None::<&str>);
+    // A closed element whose parent is not open, and an element that is not
+    // in the tree.
+    let closed_child = document.append_element(Some(head), "meta", None::<&str>);
+    let detached = document.append_element(None, "p", None::<&str>);
+    // The stack of open elements first, then a list of active formatting
+    // elements that repeats `inner`, lists a stale element and one that is
+    // not in the document.
+    let traced = [html, body, outer, inner, inner, closed_child, detached];
+    // The parent of each is kept before it, so only the handles that sit on a
+    // chain from the document stay, once each and in the order of `traced`.
+    assert_eq!(
+        open_elements(&document, &traced),
+        [html, body, outer, inner]
+    );
+    // A handle comes before its parent in the list: its parent is not kept
+    // yet, so it is dropped (and not kept for the ones after it).
+    assert_eq!(
+        open_elements(&document, &[outer, html, outer, body]),
+        [html, body]
+    );
+    // A closed `<head>` is a child of the open `<html>`, so it stays.
+    assert_eq!(open_elements(&document, &[html, head]), [html, head]);
+    assert_eq!(open_elements(&document, &[]), Vec::<usize>::new());
+}
+
+/// `open_elements` as it was when it scanned the elements kept so far for
+/// every handle.
+fn open_elements_by_scan(document: &raikiri_dom::Document, traced: &[usize]) -> Vec<usize> {
+    let root = document.root_index();
+    let mut open: Vec<usize> = Vec::new();
+    for &id in traced {
+        if open.contains(&id) {
+            continue;
+        }
+        let parent = document.parent_of(id);
+        if parent == Some(root) || parent.is_some_and(|parent| open.contains(&parent)) {
+            open.push(id);
+        }
+    }
+    open
+}
+
+#[test]
+fn the_open_elements_are_the_ones_a_scan_of_the_kept_handles_keeps() {
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move |below: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % below as u64) as usize
+    };
+    let (mut dropped, mut kept) = (0, 0);
+    for _ in 0..2_000 {
+        let mut document = raikiri_dom::Document::new();
+        let mut ids = vec![document.root_index()];
+        for _ in 0..next(40) {
+            // Most elements go under an earlier one; some stay detached.
+            let parent = (next(6) != 0).then(|| ids[next(ids.len())]);
+            ids.push(document.append_element(parent, "div", None::<&str>));
+        }
+        // Handles in any order, with repeats.
+        let traced: Vec<usize> = (0..next(60)).map(|_| ids[next(ids.len())]).collect();
+        let open = open_elements(&document, &traced);
+        assert_eq!(
+            open,
+            open_elements_by_scan(&document, &traced),
+            "{traced:?}"
+        );
+        kept += open.len();
+        dropped += traced.len() - open.len();
+    }
+    assert!(
+        kept > 5_000 && dropped > 5_000,
+        "{kept} kept, {dropped} dropped"
+    );
+}
