@@ -3167,7 +3167,7 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
     // the edges when nothing keeps the items together or makes the last one
     // something else than a box to move.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 17] = [
+    let shapes: [(&str, Shape); 16] = [
         ("avoided break before the last item", |doc, card| {
             let ids = flex_column_of(doc, card, 1, "");
             vec![
@@ -3280,18 +3280,6 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
             block(doc, row, "display:table-cell;padding:0;height:10px");
             vec![table, first, row]
         }),
-        (
-            "table whose last row group avoids breaks inside its two rows",
-            |doc, card| {
-                let table = block(doc, card, "display:table;border-spacing:0");
-                let group = block(doc, table, "display:table-row-group;break-inside:avoid");
-                let first = block(doc, group, "display:table-row");
-                block(doc, first, "display:table-cell;padding:0;height:10px");
-                let row = block(doc, group, "display:table-row");
-                block(doc, row, "display:table-cell;padding:0;height:10px");
-                vec![table, first, row]
-            },
-        ),
         (
             "table whose last row group has an avoided break before it",
             |doc, card| {
@@ -4096,4 +4084,43 @@ fn an_avoiding_paragraph_with_a_height_of_its_own_moves_whole_with_the_edges() {
         3,
     );
     assert_eq!((y, box_height, parent_height), (10.0, 60.0, 100.0));
+}
+
+#[test]
+fn a_final_avoided_row_group_moves_whole_with_closing_edges() {
+    let (ys, height) = card_with_edges(30, |doc, card| {
+        let table = block(doc, card, "display:table;border-spacing:0");
+        let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+        let first = block(doc, group, "display:table-row");
+        block(doc, first, "display:table-cell;padding:0;height:10px");
+        let last = block(doc, group, "display:table-row");
+        block(doc, last, "display:table-cell;padding:0;height:10px");
+        vec![table, first, last]
+    });
+    assert_eq!(ys, [100.0, 100.0, 110.0]);
+    assert_eq!(height, 150.0);
+}
+
+#[test]
+fn a_final_avoided_group_can_split_its_tail_after_moving_to_a_shorter_page() {
+    for next_step in [15.0, 30.0] {
+        let steps = [
+            200.0, next_step, next_step, next_step, next_step, next_step, next_step,
+        ];
+        let ys = paginated_flow_ys(
+            |doc, body| {
+                let card = block(doc, body, "display:block;padding-bottom:30px");
+                block(doc, card, "display:block;height:160px");
+                let table = block(doc, card, "display:table;border-spacing:0");
+                let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+                let first = block(doc, group, "display:table-row");
+                block(doc, first, "display:table-cell;padding:0;height:10px");
+                let last = block(doc, group, "display:table-row");
+                block(doc, last, "display:table-cell;padding:0;height:10px");
+                vec![first, last]
+            },
+            &steps,
+        );
+        assert_eq!(ys, [200.0, 200.0 + next_step]);
+    }
 }
