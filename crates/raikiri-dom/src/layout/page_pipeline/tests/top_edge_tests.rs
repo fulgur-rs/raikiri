@@ -1518,54 +1518,63 @@ fn a_delegated_atomic_line_after_text_keeps_earlier_text_on_its_page() {
 #[test]
 fn a_column_fragmented_paragraph_keeps_leading_atomics_in_their_columns() {
     use raikiri_traits::PageBox;
-    let mut doc = Document::new();
-    crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Some("display:block;margin:0;width:100px"),
-    );
-    block(&mut doc, body, "display:block;height:60px");
-    let columns = block(
-        &mut doc,
-        body,
-        "display:block;columns:2;column-gap:0;height:40px;font-family:Ahem;font-size:10px;line-height:10px",
-    );
-    for text in ["z", "q"] {
-        let atomic = block(
-            &mut doc,
-            columns,
-            "display:inline-block;width:30px;padding-top:6px",
+    for columns_on_body in [false, true] {
+        let mut doc = Document::new();
+        crate::layout::test_support::with_ahem(&mut doc);
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let column_css =
+            "columns:2;column-gap:0;height:40px;font-family:Ahem;font-size:10px;line-height:10px";
+        let body_css = format!(
+            "display:block;margin:0;width:100px;{}",
+            if columns_on_body { column_css } else { "" }
         );
-        let child = block(
-            &mut doc,
-            atomic,
-            "display:block;height:20px;break-inside:avoid",
+        let body = doc.append_element(Some(html), "body", Some(body_css));
+        let columns = if columns_on_body {
+            body
+        } else {
+            block(&mut doc, body, "display:block;height:60px");
+            block(&mut doc, body, &format!("display:block;{column_css}"))
+        };
+        for text in ["z", "q"] {
+            let atomic = block(
+                &mut doc,
+                columns,
+                "display:inline-block;width:30px;padding-top:6px",
+            );
+            let child = block(
+                &mut doc,
+                atomic,
+                "display:block;height:20px;break-inside:avoid",
+            );
+            doc.append_text(child, text);
+        }
+        doc.mark_in_document_flags();
+        let styles = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let pages = layout_pages(&mut doc, &styles, page).unwrap();
+        assert!(
+            doc.nodes[columns]
+                .ifc
+                .as_ref()
+                .unwrap()
+                .multicol_fragments
+                .is_some()
         );
-        doc.append_text(child, text);
+        assert_eq!(pages.len(), 1);
+        doc.project_pages(&styles, page, &pages, &[]).unwrap();
+        let runs = doc.page_text_runs(&styles, 0);
+        let positions: Vec<_> = ["z", "q"]
+            .map(|text| runs.iter().find(|run| run.text == text).unwrap().origin)
+            .into();
+        let baseline = if columns_on_body { 14.0 } else { 74.0 };
+        assert_eq!(
+            positions,
+            [(0.0, baseline), (50.0, baseline)],
+            "columns_on_body={columns_on_body}"
+        );
     }
-    doc.mark_in_document_flags();
-    let styles = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
-    let mut page = PageBox::new();
-    page.width = 100.0;
-    page.height = 100.0;
-    let pages = layout_pages(&mut doc, &styles, page).unwrap();
-    assert!(
-        doc.nodes[columns]
-            .ifc
-            .as_ref()
-            .unwrap()
-            .multicol_fragments
-            .is_some()
-    );
-    assert_eq!(pages.len(), 1);
-    doc.project_pages(&styles, page, &pages, &[]).unwrap();
-    let runs = doc.page_text_runs(&styles, 0);
-    let positions: Vec<_> = ["z", "q"]
-        .map(|text| runs.iter().find(|run| run.text == text).unwrap().origin)
-        .into();
-    assert_eq!(positions, [(0.0, 74.0), (50.0, 74.0)]);
 }
 
 #[test]
