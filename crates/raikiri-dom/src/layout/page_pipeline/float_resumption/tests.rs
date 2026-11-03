@@ -292,3 +292,103 @@ fn mixed_height_and_generated_content_cannot_be_completed_as_empty_prefixes() {
         );
     }
 }
+
+fn with_margin_fixture(
+    style: &str,
+    check: impl FnOnce(&mut LayoutSession<'_>, &CascadeResult, usize, usize),
+) {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let float = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;float:left;width:40px;height:5px;margin-top:4px"),
+    );
+    let flow = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;font:20px/30px Ahem;{style}")),
+    );
+    doc.append_text(flow, "XX XX XX XX");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    layout_single_page(
+        &mut doc,
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session
+        .context
+        .float_resumption_candidates
+        .push((float, flow));
+    session.context.float_resumption_boundaries.insert(
+        float,
+        Boundary {
+            page_origin: 100.0,
+            relative_offset: 3.0,
+        },
+    );
+    check(&mut session, &cascade, float, flow);
+}
+
+#[test]
+fn margin_resumption_retains_a_relationship_without_freezing_page_coordinates() {
+    with_margin_fixture("margin-top:10%", |session, cascade, float, flow| {
+        session.nodes[flow].layout.margin.top = 10.0;
+        let plan = Plan::collect(session, cascade);
+        assert_eq!(plan.margin_float(flow), Some(float));
+        assert!(plan.has_margin_flows());
+        assert!(!plan.is_empty());
+        assert_eq!(plan.float_top(float), None);
+        assert_eq!(plan.flow_top(flow), None);
+        assert!(plan.completed.is_empty());
+        assert!(plan.completed_containers.is_empty());
+        session.context.float_resumptions = plan.clone();
+        session.nodes[flow].layout.margin.top = 20.0;
+        session.nodes[flow].layout.location.y += 500.0;
+        session
+            .context
+            .float_resumption_boundaries
+            .get_mut(&float)
+            .unwrap()
+            .page_origin += 100.0;
+        assert_eq!(Plan::collect(session, cascade), plan);
+        session.nodes[flow].layout.margin.top = 0.0;
+        assert!(Plan::collect(session, cascade).is_empty());
+    });
+}
+
+#[test]
+fn margin_resumption_requires_an_ordinary_shared_context_and_positive_margin() {
+    for style in [
+        "margin-top:0",
+        "margin-top:-10px",
+        "margin-top:10px;clear:both",
+        "margin-top:10px;position:relative",
+        "margin-top:10px;display:flow-root",
+        "margin-top:10px;writing-mode:vertical-rl",
+    ] {
+        with_margin_fixture(style, |session, cascade, _, _| {
+            assert!(Plan::collect(session, cascade).is_empty(), "{style}");
+        });
+    }
+    with_margin_fixture("margin-top:10px", |session, cascade, float, flow| {
+        let boundary = session
+            .context
+            .float_resumption_boundaries
+            .remove(&float)
+            .unwrap();
+        assert!(Plan::collect(session, cascade).is_empty());
+        session
+            .context
+            .float_resumption_boundaries
+            .insert(float, boundary);
+        session.nodes[flow].layout.margin.top = f32::NAN;
+        assert!(Plan::collect(session, cascade).is_empty());
+    });
+}

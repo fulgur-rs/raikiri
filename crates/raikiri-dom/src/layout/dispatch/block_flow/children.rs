@@ -334,6 +334,8 @@ pub(super) fn layout(
     let mut pending_has_clearance = false;
     let mut completed_boundary = None;
     let mut leading = true;
+    let track_margin_floats = tree.context.float_resumptions.has_margin_flows();
+    let mut margin_float_tops = Vec::new();
     if !collapse_start {
         ctx.commit_strut();
     }
@@ -515,6 +517,9 @@ pub(super) fn layout(
                 style.clear,
                 leading && collapse_start,
             );
+            if track_margin_floats {
+                margin_float_tops.push((usize::from(child), position.y));
+            }
             let location = Point {
                 x: position.x + margin.left,
                 y: position.y + margin.top,
@@ -546,6 +551,12 @@ pub(super) fn layout(
         }
         // The box after the float that starts a page lines up beside that
         // float, but below the floats of the pages before it.
+        let margin_floor = tree
+            .context
+            .float_resumptions
+            .margin_float(usize::from(child))
+            .and_then(|source| margin_float_tops.iter().rev().find(|(id, _)| *id == source))
+            .map(|(_, top)| top + margin.top);
         let floor = tree
             .forced_break_float_floor
             .binary_search(&usize::from(child))
@@ -554,6 +565,7 @@ pub(super) fn layout(
             .flatten()
             .into_iter()
             .chain(tree.context.float_resumptions.flow_top(usize::from(child)))
+            .chain(margin_floor)
             .reduce(f32::max);
         // An `auto` width fills the room, but a table, a compressible
         // replaced box and a button take their own size then; `stretch` fills
