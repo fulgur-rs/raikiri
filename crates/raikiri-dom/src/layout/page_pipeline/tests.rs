@@ -39,6 +39,7 @@ mod candidate_text_tests;
 mod clear_start_margin_tests;
 mod closing_edge_tests;
 mod column_projection_tests;
+mod float_gap_tests;
 mod fragment_sources_tests;
 mod geometry_lookup_tests;
 mod grid_row_tests;
@@ -19249,6 +19250,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
     let at_first_line = || pagination_state::TextPosition {
         effective_y: 95.0,
         height: 10.0,
+        first_line_shift: 0.0,
     };
     let push = |doc: &mut Document,
                 state: &mut PaginationState,
@@ -19362,6 +19364,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
             let mut text = pagination_state::TextPosition {
                 effective_y: spacer_height,
                 height: candidate.height,
+                first_line_shift: 0.0,
             };
             let kept = state.keep_lines_together(
                 &mut session,
@@ -19496,6 +19499,7 @@ fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_ope
         let mut position = pagination_state::TextPosition {
             effective_y,
             height: 10.0,
+            first_line_shift: 0.0,
         };
         let stepped = state.step_text_page(&mut session, &env, candidate, entry, &mut position);
         (stepped, position.effective_y)

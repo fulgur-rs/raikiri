@@ -102,7 +102,15 @@ fn resolve_column_widths_in_session(
     spacing: f32,
 ) -> Vec<f32> {
     with_layout_session(document, |session| {
-        super::resolve_column_widths(session, grid, inputs, padding_border_size, spacing, None)
+        super::resolve_column_widths(
+            session,
+            grid,
+            inputs,
+            padding_border_size,
+            spacing,
+            None,
+            false,
+        )
     })
 }
 

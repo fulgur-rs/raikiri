@@ -15,8 +15,8 @@ use super::{
     closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain, collapses_through,
     collapses_with_previous_block, content_overflow_end, current_abs_y,
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
-    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
+    fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, follows_flow_content,
+    forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, is_unfixed_absolute_box,
     lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
@@ -151,6 +151,10 @@ pub(super) struct TextPosition {
     pub(super) effective_y: f32,
     /// How tall the text is.
     pub(super) height: f32,
+    /// How far moving the lines of its paragraph took the text's first line.
+    /// The paragraph's root is placed from where that line was, since the line
+    /// shifts of the paragraph already hold the move.
+    pub(super) first_line_shift: f32,
 }
 
 /// What a box meets at the start of its placement: the break it starts
@@ -472,6 +476,7 @@ impl PaginationState {
                 candidate.raw_y + self.flow_shift
             },
             height: candidate.height,
+            first_line_shift: 0.0,
         };
         let blocks = LineBlocks::find(
             document,
@@ -482,11 +487,10 @@ impl PaginationState {
         );
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
-        let first_line_shift =
-            self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
+        self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
-        let ifc_root = ifc_root.map(|(root, offset)| (root, offset + first_line_shift));
+        let ifc_root = ifc_root.map(|(root, offset)| (root, offset + text.first_line_shift));
         self.note_positioned_paragraph(document, candidate);
         place_text_candidate(
             document,
@@ -1738,12 +1742,13 @@ impl PaginationState {
                         0.0
                     },
                 );
-                // The block is measured from where it is now.
+                // The block is measured from where it is now: lines moved
+                // inside it leave it where it was.
                 let block_effective_y = block_effective_y(
                     document,
                     block_id,
                     candidate.raw_y,
-                    text.effective_y,
+                    text.effective_y - text.first_line_shift,
                     root_flow_offset,
                     self.flow_shift,
                 );
@@ -1805,21 +1810,58 @@ impl PaginationState {
                     }
                     LineBreakFix::MoveBlock => {
                         page = page.saturating_add(1);
-                        reach_page(control, page)?;
-                        let delta = move_line_block(
-                            document,
-                            cascade,
-                            body_id,
-                            block_id,
-                            nested,
-                            block_effective_y,
-                            page_origins.origin(page),
-                            page_start,
-                            &mut self.subtree_shifts,
-                            entry.page_before_candidate,
-                        );
-                        self.flow_shift += delta;
-                        text.effective_y += delta;
+                        // The floats that put the first line down end where
+                        // it starts, so they stay on the page it leaves. The
+                        // break falls between the empty space they left at the
+                        // top of the block and the line, as in a block whose
+                        // content starts below a gap (CSS Fragmentation 3
+                        // §4.1): the block stays and its lines move down,
+                        // rather than the block carrying that space along.
+                        // A relative offset moves the line along with the
+                        // block, which the flow leaves where it is.
+                        let below_floats = (lines_can_move
+                            && floats_put_first_line_down(
+                                document,
+                                block_id,
+                                text_lines.get(node_id),
+                                first_line_top - (block_effective_y + block_edges),
+                            ))
+                        .then(|| {
+                            page_origins.origin(page)
+                                + accumulated_relative_offset_y(
+                                    document, cascade, body_id, block_id,
+                                )
+                                - first_line_top
+                        })
+                        .filter(|shift| *shift > 0.0);
+                        if let Some(shift) = below_floats {
+                            self.move_lines(
+                                document,
+                                env,
+                                candidate,
+                                entry,
+                                blocks,
+                                text,
+                                block_id,
+                                [(0, shift, page)],
+                            )?;
+                        } else {
+                            reach_page(control, page)?;
+                            let delta = move_line_block(
+                                document,
+                                cascade,
+                                body_id,
+                                block_id,
+                                nested,
+                                block_effective_y,
+                                page_origins.origin(page),
+                                page_start,
+                                &mut self.subtree_shifts,
+                                entry.page_before_candidate,
+                            );
+                            self.flow_shift += delta;
+                            text.effective_y += delta;
+                        }
                         moved_whole = true;
                     }
                     LineBreakFix::Keep => {
@@ -1857,8 +1899,8 @@ impl PaginationState {
     /// the break would leave too few orphans or widows; otherwise the line
     /// that crosses a page end starts the next page, and the lines that keep
     /// the widows move down with it. The rest of the
-    /// paragraph follows the moved lines. Returns how far the moves took the
-    /// run's first line.
+    /// paragraph follows the moved lines. The text's `first_line_shift` takes
+    /// how far the moves took the run's first line.
     pub(super) fn keep_lines_after_block(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1867,7 +1909,7 @@ impl PaginationState {
         entry: &CandidateEntry,
         blocks: &LineBlocks,
         text: &mut TextPosition,
-    ) -> Result<f32, Halt> {
+    ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
             body_id,
@@ -1883,15 +1925,15 @@ impl PaginationState {
             && !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant();
         let Some(root) = blocks.paragraph_root.filter(|_| in_flow) else {
-            return Ok(0.0);
+            return Ok(());
         };
         if !self.deferred_shifts.line_splits.is_empty()
             || !lines_can_shift_between_blocks(document, env.cascade, root)
         {
-            return Ok(0.0);
+            return Ok(());
         }
         let Some(run) = lines_between_blocks(document, text_lines, node_id, root) else {
-            return Ok(0.0);
+            return Ok(());
         };
         let run_metrics = |document: &LayoutSession<'_>| {
             paragraph_line_bounds(document, node_id, text_lines)
@@ -1904,7 +1946,7 @@ impl PaginationState {
             .lines_after_blocks
             .insert((root, run.start));
         let Some(mut metrics) = run_metrics(document).filter(|_| first_visit) else {
-            return Ok(0.0);
+            return Ok(());
         };
         let first_owned_line = text_lines
             .get(node_id)
@@ -1914,7 +1956,6 @@ impl PaginationState {
             .current_page
             .max(page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001));
         let mut moved = false;
-        let mut first_line_shift = 0.0;
         loop {
             let page_start = page_origins.origin(page);
             let page_step = page_origins.step_at(page);
@@ -1984,7 +2025,7 @@ impl PaginationState {
                 );
                 if line <= first_owned_line {
                     text.effective_y += shift;
-                    first_line_shift += shift;
+                    text.first_line_shift += shift;
                 } else if reaches_line(text_lines.get(node_id), line) {
                     text.height += shift;
                 }
@@ -2006,7 +2047,7 @@ impl PaginationState {
                 metrics = next;
             }
         }
-        Ok(first_line_shift)
+        Ok(())
     }
 
     /// Remembers the paragraph that holds the text `candidate` when it is the
@@ -2157,7 +2198,11 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
-            if reaches_line(text_lines.get(candidate.node_id), line) {
+            if line == 0 {
+                // The first line moves, and the text that starts on it with it.
+                text.effective_y += shift;
+                text.first_line_shift += shift;
+            } else if reaches_line(text_lines.get(candidate.node_id), line) {
                 text.height += shift;
             }
             self.deferred_shifts.line_splits.push(LineSplit {
