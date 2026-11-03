@@ -462,7 +462,7 @@ pub(super) fn begin(document: &mut LayoutSession<'_>, cascade: &CascadeResult, b
         .collect();
     while let Some((node, depth)) = pending.pop() {
         if depths.insert(node, depth).is_some() {
-            continue;
+            continue; // cov:ignore: defensive duplicate-node guard after source-tree validation.
         }
         let layout = &document.nodes[node].layout;
         for value in [layout.location.y, layout.size.height, layout.margin.bottom] {
@@ -591,6 +591,7 @@ fn branch_float_end(
 ) -> f32 {
     if super::holds_floats(document, cascade, child)
         || !matches!(
+            // cov:ignore: abs/fixed hold floats above; running positions are normalized by cascade.
             document.nodes[child].position(),
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
         )

@@ -536,3 +536,187 @@ fn extreme_geometry_is_checked_before_cancellation_hides_its_magnitude() {
         assert!(session.normal_block_shifts.is_none());
     }
 }
+
+#[test]
+fn exported_float_ends_ignore_pending_offsets_of_noncontributing_branches() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+    use crate::layout::test_support::page_box_800x600;
+    let mut fixture = block_fixture_with_ahem("", |doc, root| {
+        doc.append_element(Some(root), "div", Some("display:block;height:10px"));
+        let branch = doc.append_element(Some(root), "div", Some("display:block"));
+        let holder = doc.append_element(Some(branch), "div", Some("display:block;height:20px"));
+        doc.append_element(
+            Some(holder),
+            "span",
+            Some("display:block;float:left;width:10px;height:35px"),
+        );
+        doc.append_text(holder, "x");
+    });
+    crate::layout::layout_single_page(&mut fixture.doc, &fixture.cascade, page_box_800x600())
+        .unwrap();
+    let root = fixture.root;
+    let first = fixture.doc.nodes[root].children[0];
+    let branch = fixture.doc.nodes[root].children[1];
+    let mut session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+    session.nodes[branch]
+        .flags
+        .insert(crate::node::NodeFlags::IN_IFC_SUBTREE);
+    assert!(!session.contributes_layout_offset(branch));
+    begin(&mut session, &fixture.cascade, root);
+    let before = branch_float_end(
+        &session,
+        &fixture.cascade,
+        root,
+        branch,
+        session.pagination_local_y(branch),
+    );
+    super::super::shift_later_block_siblings(&mut session, root, first, 12.5);
+    let top = session.pagination_local_y(branch);
+    let after = branch_float_end(&session, &fixture.cascade, root, branch, top);
+    let mut reference = f32::NEG_INFINITY;
+    super::super::visit_same_bfc_floats_in_subtree(
+        &session,
+        &fixture.cascade,
+        root,
+        branch,
+        top,
+        |_, end| reference = reference.max(end),
+    );
+    assert!(reference.is_finite());
+    assert_eq!(after, reference);
+    assert_eq!(after, before);
+    session.finish_normal_block_shifts();
+    assert_eq!(
+        branch_float_end(
+            &session,
+            &fixture.cascade,
+            root,
+            branch,
+            session.pagination_local_y(branch)
+        ),
+        reference
+    );
+}
+
+#[test]
+fn refreshing_an_extent_at_the_arithmetic_limit_flushes_other_pending_siblings() {
+    use crate::layout::ifc::test_support::block_fixture;
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_element(Some(root), "div", Some("display:block"));
+        doc.append_element(Some(root), "div", Some("display:block"));
+    });
+    let root = fixture.root;
+    let first = fixture.doc.nodes[root].children[0];
+    let last = fixture.doc.nodes[root].children[1];
+    fixture.doc.nodes[last].layout.location.y = 1_000_000.0;
+    let mut session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+    begin(&mut session, &fixture.cascade, root);
+    super::super::shift_later_block_siblings(&mut session, root, first, 7.5);
+    session.mark_pagination_extent_dirty(first);
+    let state = session.normal_block_shifts.as_mut().unwrap();
+    while state.can_defer(0.0) {
+        state.arithmetic_updates += 1.0;
+    }
+    state.arithmetic_updates -= 1.0;
+    refresh(&mut session, &fixture.cascade, root, root);
+    assert!(session.normal_block_shifts.is_none());
+    assert_eq!(session.nodes[last].layout.location.y, 1_000_007.5);
+}
+
+#[test]
+fn extent_queries_reject_untracked_children_and_keep_a_trailing_float_separate() {
+    let mut doc = crate::Document::new();
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let flow = doc.append_element(Some(parent), "div", None::<&str>);
+    let float = doc.append_element(Some(parent), "div", None::<&str>);
+    let hidden = doc.append_element(Some(parent), "div", None::<&str>);
+    let float_parent = doc.append_element(Some(0), "div", None::<&str>);
+    let only_float = doc.append_element(Some(float_parent), "div", None::<&str>);
+    let mut state = NormalBlockShifts::default();
+    state.insert(
+        parent,
+        vec![
+            Leaf {
+                node: flow,
+                ends: Ends([90.0, 90.0, f32::NEG_INFINITY]),
+                follows: true,
+                float_follows: true,
+            },
+            Leaf {
+                node: float,
+                ends: Ends([f32::NEG_INFINITY, f32::NEG_INFINITY, 110.0]),
+                follows: true,
+                float_follows: true,
+            },
+            Leaf {
+                node: hidden,
+                ends: Ends::EMPTY,
+                follows: false,
+                float_follows: false,
+            },
+        ],
+    );
+    state.insert(
+        float_parent,
+        vec![Leaf {
+            node: only_float,
+            ends: Ends([f32::NEG_INFINITY, f32::NEG_INFINITY, 20.0]),
+            follows: true,
+            float_follows: true,
+        }],
+    );
+    doc.normal_block_shifts = Some(Box::new(state));
+    assert_eq!(
+        extents(&doc, float_parent, flow, 10.0, 20.0, 30.0, false),
+        None
+    );
+    assert_eq!(extents(&doc, parent, hidden, 10.0, 20.0, 30.0, false), None);
+    assert_eq!(extents(&doc, parent, 999, 10.0, 20.0, 30.0, false), None);
+    assert_eq!(
+        extents(&doc, parent, float, 10.0, 20.0, 30.0, false),
+        Some([(90.0, 90.0), (90.0, 90.0), (80.0, 110.0)])
+    );
+    assert_eq!(
+        extents(&doc, float_parent, only_float, 5.0, 5.0, 5.0, true),
+        Some([
+            (f32::NEG_INFINITY, f32::NEG_INFINITY),
+            (f32::NEG_INFINITY, f32::NEG_INFINITY),
+            (15.0, 20.0)
+        ])
+    );
+}
+
+#[test]
+fn out_of_flow_and_footnote_boundaries_match_the_existing_float_visitor() {
+    use crate::layout::ifc::test_support::block_fixture;
+    for style in ["position:absolute", "position:fixed", "float:footnote"] {
+        let mut fixture = block_fixture(style, |doc, root| {
+            let child = doc.append_element(Some(root), "div", Some("display:block"));
+            doc.append_element(
+                Some(child),
+                "div",
+                Some("display:block;float:left;width:10px;height:35px"),
+            );
+        });
+        let root = fixture.root;
+        let session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+        let mut reference = f32::NEG_INFINITY;
+        super::super::visit_same_bfc_floats_in_subtree(
+            &session,
+            &fixture.cascade,
+            root,
+            root,
+            0.0,
+            |_, end| reference = reference.max(end),
+        );
+        assert_eq!(
+            branch_float_end(&session, &fixture.cascade, root, root, 0.0),
+            reference
+        );
+        eprintln!(
+            "float_boundary style={style} holds={} active={}",
+            super::super::holds_floats(&session, &fixture.cascade, root),
+            super::super::is_floating_box_for_pagination(&session, &fixture.cascade, root)
+        );
+    }
+}
