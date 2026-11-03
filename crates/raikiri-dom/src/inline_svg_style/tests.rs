@@ -1,6 +1,9 @@
 use super::*;
+use crate::layout::ifc::test_support::sheet_fixture;
+use crate::layout::test_support::INLINE_SVG_PARENT_STEPS;
 use raikiri_style::cascade::SvgStyleProperty;
 use raikiri_style::property::PropertyKey;
+use smol_str::SmolStr;
 
 #[test]
 fn descendant_declarations_ignore_properties_outside_the_svg_contract() {
@@ -360,4 +363,129 @@ fn a_local_reference_is_read_as_the_renderer_reads_it() {
     for unreadable in ["", "#", "shape", "shape#", "#a b", "file.svg#shape"] {
         assert_eq!(iri_fragment(unreadable), None, "{unreadable:?}");
     }
+}
+
+/// Make `node` an SVG element holding `attributes`.
+fn svg_element(doc: &mut Document, node: usize, attributes: &[(&str, &str)]) -> usize {
+    doc.set_element_namespace(node, Some(SmolStr::new(SVG_NAMESPACE)));
+    doc.set_element_attributes(
+        node,
+        attributes
+            .iter()
+            .map(|&(name, value)| (SmolStr::new(name), SmolStr::new(value)))
+            .collect(),
+    );
+    node
+}
+
+/// How many parent links are followed to declare an inline SVG that a `use`
+/// element instantiates a group of, `levels` deep. Each level is a `g` that
+/// declares a stroke length in em at 20px, holding a `path` that inherits it at
+/// 10px and the next level. The path takes the length from the `g` above it,
+/// which is inside the group.
+fn parent_steps_for_a_chain_of_levels(levels: usize) -> usize {
+    let mut paths = Vec::new();
+    let fixture = sheet_fixture(
+        "g{font-size:20px;stroke-width:2em}path{font-size:10px;stroke-width:inherit}",
+        "",
+        |doc, root| {
+            let svg = doc.append_element(Some(root), "svg", None::<&str>);
+            svg_element(doc, svg, &[("width", "50"), ("height", "50")]);
+            let defs = doc.append_element(Some(svg), "defs", None::<&str>);
+            svg_element(doc, defs, &[]);
+            let mut above = doc.append_element(Some(defs), "g", None::<&str>);
+            svg_element(doc, above, &[("id", "d")]);
+            for _ in 0..levels {
+                let path = doc.append_element(Some(above), "path", None::<&str>);
+                svg_element(doc, path, &[]);
+                paths.push(path);
+                above = doc.append_element(Some(above), "g", None::<&str>);
+                svg_element(doc, above, &[]);
+            }
+            let instance = doc.append_element(Some(svg), "use", None::<&str>);
+            svg_element(doc, instance, &[("href", "#d")]);
+        },
+    );
+    let svg = fixture.doc.get_node(fixture.root).unwrap().children[0];
+    INLINE_SVG_PARENT_STEPS.with(|steps| steps.set(0));
+    let elements = inline_svg_element_declarations(&fixture.doc, &fixture.cascade, svg).unwrap();
+    let steps = INLINE_SVG_PARENT_STEPS.with(|steps| steps.get());
+    // Every path takes its length from a group inside the instance, written in
+    // px for the 10px of the path.
+    for path in paths {
+        let index = path_index(&fixture.doc, svg, path);
+        let listed = elements
+            .iter()
+            .find(|element| element.element_index == index)
+            .unwrap_or_else(|| panic!("no declarations for the path at index {index}"));
+        assert_eq!(
+            listed.declarations,
+            "font-size:10px!important;stroke-width:40px!important;"
+        );
+    }
+    steps
+}
+
+/// The preorder index of the element `node` in the SVG `svg`, counting `svg`
+/// as zero.
+fn path_index(doc: &Document, svg: usize, node: usize) -> usize {
+    let mut stack = vec![svg];
+    let mut index = 0;
+    while let Some(id) = stack.pop() {
+        if id == node {
+            return index;
+        }
+        if doc.get_node(id).unwrap().kind() == NodeKind::Element {
+            index += 1;
+        }
+        stack.extend(doc.get_node(id).unwrap().children.iter().rev());
+    }
+    panic!("{node} is not in the SVG");
+}
+
+#[test]
+fn an_inherited_length_is_placed_in_an_instance_without_climbing_to_it_for_every_level() {
+    let few = parent_steps_for_a_chain_of_levels(32);
+    let many = parent_steps_for_a_chain_of_levels(128);
+    // The group is found for each level by where it sits among the elements
+    // above the path.
+    assert!(few <= 32 * 8, "{few} steps for 32 levels");
+    assert!(many <= 128 * 8, "{many} steps for 128 levels");
+}
+
+#[test]
+fn the_ancestors_of_an_element_tell_where_other_elements_are_without_climbing() {
+    let mut doc = Document::new();
+    let top = doc.append_element(Some(0), "a", None::<&str>);
+    let walk_root = doc.append_element(Some(top), "b", None::<&str>);
+    let left = doc.append_element(Some(walk_root), "c", None::<&str>);
+    let left_child = doc.append_element(Some(left), "d", None::<&str>);
+    let right = doc.append_element(Some(walk_root), "e", None::<&str>);
+    // At `left_child`, on the way from `walk_root`.
+    let mut ancestors = Ancestors::above(&doc, walk_root);
+    ancestors.enter(walk_root, 0);
+    ancestors.enter(left, 1);
+    ancestors.enter(left_child, 2);
+    INLINE_SVG_PARENT_STEPS.with(|steps| steps.set(0));
+    for (node, ancestor, within) in [
+        (left_child, left, true),
+        (left, left, true),
+        (left, left_child, false),
+        (left_child, walk_root, true),
+        // An element above the root of the walk.
+        (top, walk_root, false),
+        (left, top, true),
+    ] {
+        assert_eq!(ancestors.is_within(&doc, node, ancestor), within);
+    }
+    assert_eq!(INLINE_SVG_PARENT_STEPS.with(|steps| steps.get()), 0);
+    // Moving to the next branch drops the elements of the one that was left.
+    ancestors.enter(right, 1);
+    assert!(ancestors.is_within(&doc, right, walk_root));
+    assert!(!ancestors.position.contains_key(&left));
+    assert!(!ancestors.position.contains_key(&left_child));
+    // An element that is not on the path is searched for in the tree.
+    assert!(ancestors.is_within(&doc, left_child, left));
+    assert!(!ancestors.is_within(&doc, left_child, right));
+    assert!(INLINE_SVG_PARENT_STEPS.with(|steps| steps.get()) > 0);
 }
