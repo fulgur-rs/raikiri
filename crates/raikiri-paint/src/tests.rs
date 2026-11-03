@@ -358,15 +358,14 @@ fn custom_highlight_paints_only_on_the_line_holding_its_text() {
     );
 }
 
-/// Paint a ruby `<ruby>a<rt>xyz</rt></ruby>` with `ruby_style` in a
-/// paragraph with `paragraph_style`, the text of its annotation highlighted, and return the highlight's rectangles and the
-/// origins of the annotation's glyphs.
-fn highlighted_ruby_annotation(
+/// Paint `<ruby>a<rt>…</rt></ruby>` with `ruby_style` in a paragraph with
+/// `paragraph_style`, the first three bytes of the text node `annotation`
+/// returns highlighted. `annotation` fills the `rt` element.
+fn painted_ruby_annotation(
     paragraph_style: &str,
     ruby_style: &str,
-) -> (Vec<kurbo::Rect>, Vec<kurbo::Point>) {
-    use anyrender::types::Paint;
-
+    annotation: impl FnOnce(&mut Document, usize) -> usize,
+) -> Scene {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let head = doc.append_element(Some(html), "head", None::<&str>);
@@ -380,8 +379,8 @@ fn highlighted_ruby_annotation(
     let ruby = doc.append_element(Some(paragraph), "ruby", Some(ruby_style));
     let base = doc.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     doc.append_text(base, "a");
-    let annotation = doc.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:10px"));
-    let text = doc.append_text(annotation, "xyz");
+    let rt = doc.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:10px"));
+    let text = annotation(&mut doc, rt);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
@@ -406,7 +405,14 @@ fn highlighted_ruby_annotation(
         }],
     )
     .expect("paint succeeds");
-    let highlights = scene
+    scene
+}
+
+/// The rectangles the `::highlight(sample)` background of `scene` fills.
+fn highlight_fills(scene: &Scene) -> Vec<kurbo::Rect> {
+    use anyrender::types::Paint;
+
+    scene
         .commands
         .iter()
         .filter_map(|command| match command {
@@ -419,7 +425,21 @@ fn highlighted_ruby_annotation(
             }
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+/// Paint a ruby `<ruby>a<rt>xyz</rt></ruby>` with `ruby_style` in a
+/// paragraph with `paragraph_style`, the text of its annotation
+/// highlighted, and return the highlight's rectangles and the origins of the
+/// annotation's glyphs.
+fn highlighted_ruby_annotation(
+    paragraph_style: &str,
+    ruby_style: &str,
+) -> (Vec<kurbo::Rect>, Vec<kurbo::Point>) {
+    let scene = painted_ruby_annotation(paragraph_style, ruby_style, |doc, rt| {
+        doc.append_text(rt, "xyz")
+    });
+    let highlights = highlight_fills(&scene);
     let glyphs = scene
         .commands
         .iter()
@@ -437,6 +457,21 @@ fn highlighted_ruby_annotation(
         .next()
         .expect("the annotation's glyphs should be painted");
     (highlights, glyphs)
+}
+
+#[test]
+fn custom_highlight_of_an_annotation_with_several_runs_paints_once() {
+    // The annotation's text changes colour, so its line holds two runs.
+    let scene =
+        painted_ruby_annotation("display:block;font-size:20px", "display:ruby", |doc, rt| {
+            let text = doc.append_text(rt, "xyz");
+            let span = doc.append_element(Some(rt), "span", Some("color:rgb(255,0,0)"));
+            doc.append_text(span, "w");
+            text
+        });
+    let fills = highlight_fills(&scene);
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!(fills[0].width() > 0.0, "{fills:?}");
 }
 
 #[test]
