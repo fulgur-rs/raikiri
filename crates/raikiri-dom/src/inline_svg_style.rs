@@ -10,6 +10,7 @@ use raikiri_style::cascade::SvgStyleProperty;
 use raikiri_style::property::{FontFamilyKind, PropertyKey};
 use raikiri_style::{CascadeResult, ComputedValues, StyleNodeId};
 use raikiri_traits::NodeKind;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -146,6 +147,15 @@ fn walk_styled_elements(
         value: String::new(),
     };
     let use_targets = use_targets(document, root);
+    // Whether an inherited value comes from inside an instance is asked per
+    // property of each element that an instance holds, so the elements above
+    // the one at hand are kept to answer that without climbing to the
+    // instance. Nothing asks without a `use` element.
+    let mut ancestors = if use_targets.is_empty() {
+        Ancestors::default()
+    } else {
+        Ancestors::above(document, root)
+    };
     // Each entry carries the nearest element above it, or itself, that a `use`
     // element instantiates, which stands for the subtree a renderer clones
     // under the `use` element. One list per element has to serve every
@@ -153,10 +163,13 @@ fn walk_styled_elements(
     // one: what lies between the targets is the ancestry of a copy of the outer
     // target only, and a copy of the inner one inherits from its own `use`
     // element there.
-    let mut stack = vec![(root, root_node, None)];
+    let mut stack = vec![(root, root_node, None, 0)];
     let mut element_index = 0;
-    while let Some((node_id, node, mut instance_root)) = stack.pop() {
+    while let Some((node_id, node, mut instance_root, depth)) = stack.pop() {
         if node.kind() == NodeKind::Element {
+            if !use_targets.is_empty() {
+                ancestors.enter(node_id, depth);
+            }
             if !use_targets.is_empty()
                 && node
                     .attribute("id")
@@ -189,9 +202,12 @@ fn walk_styled_elements(
                 && let Some(style) = cascade.computed.get(node_id)
             {
                 let properties = match instance_root {
-                    Some(instance_root) => {
-                        inherit_from_instantiating_use(document, properties, instance_root)
-                    }
+                    Some(instance_root) => inherit_from_instantiating_use(
+                        document,
+                        &ancestors,
+                        properties,
+                        instance_root,
+                    ),
                     None => Cow::Borrowed(properties),
                 };
                 let element = StyledElement {
@@ -207,10 +223,12 @@ fn walk_styled_elements(
             }
             element_index += 1;
         }
+        // Only elements make a level of the path.
+        let child_depth = depth + usize::from(node.kind() == NodeKind::Element);
         stack.extend(node.children.iter().rev().filter_map(|&child| {
             document
                 .get_node(child)
-                .map(|node| (child, node, instance_root))
+                .map(|node| (child, node, instance_root, child_depth))
         }));
     }
     Ok(true)
@@ -259,23 +277,26 @@ fn iri_fragment(href: &str) -> Option<&str> {
 /// reaches by itself.
 fn inherit_from_instantiating_use<'a>(
     document: &Document,
+    ancestors: &Ancestors,
     properties: &'a [SvgStyleProperty],
     instance_root: usize,
 ) -> Cow<'a, [SvgStyleProperty]> {
     let outside = |property: &SvgStyleProperty| {
-        property.inherited_from.is_some_and(|source| {
-            !is_inclusive_descendant(document, source.0 as usize, instance_root)
-        })
+        property
+            .inherited_from
+            .is_some_and(|source| !ancestors.is_within(document, source.0 as usize, instance_root))
     };
-    if !properties.iter().any(outside) {
+    let Some(first) = properties.iter().position(outside) else {
         return Cow::Borrowed(properties);
-    }
+    };
     Cow::Owned(
         properties
             .iter()
-            .map(|property| {
+            .enumerate()
+            .map(|(at, property)| {
                 let mut property = property.clone();
-                if outside(&property) {
+                // None of the properties before `first` comes from outside.
+                if at >= first && outside(&property) {
                     property.inherited = true;
                     property.inherited_from = None;
                 }
@@ -285,16 +306,65 @@ fn inherit_from_instantiating_use<'a>(
     )
 }
 
+/// The elements above the one a walk is at, from the top of the document down
+/// to that element, which tell whether another element is within a subtree
+/// that one of them roots without climbing to its root.
+#[derive(Default)]
+struct Ancestors {
+    /// The elements above the root of the walk come first, then the elements
+    /// from the root of the walk to the current one.
+    path: Vec<usize>,
+    /// How many of `path` lie above the root of the walk.
+    above: usize,
+    /// Where each element of `path` sits in it.
+    position: FxHashMap<usize, usize>,
+}
+
+impl Ancestors {
+    /// The ancestors of `root`, where a walk of its subtree starts.
+    fn above(document: &Document, root: usize) -> Self {
+        let mut path: Vec<usize> = document.ancestors(root).collect();
+        path.reverse();
+        Self {
+            above: path.len(),
+            position: path.iter().enumerate().map(|(at, &id)| (id, at)).collect(),
+            path,
+        }
+    }
+
+    /// Make `node`, `depth` levels below the root of the walk, the current
+    /// element.
+    fn enter(&mut self, node: usize, depth: usize) {
+        while self.path.len() > self.above + depth {
+            if let Some(left) = self.path.pop() {
+                self.position.remove(&left);
+            }
+        }
+        self.position.insert(node, self.path.len());
+        self.path.push(node);
+    }
+
+    /// Whether `node` is `ancestor` or one of its descendants, `ancestor` being
+    /// the current element or one above it. When `node` is on the path too, it
+    /// is one exactly when it comes at or after `ancestor` there; any other
+    /// element is searched for in the tree.
+    fn is_within(&self, document: &Document, node: usize, ancestor: usize) -> bool {
+        match (self.position.get(&node), self.position.get(&ancestor)) {
+            (Some(node), Some(ancestor)) => node >= ancestor,
+            _ => is_inclusive_descendant(document, node, ancestor),
+        }
+    }
+}
+
 /// Whether `node` is `ancestor` or one of its descendants.
 fn is_inclusive_descendant(document: &Document, node: usize, ancestor: usize) -> bool {
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if id == ancestor {
-            return true;
-        }
-        current = document.parent_of(id);
-    }
-    false
+    let steps = document.inclusive_ancestors(node);
+    #[cfg(test)]
+    let steps = steps.inspect(|_| {
+        crate::layout::test_support::INLINE_SVG_PARENT_STEPS
+            .with(|count| count.set(count.get() + 1))
+    });
+    steps.into_iter().any(|id| id == ancestor)
 }
 
 /// The CSS `font-family` list of `style`, with every non-generic name quoted.

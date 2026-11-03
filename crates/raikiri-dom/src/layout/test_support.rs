@@ -22,6 +22,7 @@ thread_local! {
     pub(crate) static LAYOUT_ORIGIN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static INLINE_BASELINE_MEMBER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static INLINE_BASELINE_SHIFT_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static INLINE_SVG_PARENT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static MULTICOL_LAYOUTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
