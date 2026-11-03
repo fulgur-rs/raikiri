@@ -145,7 +145,11 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
     }
 
     fn get_flexbox_child_style(&self, child_node_id: taffy::NodeId) -> Self::FlexboxItemStyle<'_> {
-        TaffyStyle::new(self.query_style(usize::from(child_node_id), ReadRole::FlexItem))
+        TaffyStyle::new(table::item_style(
+            self,
+            usize::from(child_node_id),
+            ReadRole::FlexItem,
+        ))
     }
 }
 
@@ -164,7 +168,11 @@ impl LayoutGridContainer for LayoutSession<'_> {
     }
 
     fn get_grid_child_style(&self, child_node_id: taffy::NodeId) -> Self::GridItemStyle<'_> {
-        TaffyStyle::new(self.query_style(usize::from(child_node_id), ReadRole::GridItem))
+        TaffyStyle::new(table::item_style(
+            self,
+            usize::from(child_node_id),
+            ReadRole::GridItem,
+        ))
     }
 
     fn set_detailed_grid_info(

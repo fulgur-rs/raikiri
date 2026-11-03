@@ -82,10 +82,12 @@ fn assert_same(actual: Vec<u8>, expected: Vec<u8>) {
 
 #[test]
 fn outside_relative_png_and_opacity_match_literal_pixels() {
+    // Chromium 152: Ahem 20px/20px has a 16px baseline, and the
+    // 4px image bottom meets it, so its top is 12px.
     assert_same(
         raster("<ul><li style='opacity:.5'>A</li></ul>"),
         raster(
-            "<div style='position:absolute;left:8px;top:0;width:8px;height:4px;background:red;opacity:.5'></div>",
+            "<div style='position:absolute;left:8px;top:12px;width:8px;height:4px;background:red;opacity:.5'></div>",
         ),
     );
 }
@@ -105,7 +107,7 @@ fn translated_png_markers_match_literal_pixels() {
     assert_same(
         raster("<ul style='transform:translate(5px,3px)'><li>A</li></ul>"),
         raster(
-            "<div style='position:absolute;left:13px;top:3px;width:8px;height:4px;background:red'></div>",
+            "<div style='position:absolute;left:13px;top:15px;width:8px;height:4px;background:red'></div>",
         ),
     );
     assert_same(

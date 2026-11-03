@@ -28,7 +28,9 @@ use std::sync::Arc;
 
 mod line_paint;
 mod line_text;
-use line_paint::{LineGroups, LinePaint, PiecesByLine, block_pieces, kept_whole_box};
+use line_paint::{LinePaint, block_pieces, kept_whole_box};
+mod prepared;
+pub(crate) use prepared::ParagraphPreparations;
 mod typographic;
 pub(crate) use typographic::{BackgroundSlice, Paragraph, enclosing_inline_opacities};
 
@@ -293,7 +295,6 @@ pub(crate) fn hold_ifc_lines<'a>(
     // Pages never cut a paragraph across its lines: each of its lines goes
     // with the paragraph's content box.
     let paragraph_box = kept_whole_box(document, root_id, page_lines, vertical, base);
-    let pieces = PiecesByLine::new(&positioned, document, cascade, root_id);
     let offsets = positioned.offsets;
     let hit_layout =
         (!custom_highlights.is_empty()).then(|| LineLayout::new(positioned.all_lines()));
@@ -312,7 +313,11 @@ pub(crate) fn hold_ifc_lines<'a>(
     let blocks = block_pieces(root_node, off_band);
     let block_nodes: std::collections::HashSet<usize> =
         blocks.iter().map(|(piece, _)| piece.node).collect();
-    let mut groups = LineGroups::new(paragraph, root_node, &pieces.pieces, &blocks);
+    let prepared =
+        image_cache
+            .paragraphs()
+            .prepare(&positioned, paragraph, root_node, &blocks, fragmentainer);
+    let mut groups = prepared.shapes.paint();
     let mut lines = LinePaint {
         image_cache,
         paragraph,
@@ -323,7 +328,7 @@ pub(crate) fn hold_ifc_lines<'a>(
         base_decorations,
         shifts,
         root_node,
-        pieces,
+        pieces: prepared.pieces,
         block_nodes,
         page_lines,
         paragraph_box,

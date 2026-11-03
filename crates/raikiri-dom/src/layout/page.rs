@@ -563,6 +563,7 @@ fn document_has_resolved_pagination_order(document: &Document, cascade: &Cascade
     let has_resolved_order = document.nodes.iter().any(|node| {
         node.grid_column_count > 0
             || !node.grid_item_row_starts.is_empty()
+            || !node.grid_item_rows.is_empty()
             || !node.order_modified_children.is_empty()
     });
     let cascade_order_matches_layout = document.nodes.iter().enumerate().all(|(node_id, node)| {
@@ -942,6 +943,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         for node in doc.nodes.layout_nodes_mut() {
             node.cache.clear();
             node.grid_item_row_starts = Box::new([]);
+            node.grid_item_rows = Box::new([]);
             node.grid_column_count = 0;
         }
     } else if grid_details_stale {
@@ -949,6 +951,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         // discard placement metadata until the next grid layout repopulates it.
         for node in &mut doc.nodes {
             node.grid_item_row_starts = Box::new([]);
+            node.grid_item_rows = Box::new([]);
             node.grid_column_count = 0;
         }
     }
@@ -1141,7 +1144,7 @@ pub(crate) fn pagination_child_order(
     pagination_child_order_borrowed(document, cascade, parent_id).into_owned()
 }
 
-fn pagination_child_order_borrowed<'doc>(
+pub(crate) fn pagination_child_order_borrowed<'doc>(
     document: &'doc Document,
     cascade: &CascadeResult,
     parent_id: usize,

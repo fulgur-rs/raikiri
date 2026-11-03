@@ -62,6 +62,51 @@ fn relative_span_run_lookup_work_is_linear() {
     }
 }
 
+/// The left of each atomic inline in a paragraph of `count` spans that hold
+/// one atomic inline each, and the probes of the offset index it took.
+fn atomic_lefts_in_spans(count: usize, span_css: &str) -> (Vec<f32>, usize, usize) {
+    INDEX_ENTRIES.set(0);
+    PROBES.set(0);
+    let mut atomics = Vec::new();
+    let fixture = block_fixture("width:100000px", |doc, root| {
+        for _ in 0..count {
+            let span = doc.append_element(Some(root), "span", Some(span_css));
+            let atomic = doc.append_element(
+                Some(span),
+                "i",
+                Some("display:inline-block;width:1px;height:1px"),
+            );
+            atomics.push(atomic);
+        }
+    });
+    let (mut doc, cascade) = (fixture.doc, fixture.cascade);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let lefts = atomics
+        .iter()
+        .map(|&atomic| doc.nodes[atomic].layout.location.x)
+        .collect();
+    (lefts, INDEX_ENTRIES.get(), PROBES.get())
+}
+
+#[test]
+fn atomic_inlines_in_relative_spans_are_placed_through_the_offset_index() {
+    for count in [32, 64, 128] {
+        let (plain, entries, plain_probes) = atomic_lefts_in_spans(count, "");
+        assert_eq!(entries, 0, "{count}");
+        let (moved, entries, probes) = atomic_lefts_in_spans(count, "position:relative;left:1px");
+        // Every atomic inline is moved by the offset of its span.
+        for (index, (moved, plain)) in moved.iter().zip(&plain).enumerate() {
+            assert_eq!(moved - plain, 1.0, "{count}: atomic {index}");
+        }
+        assert!(entries <= 4 * count, "{count}: {entries} index entries");
+        // The paragraph's index gives the offset of the span of each atomic
+        // inline with one probe, on top of the probes that paragraphs without
+        // offsets make too; a search of all the offsets for each atomic
+        // inline would make none.
+        assert_eq!(probes - plain_probes, count, "{count}");
+    }
+}
+
 #[test]
 fn indexed_and_independent_slices_keep_nested_generated_offsets_in_each_writing_mode() {
     use crate::generated_content::generated_node_id;

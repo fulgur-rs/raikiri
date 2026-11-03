@@ -9,10 +9,31 @@ use raikiri_style::{CascadeResult, PseudoElem, property::Visibility};
 use raikiri_traits::{NodeId, PaintRect};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct PreparedMarkers {
+    pub(super) pages: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
+    pub(super) anchors: BTreeMap<usize, ImageAnchor>,
+}
+
+impl PreparedMarkers {
+    pub(super) fn clear(&mut self) {
+        self.pages.clear();
+        self.anchors.clear();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ImageAnchor {
+    pub(super) offset_y: f32,
+    pub(super) page_origin: Option<f32>,
+}
+
 enum MarkerRoot {
     Standalone {
         owner: usize,
         size: raikiri_traits::ImageRasterSize,
+        offset_y: f32,
+        page: Option<u32>,
     },
     Inline(Vec<(f32, f32, PositionedMarker)>),
 }
@@ -24,8 +45,8 @@ pub(super) fn prepare(
     pages: &[PageFragment],
     paragraphs: &crate::layout::ParagraphCache,
     work: &mut crate::layout::ProjectionWork<'_, '_>,
-) -> Result<BTreeMap<u32, BTreeMap<NodeId, PaintRect>>, raikiri_traits::LayoutError> {
-    let mut placements = BTreeMap::new();
+) -> Result<PreparedMarkers, raikiri_traits::LayoutError> {
+    let mut placements = PreparedMarkers::default();
     // Only IFC roots themselves can own an atomic image marker. Extract their
     // source placements once; ordinary paragraphs need no additional glyph walk.
     let mut prepared = Vec::new();
@@ -37,7 +58,15 @@ pub(super) fn prepare(
                     .list_marker_image_size(owner)
                     .expect("prepared marker pixels retain their raster size");
                 work.charge(1)?;
-                prepared.push((*root, MarkerRoot::Standalone { owner, size }));
+                prepared.push((
+                    *root,
+                    MarkerRoot::Standalone {
+                        owner,
+                        size,
+                        offset_y: 0.0,
+                        page: None,
+                    },
+                ));
             }
             None if crate::generated_content::inside_marker_in_flow(cascade, root.node)
                 && document.list_marker_image(root.node).is_some() =>
@@ -71,11 +100,74 @@ pub(super) fn prepare(
     for page in pages {
         for item in &page.items {
             if item.fragment_index == 0 {
-                first_pages.entry(item.node_id).or_insert(page.page_index);
+                first_pages
+                    .entry(item.node_id)
+                    .or_insert((page.page_index, page.content_origin_y));
             }
         }
     }
     let flow_pages = FlowPages::new(pages);
+    let vertical_flow = pages
+        .iter()
+        .all(|page| page.flow_axis == super::records::FlowAxis::Y);
+    let mut counts = BTreeMap::<usize, usize>::new();
+    for (_, _, kind) in &roots {
+        if let MarkerRoot::Standalone { owner, .. } = kind {
+            *counts.entry(*owner).or_default() += 1;
+        }
+    }
+    let mut first_lines = BTreeMap::new();
+    for (root, _, kind) in &mut roots {
+        let MarkerRoot::Standalone {
+            owner,
+            size,
+            offset_y,
+            page,
+        } = kind
+        else {
+            continue;
+        };
+        let line = if let Some(line) = first_lines.get(owner) {
+            *line
+        } else {
+            // Reserve work for the first-line search once per owner,
+            // rather than walking the item's subtree on each page.
+            let mut pending = vec![*owner];
+            while let Some(node) = pending.pop() {
+                work.charge(1)?;
+                if let Some(node) = document.ifc_layout_node(node) {
+                    pending.extend(node.layout_children());
+                }
+            }
+            // The shared first-line metrics describe the horizontal
+            // baseline. Keep physical placement for vertical items and
+            // flows that paginate along the other axis.
+            let line = (vertical_flow && !document.nodes[*owner].used_writing_mode.is_vertical())
+                .then(|| super::text_runs::first_line(document, cascade, *owner))
+                .flatten()
+                .filter(|line| {
+                    line.horizontal && line.baseline.is_finite() && line.center.is_finite()
+                });
+            first_lines.insert(*owner, line);
+            line
+        };
+        *offset_y = line.map_or(0.0, |line| line.baseline - size.height);
+        let first = first_pages.get(&NodeId::new(*owner as u64)).copied();
+        let selected = super::text_runs::marker_page(
+            line.filter(|_| counts[owner] == 1)
+                .map(|line| root.y + line.center),
+            vertical_flow.then_some(&flow_pages),
+            first,
+        );
+        *page = selected.map(|(index, _)| index);
+        placements.anchors.insert(
+            *owner,
+            ImageAnchor {
+                offset_y: *offset_y,
+                page_origin: selected.map(|(_, origin)| origin),
+            },
+        );
+    }
     let mut line_ownership = LineOwnership::new(pages);
     let flow_axis = pages
         .first()
@@ -93,8 +185,8 @@ pub(super) fn prepare(
             Box::new(pages.iter().enumerate())
         } else {
             match kind {
-                MarkerRoot::Standalone { owner, .. } => {
-                    let Some(&first_page) = first_pages.get(&NodeId::new(*owner as u64)) else {
+                MarkerRoot::Standalone { page, .. } => {
+                    let Some(first_page) = *page else {
                         continue;
                     };
                     let start = pages.partition_point(|page| page.page_index < first_page);
@@ -147,10 +239,15 @@ pub(super) fn prepare(
             let x = page.content_box.x + root.x + paint_shift.0 + dx;
             let y = page.content_box.y + root.y + paint_shift.1 + dy;
             match kind {
-                MarkerRoot::Standalone { owner, size } => {
+                MarkerRoot::Standalone {
+                    owner,
+                    size,
+                    offset_y,
+                    page: marker_page,
+                } => {
                     let owner = *owner;
                     let id = NodeId::new(owner as u64);
-                    if !root.is_repeat && first_pages.get(&id) != Some(&page.page_index) {
+                    if !root.is_repeat && *marker_page != Some(page.page_index) {
                         continue;
                     }
                     let Some(style) = computed_for_id(cascade, root.node)
@@ -169,7 +266,7 @@ pub(super) fn prepare(
                         id,
                         document.standalone_marker_image_rect(
                             style,
-                            (x, y),
+                            (x, y + offset_y),
                             layout.padding.left,
                             *size,
                         ),
@@ -203,7 +300,10 @@ pub(super) fn prepare(
         }
     }
     for (page, markers) in pages.iter().zip(per_page) {
-        placements.insert(page.page_index, markers);
+        placements.pages.insert(page.page_index, markers);
     }
     Ok(placements)
 }
+
+#[cfg(test)]
+mod tests;

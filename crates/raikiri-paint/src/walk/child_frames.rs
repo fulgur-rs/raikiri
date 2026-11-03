@@ -456,7 +456,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // With content positioned below the blocks, the lines place
         // the blocks between that content and the rest.
         let negative_content = node.is_ifc_root()
-            && raikiri_dom::paint_rules::holds_negative_stack_level(document, cascade, node_id);
+            && self.image_cache.paragraphs().holds_negative_stack_level(
+                document,
+                cascade,
+                node_id,
+                visit.fragmentainer.is_some(),
+            );
         ChildPlan {
             fragment_clip_height: visit.fragment_clip_height,
             multicol_clip_height: own_multicol_clip_height,

@@ -6,8 +6,9 @@
 //! that width as well.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
-//! markup in an 800px by 600px viewport with the 8px body margin, with every
-//! image 20x50 pixels, a 2:5 aspect ratio.
+//! markup with an 8px body margin and 20x50px images, a 2:5 aspect ratio.
+//! The default viewport is 800x600px; a fixture's explicit `page_size` keeps
+//! taller geometry unfragmented instead of measuring a clipped page slice.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -39,15 +40,39 @@ impl ReplacedResolver for Portrait {
 /// A border box `(x, y, width, height)`.
 type Rect = [f32; 4];
 
-/// The border boxes of the elements of `body` with an `id` on the first page.
+/// Unfragmented border boxes of the elements of `body` with an `id`.
+/// Geometry oracles must fit one page before their fragments are compared.
 fn border_boxes(body: &str) -> Vec<(String, Rect)> {
     border_boxes_with_device_scale(body, None)
 }
 
 fn border_boxes_with_device_scale(body: &str, scale: Option<f32>) -> Vec<(String, Rect)> {
+    border_boxes_with_page_size(body, scale, [800.0, 600.0])
+}
+
+fn border_boxes_with_page_size(
+    body: &str,
+    scale: Option<f32>,
+    page_size: [f32; 2],
+) -> Vec<(String, Rect)> {
+    let result = layout_geometry_fixture(body, scale, page_size);
+    assert_eq!(
+        result.page_count(),
+        1,
+        "unfragmented geometry oracle requires one page; set page_size for taller fixtures"
+    );
+    first_page_border_boxes(&result)
+}
+
+fn layout_geometry_fixture(
+    body: &str,
+    scale: Option<f32>,
+    page_size: [f32; 2],
+) -> raikiri_html::DocumentLayout {
     let html = format!(
-        "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
-         body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
+        "<!DOCTYPE html><style>@page {{ size: {}px {}px; margin: 0 }} \
+         body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}",
+        page_size[0], page_size[1],
     );
     let fonts = FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
@@ -69,6 +94,12 @@ fn border_boxes_with_device_scale(body: &str, scale: Option<f32>) -> Vec<(String
     let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete layout");
     };
+    result
+}
+
+/// Explicit fragment access for the pagination contrast, without treating a
+/// clipped page rectangle as a whole-document geometry measurement.
+fn first_page_border_boxes(result: &raikiri_html::DocumentLayout) -> Vec<(String, Rect)> {
     let page = result.pages().next().expect("a page");
     let dom = page.dom();
     page.fragments()
@@ -404,7 +435,12 @@ fn check_image_oracle(source: &str) {
     for case in oracle["cases"].as_array().expect("cases") {
         let body = case["html"].as_str().expect("markup");
         let scale = case["device_scale"].as_f64().map(|value| value as f32);
-        let boxes = border_boxes_with_device_scale(body, scale);
+        let page_size = if case["page_size"].is_null() {
+            [800.0, 600.0]
+        } else {
+            serde_json::from_value(case["page_size"].clone()).expect("page_size [width, height]")
+        };
+        let boxes = border_boxes_with_page_size(body, scale, page_size);
         for entry in case["expected"].as_array().expect("expected boxes") {
             let id = entry[0].as_str().expect("id");
             let (_, actual) = boxes.iter().find(|(name, _)| name == id).expect("box");
@@ -441,3 +477,6 @@ fn a_vertical_column_image_takes_its_ratio_width_from_the_margin_adjusted_stretc
 fn stretched_image_ratios_follow_the_containing_inline_size() {
     check_image_oracle(include_str!("data/vertical-stretch-image.json"));
 }
+
+#[path = "stretch_replaced_height/rowspan_geometry_tests.rs"]
+mod rowspan_geometry_tests;

@@ -13,6 +13,7 @@ use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
 use raikiri_style::property::BreakInside;
+use std::collections::HashMap;
 
 mod paged;
 pub(super) use paged::{PagedPiece, paginate};
@@ -808,6 +809,38 @@ struct AbsolutePiece {
     clip: FragmentRect,
 }
 
+/// How far the clip of each of `count` pieces of a box reaches left and right,
+/// from `start`: the extent it has by itself, widened by the clips of the
+/// pieces of absolutely positioned boxes that sit in it. A piece of those with
+/// no piece of the box to sit in widens none.
+fn piece_clip_extents(
+    count: usize,
+    start: (f32, f32),
+    absolute: &[AbsolutePiece],
+) -> Vec<(f32, f32)> {
+    #[cfg(test)]
+    tests::record_absolute_parent_work(2, absolute.len());
+    let mut extents = vec![start; count];
+    for piece in absolute {
+        if let Some((left, right)) = extents.get_mut(piece.parent_piece) {
+            *left = left.min(piece.clip.x);
+            *right = right.max(piece.clip.x + piece.clip.width);
+        }
+    }
+    extents
+}
+
+/// The index of the first piece that starts in each column of `pieces`.
+fn first_piece_per_column(pieces: &[Piece]) -> HashMap<usize, usize> {
+    #[cfg(test)]
+    tests::record_absolute_parent_work(0, pieces.len());
+    let mut first = HashMap::with_capacity(pieces.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        first.entry(piece.column).or_insert(index);
+    }
+    first
+}
+
 /// The pieces of the absolutely positioned boxes of each child, in the
 /// coordinates of the child's pieces. A box breaks at the column ends of
 /// the flow its containing block is part of (CSS Position 3, 3.3.4), and a
@@ -846,6 +879,9 @@ fn absolute_pieces(
         }
         // The containing block's block offset in the columns laid end to end.
         let flow_top = first.column as f32 * column_height + first.top;
+        // Which piece starts in each column, read once for a box that has
+        // absolutely positioned children.
+        let mut piece_of_column: Option<HashMap<usize, usize>> = None;
         for node in absolute_children(tree, child) {
             let layout = tree.nodes[node].layout;
             let start = flow_top + layout.location.y;
@@ -872,9 +908,13 @@ fn absolute_pieces(
             if count > budget {
                 return None;
             }
+            #[cfg(test)]
+            tests::record_absolute_parent_work(1, end_column - first_column + 1);
+            let piece_of_column =
+                piece_of_column.get_or_insert_with(|| first_piece_per_column(pieces));
             for column in first_column..=end_column {
-                let parent_piece = match pieces.iter().position(|piece| piece.column == column) {
-                    Some(index) => index,
+                let parent_piece = match piece_of_column.get(&column) {
+                    Some(&index) => index,
                     // The last piece of the containing block holds the
                     // box's pieces in the columns after its own.
                     None if column > last.column => pieces.len() - 1,
@@ -2381,6 +2421,13 @@ pub(super) fn layout(
             ),
             _ => pieces.iter().map(|piece| piece.height).collect(),
         };
+        // A box that stays in one column is not cut, so has no clip.
+        let clip_extents = if pieces.len() > 1 {
+            let wide = size.width.max(context.column_width).max(held_right);
+            piece_clip_extents(pieces.len(), (held_left, wide), absolute)
+        } else {
+            Vec::new()
+        };
         let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {
             shifts.push(if sliced { taken } else { 0.0 });
@@ -2402,21 +2449,7 @@ pub(super) fn layout(
                 // still shows its absolutely positioned boxes, which have
                 // clips of their own, where they reach past it inline.
                 fragmentainer_clip: (pieces.len() > 1).then(|| {
-                    let (left, right) = absolute
-                        .iter()
-                        .filter(|absolute| absolute.parent_piece == index)
-                        .fold(
-                            (
-                                held_left,
-                                size.width.max(context.column_width).max(held_right),
-                            ),
-                            |(left, right), absolute| {
-                                (
-                                    left.min(absolute.clip.x),
-                                    right.max(absolute.clip.x + absolute.clip.width),
-                                )
-                            },
-                        );
+                    let (left, right) = clip_extents[index];
                     FragmentRect {
                         x: x + left,
                         y: origin.y,

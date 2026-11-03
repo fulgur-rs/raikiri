@@ -286,11 +286,22 @@ fn a_container_moves_when_the_orphans_of_every_item_do_not_fit() {
 }
 
 #[test]
-fn a_container_stays_while_one_item_has_its_first_line_on_the_page() {
+fn a_grid_stays_while_one_item_has_its_first_line_on_the_page() {
     // The first item is pushed down by its padding, the second one is not.
     assert_eq!(
-        container_after(80, FLEX, &["padding-top:30px", ""], 1),
+        container_after(80, GRID, &["padding-top:30px", ""], 1),
         (80.0, 86.0, 2)
+    );
+}
+
+#[test]
+fn a_flex_line_moves_whole_while_one_item_has_its_first_line_on_the_page() {
+    // The first item is pushed down by its padding, the second one is not: the
+    // items of the line are cut together, and the first one cannot be cut
+    // before its line.
+    assert_eq!(
+        container_after(80, FLEX, &["padding-top:30px", ""], 1),
+        (100.0, 106.0, 2)
     );
 }
 
@@ -304,8 +315,15 @@ fn a_container_stays_when_the_next_page_cannot_hold_the_first_piece() {
 
 #[test]
 fn a_container_without_padding_or_border_above_its_items_is_left_to_its_items() {
-    let (container, _, _) = container_after(94, "display:flex", &["", ""], 1);
-    assert_eq!(container, 94.0);
+    // Nothing of the container stays behind alone, and the items sit one above
+    // the other or break in turn.
+    for css in [
+        "display:grid;grid-template-columns:30px 30px",
+        "display:flex;flex-direction:column",
+    ] {
+        let (container, _, _) = container_after(94, css, &["", ""], 1);
+        assert_eq!(container, 94.0, "{css}");
+    }
 }
 
 #[test]
@@ -347,9 +365,9 @@ fn container_with_item(build_item: impl FnOnce(&mut Document, usize)) -> f32 {
 
 #[test]
 fn a_container_is_left_alone_when_its_first_piece_cannot_be_read() {
-    // A block between lines, a float, a table, a positioned box and a box with
-    // nothing in it: no piece of their content is known to keep together.
-    let unread: [(&str, ItemBuilder); 5] = [
+    // A block between lines, a float, a table and a positioned box:
+    // no piece of their content is known to keep together.
+    let unread: [(&str, ItemBuilder); 4] = [
         (
             "block between lines",
             Box::new(|doc, container| {
@@ -379,12 +397,6 @@ fn a_container_is_left_alone_when_its_first_piece_cannot_be_read() {
             "positioned",
             Box::new(|doc, container| {
                 paragraph(doc, container, 1, "position:sticky;top:0");
-            }),
-        ),
-        (
-            "empty",
-            Box::new(|doc, container| {
-                block(doc, container, "display:block;height:20px");
             }),
         ),
     ];
@@ -592,4 +604,515 @@ fn a_block_moves_even_when_its_padding_and_line_do_not_fit_one_page() {
         ),
         (100.0, 210.0, 3)
     );
+}
+
+/// `body > [div(lead), container(container_css) > items]` on 100px pages, each
+/// item a block styled with its entry of `item_css`. Returns the page-flow y
+/// of the container and of its items.
+fn row_after(lead: u32, container_css: &str, item_css: &[&str]) -> (f32, Vec<f32>) {
+    let mut container = 0;
+    let mut items = Vec::new();
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{lead}px"));
+        container = block(doc, body, container_css);
+        for css in item_css {
+            items.push(block(doc, container, &format!("display:block;{css}")));
+        }
+    });
+    (
+        page_flow_y(&doc, container),
+        items.iter().map(|&item| page_flow_y(&doc, item)).collect(),
+    )
+}
+
+const AVOID_20: &str = "height:20px;break-inside:avoid";
+const AVOID_40: &str = "height:40px;break-inside:avoid";
+const AVOID_50: &str = "height:50px;break-inside:avoid";
+
+#[test]
+fn a_flex_line_moves_whole_for_an_item_that_cannot_be_cut_and_does_not_fit() {
+    // Whichever item that is, and with or without padding above the items:
+    // they all start at the top of the line, and the line cannot be cut
+    // before the item that does not fit.
+    let padded = "display:flex;padding-top:6px";
+    let bare = "display:flex";
+    for (css, items, expected) in [
+        (padded, ["height:20px", AVOID_40], (100.0, [106.0, 106.0])),
+        (padded, [AVOID_40, "height:20px"], (100.0, [106.0, 106.0])),
+        (padded, [AVOID_40, AVOID_40], (100.0, [106.0, 106.0])),
+        (bare, ["height:20px", AVOID_50], (100.0, [100.0, 100.0])),
+        (bare, [AVOID_50, "height:20px"], (100.0, [100.0, 100.0])),
+        (bare, [AVOID_20, AVOID_50], (100.0, [100.0, 100.0])),
+        (
+            "display:flex;flex-direction:row-reverse",
+            ["height:20px", AVOID_50],
+            (100.0, [100.0, 100.0]),
+        ),
+    ] {
+        let (container, placed) = row_after(60, css, &items);
+        assert_eq!(
+            (container, placed.as_slice()),
+            (expected.0, &expected.1[..]),
+            "{css} {items:?}"
+        );
+    }
+}
+
+#[test]
+fn a_flex_line_stays_when_its_items_fit_or_can_be_cut() {
+    for (css, items) in [
+        // The item ends at the page end.
+        ("display:flex", ["height:20px", AVOID_40]),
+        (
+            "display:flex;padding-top:6px",
+            ["height:20px", "height:30px;break-inside:avoid"],
+        ),
+        // Boxes with nothing in them can be cut anywhere.
+        ("display:flex", ["height:20px", "height:50px"]),
+        (
+            "display:flex;padding-top:6px",
+            ["height:20px", "height:50px"],
+        ),
+    ] {
+        let (container, _) = row_after(60, css, &items);
+        assert_eq!(container, 60.0, "{css} {items:?}");
+    }
+}
+
+#[test]
+fn an_item_that_starts_lower_in_the_line_is_pushed_on_alone() {
+    // The line can be cut above the item, so the rest of it stays.
+    for (css, items, lower) in [
+        (
+            "display:flex;align-items:flex-end",
+            [AVOID_20, "height:50px"],
+            90.0,
+        ),
+        (
+            "display:flex",
+            [
+                "height:20px;margin-top:30px;break-inside:avoid",
+                "height:50px",
+            ],
+            90.0,
+        ),
+    ] {
+        let (container, placed) = row_after(60, css, &items);
+        assert_eq!((container, placed[0]), (60.0, lower), "{css}");
+    }
+    // The tall item starts at the top, and the one beside it goes with it.
+    let (container, placed) = row_after(
+        60,
+        "display:flex;align-items:center",
+        &["height:20px", AVOID_50],
+    );
+    assert_eq!((container, placed[1]), (100.0, 100.0));
+}
+
+#[test]
+fn a_flex_line_is_judged_by_the_normal_flow_place_of_its_items() {
+    // The page breaks before the relative offset moves the item.
+    let (container, _) = row_after(
+        60,
+        "display:flex",
+        &[
+            "height:50px;break-inside:avoid;position:relative;top:10px",
+            "height:20px",
+        ],
+    );
+    assert_eq!(container, 100.0);
+    let (container, _) = row_after(
+        60,
+        "display:flex",
+        &[
+            "height:20px;break-inside:avoid;position:relative;top:50px",
+            "height:20px",
+        ],
+    );
+    assert_eq!(container, 60.0);
+}
+
+#[test]
+fn a_flex_container_that_stacks_its_items_is_left_to_them() {
+    let (container, _) = row_after(
+        60,
+        "display:flex;flex-direction:column",
+        &["height:20px", AVOID_50],
+    );
+    assert_eq!(container, 60.0);
+}
+
+#[test]
+fn a_wrapping_flex_container_moves_whole_for_an_item_of_its_top_line() {
+    let wrap = "display:flex;flex-wrap:wrap;width:100px";
+    // One line.
+    let (container, placed) = row_after(60, wrap, &["height:20px", AVOID_50]);
+    assert_eq!((container, placed), (100.0, vec![100.0, 100.0]));
+    // Two lines, of which the first holds the item.
+    let half = "width:50px";
+    let (container, placed) = row_after(
+        60,
+        wrap,
+        &[
+            &format!("{half};{AVOID_50}"),
+            &format!("{half};height:20px"),
+            &format!("{half};height:20px"),
+        ],
+    );
+    assert_eq!((container, placed), (100.0, vec![100.0, 100.0, 150.0]));
+}
+
+#[test]
+fn a_wrapping_flex_container_stays_for_an_item_of_a_line_below_the_top_one() {
+    // The line with the item goes on to the next page alone.
+    let half = "width:50px";
+    let (container, placed) = row_after(
+        60,
+        "display:flex;flex-wrap:wrap;width:100px",
+        &[
+            &format!("{half};height:20px"),
+            &format!("{half};height:20px"),
+            &format!("{half};{AVOID_50}"),
+        ],
+    );
+    assert_eq!((container, placed[0]), (60.0, 60.0));
+}
+
+#[test]
+fn a_flex_line_in_a_block_moves_after_the_box_before_it() {
+    let (mut before, mut container, mut item) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        let wrapper = block(doc, body, "display:block");
+        before = block(doc, wrapper, "display:block;height:10px");
+        container = block(doc, wrapper, "display:flex");
+        block(doc, container, "display:block;height:20px");
+        item = block(doc, container, &format!("display:block;{AVOID_50}"));
+    });
+    assert_eq!(
+        [before, container, item].map(|id| page_flow_y(&doc, id)),
+        [50.0, 100.0, 100.0]
+    );
+}
+
+/// `body > [div(lead), wrappers[0] > wrappers[1] > ... > box(item_css)]` on
+/// 100px pages, each wrapper a block styled with its entry of `wrappers`.
+/// Returns the page-flow y of the wrappers and of the box.
+fn wrapped_after(lead: u32, wrappers: &[&str], item_css: &str) -> Vec<f32> {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{lead}px"));
+        let mut parent = body;
+        for css in wrappers {
+            parent = block(doc, parent, &format!("display:block;{css}"));
+            ids.push(parent);
+        }
+        ids.push(block(doc, parent, &format!("display:block;{item_css}")));
+    });
+    ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
+}
+
+const PADDED: &str = "padding-top:6px";
+
+#[test]
+fn a_block_with_padding_moves_whole_with_a_box_that_avoids_breaks_and_does_not_fit() {
+    // The box runs past the page end wherever the padding ends before it: the
+    // page breaks before the block, not between its edges and the box.
+    for lead in [97, 90, 80] {
+        assert_eq!(
+            wrapped_after(lead, &[PADDED], AVOID_20),
+            [100.0, 106.0],
+            "{lead}"
+        );
+    }
+    for css in [
+        "border-top:6px solid",
+        "display:flow-root;padding-top:6px",
+        "display:list-item;padding-top:6px",
+    ] {
+        assert_eq!(wrapped_after(90, &[css], AVOID_20), [100.0, 106.0], "{css}");
+    }
+}
+
+#[test]
+fn a_block_with_padding_moves_whole_with_a_replaced_box_that_does_not_fit() {
+    // No page break goes through a replaced box.
+    let (mut wrapper, mut image) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        wrapper = block(doc, body, &format!("display:block;{PADDED}"));
+        image = doc.append_element(
+            Some(wrapper),
+            "img",
+            Some("display:block;width:30px;height:20px"),
+        );
+    });
+    assert_eq!(
+        [wrapper, image].map(|id| page_flow_y(&doc, id)),
+        [100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_block_with_padding_stays_with_a_box_that_avoids_breaks_and_fits() {
+    // Ends at the page end.
+    assert_eq!(wrapped_after(74, &[PADDED], AVOID_20), [74.0, 80.0]);
+    assert_eq!(wrapped_after(60, &[PADDED], AVOID_20), [60.0, 66.0]);
+}
+
+#[test]
+fn a_block_with_padding_moves_whole_with_an_avoid_box_taller_than_the_page() {
+    // The box is cut on the page it lands on whichever way the break goes, so
+    // the break still goes before the block rather than between its padding
+    // and the box. The box then stays below the padding and splits there.
+    let tall = "height:120px;break-inside:avoid";
+    assert_eq!(wrapped_after(90, &[PADDED], tall), [100.0, 106.0]);
+    // One that fits a page but not the space below the padding.
+    let nearly = "height:96px;break-inside:avoid";
+    assert_eq!(wrapped_after(90, &[PADDED], nearly), [100.0, 106.0]);
+    // Outer blocks that begin where the padded one does move with it.
+    assert_eq!(
+        wrapped_after(90, &["", PADDED], tall),
+        [100.0, 100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_margin_above_the_box_adds_to_the_offset_below_the_padding_of_a_moved_block() {
+    let tall = "height:120px;break-inside:avoid;margin-top:10px";
+    assert_eq!(wrapped_after(90, &[PADDED], tall), [100.0, 116.0]);
+    // So does one on a wrapper between them, which collapses with the margin
+    // of the box, and the edge of a wrapper keeps its own apart.
+    let tall = "height:120px;break-inside:avoid";
+    assert_eq!(
+        wrapped_after(90, &[PADDED, "margin-top:10px"], tall),
+        [100.0, 116.0, 116.0]
+    );
+    assert_eq!(
+        wrapped_after(
+            90,
+            &[PADDED, "margin-top:10px"],
+            "height:120px;break-inside:avoid;margin-top:15px"
+        ),
+        [100.0, 121.0, 121.0]
+    );
+    assert_eq!(
+        wrapped_after(90, &[PADDED, "margin-top:10px;padding-top:5px"], tall),
+        [100.0, 116.0, 121.0]
+    );
+    // A block that establishes a formatting context keeps the margin of the
+    // box inside it apart from its own.
+    for wrapper in [
+        "display:flow-root;margin-top:10px",
+        "overflow:hidden;margin-top:10px",
+    ] {
+        assert_eq!(
+            wrapped_after(
+                90,
+                &[PADDED, wrapper],
+                "height:120px;break-inside:avoid;margin-top:15px"
+            ),
+            [100.0, 116.0, 131.0],
+            "{wrapper}"
+        );
+    }
+    // A wrapper that generates no box keeps no margin or edge of its own.
+    let ys = wrapped_after(90, &[PADDED, "display:contents;margin-top:10px"], tall);
+    assert_eq!([ys[0], ys[2]], [100.0, 106.0]);
+}
+
+#[test]
+fn a_block_with_padding_moves_for_an_empty_box_only_when_it_begins_past_the_page_end() {
+    // An empty box can be cut anywhere, so it only moves the block when none
+    // of it fits: the padding ends at the page end or past it.
+    for lead in [97, 94] {
+        assert_eq!(
+            wrapped_after(lead, &[PADDED], "height:20px"),
+            [100.0, 106.0],
+            "{lead}"
+        );
+    }
+    for lead in [93, 90, 80] {
+        let ys = wrapped_after(lead, &[PADDED], "height:20px");
+        assert_eq!(ys, [lead as f32, lead as f32 + 6.0], "{lead}");
+    }
+}
+
+#[test]
+fn the_blocks_around_a_padded_block_move_with_it() {
+    // Outer blocks that begin where it does, with or without edges of their own.
+    assert_eq!(
+        wrapped_after(90, &["", PADDED], AVOID_20),
+        [100.0, 100.0, 106.0]
+    );
+    assert_eq!(
+        wrapped_after(94, &["", PADDED], "height:20px"),
+        [100.0, 100.0, 106.0]
+    );
+    assert_eq!(
+        wrapped_after(90, &[PADDED, PADDED], AVOID_20),
+        [100.0, 106.0, 112.0]
+    );
+    assert_eq!(
+        wrapped_after(90, &[PADDED, ""], AVOID_20),
+        [100.0, 106.0, 106.0]
+    );
+    // The padding of both ends before the page end, and the empty box is cut.
+    assert_eq!(
+        wrapped_after(86, &[PADDED, PADDED], "height:20px"),
+        [86.0, 92.0, 98.0]
+    );
+    assert_eq!(
+        wrapped_after(90, &[PADDED, PADDED], "height:20px"),
+        [100.0, 106.0, 112.0]
+    );
+}
+
+#[test]
+fn a_padded_block_is_judged_by_the_normal_flow_place_of_its_box() {
+    // The relative offset paints the box lower, but the page breaks before it.
+    assert_eq!(
+        wrapped_after(
+            60,
+            &[PADDED],
+            "height:20px;break-inside:avoid;position:relative;top:50px"
+        )[0],
+        60.0
+    );
+    // The block's own offset moves it after the break.
+    assert_eq!(
+        wrapped_after(90, &["padding-top:6px;position:relative;top:3px"], AVOID_20)[0],
+        103.0
+    );
+}
+
+#[test]
+fn a_padded_block_is_left_to_the_rules_for_lines_when_a_line_decides() {
+    // The line that does not fit is placed by the rules for lines, which take
+    // the padding along: the lead after which the padding ends the page.
+    let (mut wrapper, mut line_box) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:94px");
+        wrapper = block(doc, body, &format!("display:block;{PADDED}"));
+        line_box = paragraph(doc, wrapper, 1, "");
+    });
+    assert_eq!(
+        [wrapper, line_box].map(|id| page_flow_y(&doc, id)),
+        [100.0, 106.0]
+    );
+}
+
+#[test]
+fn a_padded_block_is_not_moved_for_a_box_that_starts_a_page_itself() {
+    // The forced break before the box is taken where it is, after the
+    // padding: moving the block as well would put the box on a third page.
+    for (lead, item) in [
+        (94, "height:20px;break-before:page"),
+        (90, "height:20px;break-inside:avoid;break-before:page"),
+        (94, "height:20px;break-before:always"),
+    ] {
+        let (mut wrapper, mut item_id) = (0, 0);
+        let (doc, pages) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{lead}px"));
+            wrapper = block(doc, body, &format!("display:block;{PADDED}"));
+            item_id = block(doc, wrapper, &format!("display:block;{item}"));
+        });
+        assert_eq!(
+            ([wrapper, item_id].map(|id| page_flow_y(&doc, id)), pages),
+            ([lead as f32, 100.0], 2),
+            "{lead} {item}"
+        );
+    }
+}
+
+#[test]
+fn a_padded_block_is_not_moved_for_a_box_that_avoids_breaks_around_a_forced_break() {
+    // The box that avoids a break inside it splits where a box in it forces
+    // one, so its height is not a piece to keep with the padding: moving the
+    // block would put that box on a third page.
+    for inner in [
+        "height:20px;break-before:page",
+        "height:20px;break-after:page",
+    ] {
+        let (mut wrapper, mut avoiding, mut inner_id) = (0, 0, 0);
+        let (doc, pages) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:90px");
+            wrapper = block(doc, body, &format!("display:block;{PADDED}"));
+            avoiding = block(doc, wrapper, "display:block;break-inside:avoid");
+            inner_id = block(doc, avoiding, &format!("display:block;{inner}"));
+        });
+        assert_eq!(
+            (
+                [wrapper, avoiding, inner_id].map(|id| page_flow_y(&doc, id)),
+                pages
+            ),
+            ([90.0, 100.0, 100.0], 2),
+            "{inner}"
+        );
+    }
+}
+
+#[test]
+fn empty_flex_items_move_with_edges_that_reach_or_cross_the_page_end() {
+    for lead in [94, 97] {
+        for css in [
+            "display:flex;padding-top:6px",
+            "display:flex;padding-top:6px;flex-direction:row-reverse",
+            "display:flex;border-top:6px solid",
+        ] {
+            let (container, items) = row_after(lead, css, &["height:20px", "height:20px"]);
+            assert_eq!(
+                (container, items.as_slice()),
+                (100.0, &[106.0, 106.0][..]),
+                "{lead} {css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_flex_items_keep_cutting_when_some_height_fits_after_the_edges() {
+    for lead in [80, 90] {
+        for css in [
+            "display:flex;padding-top:6px",
+            "display:flex;padding-top:6px;flex-direction:row-reverse",
+            "display:flex;border-top:6px solid",
+        ] {
+            let (container, items) = row_after(lead, css, &["height:20px", "height:20px"]);
+            let top = lead as f32;
+            assert_eq!(
+                (container, items.as_slice()),
+                (top, &[top + 6.0, top + 6.0][..]),
+                "{lead} {css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_single_empty_flex_item_moves_with_padding_that_ends_the_page() {
+    assert_eq!(
+        container_with_item(|doc, container| {
+            block(doc, container, "display:block;height:20px");
+        }),
+        100.0
+    );
+}
+
+#[test]
+fn nested_empty_flex_items_keep_the_edges_only_when_the_first_piece_does_not_fit() {
+    for (lead, expected) in [(94, 100.0), (97, 100.0), (90, 90.0)] {
+        let (mut container, mut item) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{lead}px"));
+            container = block(doc, body, FLEX);
+            item = block(doc, container, "display:block");
+            block(doc, item, "display:block;height:20px");
+        });
+        assert_eq!(
+            (page_flow_y(&doc, container), page_flow_y(&doc, item)),
+            (expected, expected + 6.0),
+            "{lead}"
+        );
+    }
 }

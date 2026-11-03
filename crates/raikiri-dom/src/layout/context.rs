@@ -37,6 +37,18 @@ pub(crate) struct LayoutContext {
     pub(crate) transposed_frame_serial: u64,
     pub(crate) transposed_blocks: Vec<crate::layout::dispatch::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
+    /// The height that the vertical items of each grid container being laid
+    /// out fit their lines in, innermost last: the height of its content box
+    /// where it is definite, else the height its `max-height` leaves where a
+    /// column follows its items, else none (see `grid_item_content_height` in
+    /// [`crate::layout::dispatch`]). Provisional areas in `grid_row_rooms`
+    /// take precedence once measured.
+    pub(crate) grid_inner_heights: Vec<(usize, Option<f32>)>,
+    /// Provisional row-area heights by grid owner and in-flow item. An empty
+    /// entry marks a grid whose row measurement is already running.
+    pub(crate) grid_row_rooms: Vec<(usize, Vec<(usize, f32)>)>,
+    /// Owners whose size-only layout must also provide a first baseline.
+    pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
@@ -49,6 +61,11 @@ pub(crate) struct LayoutContext {
     /// A container asked for its min-content or max-content width in any other
     /// way bounds its items the same, whatever this holds.
     pub(crate) flex_intrinsic_probe: Option<usize>,
+    /// The flex container whose content height is being measured to raise the
+    /// height its aspect ratio gives it (see `ratio_height` in
+    /// [`crate::layout::dispatch`]). The items it stretches add only their
+    /// `min-height` to that measure meanwhile.
+    pub(crate) ratio_height_probe: Option<usize>,
     /// Definite block sizes retained as percentage bases for the direct
     /// children of boxes being measured for intrinsic height limits.
     pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,
@@ -72,6 +89,7 @@ pub(crate) struct LayoutContext {
     /// What the grid algorithm reported for each grid container laid out so
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
+    pub(super) table_item_captures: Vec<super::dispatch::table_items::Capture>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     /// The root whose out-of-flow candidates are being recorded, and the
     /// candidates it hands to the library's positioning pass for the initial
@@ -273,6 +291,26 @@ impl<'doc> LayoutSession<'doc> {
             .box_key(idx)
             .expect("cache override has a box key");
         self.document.layout_cache_context.override_changed(key);
+    }
+
+    /// Request a horizontal box's first baseline during size-only layout,
+    /// restoring the request stack even if measuring a descendant panics.
+    pub(crate) fn with_baseline_measure<R>(
+        &mut self,
+        idx: usize,
+        measure: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if self.nodes[idx].used_writing_mode.is_vertical() {
+            return measure(self);
+        }
+        let depth = self.context.baseline_measure_owners.len();
+        self.context.baseline_measure_owners.push(idx);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| measure(self)));
+        self.context.baseline_measure_owners.truncate(depth);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// Enclose both Taffy's lookup and its eventual store in the same frame.

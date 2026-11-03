@@ -55,7 +55,7 @@ xml5ever    = "0.40"
 
 # ── Layout (taffy) ─────────────────────────────────────────────────────
 # Block and inline flow share project-owned context over public Taffy APIs.
-taffy = { version = "=0.15.0", default-features = false, features = [
+taffy = { version = "=0.15.1", default-features = false, features = [
     "std",
     "flexbox",
     "grid",

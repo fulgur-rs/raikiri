@@ -317,7 +317,8 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
         crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
         // The 4px borders of the cells at the edges are the table's own edge
-        // (Chromium: 80x32 for this table), so the rows add up to 18 + 18 - 4.
+        // (Chromium: 80x32 for this table). The logical rows are 14px high,
+        // with another 2px at each outer edge for the centered border.
         assert_eq!(
             doc.nodes[table].layout.size,
             Size {
@@ -331,14 +332,14 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
                 layout.size,
                 Size {
                     width: 42.0,
-                    height: 18.0
+                    height: 14.0
                 }
             );
             assert_eq!(
                 layout.location,
                 Point {
                     x: (i % 2) as f32 * 38.0,
-                    y: (i / 2) as f32 * 14.0
+                    y: 2.0 + (i / 2) as f32 * 14.0
                 }
             );
             let painted = doc.nodes[cell].collapsed_border().unwrap();

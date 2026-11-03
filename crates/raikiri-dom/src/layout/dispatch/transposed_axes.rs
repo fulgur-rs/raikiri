@@ -129,8 +129,9 @@ pub(super) fn transpose_output_to_physical(
 /// is the inline extent, and the block extent, the physical width, decides
 /// instead: a box of no height whose width is set does not collapse through.
 /// The flag only matters when the caller shares the block formatting context;
-/// otherwise the conversion drops it. A box with an inline extent and no block
-/// extent keeps the answer of the physical axes.
+/// otherwise the conversion drops it. The conversion can only rule out
+/// collapse for a nonzero block extent; the measurement caller re-evaluates
+/// an empty leaf's affirmative answer on its block axes before converting it.
 pub(super) fn transpose_child_output_to_vertical(
     mut output: LayoutOutput,
     right_to_left: bool,

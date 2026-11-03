@@ -26,6 +26,7 @@ mod cache_mode_tests;
 mod child_filter_tests;
 mod float_tests;
 mod grid_info_tests;
+mod grid_row_measure_tests;
 mod grid_rows_tests;
 mod intrinsic_width_tests;
 mod round_trip_tests;

@@ -26,7 +26,9 @@
 pub(crate) mod algorithms;
 mod cache;
 pub(crate) mod convert;
+mod empty_leaf;
 mod float;
+pub(crate) use empty_leaf::empty_leaf_collapses_on_transposed_axes;
 mod grid_info;
 mod grid_rows;
 mod margin_set;
@@ -38,6 +40,7 @@ mod tree;
 pub(crate) use cache::LayoutCache;
 pub(crate) use float::{FloatContext, FloatIntrinsicWidthCalculator};
 pub(crate) use grid_info::{GridInfo, GridRowCounts};
+pub(crate) use grid_rows::columns_follow_their_items;
 pub(crate) use grid_rows::{RowSizing, columns_have_no_content_minimum, rows_size_to_content};
 pub(crate) use margin_set::CollapsibleMarginSet;
 pub(crate) use oof_candidates::{OofBatch, OofCandidates, OofSpan};

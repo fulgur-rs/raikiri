@@ -723,3 +723,103 @@ fn border_scope_empty_table_keeps_natural_and_assigned_widths() {
         }
     }
 }
+
+#[test]
+fn centered_border_flags_follow_temporary_scopes_and_unwind() {
+    use super::super::border_scopes::{with_table_borders, with_temporary_borders};
+    for panic_body in [false, true] {
+        let (mut doc, _, table, cells) = fixture(&[2], false);
+        let cascade = crate::layout::test_support::cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+        let grid = super::super::cache::table_grid(&mut tree, table).unwrap();
+        let authored = super::super::BorderState::authored(&tree, &grid);
+        let prepared = prepared_state(&mut tree, table);
+        let state = prepared.borders.as_ref().unwrap();
+        let cell = cells[0];
+        assert!(!tree.nodes[cell].centered_collapsed_block_borders());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_table_borders(&mut tree, state, |tree| -> Result<(), ()> {
+                assert!(tree.nodes[cell].centered_collapsed_block_borders());
+                with_temporary_borders(tree, &authored, |tree| {
+                    assert!(!tree.nodes[cell].centered_collapsed_block_borders());
+                });
+                assert!(tree.nodes[cell].centered_collapsed_block_borders());
+                if panic_body {
+                    panic!("centered border scope");
+                }
+                Err(())
+            })
+        }));
+        if panic_body {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(result.unwrap(), Err(()));
+        }
+        assert!(!tree.nodes[cell].centered_collapsed_block_borders());
+        assert_eq!(tree.override_checkpoint(), 0);
+    }
+}
+
+#[test]
+fn a_new_layout_clears_centered_flags_for_separate_and_vertical_tables() {
+    let (mut doc, _, table, cells) = fixture(&[2], false);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    doc.attach_child(body, table);
+    for (css, centered) in [
+        ("display:table;border-collapse:collapse", true),
+        ("display:table;border-collapse:separate", false),
+        (
+            "display:table;border-collapse:collapse;writing-mode:vertical-rl",
+            false,
+        ),
+        ("display:table;border-collapse:collapse", true),
+    ] {
+        doc.set_element_attribute(table, "style", css).unwrap();
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+        assert_eq!(
+            doc.nodes[cells[0]].centered_collapsed_block_borders(),
+            centered
+        );
+    }
+}
+
+#[test]
+fn asymmetric_used_table_edges_are_stored_on_physical_axes() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        for display in ["grid", "flex;flex-direction:column"] {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Some("display:block"));
+            let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+            let parent = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!(
+                    "display:{display};writing-mode:{mode};width:100px;height:100px"
+                )),
+            );
+            let table = doc.append_element(Some(parent),"table",Some("display:table;writing-mode:horizontal-tb;border-collapse:collapse;border-top:2px solid;border-bottom:6px solid"));
+            for (height, visibility) in [(40, "collapse"), (20, "visible")] {
+                let row = doc.append_element(
+                    Some(table),
+                    "tr",
+                    Some(&format!("display:table-row;visibility:{visibility}")),
+                );
+                doc.append_element(
+                    Some(row),
+                    "td",
+                    Some(&format!(
+                        "display:table-cell;height:{height}px;padding:0;border:2px solid"
+                    )),
+                );
+            }
+            doc.mark_in_document_flags();
+            let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+            crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+            assert_eq!(doc.nodes[table].layout.border.top, 1.0);
+            assert_eq!(doc.nodes[table].layout.border.bottom, 3.0);
+        }
+    }
+}

@@ -380,3 +380,726 @@ fn a_flex_container_with_a_ratio_is_raised_by_its_content_as_an_item() {
     ];
     check_boxes(cases);
 }
+
+/// The items a single-line flex row stretches fill the line, so neither their content nor their own aspect ratio raises the container past the height its ratio gives it, whichever kind of box the item is and wherever the container is laid out; the line is as high as the ratio height says.
+#[test]
+fn a_row_container_ratio_height_is_not_raised_by_the_items_it_stretches() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a stretched item with a ratio",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a stretched item without a ratio and with taller content",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%'><div style='height:80px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a stretched item with a ratio and much taller content",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:200px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a stretched item with a ratio next to a short item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50px;aspect-ratio:1/1'><div style='height:80px'></div></div><div id=e style='width:50px;height:30px'></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 50.0),
+                ("d", 8.0, 8.0, 50.0, 50.0),
+                ("e", 58.0, 8.0, 50.0, 30.0),
+            ],
+        ),
+        (
+            "a stretched item with a tall ratio",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/2'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "the padding of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;padding:5px 0'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "the border of a stretched item that sizes its content box",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;border:3px solid;box-sizing:content-box'><div style='height:80px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "the margins of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;margin:5px 0'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 13.0, 100.0, 40.0)],
+        ),
+        (
+            "align-self: stretch over another align-items",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1;align-items:flex-end'><div id=d style='width:100%;aspect-ratio:1/1;align-self:stretch'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a flex basis of 100%",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;height:auto;flex-basis:100%'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an item that grows",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='flex:1 1 0;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a paragraph item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'>AAAA</div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a flex container item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='display:flex;width:100%;aspect-ratio:1/1'><div style='height:30px;width:10px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a grid container item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='display:grid;width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an inline-flex container",
+            "<div id=c style='display:inline-flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a width the parent imposes",
+            "<div style='width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an item of a flex row",
+            "<div style='display:flex;width:100px'><div id=c style='display:flex;aspect-ratio:2/1;flex:1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an item of a grid",
+            "<div style='display:grid;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a float",
+            "<div style='float:left'><div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "an inline-flex container that takes its width from its content",
+            "<div id=c style='display:inline-flex;aspect-ratio:2/1'><div id=d style='width:100px;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "a maximum height on the stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;max-height:20px'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
+/// What raises a flex row with a ratio is what its line does not stretch: an item that states a height, or aligns to something else than the line, or has auto margins, and the `min-height`, padding and margins of a stretched one; a container that wraps its items or lays them out in a grid has no line of the height of its ratio.
+#[test]
+fn a_row_container_ratio_height_is_raised_by_what_the_line_does_not_stretch() {
+    let cases: &[Case<'_>] = &[
+        (
+            "the min-height of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;min-height:60px'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
+            "the min-height of a stretched item that sizes its content box",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:40px;padding:10px 0;box-sizing:content-box'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
+            "the min-height and margins of a stretched item",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:20px;margin:30px 0'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 38.0, 100.0, 20.0)],
+        ),
+        (
+            "padding taller than the ratio height",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;padding:40px 0;box-sizing:border-box'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 8.0, 100.0, 80.0)],
+        ),
+        (
+            "a centered item taller than the ratio height",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50px'><div style='height:80px'></div></div><div id=e style='width:50px;align-self:center;height:150px'></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 150.0),
+                ("d", 8.0, 8.0, 50.0, 150.0),
+                ("e", 58.0, 8.0, 50.0, 150.0),
+            ],
+        ),
+        (
+            "an item at the end with a margin",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50px'><div style='height:30px'></div></div><div id=e style='width:50px;align-self:flex-end;height:80px;margin-top:10px'></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 90.0),
+                ("d", 8.0, 8.0, 50.0, 90.0),
+                ("e", 58.0, 18.0, 50.0, 80.0),
+            ],
+        ),
+        (
+            "an item aligned to the baseline",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1;align-items:baseline'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "an item with an auto margin",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;margin-top:auto'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "items aligned to the start",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1;align-items:flex-start'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a tall item next to a stretched one",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:50%;align-self:flex-start'><div style='height:80px'></div></div><div id=e style='width:50%;aspect-ratio:1/1;'><div style='height:10px'></div></div></div>",
+            &[
+                ("c", 8.0, 8.0, 100.0, 80.0),
+                ("d", 8.0, 8.0, 50.0, 80.0),
+                ("e", 58.0, 8.0, 50.0, 80.0),
+            ],
+        ),
+        (
+            "a container that wraps its items",
+            "<div id=c style='display:flex;flex-wrap:wrap;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a grid container",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
+/// A container that is the item of a flex column finds its height from its content first, so the items it stretches count at their own heights there, whether the container states its width or is stretched.
+#[test]
+fn a_ratio_container_in_a_flex_column_keeps_the_heights_of_its_items() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a stretched container",
+            "<div style='display:flex;flex-direction:column;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a container that states its width",
+            "<div style='display:flex;flex-direction:column;align-items:flex-start'><div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a container that states its width in a wider column",
+            "<div style='display:flex;flex-direction:column;align-items:flex-start;width:200px'><div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a container with a plain item",
+            "<div style='display:flex;flex-direction:column;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%'><div style='height:80px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 80.0), ("d", 8.0, 8.0, 100.0, 80.0)],
+        ),
+        (
+            "a container whose ratio height is the larger",
+            "<div style='display:flex;flex-direction:column;width:300px'><div id=c style='display:flex;aspect-ratio:2/1;flex:none'><div id=d style='width:100px;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 300.0, 150.0), ("d", 8.0, 8.0, 100.0, 150.0)],
+        ),
+        (
+            "a container that grows",
+            "<div style='display:flex;flex-direction:column;width:300px;height:400px'><div id=c style='display:flex;aspect-ratio:2/1;flex:1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 300.0, 400.0), ("d", 8.0, 8.0, 300.0, 400.0)],
+        ),
+        (
+            "a reversed column",
+            "<div style='display:flex;flex-direction:column-reverse;width:100px'><div id=c style='display:flex;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1'><div style='height:30px'></div></div></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
+#[test]
+fn a_percentage_minimum_raises_the_ratio_height_of_a_flex_container() {
+    check_boxes(&[(
+        "ratio height resolves the item percentage minimum",
+        "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;min-height:120%'><div style='height:10px'></div></div></div>",
+        &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn a_percentage_height_raises_the_ratio_height_of_a_flex_container() {
+    check_boxes(&[(
+        "ratio height resolves the item percentage height",
+        "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;height:150%'><div style='height:10px'></div></div></div>",
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn a_calc_percentage_height_keeps_the_item_below_its_containers_ratio_height() {
+    check_boxes(&[(
+        "ratio height resolves the item calc percentage",
+        "<div id=c style='display:flex;width:100px;aspect-ratio:2/1'><div id=d style='width:100%;aspect-ratio:1/1;height:calc(100% - 10px)'><div style='height:30px'></div></div></div>",
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn a_percentage_height_in_a_ratio_column_resolves_before_its_item_ratio() {
+    check_boxes(&[(
+        "ratio column height resolves before item ratio",
+        "<div id=c style='display:flex;flex-direction:column;width:100px;aspect-ratio:2/1'><div id=d style='height:100%;aspect-ratio:1/1'><div style='width:30px;height:10px'></div></div></div>",
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_minimum() {
+    check_boxes(&[(
+        "row-minimum",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_minimum_nested_column() {
+    check_boxes(&[(
+        "row-minimum-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_height() {
+    check_boxes(&[(
+        "row-height",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_height_nested_column() {
+    check_boxes(&[(
+        "row-height-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_calc() {
+    check_boxes(&[(
+        "row-calc",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;height:calc(100% - 10px)"><div style="width:30px;height:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_calc_nested_column() {
+    check_boxes(&[(
+        "row-calc-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;height:calc(100% - 10px)"><div style="width:30px;height:30px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 90.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_column_original() {
+    check_boxes(&[(
+        "row-column-original",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="height:100%;aspect-ratio:1/1"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 50.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_column_original_nested_column() {
+    check_boxes(&[(
+        "row-column-original-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="height:100%;aspect-ratio:1/1"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 50.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_max() {
+    check_boxes(&[(
+        "row-max",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;max-height:50%;aspect-ratio:1/1"><div style="width:30px;height:80px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 25.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_max_nested_column() {
+    check_boxes(&[(
+        "row-max-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;max-height:50%;aspect-ratio:1/1"><div style="width:30px;height:80px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_percentage() {
+    check_boxes(&[(
+        "row-percentage",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:80%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_percentage_nested_column() {
+    check_boxes(&[(
+        "row-percentage-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:80%"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_minimum() {
+    check_boxes(&[(
+        "column-minimum",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_minimum_nested_column() {
+    check_boxes(&[(
+        "column-minimum-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_height() {
+    check_boxes(&[(
+        "column-height",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_height_nested_column() {
+    check_boxes(&[(
+        "column-height-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_calc() {
+    check_boxes(&[(
+        "column-calc",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;height:calc(100% - 10px)"><div style="width:30px;height:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_calc_nested_column() {
+    check_boxes(&[(
+        "column-calc-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;aspect-ratio:1/1;height:calc(100% - 10px)"><div style="width:30px;height:30px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 90.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_column_original() {
+    check_boxes(&[(
+        "column-column-original",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="height:100%;aspect-ratio:1/1"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_column_original_nested_column() {
+    check_boxes(&[(
+        "column-column-original-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="height:100%;aspect-ratio:1/1"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 100.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_max() {
+    check_boxes(&[(
+        "column-max",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;max-height:50%;aspect-ratio:1/1"><div style="width:30px;height:80px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 25.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_max_nested_column() {
+    check_boxes(&[(
+        "column-max-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;max-height:50%;aspect-ratio:1/1"><div style="width:30px;height:80px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 100.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_percentage() {
+    check_boxes(&[(
+        "column-percentage",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:80%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_percentage_nested_column() {
+    check_boxes(&[(
+        "column-percentage-nested-column",
+        r#"<div style="display:flex;flex-direction:column;width:100px"><div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:80%"><div style="width:30px;height:10px"></div></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_border_box_edges() {
+    check_boxes(&[(
+        "row-border-box-edges",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;padding:10px;border:5px solid"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 54.0), ("d", 23.0, 23.0, 70.0, 24.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_content_box_edges() {
+    check_boxes(&[(
+        "row-content-box-edges",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;box-sizing:content-box;padding:10px;border:5px solid"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 130.0, 90.0), ("d", 23.0, 23.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_max_height() {
+    check_boxes(&[(
+        "row-max-height",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;max-height:40px"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 40.0), ("d", 8.0, 8.0, 100.0, 48.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_no_auto_min() {
+    check_boxes(&[(
+        "row-no-auto-min",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;min-height:0"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_wrapped() {
+    check_boxes(&[(
+        "row-wrapped",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;flex-wrap:wrap"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_centered() {
+    check_boxes(&[(
+        "row-centered",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;align-items:center"><div id=d style="width:100%;aspect-ratio:1/1;height:calc(100% - 10px)"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 13.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_vertical_item() {
+    check_boxes(&[(
+        "row-vertical-item",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;"><div id=d style="width:100%;writing-mode:vertical-lr;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_absolute_item() {
+    check_boxes(&[(
+        "row-absolute-item",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;position:relative"><div id=d style="width:100%;position:absolute;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_row_math_min() {
+    check_boxes(&[(
+        "row-math-min",
+        r#"<div id=c style="display:flex;flex-direction:row;width:100px;aspect-ratio:2/1;"><div id=d style="width:100%;min-height:min(120%, 80px)"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_border_box_edges() {
+    check_boxes(&[(
+        "column-border-box-edges",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;padding:10px;border:5px solid"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 54.0), ("d", 23.0, 23.0, 70.0, 24.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_content_box_edges() {
+    check_boxes(&[(
+        "column-content-box-edges",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;box-sizing:content-box;padding:10px;border:5px solid"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 130.0, 90.0), ("d", 23.0, 23.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_max_height() {
+    check_boxes(&[(
+        "column-max-height",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;max-height:40px"><div id=d style="width:100%;min-height:120%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 40.0), ("d", 8.0, 8.0, 100.0, 48.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_no_auto_min() {
+    check_boxes(&[(
+        "column-no-auto-min",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;min-height:0"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_wrapped() {
+    check_boxes(&[(
+        "column-wrapped",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;flex-wrap:wrap"><div id=d style="width:100%;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_centered() {
+    check_boxes(&[(
+        "column-centered",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;align-items:center"><div id=d style="width:100%;aspect-ratio:1/1;height:calc(100% - 10px)"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 40.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_vertical_item() {
+    check_boxes(&[(
+        "column-vertical-item",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;"><div id=d style="width:100%;writing-mode:vertical-lr;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_absolute_item() {
+    check_boxes(&[(
+        "column-absolute-item",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;position:relative"><div id=d style="width:100%;position:absolute;height:150%"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_math_min() {
+    check_boxes(&[(
+        "column-math-min",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1;"><div id=d style="width:100%;min-height:min(120%, 80px)"><div style="width:30px;height:10px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 60.0), ("d", 8.0, 8.0, 100.0, 60.0)],
+    )]);
+}
+
+#[test]
+fn hidden_percentage_items_do_not_raise_the_ratio_height_or_produce_fragments() {
+    for direction in ["row", "column"] {
+        let body = format!(
+            "<div id=c style='display:flex;flex-direction:{direction};width:100px;aspect-ratio:2/1'><div id=d style='display:none;height:150%'></div></div>"
+        );
+        let actual = boxes(&body);
+        assert_eq!(
+            actual.iter().find(|(id, _)| id == "c").unwrap().1,
+            [8.0, 8.0, 100.0, 50.0]
+        );
+        assert!(actual.iter().all(|(id, _)| id != "d"));
+    }
+}
+
+#[test]
+fn ratio_percentage_column_basis_50_height_auto() {
+    check_boxes(&[(
+        "column-basis-50-height-auto",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:auto;flex:0 0 50%"><div style="height:10px;width:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 25.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_basis_50_height_150percent() {
+    check_boxes(&[(
+        "column-basis-50-height-150percent",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%;flex:0 0 50%"><div style="height:10px;width:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 25.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_basis_100_height_auto() {
+    check_boxes(&[(
+        "column-basis-100-height-auto",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:auto;flex:0 0 100%"><div style="height:10px;width:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_basis_100_height_150percent() {
+    check_boxes(&[(
+        "column-basis-100-height-150percent",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%;flex:0 0 100%"><div style="height:10px;width:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 50.0), ("d", 8.0, 8.0, 100.0, 50.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_basis_150_height_auto() {
+    check_boxes(&[(
+        "column-basis-150-height-auto",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:auto;flex:0 0 150%"><div style="height:10px;width:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}
+
+#[test]
+fn ratio_percentage_column_basis_150_height_150percent() {
+    check_boxes(&[(
+        "column-basis-150-height-150percent",
+        r#"<div id=c style="display:flex;flex-direction:column;width:100px;aspect-ratio:2/1"><div id=d style="width:100%;height:150%;flex:0 0 150%"><div style="height:10px;width:30px"></div></div></div>"#,
+        &[("c", 8.0, 8.0, 100.0, 75.0), ("d", 8.0, 8.0, 100.0, 75.0)],
+    )]);
+}

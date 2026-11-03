@@ -292,6 +292,9 @@ pub(crate) struct FragmentTree {
     /// Indices of the records pushed without a parent, by source node, so a
     /// container's first layout finds its earlier roots without a scan.
     roots_by_node: std::collections::HashMap<usize, Vec<usize>>,
+    /// Indices of every record by source node, retired ones included, so the
+    /// records of a set of nodes are found without a scan of the arena.
+    by_node: std::collections::HashMap<usize, Vec<usize>>,
     /// Break points retained for a later incremental/reflow consumer.
     pub(crate) break_tokens: Vec<BreakToken>,
     /// Separate caps for fragments and estimated break-flow measurement work.
@@ -309,6 +312,7 @@ impl Default for FragmentTree {
             children_by_parent: std::collections::HashMap::new(),
             retired: std::collections::HashSet::new(),
             roots_by_node: std::collections::HashMap::new(),
+            by_node: std::collections::HashMap::new(),
             break_tokens: Vec::new(),
             limit: MAX_LAYOUT_FRAGMENTS,
             break_flow_work_used: 0,
@@ -323,6 +327,7 @@ impl FragmentTree {
         self.children_by_parent.clear();
         self.retired.clear();
         self.roots_by_node.clear();
+        self.by_node.clear();
         self.break_tokens.clear();
         self.break_flow_work_used = 0;
         self.limit_exceeded = false;
@@ -346,6 +351,7 @@ impl FragmentTree {
             return None;
         }
         let id = self.fragments.len();
+        self.by_node.entry(fragment.node_id).or_default().push(id);
         if fragment.parent.is_none() {
             self.roots_by_node
                 .entry(fragment.node_id)
@@ -389,10 +395,15 @@ impl FragmentTree {
 
     fn rebuild_indexes(&mut self) {
         self.roots_by_node.clear();
+        self.by_node.clear();
         self.children_by_parent.clear();
         #[cfg(test)]
         tests::record_index_work(0, self.fragments.len());
         for (index, fragment) in self.fragments.iter().enumerate() {
+            self.by_node
+                .entry(fragment.node_id)
+                .or_default()
+                .push(index);
             if let Some(parent) = fragment.parent {
                 self.children_by_parent
                     .entry(parent)
@@ -413,13 +424,14 @@ impl FragmentTree {
 
     pub(crate) fn retire_nodes(&mut self, nodes: &std::collections::HashSet<usize>) {
         // Keep indices stable while recursive callers retain their container.
-        self.retired.extend(
-            self.fragments
-                .iter()
-                .enumerate()
-                .filter(|(_, fragment)| nodes.contains(&fragment.node_id))
-                .map(|(index, _)| index),
-        );
+        // Only the records of these nodes are visited, however many records
+        // other containers have left.
+        for node in nodes {
+            let records = self.by_node.get(node).map_or(&[][..], Vec::as_slice);
+            #[cfg(test)]
+            tests::record_index_work(3, records.len());
+            self.retired.extend(records.iter().copied());
+        }
     }
 
     /// Retire the container roots that an earlier layout of `node_id` left,

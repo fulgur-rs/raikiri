@@ -861,6 +861,7 @@ impl Document {
         );
         sources.extend(ids(&mut projection
             .image_markers
+            .pages
             .get(&page_index)
             .into_iter()
             .flat_map(BTreeMap::keys)

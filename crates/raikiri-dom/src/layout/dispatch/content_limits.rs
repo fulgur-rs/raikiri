@@ -32,7 +32,7 @@ use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::BoxStyle as Style;
-use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_layout_style::{LayoutStyleView, LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::{PositionValue, TableLayoutValue};
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
@@ -943,6 +943,260 @@ pub(super) fn ratio_width_floors(
     })
 }
 
+/// The length that stands for "no maximum" where a bound must be installed so
+/// that the library does not carry one across the aspect ratio of a box.
+const NO_MAXIMUM: f32 = 1.0e9;
+
+/// The border-box height of the out-of-flow box `node_id` when it is laid out
+/// `width` wide with no aspect ratio and an `auto` height: the height of its
+/// content, as a box in a containing block `containing_width` wide.
+fn height_without_ratio(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    containing_width: f32,
+    width: f32,
+) -> f32 {
+    let idx = usize::from(node_id);
+    let along = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(width),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(containing_width),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(width),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let pinned = Bounds {
+        min: Some(width),
+        max: Some(width),
+    };
+    let key = MeasureKey::new(tree, idx, false, &along, pinned, None);
+    use LengthProperty::*;
+    let mut entries = vec![OwnedPropertyOverride::aspect_ratio(None)];
+    entries.extend(neutral_size_overrides(&[Height, MinHeight, MaxHeight]));
+    entries.extend(pinned.overrides(true, box_sizing_adjustment(tree, idx, containing_width)));
+    probe(tree, node_id, key, along, entries)
+}
+
+/// The border-box minimum height that the `min-width` of the box `idx` carries
+/// across its aspect ratio when its `min-height` is `auto`, or `0` where it
+/// carries none.
+fn min_height_from_min_width(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    containing_size: Size<f32>,
+) -> f32 {
+    let mut style = super::block_flow::style_input::physical(tree, idx);
+    style.min_size.height = LengthPercentageAuto::auto();
+    super::block_flow::Metrics::resolve(
+        &style,
+        false,
+        tree.nodes[idx].ratio_in_content_box,
+        LayoutInput {
+            parent_size: containing_size.map(Some),
+            ..LayoutInput::HIDDEN
+        },
+    )
+    .min
+    .height
+    .unwrap_or(0.0)
+}
+
+/// The sizes of the `candidates`, out-of-flow boxes with an aspect ratio in a
+/// containing block of `containing_size`, that the library gets wrong when it
+/// carries a minimum or maximum across the ratio or takes the height the ratio
+/// gives for final.
+///
+/// - A border-box maximum smaller than the padding and border of the box is
+///   raised to them before it is carried: the box is no smaller than that, and
+///   its other size follows from the box that results (`aspect-ratio: 2 / 1;
+///   max-height: 40px` with 25px of border is 100px wide, not 80px).
+///   `Metrics::resolve` does the same for a box in flow.
+/// - A size the box states is not one the other axis carries a bound into:
+///   a minimum or maximum height does not move the width the box states, and
+///   the other way round (CSS Sizing 4 §4.2). The library carries them whatever
+///   the box states, so the bound the box does not state itself is installed as
+///   the one that does nothing.
+/// - A box that states its width and leaves its height `auto` is no shorter
+///   than its content at that width, unless it scrolls or states a `min-height`
+///   (CSS Sizing 4 §5.1). The library takes the height the ratio gives as final,
+///   so the floor goes in as the `min-height` of the box, bounded by its
+///   `max-height`. That `min-height` replaces the one the box's `min-width`
+///   carries across the ratio, so it holds that one too, and so does a
+///   `min-height` the box states where the carried one is larger.
+///
+/// The mirror of [`ratio_width_floors`], which does the same for a box that
+/// states its height.
+pub(super) fn ratio_bound_overrides(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_size: Size<f32>,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    /// A height that the content raises to, still to be measured.
+    struct HeightFloor {
+        key: BoxKey,
+        node_id: NodeId,
+        width: f32,
+        adjustment: f32,
+        transferred: f32,
+        own_max: Option<f32>,
+    }
+    let mut entries = Vec::new();
+    let mut floors = Vec::new();
+    for &candidate in candidates {
+        let idx = usize::from(candidate);
+        if !is_plain_ratio_box(tree, idx) {
+            continue;
+        }
+        let key = tree.nodes.box_key(idx).expect("live aspect-ratio box");
+        let style = tree.physical_style(idx);
+        let (size, min, max) = (style.size(), style.min_size(), style.max_size());
+        let edges = padding_border_sum(tree, idx, Some(containing_size.width));
+        let border_box = style.box_sizing() != BoxSizing::ContentBox;
+        let scrolls = style.overflow().y.is_scroll_container();
+        let stated = Size {
+            width: size.width.maybe_resolve(Some(containing_size.width)),
+            height: size.height.maybe_resolve(Some(containing_size.height)),
+        };
+        let own_max = Size {
+            width: max.width.maybe_resolve(Some(containing_size.width)),
+            height: max.height.maybe_resolve(Some(containing_size.height)),
+        };
+        // A maximum the box does not state on an axis it sizes itself stays out
+        // of the way of the one the other axis carries into it.
+        for (property, maximum, edge, states, other_maximum) in [
+            (
+                LengthProperty::MaxWidth,
+                own_max.width,
+                edges.width,
+                stated.width.is_some(),
+                max.height,
+            ),
+            (
+                LengthProperty::MaxHeight,
+                own_max.height,
+                edges.height,
+                stated.height.is_some(),
+                max.width,
+            ),
+        ] {
+            match maximum {
+                Some(maximum) if border_box && maximum < edge => {
+                    entries.push((key, px_length(property, edge)));
+                }
+                None if states && !other_maximum.is_auto() => {
+                    entries.push((key, px_length(property, NO_MAXIMUM)));
+                }
+                _ => {}
+            }
+        }
+        let Some(stated_width) = stated.width.filter(|_| stated.height.is_none()) else {
+            continue;
+        };
+        // The box that states its width takes no minimum width from the
+        // minimum height it carries across the ratio, nor from the floor
+        // installed below: its own `min-width` is the only one.
+        let carries_minimum = !min.height.is_auto() || !scrolls;
+        if min.width.is_auto() && carries_minimum {
+            entries.push((key, px_length(LengthProperty::MinWidth, 0.0)));
+        }
+        let adjustment = if border_box {
+            Size::ZERO
+        } else {
+            Size {
+                width: edges.width,
+                height: edges.height,
+            }
+        };
+        let transferred = if min.width.is_auto() {
+            0.0
+        } else {
+            min_height_from_min_width(tree, idx, containing_size)
+        };
+        let own_max_height = own_max
+            .height
+            .map(|size| (size + adjustment.height).max(edges.height));
+        if !min.height.is_auto() {
+            // The ratio gives the height of the width the minimum raised, even
+            // where the box states a `min-height` of its own, which the library
+            // then takes for the only minimum.
+            let own_min = min
+                .height
+                .maybe_resolve(Some(containing_size.height))
+                .map_or(0.0, |size| size + adjustment.height)
+                .max(edges.height);
+            let transferred =
+                own_max_height.map_or(transferred, |maximum| transferred.min(maximum));
+            if transferred > own_min {
+                entries.push((
+                    key,
+                    px_length(
+                        LengthProperty::MinHeight,
+                        (transferred - adjustment.height).max(0.0),
+                    ),
+                ));
+            }
+            continue;
+        }
+        if scrolls {
+            continue;
+        }
+        let own_min_width = min.width.maybe_resolve(Some(containing_size.width));
+        let width = Bounds {
+            min: Some(
+                own_min_width
+                    .map_or(0.0, |size| size + adjustment.width)
+                    .max(edges.width),
+            ),
+            max: own_max.width.map(|size| size + adjustment.width),
+        }
+        .apply(stated_width + adjustment.width);
+        floors.push(HeightFloor {
+            key,
+            node_id: candidate,
+            width,
+            adjustment: adjustment.height,
+            transferred,
+            own_max: own_max_height,
+        });
+    }
+    if floors.is_empty() {
+        return entries;
+    }
+    scoped(tree, |tree| {
+        for floor in floors {
+            let content =
+                height_without_ratio(tree, floor.node_id, containing_size.width, floor.width);
+            // The floor installed as the `min-height` replaces the minimum
+            // that the `min-width` carries across the ratio, so it holds that
+            // one too.
+            let height = content.max(floor.transferred);
+            let height = floor.own_max.map_or(height, |maximum| height.min(maximum));
+            entries.push((
+                floor.key,
+                px_length(
+                    LengthProperty::MinHeight,
+                    (height - floor.adjustment).max(0.0),
+                ),
+            ));
+        }
+    });
+    entries
+}
+
 /// Whether a size, a minimum or maximum size, or an edge of the box `idx`
 /// depends on the size of its containing block.
 ///
@@ -1676,17 +1930,36 @@ fn stretched_cross_size(
     ) {
         return None;
     }
-    if cross.expand() != ExpandedDimension::Stretch {
-        let stretched = matches!(
-            item.align_self().or(Some(container.align_items())),
-            None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
-        );
-        if !stretched || start.is_auto() || end.is_auto() {
-            return None;
-        }
+    if cross.expand() != ExpandedDimension::Stretch
+        && !alignment_stretches(&container, &item, width)
+    {
+        return None;
     }
     let side = |side: LengthPercentageAuto| side.resolve(parent_size.width).unwrap_or(0.0);
     Some((room - side(start) - side(end)).max(0.0))
+}
+
+/// Whether the alignment of the flex item `item` of `container` stretches it
+/// across the main axis: `align-self`, or `align-items` of the container where
+/// that is `auto`, says `stretch` or `normal`, and neither margin across is
+/// `auto` (CSS Flexbox 1 §9.4). `width` is whether the main axis is the width,
+/// which makes the top and bottom margins the ones across.
+pub(super) fn alignment_stretches(
+    container: &LayoutStyleView<'_>,
+    item: &LayoutStyleView<'_>,
+    width: bool,
+) -> bool {
+    let margin = item.margin();
+    let (start, end) = if width {
+        (margin.top, margin.bottom)
+    } else {
+        (margin.left, margin.right)
+    };
+    matches!(
+        item.align_self().or(Some(container.align_items())),
+        None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
+    ) && !start.is_auto()
+        && !end.is_auto()
 }
 
 /// `minimum`, the content-based automatic minimum size of a flex item along
@@ -1779,7 +2052,7 @@ fn with_item_content_limits_for_parent_sizes(
                         vertical_margins_are_collapsible: Line::FALSE,
                     };
 
-                    if let Some((width, size)) = item
+                    let ratio_is_redundant = if let Some((width, size)) = item
                         .ratio_minimum
                         .and_then(|minimum| Some((minimum.width, minimum.stretched?)))
                     {
@@ -1789,7 +2062,21 @@ fn with_item_content_limits_for_parent_sizes(
                             LengthProperty::Width
                         };
                         push_size_overrides(tree, idx, vec![px_length(property, size)]);
-                    }
+                        let basis = tree.physical_style(idx).flex_basis();
+                        let main_parent = if width {
+                            parent_size.width
+                        } else {
+                            parent_size.height
+                        };
+                        if basis.is_auto() {
+                            item.ratio_minimum
+                                .is_some_and(|minimum| minimum.stated.is_some())
+                        } else {
+                            basis.maybe_resolve(main_parent).is_some()
+                        }
+                    } else {
+                        false
+                    };
                     let mut width = if limits.has_width()
                         || (is_replaced_content(tree, idx) && limits.has_height())
                     {
@@ -1830,6 +2117,18 @@ fn with_item_content_limits_for_parent_sizes(
                         push_size_overrides(tree, idx, vec![zero_length(cross)]);
                     }
 
+                    // Keep the ratio while measuring the automatic minimum:
+                    // it may still supply a floor from the stretched cross size.
+                    // Once that floor is installed, both axes are definite.
+                    // The parent must not transfer a cross maximum through the
+                    // ratio into a main maximum that shrinks the flex basis.
+                    if ratio_is_redundant {
+                        push_size_overrides(
+                            tree,
+                            idx,
+                            vec![OwnedPropertyOverride::aspect_ratio(None)],
+                        );
+                    }
                     let cache = tree.take_layout_cache(idx);
                     tree.context.content_limit_probes.push(idx);
                     saved_caches.push((idx, cache));

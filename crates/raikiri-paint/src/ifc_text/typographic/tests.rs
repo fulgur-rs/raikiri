@@ -124,3 +124,53 @@ fn nested_first_letter_group_lookup_has_a_document_wide_work_bound() {
         );
     }
 }
+
+#[test]
+fn an_element_the_pieces_do_not_mention_gets_its_group_when_it_is_asked_for() {
+    let mut doc = Document::new();
+    doc.set_font_collection(
+        build_bundled_font_collection(
+            vec![BundledFace {
+                family: "Ahem".into(),
+                bytes: include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+                ))
+                .to_vec(),
+            }],
+            false,
+        )
+        .unwrap(),
+    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let root = doc.append_element(Some(body), "div", Some("display:block;font:10px/10px Ahem"));
+    let outer = doc.append_element(Some(root), "span", Some("display:inline;opacity:.5"));
+    let inner = doc.append_element(Some(outer), "span", Some("display:inline;opacity:.7"));
+    doc.append_text(inner, "ab");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    let paragraph = Paragraph {
+        document: &doc,
+        cascade: &computed,
+        root_id: root,
+    };
+    // No piece mentions either element, so the shape has no group for them.
+    let shape = GroupShape::of(paragraph, doc.get_node(root).unwrap(), &[]);
+    let mut paint = TypographicPaint::on(&shape);
+    let mut other = TypographicPaint::on(&shape);
+    assert!(!paint.has_groups());
+    // The outer group is made first, as the element that is painted first.
+    assert_eq!(paint.element_group(paragraph, inner), Some(1));
+    assert_eq!(paint.element_group(paragraph, outer), Some(0));
+    assert_eq!(paint.groups.len(), 2);
+    assert_eq!(paint.groups[0].parent, None);
+    assert_eq!(paint.groups[0].opacity, Some(0.5));
+    assert_eq!(paint.groups[1].parent, Some(0));
+    assert_eq!(paint.groups[1].opacity, Some(0.7));
+    // What one paint finds does not change the shape the others have.
+    assert!(!other.has_groups());
+    assert_eq!(other.element_group(paragraph, outer), Some(0));
+    assert_eq!(other.groups.len(), 1);
+}

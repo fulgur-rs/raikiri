@@ -6,6 +6,22 @@ use raikiri_layout_style::values::Clear;
 thread_local! {
     pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
     pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+    pub(super) static FLOAT_SUBTREE_WALKS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static FLOAT_PREFILTER_VISITS: Cell<usize> = const { Cell::new(0) };
+    /// Children of a parent read to find where a box sits among them or what
+    /// renders before it.
+    pub(super) static PARENT_CHILD_STEPS: Cell<usize> = const { Cell::new(0) };
+    /// Moves recorded, queries for the pending move of a child, and moves
+    /// read to answer them.
+    pub(super) static SIBLING_SHIFT_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+}
+
+pub(super) fn record_sibling_shift_work(kind: usize, amount: usize) {
+    SIBLING_SHIFT_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += amount;
+        work.set(counts);
+    });
 }
 
 pub(super) fn record_sibling_adjacency_work(work: [usize; 3]) {
@@ -24,13 +40,18 @@ mod closing_edge_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
 mod geometry_lookup_tests;
+mod grid_row_tests;
+mod leading_box_scan_tests;
 mod line_ranges_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
 mod options_tests;
 mod page_name_storage_tests;
+mod page_start_tests;
 mod paged_spanning_tests;
 mod sibling_adjacency_tests;
+mod sibling_scan_tests;
+mod sibling_shift_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod top_edge_tests;
@@ -4463,6 +4484,151 @@ fn relayout_keeps_the_lines_of_a_paragraph_beside_a_float() {
         .map(line_text)
         .collect();
     assert_eq!(after, before);
+}
+
+#[test]
+fn a_box_moves_down_only_while_its_lines_keep_their_room_beside_the_floats() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    // The float is 20px tall and the three 10px lines sit at 0, 10 and 20, the
+    // first two beside it and the last below it.
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert_eq!(floats, [(0.0, 20.0)]);
+    let top = doc.nodes[root].layout.location.y;
+    let stays = |delta: f32, floats: &[(f32, f32)]| {
+        lines_stay_put_when_moved(&doc, &cascade, root, top, delta, floats)
+    };
+    // The second line moves to 15..25 and is still beside the float.
+    assert!(stays(5.0, &floats));
+    // At 20..30 it would be below the float, and the narrow room it was broken
+    // for would be left empty.
+    assert!(!stays(10.0, &floats));
+    // The lines sit beside a float that is not among those given.
+    assert!(!stays(5.0, &[]));
+    // Nor does a float elsewhere account for the lines beside the one given.
+    assert!(!stays(5.0, &[(100.0, 120.0)]));
+}
+
+#[test]
+fn a_line_a_float_puts_below_itself_stays_where_it_is() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa", "float:left;width:100px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    // The float leaves no room, so the only line starts below it and a gap
+    // opens above that line.
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert_eq!(floats, [(0.0, 20.0)]);
+    let top = doc.nodes[root].layout.location.y;
+    assert!(!lines_stay_put_when_moved(
+        &doc, &cascade, root, top, 5.0, &floats
+    ));
+}
+
+#[test]
+fn a_box_holding_a_paragraph_is_judged_by_the_paragraph() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    let wrapper = doc.parent_of(root).expect("the paragraph has a parent");
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert!(lines_stay_put_when_moved(
+        &doc, &cascade, wrapper, 0.0, 5.0, &floats
+    ));
+    assert!(!lines_stay_put_when_moved(
+        &doc, &cascade, wrapper, 0.0, 10.0, &floats
+    ));
+}
+
+#[test]
+fn a_box_of_a_formatting_context_of_its_own_is_not_moved_line_by_line() {
+    let (mut doc, cascade, _float, root) = ahem_paragraph_beside_float(
+        "aaaa bbbb cccc",
+        "float:left;width:30px;height:20px",
+        "overflow:hidden",
+    );
+    lay_out(&mut doc, &cascade);
+    // The box is placed beside the float as a whole, so its lines say nothing
+    // about the float, and moving it below the float would keep its width.
+    let floats = preceding_float_extents(&doc, &cascade, root);
+    assert_eq!(floats, [(0.0, 20.0)]);
+    let top = doc.nodes[root].layout.location.y;
+    assert!(!lines_stay_put_when_moved(
+        &doc, &cascade, root, top, 5.0, &floats
+    ));
+}
+
+#[test]
+fn only_the_floats_before_a_box_among_its_siblings_are_listed() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let float = |doc: &mut Document, side: &str, height: u32| {
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Some(&format!(
+                "display:block;float:{side};width:10px;height:{height}px"
+            )),
+        )
+    };
+    let first = float(&mut doc, "left", 20);
+    let contents = doc.append_element(Some(wrapper), "div", Some("display:contents"));
+    let root = doc.append_element(Some(contents), "div", Some("display:block"));
+    doc.append_text(root, "aaaa bbbb cccc");
+    let later = float(&mut doc, "right", 5);
+    let beside = doc.append_element(Some(wrapper), "div", Some("display:block"));
+    doc.append_text(beside, "dddd");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    // The floats before a `display: contents` box are not among the siblings
+    // of the box it holds, so none is listed for it.
+    assert_eq!(doc.layout_parent_of(root), Some(contents));
+    assert!(preceding_float_extents(&doc, &cascade, root).is_empty());
+    // A direct child lists the floats before it, and a float lists the ones
+    // before it only.
+    assert_eq!(
+        preceding_float_extents(&doc, &cascade, beside),
+        [
+            float_outer_extent(&doc, first),
+            float_outer_extent(&doc, later)
+        ]
+    );
+    assert!(preceding_float_extents(&doc, &cascade, first).is_empty());
+    assert_eq!(
+        preceding_float_extents(&doc, &cascade, later),
+        [float_outer_extent(&doc, first)]
+    );
+}
+
+#[test]
+fn a_paragraph_with_a_block_child_is_not_looked_into() {
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaa bbbb cccc", "float:left;width:30px;height:20px", "");
+    let block = doc.append_element(Some(root), "div", Some("display:block;height:5px"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade_with_block = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    drop(cascade);
+    lay_out(&mut doc, &cascade_with_block);
+    assert_eq!(doc.nodes[block].layout.size.height, 5.0);
+    let floats = preceding_float_extents(&doc, &cascade_with_block, root);
+    let top = doc.nodes[root].layout.location.y;
+    assert!(!lines_stay_put_when_moved(
+        &doc,
+        &cascade_with_block,
+        root,
+        top,
+        5.0,
+        &floats
+    ));
 }
 
 #[test]
@@ -9242,6 +9408,18 @@ fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
     page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
 }
 
+/// Places a zero-size absolutely positioned box in `wrapper`. Something placed
+/// against a block keeps it from moving to the next page with the box that
+/// begins it (see `first_box_ancestor_at_start`), so the tests of how a
+/// wrapper grows around a moved box can keep the wrapper where it is.
+fn hold_in_place(doc: &mut Document, wrapper: usize) {
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("position:absolute;width:0;height:0"),
+    );
+}
+
 /// `body > div(60px) > div(wrapper_css) > div(avoid, 60px)` on 100px pages.
 /// Returns the avoiding box's page-flow y, the wrapper's height and the
 /// page count.
@@ -9262,6 +9440,7 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
         "div",
         Some(&format!("display:block;width:100px;{wrapper_css}")),
     );
+    hold_in_place(&mut doc, wrapper);
     let avoiding = doc.append_element(
         Some(wrapper),
         "div",
@@ -9361,6 +9540,7 @@ fn avoiding_block_in_wrapper(
             "div",
             Some(&format!("display:block;{wrapper_css}")),
         );
+        hold_in_place(doc, wrapper);
         avoiding = doc.append_element(
             Some(wrapper),
             "div",
@@ -9404,6 +9584,7 @@ fn a_moved_box_inside_a_contents_element_lengthens_the_box_around_it() {
     let (doc, _) = paged_body(|doc, body| {
         doc.append_element(Some(body), "div", Some("display:block;height:50px"));
         wrapper = doc.append_element(Some(body), "div", Some("display:block"));
+        hold_in_place(doc, wrapper);
         let contents = doc.append_element(Some(wrapper), "span", Some("display:contents"));
         avoiding = doc.append_element(
             Some(contents),
@@ -13008,12 +13189,14 @@ fn break_inside_avoid_does_not_move_an_inline_box() {
 fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
     let (mut wrapper, mut after) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        doc.append_element(Some(body), "div", Some("display:block;height:59px"));
         wrapper = doc.append_element(
             Some(body),
             "div",
             Some("display:block;min-height:100px;font:10px/10px monospace"),
         );
+        // A box before the moved one keeps the wrapper where it is.
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:1px"));
         doc.append_element(
             Some(wrapper),
             "div",
@@ -13022,9 +13205,9 @@ fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
         doc.append_text(wrapper, "x");
         after = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
-    // The block moves 40px, and the line after it now ends 110px into the
+    // The block moves 40px, and the line after it now ends 111px into the
     // wrapper, past its `min-height`.
-    assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 111.0);
     assert_eq!(page_flow_y(&doc, after), 170.0);
 }
 
@@ -13036,6 +13219,7 @@ fn a_percentage_bound_resolves_against_a_percentage_height() {
         let fixed = doc.append_element(Some(body), "div", Some("display:block;height:200px"));
         let half = doc.append_element(Some(fixed), "div", Some("display:block;height:50%"));
         wrapper = doc.append_element(Some(half), "div", Some("display:block;max-height:70%"));
+        hold_in_place(doc, wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
@@ -13102,6 +13286,7 @@ fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) 
             doc.append_text(outer, "x");
         }
         let wrapper = doc.append_element(Some(outer), "div", Some("display:block"));
+        hold_in_place(doc, wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
@@ -13181,8 +13366,10 @@ fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
         },
         &[],
     );
-    // The nested box keeps its margin, 31px into the wrapper.
-    assert_eq!(ys, [0.0, 80.0, 31.0]);
+    // The margin pushes the nested box past the page end, and the page breaks
+    // before the wrapper rather than between its padding and the box. The
+    // nested box keeps its margin, 31px into the wrapper.
+    assert_eq!(ys, [0.0, 100.0, 31.0]);
 }
 
 #[test]
@@ -14437,6 +14624,7 @@ fn an_ancestor_grows_only_past_its_min_height_when_later_boxes_follow_a_moved_bo
         doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let wrapper = doc.append_element(Some(body), "div", Some("display:block;min-height:100px"));
         ids.push(wrapper);
+        hold_in_place(doc, wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
@@ -16775,9 +16963,9 @@ fn a_box_that_begins_plain_blocks_takes_them_to_the_next_page() {
     // edge, so both start the page with it.
     let (doc, cascade, [body, outer, middle, first, _]) =
         nested_holder_document("display:block", "display:block;height:50px", None);
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), outer);
-    assert_eq!(leading_holder(&doc, &cascade, body, middle, 0.0), outer);
-    assert_eq!(leading_holder(&doc, &cascade, body, outer, 0.0), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, true).0, outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, middle, true).0, outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, outer, true).0, outer);
 }
 
 #[test]
@@ -16787,23 +16975,54 @@ fn a_wrapper_without_a_box_of_its_own_is_passed_on_the_way_to_the_holder() {
     let (doc, cascade, [body, outer, middle, first, _]) =
         nested_holder_document("display:block", "display:contents", None);
     assert!(doc.layout_ancestors(first).any(|id| id == middle));
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), outer);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, true).0, outer);
 }
 
 #[test]
-fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
+fn a_box_takes_the_padding_border_and_margin_that_blocks_keep_above_it() {
+    // The wrapper starts the page with the box, which lands below the edges
+    // and the margin that sit between them.
+    let (doc, cascade, [body, outer, _, first, _]) =
+        nested_holder_document("display:block;padding-top:4px", "display:block", None);
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 4.0)
+    );
+    let (doc, cascade, [body, outer, _, first, _]) = nested_holder_document(
+        "display:block;border-top:3px solid",
+        "display:block;padding-top:5px",
+        None,
+    );
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 8.0)
+    );
+    // A block that contains the margins of the one it begins keeps the margin
+    // inside it.
+    let (doc, cascade, [body, outer, _, first, _]) =
+        nested_holder_document("display:flow-root", "display:block;margin-top:7px", None);
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 7.0)
+    );
+    // A margin that collapses through the wrapper is above it.
+    let (doc, cascade, [body, outer, _, first, _]) =
+        nested_holder_document("display:block", "display:block;margin-top:7px", None);
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, first, true),
+        (outer, 0.0)
+    );
+}
+
+#[test]
+fn a_box_does_not_take_blocks_that_render_before_it_or_cannot_move_whole() {
     // A sibling before the wrapper stays on this page with the outer wrapper.
     let (doc, cascade, [body, _, middle, first, _]) = nested_holder_document(
         "display:block",
         "display:block",
         Some("display:block;height:5px"),
     );
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), middle);
-    // Padding above the box is the place of the padded wrapper: the walk
-    // stops below it.
-    let (doc, cascade, [body, _, middle, first, _]) =
-        nested_holder_document("display:block;padding-top:4px", "display:block", None);
-    assert_eq!(leading_holder(&doc, &cascade, body, first, 0.0), middle);
+    assert_eq!(leading_holder(&doc, &cascade, body, first, true).0, middle);
     // So does a wrapper that is not a plain block, or that floats.
     for outer_css in [
         "display:flex;flex-direction:column",
@@ -16813,11 +17032,35 @@ fn a_box_does_not_take_blocks_that_render_before_it_or_have_a_top_edge() {
         let (doc, cascade, [body, _, middle, first, _]) =
             nested_holder_document(outer_css, "display:block", None);
         assert_eq!(
-            leading_holder(&doc, &cascade, body, first, 0.0),
+            leading_holder(&doc, &cascade, body, first, true).0,
             middle,
             "{outer_css}"
         );
     }
+}
+
+#[test]
+fn a_box_placed_out_of_flow_is_held_by_no_block_but_itself() {
+    // Its place does not follow the blocks around it, so they are not moved
+    // with it.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let outer = doc.append_element(Some(body), "div", Some("display:block;position:relative"));
+    let placed = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;position:absolute;top:0;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    assert!(has_unusual_coordinates(&doc, placed));
+    assert_eq!(
+        leading_holder(&doc, &cascade, body, placed, true),
+        (placed, 0.0)
+    );
 }
 
 #[test]
@@ -16835,7 +17078,7 @@ fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height(
         named_flex_context: None,
         ifc_root: None,
     };
-    let holder = leading_holder(&doc, &cascade, body, first, 0.0);
+    let holder = leading_holder(&doc, &cascade, body, first, true).0;
     assert_eq!(holder, outer);
     let mut shifts = SubtreeShifts::default();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
@@ -17003,6 +17246,10 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
         flow_y: 80.0,
         margin_top: 0.0,
         trailing_margin: 0.0,
+        holder_lead: 0.0,
+        holder_margin_top: 0.0,
+        avoided_lead: 0.0,
+        avoided_margin_top: 0.0,
         page_start: 0.0,
         page_end: 100.0,
         next_page_step: 100.0,
@@ -17044,7 +17291,13 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
 
     // The first box of a run of avoided breaks moves with the run, judged
     // where the box sits with its relative offset.
-    breaks.run_ends.insert(plain, 140.0);
+    breaks.run_ends.insert(
+        plain,
+        AvoidedRunEnd {
+            end: 140.0,
+            closing: None,
+        },
+    );
     let overflow = measure(&breaks, plain, Default::default(), &fit);
     assert!(overflow.avoided_run && overflow.moves_box());
     assert!(!measure(&breaks, plain, Default::default(), &offset_up).avoided_run);
@@ -17218,12 +17471,14 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     margins.record_bottom(body, first, true, 90.0);
     let at = MarginBreak {
         node_id: second,
+        clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
         natural_page: 1,
         forced_before: false,
         margin_top: 30.0,
         collapses_with_previous_block: true,
+        run_end: None,
     };
 
     // The block moves up to the top of the page.
@@ -17278,6 +17533,116 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
     let found = truncation(&mut doc, &mut margins, &cascade, &clearing).unwrap();
     assert_eq!(found.delta, -20.0);
+}
+
+#[test]
+fn a_page_edge_cuts_the_margins_around_an_empty_box_where_the_next_box_starts() {
+    // `body > first, empty, next`: the margin of 30 below `first` collapses
+    // with the -10 above `next` through `empty`, so the run ends at 110, 10
+    // above where the empty box sits.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block = |doc: &mut Document, css: &str| doc.append_element(Some(body), "div", Some(css));
+    let first = block(&mut doc, "display:block;height:90px");
+    let empty = block(&mut doc, "display:block");
+    let clearing = block(&mut doc, "display:block;clear:both");
+    let next = block(&mut doc, "display:block;height:30px");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.nodes[first].layout.margin.bottom = 30.0;
+    doc.nodes[next].layout.margin.top = -10.0;
+    let origins = PageOrigins::new(&[], 100.0);
+    let mut margins = SiblingMargins::default();
+    margins.record_bottom(body, first, true, 90.0);
+    let end = |raw_y: f32| {
+        Some(MarginRunEnd {
+            node_id: next,
+            raw_y,
+            height: 30.0,
+        })
+    };
+    let at = MarginBreak {
+        node_id: empty,
+        clearance_free: false,
+        raw_y: 120.0,
+        effective_y: 120.0,
+        natural_page: 1,
+        forced_before: false,
+        margin_top: 0.0,
+        collapses_with_previous_block: true,
+        run_end: end(110.0),
+    };
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+
+    // The next box lands at the top of the page, so the empty box moves up by
+    // as much as it does, not by the whole margin below `first`.
+    let found = margins
+        .truncation_at_break(&session, &cascade, &origins, &at)
+        .unwrap();
+    assert_eq!(found.delta, -10.0);
+    assert_eq!(found.underflow, None);
+    let (pulling, pulled) = margins.pulled_run_end(&session, &cascade, &at).unwrap();
+    assert_eq!((pulling.node_id, pulled), (next, 10.0));
+
+    // Without an end, or with one that is not above the empty box, the empty
+    // box is cut by its own margin.
+    for run_end in [None, end(120.0), end(125.0)] {
+        let alone = MarginBreak { run_end, ..at };
+        let found = margins
+            .truncation_at_break(&session, &cascade, &origins, &alone)
+            .unwrap();
+        assert_eq!(found.delta, -20.0);
+        assert!(margins.pulled_run_end(&session, &cascade, &alone).is_none());
+    }
+
+    // A box that clears floats, or whose margin does not collapse with the
+    // block before it, is cut by its own margin as well.
+    let clears = MarginBreak {
+        node_id: clearing,
+        ..at
+    };
+    assert!(
+        margins
+            .pulled_run_end(&session, &cascade, &clears)
+            .is_none()
+    );
+    let apart = MarginBreak {
+        collapses_with_previous_block: false,
+        ..at
+    };
+    assert!(margins.pulled_run_end(&session, &cascade, &apart).is_none());
+
+    // A forced break before the empty box keeps its margin as it is.
+    let forced = MarginBreak {
+        forced_before: true,
+        ..at
+    };
+    assert!(
+        margins
+            .pulled_run_end(&session, &cascade, &forced)
+            .is_none()
+    );
+    let found = margins
+        .truncation_at_break(&session, &cascade, &origins, &forced)
+        .unwrap();
+    assert_eq!(found.delta, -20.0);
+
+    // The page edge is outside the margins when the next box starts above the
+    // box before the empty one ends, or before the edge.
+    for raw_y in [80.0, 95.0] {
+        let outside = MarginBreak {
+            run_end: end(raw_y),
+            ..at
+        };
+        assert!(
+            margins
+                .truncation_at_break(&session, &cascade, &origins, &outside)
+                .is_none(),
+            "next box at {raw_y}"
+        );
+    }
 }
 
 #[test]
@@ -17540,6 +17905,8 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
     let overflow = |table_row_lead: f32| BoxOverflow {
         page: false,
         unbreakable: false,
+        leading_column_replaced: false,
+        moved_for_avoided_break: false,
         avoided_run: false,
         table_row: false,
         table_row_lead,
@@ -18042,6 +18409,8 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         overflow: BoxOverflow {
             page: false,
             unbreakable: false,
+            leading_column_replaced: false,
+            moved_for_avoided_break: false,
             avoided_run: false,
             table_row: false,
             table_row_lead: 0.0,
@@ -18056,6 +18425,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         collapses_with_previous_block: false,
         pending_break_applies: false,
         keeps_continuation_margin: false,
+        holder: None,
     }
 }
 
@@ -19211,6 +19581,8 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         overflow: BoxOverflow {
             page: !forced,
             unbreakable: false,
+            leading_column_replaced: false,
+            moved_for_avoided_break: false,
             avoided_run: false,
             table_row: false,
             table_row_lead: 0.0,
@@ -19225,6 +19597,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         collapses_with_previous_block: true,
         pending_break_applies: forced,
         keeps_continuation_margin: false,
+        holder: None,
     }
 }
 
@@ -20020,6 +20393,137 @@ fn a_replaced_block_that_fits_the_page_exactly_stays() {
         &[],
     );
     assert_eq!(ys, [0.0]);
+}
+
+/// `div(60px)`, a wrapper with the given style that holds an `img` 60px
+/// tall, `div(10px)` on 100px pages: the page-flow y of the wrapper, the image
+/// and the last box.
+fn clipped_wrapper_with_image(wrapper_css: &str, image_height: u32) -> Vec<f32> {
+    wrapper_with_image(wrapper_css, &format!("height:{image_height}px"))
+}
+
+/// Like [`clipped_wrapper_with_image`], with the style of the image given
+/// whole.
+fn wrapper_with_image(wrapper_css: &str, image_css: &str) -> Vec<f32> {
+    paginated_flow_ys(
+        |doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:60px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("display:block;width:100px;{wrapper_css}")),
+            );
+            let image = doc.append_element(
+                Some(wrapper),
+                "img",
+                Some(&format!("display:block;width:100px;{image_css}")),
+            );
+            let after = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:10px"),
+            );
+            vec![wrapper, image, after]
+        },
+        &[],
+    )
+}
+
+#[test]
+fn a_clipping_wrapper_with_a_height_moves_with_the_image_that_begins_it() {
+    // The image would be cut at the page end and the wrapper clips it to a
+    // height of its own, so it is the wrapper that goes to the next page, and
+    // the image with it.
+    for wrapper_css in [
+        "height:60px;overflow:hidden",
+        "height:60px;overflow:clip",
+        "height:60px;overflow-y:hidden",
+        "max-height:60px;overflow:hidden",
+    ] {
+        assert_eq!(
+            clipped_wrapper_with_image(wrapper_css, 60),
+            [100.0, 100.0, 160.0],
+            "{wrapper_css}"
+        );
+    }
+    // The wrapper keeps the height it has on the next page.
+    assert_eq!(
+        clipped_wrapper_with_image("height:80px;overflow:hidden", 60),
+        [100.0, 100.0, 180.0]
+    );
+    // One that grows with the image moved before this.
+    assert_eq!(
+        clipped_wrapper_with_image("overflow:hidden", 60),
+        [100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_wrapper_moves_with_the_image_that_begins_it_below_a_padding_or_border() {
+    // The image lands below the top edge of the wrapper, which starts the
+    // page: the wrapper from 100, the image below its padding.
+    for wrapper_css in [
+        "padding-top:10px",
+        "border-top:6px solid;padding-top:4px",
+        "height:80px;padding-top:10px;overflow:hidden",
+    ] {
+        // The box sizing of the wrapper is its content box here.
+        let after = if wrapper_css.starts_with("height") {
+            190.0
+        } else {
+            170.0
+        };
+        assert_eq!(
+            clipped_wrapper_with_image(wrapper_css, 60),
+            [100.0, 110.0, after],
+            "{wrapper_css}"
+        );
+    }
+    // A margin that the wrapper keeps inside it counts the same.
+    assert_eq!(
+        wrapper_with_image("overflow:hidden", "height:60px;margin-top:10px"),
+        [100.0, 110.0, 170.0]
+    );
+    // One that collapses through the wrapper is cut by the break.
+    assert_eq!(
+        wrapper_with_image("", "height:60px;margin-top:10px"),
+        [100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_wrapper_with_a_top_edge_moves_even_where_the_image_below_it_does_not_fit_the_next_page() {
+    // The image is taller than the room below the edge of the wrapper on the
+    // next page too. The break still goes before the wrapper, so the image is
+    // alone on the page after it.
+    assert_eq!(
+        clipped_wrapper_with_image("padding-top:30px", 80),
+        [100.0, 200.0, 280.0]
+    );
+    // One that fits moves with the wrapper.
+    assert_eq!(
+        clipped_wrapper_with_image("padding-top:30px", 60),
+        [100.0, 130.0, 190.0]
+    );
+}
+
+#[test]
+fn an_image_clipped_by_its_wrapper_to_the_page_stays_with_the_wrapper() {
+    // The 120px image shows 30px of itself, and they end above the page end.
+    assert_eq!(
+        clipped_wrapper_with_image("height:30px;overflow:hidden", 120),
+        [60.0, 60.0, 90.0]
+    );
+    // The wrapper crosses the page end, and the part of the image that shows
+    // moves with it.
+    assert_eq!(
+        clipped_wrapper_with_image("height:60px;overflow:hidden", 120),
+        [100.0, 100.0, 160.0]
+    );
 }
 
 #[test]

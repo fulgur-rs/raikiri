@@ -140,7 +140,9 @@ pub enum ViolationType {
     SchemeNotAllowed,
     /// Host rejected by `is_host_allowed`.
     HostNotAllowed,
-    /// Redirect rejected by `allow_redirect`.
+    /// Redirect rejected by `allow_redirect`, by the redirect cap, or refused
+    /// outright because it downgrades `https` to `http` or would replay a
+    /// request body to another origin.
     RedirectDenied,
     /// Fetched bytes exceeded `max_fetch_bytes`.
     FetchTooLarge {

@@ -758,6 +758,19 @@ fn run_boxes_segment(
     let mut assumed_height = 0.0_f32;
     let mut retries = 0;
     let mut beside = false;
+    // The floats met at the start of the line being laid out, one after the
+    // other. Each narrows the space of the line, and the engine keeps what it
+    // scanned of the line only for the space it scanned it in, so a line that
+    // starts with many floats would be scanned and indexed once for every one
+    // of them. Once more than `HELD_AFTER_START_FLOATS` of them have been met,
+    // the engine is asked about the space it was asked about before: the
+    // floats are met just the same, as nothing of the line comes before them.
+    // The space that decides where they go stays the real one, and the line is
+    // asked for again in the real space before it is taken.
+    let mut start_floats = 0;
+    let mut held_space: Option<LineSpace> = None;
+    #[cfg(test)]
+    let mut previous_start: Option<f32> = None;
     // Top of the lowest float this paragraph has placed, from its content
     // box: a later float may not be placed above it (CSS 2.1 9.5.1 rule 5).
     let mut ceiling = f32::NEG_INFINITY;
@@ -819,6 +832,16 @@ fn run_boxes_segment(
             assumed_height,
         );
         let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
+        let asked = held_space.take().unwrap_or(space);
+        // The engine scans a line again when the start of the space it is
+        // asked about moves.
+        #[cfg(test)]
+        {
+            if previous_start.is_some_and(|start| start != asked.inline_start) {
+                tests::ASKED_START_CHANGES.with(|count| count.set(count.get() + 1));
+            }
+            previous_start = Some(asked.inline_start);
+        }
         // The lines of a generated block take its own alignment and indent.
         // Its content is part of the paragraph's text, so its lines keep the
         // paragraph's base direction.
@@ -827,7 +850,7 @@ fn run_boxes_segment(
             |open| open.line_options(lines.len()),
         );
         let line_options = with_group_align(line_options, &options);
-        let mut constraint = line_constraint(root, width, space, open_block.is_some());
+        let mut constraint = line_constraint(root, width, asked, open_block.is_some());
         constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
@@ -842,6 +865,11 @@ fn run_boxes_segment(
             )
         });
         let Some(result) = result else { break };
+        // What the engine says about a space the floats have narrowed since
+        // holds only for a float at the start of the line.
+        if asked != space && !matches!(result, LineResult::FloatEncountered { .. }) {
+            continue;
+        }
         match result {
             LineResult::FloatEncountered {
                 node,
@@ -850,6 +878,11 @@ fn run_boxes_segment(
                 ..
             } => {
                 let node = node.0 as usize;
+                let indent = line_indent(&line_options, first_line, after_forced);
+                let starts_line = inline_position <= indent + 0.01;
+                if asked != space && !starts_line {
+                    continue;
+                }
                 cursor = Some(float_cursor);
                 // A withdrawal rewinds the cursor, so a float that already
                 // waits for the next line can be met again.
@@ -889,8 +922,6 @@ fn run_boxes_segment(
                 // beside it there (CSS 2.1 9.5.1 rules 6 and 8). The floats
                 // already met on this line come before it in the source and
                 // have no content before them either, so they are final too.
-                let indent = line_indent(&line_options, first_line, after_forced);
-                let starts_line = inline_position <= indent + 0.01;
                 if (!fits || below)
                     && starts_line
                     && deferred.is_empty()
@@ -922,9 +953,14 @@ fn run_boxes_segment(
                 } else {
                     float.late = !starts_line;
                     tentative.push(float);
+                    start_floats = if starts_line { start_floats + 1 } else { 0 };
+                    if start_floats > HELD_AFTER_START_FLOATS {
+                        held_space = Some(asked);
+                    }
                 }
             }
             LineResult::Line(line) => {
+                start_floats = 0;
                 // Placing a float moved its anchor to a later line: take the
                 // last such float back and lay the line out again without it.
                 // A displaced float that already waits for the next line
@@ -1416,7 +1452,7 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
     // The content of an anonymous cell sits in the cell's owner.
     let owner = tree.ifc_source_owner(idx);
     for b in &root.boxes {
-        let (dx, dy) = relative_offset_of(tree, idx, owner, &root.offsets, b.node);
+        let (dx, dy) = relative_offset_of(tree, idx, owner, |id| root.relative_offset(id), b.node);
         if dx != 0.0 || dy != 0.0 {
             let mut layout = tree.nodes[b.node].layout;
             layout.location.x += dx;
@@ -1428,19 +1464,23 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
 
 /// The offsets of the relatively positioned inline elements that contain
 /// `node`, up to the paragraph root `idx` (or `owner`, the source owner of an
-/// anonymous cell's content), added up. `offsets` holds the offset of each
+/// anonymous cell's content), added up. `offset_of` gives the offset of an
 /// element by node id.
 fn relative_offset_of(
     tree: &Document,
     idx: usize,
     owner: usize,
-    offsets: &[(usize, (f32, f32))],
+    offset_of: impl Fn(usize) -> Option<(f32, f32)>,
     node: usize,
 ) -> (f32, f32) {
     tree.ancestors(node)
         .take_while(|&id| id != idx && id != owner)
-        .filter_map(|id| offsets.iter().find(|(element, _)| *element == id))
-        .fold((0.0, 0.0), |(dx, dy), (_, (x, y))| (dx + x, dy + y))
+        .filter_map(|id| {
+            #[cfg(test)]
+            tests::OOF_OFFSET_STEPS.with(|count| count.set(count.get() + 1));
+            offset_of(id)
+        })
+        .fold((0.0, 0.0), |(dx, dy), (x, y)| (dx + x, dy + y))
 }
 
 /// The nearest ancestor of `node` inside the paragraph rooted at `idx` (or at
@@ -1469,68 +1509,15 @@ fn positioned_inline_ancestor(
         })
 }
 
-/// The padding box of the inline element `inline`, in the coordinates of the
-/// paragraph's content box: the bounding box of the padding boxes of its
-/// `pieces` on the lines (CSS 2.1 10.1). Its borders are the authored ones,
-/// which the pieces carry, whatever its style view reads. `line_shift` gives
-/// the move pagination made to the lines. An element with
-/// no piece of its own, such as a ruby base container, which has no box and
-/// holds its bases, spans the pieces of the elements in it. `None` when
-/// there is none.
-fn inline_padding_box(
-    tree: &LayoutSession<'_>,
-    pieces: &[super::inline_boxes::InlineBoxPiece],
-    inline: usize,
-    line_shift: impl Fn(usize) -> (f32, f32),
-) -> Option<PaddingBox> {
-    let computed = &tree.style_views.cascade().computed[inline].border;
-    let mut border = Edges {
-        top: computed.top.width().px(),
-        right: computed.right.width().px(),
-        bottom: computed.bottom.width().px(),
-        left: computed.left.width().px(),
-    };
-    let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
-    if spanned.is_empty() {
-        border = Edges::ZERO;
-        spanned = pieces
-            .iter()
-            .filter(|piece| tree.ancestors(piece.node).any(|id| id == inline))
-            .collect();
-    }
-    // The edges of a piece: its border box less its borders. A side that is
-    // not an edge of the element has no border, and the content box reaches
-    // the border box there.
-    let (left, top, right, bottom) = spanned
-        .into_iter()
-        .map(|piece| {
-            let (outer, inner) = (piece.border_box, piece.content_box);
-            let (dx, dy) = line_shift(piece.line);
-            (
-                outer.x + dx + border.left.min((inner.x - outer.x).max(0.0)),
-                outer.y + dy + border.top.min((inner.y - outer.y).max(0.0)),
-                outer.x + dx + outer.width
-                    - border
-                        .right
-                        .min((outer.x + outer.width - inner.x - inner.width).max(0.0)),
-                outer.y + dy + outer.height
-                    - border
-                        .bottom
-                        .min((outer.y + outer.height - inner.y - inner.height).max(0.0)),
-            )
-        })
-        .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))?;
-    Some(PaddingBox {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-    })
-}
-
 /// How many times one line is moved down past floats before it is accepted
 /// where it is.
 const MAX_LINE_MOVES: usize = 64;
+
+/// How many floats at the start of a line are met in the space each one
+/// narrows, before the engine is asked about the same space for the floats
+/// that follow: a few floats cost as many scans of the line, and many floats
+/// would cost a scan each.
+const HELD_AFTER_START_FLOATS: usize = 4;
 
 /// Whether a float with `clear` is moved below a float on the `side`.
 fn clears(clear: Clear, side: FloatDirection) -> bool {
@@ -1870,8 +1857,14 @@ fn fit_child(
         // height is the room it fits.
         Size {
             width: room,
-            height: orthogonal_room(tree, node, margin, geometry.definite_height)
-                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: orthogonal_room(
+                tree,
+                node,
+                margin,
+                geometry.definite_height,
+                geometry.height_cap,
+            )
+            .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
         }
     };
     // A vertical paragraph's inline extent is the box's height, so its
@@ -2141,19 +2134,67 @@ pub(crate) fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
         .filter(|height| *height > 0.0)
 }
 
+/// The most height that the content box of the horizontal container
+/// `container` gives a vertical box in it, when its `max-height` is a length:
+/// that length raised to its `min-height`, less the padding and border of the
+/// container where the limits are measured to the border box.
+///
+/// A percentage limit is no limit while the height of the container is open.
+/// A border-box limit is dropped whole when the padding above or below the
+/// container is or holds a percentage (`10%`, `calc(10% + 5px)`, also `0%`),
+/// whatever it comes to: a browser cannot take such a padding off the limit
+/// and the vertical box fits the page area. Only the padding above and below
+/// counts; the padding on the left and right, and any padding of a
+/// content-box limit, leave the limit as it is.
+pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Option<f32> {
+    let style = tree.physical_style(container);
+    let max = style.max_size().height.maybe_resolve(None::<f32>)?;
+    let min = style
+        .min_size()
+        .height
+        .maybe_resolve(None::<f32>)
+        .unwrap_or(0.0);
+    let edges = if style.box_sizing() == BoxSizing::ContentBox {
+        0.0
+    } else {
+        let padding = style.padding();
+        let border = style.border().resolve_or_zero(None::<f32>);
+        padding.top.maybe_resolve(None::<f32>)?
+            + padding.bottom.maybe_resolve(None::<f32>)?
+            + border.top
+            + border.bottom
+    };
+    Some((max.max(min) - edges).max(0.0))
+}
+
+/// The room along its height that a vertical box in a horizontal container is
+/// offered while the height of the container is open: the height of the page
+/// area within `cap`, the most that the container allows, or the one of them
+/// there is. `None` when there is neither, and the lines have no height to
+/// fit.
+pub(crate) fn open_height_room(tree: &LayoutSession<'_>, cap: Option<f32>) -> Option<f32> {
+    [page_area_height(tree), cap]
+        .into_iter()
+        .flatten()
+        .reduce(f32::min)
+}
+
 /// The room along its height that `node`, a float or an atomic inline of a
 /// horizontal paragraph, is offered when it is vertical: the paragraph's
-/// `definite_height` or else the page area's, less the margins of the box.
-/// `None` for a horizontal box, which lays out on the axes of the paragraph.
+/// `definite_height` or else the open room of its height
+/// ([`open_height_room`], with the paragraph's `height_cap`), less the margins
+/// of the box. `None` for a horizontal box, which lays out on the axes of the
+/// paragraph.
 fn orthogonal_room(
     tree: &LayoutSession<'_>,
     node: usize,
     margin: Edges<f32>,
     definite_height: Option<f32>,
+    height_cap: Option<f32>,
 ) -> Option<f32> {
     crate::layout::dispatch::used_writing_mode(tree, node)
         .is_vertical()
-        .then(|| definite_height.or_else(|| page_area_height(tree)))
+        .then(|| definite_height.or_else(|| open_height_room(tree, height_cap)))
         .flatten()
         .map(|height| (height - margin.top - margin.bottom).max(0.0))
 }
@@ -2196,8 +2237,9 @@ fn across_lines_of_orthogonal(
     node: usize,
     margin: Edges<f32>,
     definite_height: Option<f32>,
+    height_cap: Option<f32>,
 ) -> AcrossLines {
-    orthogonal_room(tree, node, margin, definite_height)
+    orthogonal_room(tree, node, margin, definite_height, height_cap)
         .map_or(AcrossLines::MaxContent, AcrossLines::Room)
 }
 
@@ -4264,7 +4306,6 @@ pub(crate) fn place_out_of_flow(
     let rtl = root.rtl;
     let writing_mode = root.writing_mode;
     let vertical_root = writing_mode != WritingMode::HorizontalTb;
-    let offsets = root.offsets.clone();
     let Some(lines) = root.lines.clone() else {
         return;
     };
@@ -4304,16 +4345,16 @@ pub(crate) fn place_out_of_flow(
     let mut fallback = None;
 
     let owner = tree.ifc_source_owner(idx);
-    // The pieces of the inline elements on the lines, made when a box needs
-    // them.
-    let mut pieces = None;
+    // The padding boxes of the inline elements on the lines, made when a box
+    // needs them.
+    let mut inline_boxes: Option<oof_index::InlinePaddingBoxes> = None;
     // The root's own style, for the boxes that take a static position.
     let mut container_style = None;
     let mut candidates = OofCandidates::new();
     for node in positioned {
         let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
             .and_then(|inline| {
-                let pieces = pieces.get_or_insert_with(|| {
+                let boxes = inline_boxes.get_or_insert_with(|| {
                     let content = shodo::geometry::PhysicalSize {
                         width: if vertical_root {
                             (border_box.width - content_left - border.right - padding.right)
@@ -4324,19 +4365,25 @@ pub(crate) fn place_out_of_flow(
                         height: (border_box.height - content_top - border.bottom - padding.bottom)
                             .max(0.0),
                     };
-                    super::inline_boxes::inline_box_pieces(
+                    oof_index::InlinePaddingBoxes::new(super::inline_boxes::inline_box_pieces(
                         &lines.lines,
                         writing_mode,
                         content,
                         |_| None,
-                    )
+                    ))
                 });
-                inline_padding_box(tree, pieces, inline, |line| {
+                boxes.padding_box(tree, (idx, owner), inline, |line| {
                     super::positioned_runs::block_shift(writing_mode, lines.shift_of(line))
                 })
             })
             .map(|inline| {
-                let (dx, dy) = relative_offset_of(tree, idx, owner, &offsets, node);
+                let offset_of = |id| {
+                    tree.nodes[idx]
+                        .ifc
+                        .as_ref()
+                        .and_then(|root| root.relative_offset(id))
+                };
+                let (dx, dy) = relative_offset_of(tree, idx, owner, offset_of, node);
                 PaddingBox {
                     x: content_left + inline.x + dx,
                     y: content_top + inline.y + dy,
@@ -4701,6 +4748,9 @@ pub(crate) fn intrinsics_of_boxes(
             );
         }
     }
+    // The room that a vertical float or atomic inline of a horizontal paragraph
+    // fits its lines in is cut at the `max-height` of the paragraph's root.
+    let height_cap = (!vertical).then(|| max_height_cap(tree, idx)).flatten();
     for b in boxes {
         let replaced = crate::paint_rules::is_replaced_element(tree.document, b.node);
         let percent = if !replaced {
@@ -4743,7 +4793,13 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         false,
-                        across_lines_of_orthogonal(tree, b.node, margin, percent_height),
+                        across_lines_of_orthogonal(
+                            tree,
+                            b.node,
+                            margin,
+                            percent_height,
+                            height_cap,
+                        ),
                     )
                 };
                 let style = tree.physical_style(b.node);
@@ -4841,7 +4897,13 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         false,
-                        across_lines_of_orthogonal(tree, b.node, margin, percent_height),
+                        across_lines_of_orthogonal(
+                            tree,
+                            b.node,
+                            margin,
+                            percent_height,
+                            height_cap,
+                        ),
                     )
                 };
                 intrinsics.engine.insert_atomic(

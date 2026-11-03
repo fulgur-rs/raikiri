@@ -337,6 +337,95 @@ fn the_margin_is_kept_whichever_box_carries_it() {
 }
 
 #[test]
+fn a_larger_margin_below_the_block_before_the_break_does_not_stay_with_the_box() {
+    // The 30px margin below the block before the break collapses with the 10px
+    // above the box into 30px. The break truncates it, and the box keeps the
+    // 10px of its own, as it does when no float sits between them.
+    let before = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
+    let left = lines(&format!(
+        "{before}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(left, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let right = lines(&format!(
+        "{before}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("right", 40, 50)
+    ));
+    assert_eq!(right, [(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)]);
+    // A box with no margin of its own starts at the top of the page.
+    let none = lines(&format!(
+        "{before}{}<div>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(none, [(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)]);
+    // The block before the break sits in a wrapper, or the box has a child
+    // that holds the text and the margin.
+    let wrapped = lines(&format!(
+        "<div>{before}</div>{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(wrapped, left);
+    let child = lines(&format!(
+        "{before}{}<div><div style='margin-top:10px'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(child, left);
+}
+
+#[test]
+fn a_line_the_floats_put_below_themselves_stays_there_when_the_margin_is_kept() {
+    // The two floats leave no room for a word beside them, so the first line
+    // goes below them, 50px down, whatever margin sits above the box.
+    let before = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
+    let lines = lines(&format!(
+        "{before}{}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50),
+        float("left", 40, 50)
+    ));
+    assert_eq!(lines, [(1, 0.0, 55.0), (2, 0.0, 5.0)]);
+}
+
+#[test]
+fn a_child_the_float_puts_below_itself_stays_below_it_when_the_margin_is_kept() {
+    // A child that clears the float, or a formatting context box too wide to
+    // sit beside it, goes below the float's lower edge at 50px whatever the
+    // 10px above the box holding it is.
+    let before = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
+    for child in [
+        "<div style='clear:left'>XX XX</div>",
+        "<div style='display:flow-root;width:90px'>XX</div>",
+    ] {
+        let lines = lines(&format!(
+            "{before}{}<div style='margin-top:10px'>{child}</div>",
+            float("left", 40, 50)
+        ));
+        assert_eq!(lines, [(1, 0.0, 55.0)], "{child}");
+    }
+}
+
+#[test]
+fn the_margin_is_kept_above_a_box_holding_several_paragraphs() {
+    let lines = lines(&format!(
+        "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>{}\
+         <div style='margin-top:10px'><div>XX</div><div>XX XX</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(lines, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+}
+
+#[test]
+fn an_empty_box_after_the_float_does_not_move_the_text_to_another_page() {
+    // The 10px-tall box keeps its margin, and the text below it breaks after
+    // its first line instead of moving to the next page whole.
+    let lines = lines(&format!(
+        "{BREAK}{}<div style='margin-top:10px;height:10px'></div>\
+         <div style='margin-top:15px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(lines, [(1, 40.0, 40.0), (1, 0.0, 70.0), (2, 0.0, 5.0)]);
+}
+
+#[test]
 fn the_break_after_a_float_is_ignored() {
     // The float and the text beside it stay on the page of the block before
     // them, and the third line starts the next page.
@@ -402,6 +491,61 @@ fn a_box_that_breaks_before_it_sits_beside_the_page_start_float() {
         float("left", 40, 50)
     ));
     assert_eq!(margin, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+}
+
+#[test]
+fn a_break_before_the_first_box_in_a_wrapper_is_the_break_the_float_took() {
+    // A break before the first box inside a wrapper is the wrapper's own, so
+    // the wrapper starts the page beside the float and no page is added, one
+    // wrapper deep or two.
+    for (side, x) in [("left", 40.0), ("right", 0.0)] {
+        for wrapper in ["<div>{}</div>", "<div><div>{}</div></div>"] {
+            let inner = format!("<div style='break-before:page'>{TEXT}</div>");
+            let body = format!(
+                "{BREAK}{}{}",
+                float(side, 40, 50),
+                wrapper.replace("{}", &inner)
+            );
+            assert_eq!(
+                lines(&body),
+                [(1, x, 5.0), (1, x, 35.0), (1, 0.0, 65.0)],
+                "{side} {wrapper}"
+            );
+        }
+    }
+    // A break before the wrapper's second box is a break of its own: the text
+    // goes to a page after the float's.
+    let second = lines(&format!(
+        "{BREAK}{}<div><div style='height:10px'></div>\
+         <div style='break-before:page'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(second, [(2, 0.0, 5.0), (2, 0.0, 35.0)]);
+    // Its margin stays above the first box, and the boxes after it follow it
+    // beside the float.
+    let margin = lines(&format!(
+        "{BREAK}{}<div><div style='break-before:page;margin-top:10px'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(margin, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let nested = lines(&format!(
+        "{BREAK}{}<div><div><div style='break-before:page;margin-top:10px'>{TEXT}</div></div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(nested, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let siblings = lines(&format!(
+        "{BREAK}{}<div><div style='break-before:page'>XX XX</div><div>XX XX</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(siblings, [(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)]);
+    // The wrapper's own generated content comes before the first box, so a
+    // break before that box is a break of its own.
+    let generated = lines(&format!(
+        "<style>.wrap::before{{content:'x'}}</style>{BREAK}{}\
+         <div class=wrap><div style='break-before:page'>{TEXT}</div></div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(generated, [(1, 40.0, 5.0), (2, 0.0, 5.0), (2, 0.0, 35.0)]);
 }
 
 /// The page, left edge, top and height of every fragment of the boxes whose
@@ -472,5 +616,44 @@ fn the_box_around_text_after_a_forced_break_continues_on_the_next_page() {
     assert_eq!(
         fragments_styled(&body, "display:flow-root"),
         [(0, 0.0, 0.0, 100.0), (1, 0.0, 0.0, 60.0)]
+    );
+}
+
+#[test]
+fn text_beside_two_left_floats_is_narrowed_by_the_taller_second_float() {
+    // The first float is 40px wide and 30px tall, and the second one sits
+    // beside it (x 40 to 60) and is 50px tall. The second line starts below
+    // the first float's bottom edge but is still beside the second float, so
+    // it keeps starting at 60px until that float ends.
+    let floats = format!("{}{}", float("left", 40, 30), float("left", 20, 50));
+    let text = format!("<div style='margin-top:10px'>{TEXT}</div>");
+    assert_eq!(
+        lines(&format!("{BREAK}{floats}{text}")),
+        [(1, 60.0, 15.0), (1, 60.0, 45.0), (1, 0.0, 75.0)]
+    );
+    // The same without the break: the first page starts with the floats.
+    assert_eq!(
+        lines(&format!("{floats}{text}")),
+        [(0, 60.0, 15.0), (0, 60.0, 45.0), (0, 0.0, 75.0)]
+    );
+    // The same in the middle of a page, after a 20px block.
+    assert_eq!(
+        lines(&format!(
+            "<div style='height:20px'>a</div>{floats}<div>{TEXT}</div>"
+        )),
+        [(0, 60.0, 25.0), (0, 60.0, 55.0), (1, 0.0, 5.0)]
+    );
+}
+
+#[test]
+fn text_beside_a_left_and_a_taller_right_float_is_narrowed_by_both() {
+    // The floats sit on opposite sides. The first line is beside both and
+    // starts at 40px; the second one is below the left float but still beside
+    // the taller right float, so only its right edge is narrowed.
+    let floats = format!("{}{}", float("left", 40, 30), float("right", 20, 50));
+    let text = format!("<div style='margin-top:10px'>{TEXT}</div>");
+    assert_eq!(
+        lines(&format!("{BREAK}{floats}{text}")),
+        [(1, 40.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)]
     );
 }

@@ -85,6 +85,12 @@ fn assert_indexes(tree: &FragmentTree) {
         entries.sort_unstable();
     }
     assert_eq!(indexed, roots);
+    // Every record is indexed under its node, retired ones included.
+    let mut by_node = HashMap::<usize, Vec<usize>>::new();
+    for (index, fragment) in tree.fragments.iter().enumerate() {
+        by_node.entry(fragment.node_id).or_default().push(index);
+    }
+    assert_eq!(tree.by_node, by_node);
 }
 
 // The original compaction and node-order numbering, independent of indexes.
@@ -305,7 +311,7 @@ fn fragment_retirement_index_work_scales_with_independent_groups() {
         let mut page = raikiri_traits::PageBox::new();
         page.width = 800.0;
         page.height = 600.0;
-        INDEX_WORK.with(|work| work.set([0; 3]));
+        INDEX_WORK.with(|work| work.set([0; 4]));
         crate::layout_single_page(&mut doc, &cascade, page).unwrap();
         let counts = INDEX_WORK.with(|work| work.get());
         println!("groups={groups} index_work={counts:?}");
@@ -316,6 +322,135 @@ fn fragment_retirement_index_work_scales_with_independent_groups() {
         assert!(
             counts.iter().sum::<usize>() <= 32 * groups,
             "{groups}: {counts:?}"
+        );
+    }
+}
+
+/// A tree of `nodes` source nodes with `per_node` records each, laid out the
+/// way the nodes of independent containers are: records are pushed one node
+/// after the other.
+fn tree_of_nodes(nodes: usize, per_node: usize) -> FragmentTree {
+    let mut tree = FragmentTree::default();
+    for node in 0..nodes {
+        let first = tree.try_push(fragment(node, None)).unwrap();
+        for _ in 1..per_node {
+            tree.try_push(fragment(node, Some(first))).unwrap();
+        }
+    }
+    tree
+}
+
+#[test]
+fn retiring_nodes_visits_only_the_records_of_those_nodes() {
+    for nodes in [64, 128, 256, 512, 1024] {
+        let mut tree = tree_of_nodes(nodes, 3);
+        let mut expected = HashSet::new();
+        INDEX_WORK.with(|work| work.set([0; 4]));
+        // One call per pair of nodes, as one container with a spanner is laid
+        // out after another.
+        for first in (0..nodes).step_by(2) {
+            let set = HashSet::from([first, first + 1, nodes + first]);
+            expected.extend(
+                tree.fragments
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, fragment)| set.contains(&fragment.node_id))
+                    .map(|(index, _)| index),
+            );
+            tree.retire_nodes(&set);
+            assert_eq!(tree.retired, expected, "{nodes}: {first}");
+        }
+        // Each record of a node is visited once: 3 for each of the nodes
+        // below `nodes`, and none for the nodes that have no records.
+        let visited = INDEX_WORK.with(|work| work.get())[3];
+        assert_eq!(visited, nodes * 3, "{nodes}");
+        assert_eq!(tree.retired.len(), nodes * 3);
+        assert_indexes(&tree);
+    }
+}
+
+#[test]
+fn a_record_pushed_after_a_retirement_is_found_by_the_next_one() {
+    let mut tree = tree_of_nodes(4, 2);
+    tree.retire_nodes(&HashSet::from([1]));
+    let later = tree.try_push(fragment(1, None)).unwrap();
+    assert!(!tree.is_retired(later));
+    tree.retire_nodes(&HashSet::from([1]));
+    assert!(tree.is_retired(later));
+    assert_eq!(tree.retired.len(), 3);
+    // A rejected push is not indexed.
+    let mut full = FragmentTree {
+        limit: 1,
+        ..FragmentTree::default()
+    };
+    full.try_push(fragment(5, None)).unwrap();
+    assert_eq!(full.try_push(fragment(6, None)), None);
+    assert!(!full.by_node.contains_key(&6));
+    // Compaction drops the three retired records of node 1 (two from the
+    // start and the later one) and renumbers the others; the index follows.
+    tree.finalize();
+    assert_eq!(tree.fragments.len(), 6);
+    assert_indexes(&tree);
+    tree.retire_nodes(&HashSet::from([0, 2]));
+    assert_eq!(tree.retired.len(), 4);
+}
+
+fn spanner_document(groups: usize) -> Document {
+    let mut doc = Document::new();
+    doc.set_font_collection(shodo::font::FontCollection::new(
+        &shodo::limits::Limits::default(),
+    ));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    for _ in 0..groups {
+        let owner = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;columns:2;column-gap:0"),
+        );
+        doc.append_element(Some(owner), "div", Some("display:block;height:20px"));
+        // The spanner holds a container of its own, which leaves records to
+        // retire when the owner is laid out again.
+        let spanner = doc.append_element(Some(owner), "div", Some("display:block;column-span:all"));
+        let nested = doc.append_element(
+            Some(spanner),
+            "div",
+            Some("display:block;columns:2;column-gap:0"),
+        );
+        doc.append_element(
+            Some(nested),
+            "div",
+            Some("display:block;width:12.5px;height:40px"),
+        );
+    }
+    doc.mark_in_document_flags();
+    doc
+}
+
+#[test]
+fn preliminary_spanner_records_are_retired_in_work_that_scales_with_the_spanners() {
+    for groups in [16, 32, 64, 128, 256] {
+        let mut doc = spanner_document(groups);
+        let mut rules = RuleTree::empty();
+        rules.add_stylesheet("html,body{display:block;margin:0}", Origin::Author);
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        INDEX_WORK.with(|work| work.set([0; 4]));
+        crate::layout_single_page(&mut doc, &cascade, page).unwrap();
+        let visited = INDEX_WORK.with(|work| work.get())[3];
+        println!(
+            "groups={groups} visited={visited} fragments={}",
+            doc.layout_fragments().len()
+        );
+        assert!(visited > 0, "{groups}: nothing was retired");
+        // The records of the nodes of one spanner, not of all the fragments
+        // laid out so far: a scan of the arena for each of the two layouts of
+        // an owner would visit about `groups` times as many.
+        assert!(
+            visited <= 16 * groups,
+            "{groups}: {visited} records visited"
         );
     }
 }

@@ -98,7 +98,8 @@ const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 /// element is that element's own ancestor chain (as seen from the walk's
 /// starting point): combinator and `:has()` searches only ever shrink,
 /// extend, or pass through the subject's chain, never pair an element with a
-/// different one.
+/// different one. The `:has()` search path is kept between searches on the
+/// same basis, see [`seed_ancestor_path`].
 ///
 /// # Re-entrancy
 ///
@@ -141,6 +142,10 @@ pub(crate) struct MatchCaches {
 #[derive(Default)]
 struct HasScratch {
     /// The ancestor chain of the candidate being matched, root-most first.
+    ///
+    /// It is not cleared between searches: the next anchor's chain usually
+    /// shares a long prefix with what the last search left here, and
+    /// [`seed_ancestor_path`] copies only the rest.
     path: Vec<StyleNodeId>,
     /// Pending candidates with the `path` length to truncate to first.
     stack: Vec<(StyleNodeId, usize)>,
@@ -236,10 +241,11 @@ impl MatchCaches {
         Self::with_query_work(Rc::default(), true)
     }
 
-    /// Takes a cleared [`HasScratch`] from the pool (or a new one).
+    /// Takes a [`HasScratch`] from the pool (or a new one), with an empty
+    /// stack. Its `path` still holds what the previous search left, which
+    /// [`seed_ancestor_path`] reconciles with the next anchor's chain.
     fn take_has_scratch(&self) -> HasScratch {
         let mut scratch = self.has_scratch.borrow_mut().pop().unwrap_or_default();
-        scratch.path.clear();
         scratch.stack.clear();
         scratch
     }
@@ -1230,6 +1236,49 @@ fn has_relative_selector_matches<D: StyleDom>(
     Ok(false)
 }
 
+/// Leaves `path` holding exactly `chain` (an anchor's ancestors) and charges
+/// for what it had to copy, instead of copying the whole chain for every
+/// anchor.
+///
+/// Every `:has()` search starts from its anchor's chain, and a stylesheet
+/// walk or a `querySelectorAll` visits anchors in document order, so the next
+/// anchor's chain mostly repeats what the last search left in `path`. A chain
+/// of depth `n` that is visited top down would otherwise copy and charge
+/// `n²/2` ids in all, even when every search ends at the anchor's first
+/// child.
+///
+/// An element's ancestor chain is fixed for the lifetime of a
+/// [`MatchCaches`] (see its soundness precondition), and `path` is always the
+/// chain of the node at its end, extended downwards by the search. Two such
+/// paths that hold the same node at the same depth therefore agree on every
+/// position above it, so the positions where `path` and `chain` agree form a
+/// prefix and a binary search finds where they part. Its `O(log depth)`
+/// comparisons are not charged; only the ids copied are.
+fn seed_ancestor_path<D: StyleDom>(
+    ctx: MatchContext<'_, D>,
+    path: &mut Vec<StyleNodeId>,
+    chain: &[StyleNodeId],
+) -> Result<(), CascadeError> {
+    let (mut shared, mut end) = (0, path.len().min(chain.len()));
+    while shared < end {
+        let middle = shared + (end - shared) / 2;
+        if path[middle] == chain[middle] {
+            shared = middle + 1;
+        } else {
+            end = middle;
+        }
+    }
+    debug_assert_eq!(
+        path[..shared],
+        chain[..shared],
+        "an element was paired with two different ancestor chains"
+    );
+    ctx.caches.work.charge((chain.len() - shared) as u64)?;
+    path.truncate(shared);
+    path.extend_from_slice(&chain[shared..]);
+    Ok(())
+}
+
 /// One relative selector of [`has_relative_selector_matches`]: seeds
 /// `scratch` with the candidate roots and their shared ancestor chain, then
 /// runs the region search.
@@ -1240,10 +1289,8 @@ fn relative_selector_matches<D: StyleDom>(
     anchor_ancestors: &[StyleNodeId],
     scratch: &mut HasScratch,
 ) -> Result<bool, CascadeError> {
-    scratch.path.clear();
     scratch.stack.clear();
-    ctx.caches.work.charge(anchor_ancestors.len() as u64)?;
-    scratch.path.extend_from_slice(anchor_ancestors);
+    seed_ancestor_path(ctx, &mut scratch.path, anchor_ancestors)?;
     match relative_selector.selector.combinator_at_parse_order(1) {
         Combinator::Child | Combinator::Descendant => {
             // The roots are the anchor's element children, so the anchor

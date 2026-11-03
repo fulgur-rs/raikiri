@@ -116,6 +116,10 @@ fn a_box_moves_only_when_the_next_page_can_hold_it_without_the_edges() {
             flow_y: 40.0,
             margin_top: 0.0,
             trailing_margin: 0.0,
+            holder_lead: 0.0,
+            holder_margin_top: 0.0,
+            avoided_lead: 0.0,
+            avoided_margin_top: 0.0,
             page_start: 0.0,
             page_end: 100.0,
             next_page_step,
@@ -370,15 +374,13 @@ fn a_block_tied_to_a_box_below_the_top_of_its_page_stays_with_the_run() {
 }
 
 #[test]
-fn a_block_tied_to_a_run_that_cannot_fit_a_page_keeps_its_place_below_the_page_top() {
-    // The run of the box and the block is taller than a page, so the page does
-    // not keep it together and the box stays where it is. That box is not at
-    // the top of the page, so the avoided break before the block holds, and
-    // the block stays with it. (Browsers move the box on to the next page
-    // too, which is not done.)
+fn a_run_too_tall_only_because_of_closing_edges_moves_before_its_card_moves_alone() {
+    // The content fits the current page, but the card's closing edges do
+    // not. The run first moves to the next page; its head then starts that
+    // page, so the card can break away and start the following one.
     assert_eq!(
         card_after_leads_tied(&[(10, ""), (50, "break-after:avoid")], 30, "", ""),
-        [0.0, 10.0, 60.0, 60.0, 120.0]
+        [0.0, 100.0, 200.0, 200.0, 260.0]
     );
 }
 
@@ -565,10 +567,10 @@ fn a_block_that_holds_one_box_beside_a_float_moves_whole() {
 }
 
 #[test]
-fn a_block_that_holds_one_box_stays_when_a_float_reaches_past_its_content() {
-    // The float runs into the padding below the box or out of the block, to
-    // where the page ends, and has a break to take of its own.
-    for (float_height, float_first) in [(70, true), (70, false), (40, true)] {
+fn a_block_that_holds_one_box_stays_when_a_float_crosses_the_page_end() {
+    // The float runs into the padding below the box or out of the block, past
+    // the page end, and has a break to take of its own.
+    for (float_height, float_first) in [(70, true), (70, false), (41, true), (11, false)] {
         assert_eq!(
             parent_with(|doc, parent| {
                 let float = format!("float:left;width:10px;height:{float_height}px");
@@ -581,6 +583,28 @@ fn a_block_that_holds_one_box_stays_when_a_float_reaches_past_its_content() {
                 }
             }),
             60.0,
+            "{float_height} {float_first}"
+        );
+    }
+}
+
+#[test]
+fn a_block_that_holds_one_box_moves_when_a_float_reaches_into_its_padding_within_the_page() {
+    // The float reaches below the box, into the padding or past it, but ends
+    // at the page end at the latest: it goes with the block.
+    for (float_height, float_first) in [(40, true), (35, true), (10, false), (5, false)] {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                let float = format!("float:left;width:10px;height:{float_height}px");
+                if float_first {
+                    block(doc, parent, &float);
+                }
+                block(doc, parent, "display:block;height:30px");
+                if !float_first {
+                    block(doc, parent, &float);
+                }
+            }),
+            100.0,
             "{float_height} {float_first}"
         );
     }
@@ -1052,13 +1076,15 @@ fn an_avoided_break_before_a_float_leaves_the_box_before_it_as_the_last_one() {
 }
 
 #[test]
-fn a_float_between_the_tied_boxes_leaves_them_alone() {
-    // The float is a flow of its own and has rules of its own.
-    let mut last = 0;
+fn a_float_between_the_tied_boxes_goes_with_them() {
+    // The float lies in a flow of its own and does not cut the run the boxes
+    // make: the second and last box move to the next page together, and the
+    // padding of the parent with them.
+    let (mut second, mut last) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         let parent = block(doc, body, "display:block;padding-bottom:30px");
         block(doc, parent, "display:block;height:40px");
-        block(doc, parent, "display:block;height:30px;break-after:avoid");
+        second = block(doc, parent, "display:block;height:30px;break-after:avoid");
         block(
             doc,
             parent,
@@ -1066,7 +1092,8 @@ fn a_float_between_the_tied_boxes_leaves_them_alone() {
         );
         last = block(doc, parent, "display:block;height:20px");
     });
-    assert_eq!(page_flow_y(&doc, last), 70.0);
+    assert_eq!(page_flow_y(&doc, second), 100.0);
+    assert_eq!(page_flow_y(&doc, last), 130.0);
 }
 
 #[test]
@@ -1461,9 +1488,11 @@ fn the_last_lines_that_widows_keep_together_move_with_the_edges() {
     assert_eq!(closed_paragraph(6, "orphans:1;widows:3"), (10.0, 170.0));
     assert_eq!(closed_paragraph(3, "orphans:1;widows:1"), (40.0, 150.0));
     assert_eq!(closed_paragraph(2, "orphans:1;widows:1"), (50.0, 150.0));
-    // A paragraph that avoids breaks inside keeps all its lines.
+    // A paragraph that avoids breaks inside keeps all its lines, so the box
+    // before it is the one the page breaks from: it moves whole with the
+    // padding, which fit a page together (60 + 40).
     for avoid in ["break-inside:avoid", "break-inside:avoid-page"] {
-        assert_eq!(closed_paragraph(6, avoid), (10.0, 110.0), "{avoid}");
+        assert_eq!(closed_paragraph(6, avoid), (100.0, 200.0), "{avoid}");
     }
 }
 
@@ -2767,13 +2796,33 @@ fn a_block_that_avoids_breaks_stays_with_its_parent_when_the_edges_fit() {
 }
 
 #[test]
-fn a_block_that_avoids_breaks_but_does_not_fit_the_page_leaves_its_parent_in_place() {
-    // The avoiding block runs past the page end on its own, so it moves alone
-    // and the padding below it follows it.
+fn a_block_that_avoids_breaks_and_begins_its_parent_takes_the_parent_along() {
+    // The avoiding block runs past the page end on its own, and no page breaks
+    // between the start of its parent and the block, so the parent starts the
+    // next page with it, and the padding below follows.
     let (mut parent, mut avoided) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:60px");
         parent = block(doc, body, "display:block;padding-bottom:30px");
+        avoided = block(doc, parent, "display:block;break-inside:avoid");
+        block(doc, avoided, "display:block;height:30px");
+        block(doc, avoided, "display:block;height:40px");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, parent), page_flow_y(&doc, avoided)),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_leaves_a_parent_that_something_precedes_it_in_place() {
+    // A box before it keeps the parent's start on this page: only the
+    // avoiding block moves, and the padding below it follows it.
+    let (mut parent, mut avoided) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, "display:block;padding-bottom:30px");
+        block(doc, parent, "display:block;height:0");
         avoided = block(doc, parent, "display:block;break-inside:avoid");
         block(doc, avoided, "display:block;height:30px");
         block(doc, avoided, "display:block;height:40px");
@@ -3111,7 +3160,7 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
     // the edges when nothing keeps the items together or makes the last one
     // something else than a box to move.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 19] = [
+    let shapes: [(&str, Shape); 17] = [
         ("avoided break before the last item", |doc, card| {
             let ids = flex_column_of(doc, card, 1, "");
             vec![
@@ -3250,28 +3299,56 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
                 vec![ids[0], ids[1], ids[2]]
             },
         ),
-        // Browsers send the whole container on with the edges; it is left
-        // where the flow puts it.
-        ("flex column that avoids breaks inside", |doc, card| {
-            let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
-            vec![ids[0], ids[1], ids[2]]
-        }),
-        ("table that avoids breaks inside", |doc, card| {
-            let table = block(
-                doc,
-                card,
-                "display:table;border-spacing:0;break-inside:avoid",
-            );
-            let first = block(doc, table, "display:table-row");
-            block(doc, first, "display:table-cell;padding:0;height:10px");
-            let row = block(doc, table, "display:table-row");
-            block(doc, row, "display:table-cell;padding:0;height:10px");
-            vec![table, first, row]
-        }),
     ];
     for (label, build) in shapes {
         let (ys, _) = card_with_edges(30, build);
         assert!(ys[2] < 100.0, "{label}: {ys:?}");
+    }
+}
+
+#[test]
+fn a_container_that_avoids_breaks_inside_moves_whole_with_the_edges() {
+    // Nothing may break between its items, so the page breaks before the
+    // container, and the items go on with it rather than one of them alone.
+    let (ys, height) = card_with_edges(30, |doc, card| {
+        let ids = flex_column_of(doc, card, 2, "break-inside:avoid");
+        vec![ids[0], ids[1], ids[2]]
+    });
+    assert_eq!(ys, [100.0, 100.0, 110.0]);
+    assert_eq!(height, 150.0);
+    let (ys, height) = card_with_edges(30, |doc, card| {
+        let table = block(
+            doc,
+            card,
+            "display:table;border-spacing:0;break-inside:avoid",
+        );
+        let first = block(doc, table, "display:table-row");
+        block(doc, first, "display:table-cell;padding:0;height:10px");
+        let row = block(doc, table, "display:table-row");
+        block(doc, row, "display:table-cell;padding:0;height:10px");
+        vec![table, first, row]
+    });
+    assert_eq!(ys, [100.0, 100.0, 110.0]);
+    assert_eq!(height, 150.0);
+}
+
+#[test]
+fn an_avoiding_box_with_a_forced_break_inside_stays_where_the_break_splits_it() {
+    // `break-inside` does not stop a forced break, so the box is split there
+    // wherever it sits: moving it whole first would only add a page.
+    for column in [true, false] {
+        let (ys, _) = card_with_edges(30, |doc, card| {
+            let display = if column {
+                "display:flex;flex-direction:column;"
+            } else {
+                "display:block;"
+            };
+            let outer = block(doc, card, &format!("{display}break-inside:avoid"));
+            let first = block(doc, outer, "display:block;height:10px");
+            let second = block(doc, outer, "display:block;height:10px;break-before:page");
+            vec![outer, first, second]
+        });
+        assert_eq!(ys, [70.0, 70.0, 100.0], "column: {column}");
     }
 }
 
@@ -3368,4 +3445,648 @@ fn a_container_alone_in_its_card_moves_whole_with_the_edges() {
         assert_eq!(page_flow_y(&doc, card), 100.0, "{label}");
         assert_eq!(page_flow_y(&doc, item[0]), 100.0, "{label}");
     }
+}
+
+/// `body > div(padding-bottom:30px) > [div(40px), div(30px), ...]` on 100px
+/// pages, where `build` adds boxes to the card. Returns the page-flow y of
+/// the boxes it returns.
+fn card_boxes(build: impl FnOnce(&mut Document, usize) -> Vec<usize>) -> Vec<f32> {
+    card_with_edges(30, build).0
+}
+
+#[test]
+fn a_float_after_the_last_box_moves_with_it_when_it_ends_within_the_page() {
+    // The last box ends at 90 and the padding below it does not fit; the float
+    // after it ends at the page end at the latest, so it goes along.
+    for (float_height, moves) in [(10, true), (5, true), (11, false), (30, false)] {
+        let ys = card_boxes(|doc, card| {
+            let last = block(doc, card, "display:block;height:20px");
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            vec![last, float]
+        });
+        let expected = if moves { [100.0, 120.0] } else { [70.0, 90.0] };
+        assert_eq!(ys, expected, "{float_height}");
+    }
+}
+
+#[test]
+fn a_float_after_the_last_box_of_an_inner_block_moves_with_it_unless_it_crosses() {
+    // The float is a child of the wrapper the last box sits in, or of the card
+    // after the wrapper, whose padding the box ends.
+    for (float_in_wrapper, float_height, moves) in [
+        (true, 10, true),
+        (false, 10, true),
+        (true, 11, false),
+        (false, 11, false),
+    ] {
+        let ys = card_boxes(|doc, card| {
+            let wrapper = block(doc, card, "display:block");
+            let last = block(doc, wrapper, "display:block;height:20px");
+            let float = block(
+                doc,
+                if float_in_wrapper { wrapper } else { card },
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            vec![last, float]
+        });
+        let expected = if moves { [100.0, 120.0] } else { [70.0, 90.0] };
+        assert_eq!(ys, expected, "{float_in_wrapper} {float_height}");
+    }
+}
+
+#[test]
+fn the_margin_below_a_float_counts_in_where_it_ends() {
+    // The float and its margin end at the page end at the latest to go along.
+    for (float_height, moves) in [(9, true), (10, false)] {
+        let ys = card_boxes(|doc, card| {
+            let last = block(doc, card, "display:block;height:20px");
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px;margin-bottom:1px"),
+            );
+            vec![last, float]
+        });
+        let expected = if moves { [100.0, 120.0] } else { [70.0, 90.0] };
+        assert_eq!(ys, expected, "{float_height}");
+    }
+    // The same holds for a float beside the one box of a block.
+    for (margin, moves) in [(5, true), (6, false)] {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                block(
+                    doc,
+                    parent,
+                    &format!("float:left;width:10px;height:35px;margin-bottom:{margin}px"),
+                );
+                block(doc, parent, "display:block;height:30px");
+            }),
+            if moves { 100.0 } else { 60.0 },
+            "{margin}"
+        );
+    }
+}
+
+#[test]
+fn a_float_after_the_block_in_its_parent_does_not_keep_the_block_from_moving() {
+    // The float belongs to the body, whose edges the block does not end: it is
+    // no float of the block, and no edge it crosses stops the block.
+    let (mut parent, mut only) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, "display:block;padding-bottom:30px");
+        only = block(doc, parent, "display:block;height:30px");
+        block(doc, body, "float:left;width:10px;height:80px");
+    });
+    assert_eq!(page_flow_y(&doc, parent), 100.0);
+    assert_eq!(page_flow_y(&doc, only), 100.0);
+}
+
+#[test]
+fn a_float_before_the_last_box_stays_behind_unless_it_crosses_the_page_end() {
+    // The float sits at the end of the box before, and the page breaks
+    // between it and the last box, which leaves the float behind. One that
+    // runs past the page end keeps the box with it.
+    for (float_height, moves) in [(20, true), (30, true), (31, false), (60, false)] {
+        let ys = card_boxes(|doc, card| {
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            let last = block(doc, card, "display:block;height:20px");
+            vec![float, last]
+        });
+        let expected = if moves { [70.0, 100.0] } else { [70.0, 70.0] };
+        assert_eq!(ys, expected, "{float_height}");
+    }
+}
+
+#[test]
+fn a_relative_offset_of_the_last_box_does_not_change_how_far_a_float_reaches() {
+    // The box moves by its normal-flow position, 70 to 90, whatever its
+    // offset: a float that ends at the page end at the latest goes along, a
+    // float 1px over keeps it, offset up or down.
+    for (top, float_height, moves) in [
+        (-7, 30, true),
+        (7, 30, true),
+        (-7, 31, false),
+        (7, 31, false),
+    ] {
+        let ys = card_boxes(|doc, card| {
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            let last = block(
+                doc,
+                card,
+                &format!("display:block;height:20px;position:relative;top:{top}px"),
+            );
+            vec![float, last]
+        });
+        let start = if moves { 100.0 } else { 70.0 };
+        assert_eq!(ys, [70.0, start + top as f32], "{top} {float_height}");
+    }
+}
+
+#[test]
+fn a_float_after_the_last_box_of_an_offset_block_counts_from_the_normal_flow_position() {
+    // The wrapper that holds the last box is offset, the float is not (it is
+    // the card's): both ends are measured without the offset.
+    for (top, float_height, moves) in [
+        (-7, 10, true),
+        (7, 10, true),
+        (-7, 11, false),
+        (7, 11, false),
+    ] {
+        let ys = card_boxes(|doc, card| {
+            let wrapper = block(
+                doc,
+                card,
+                &format!("display:block;position:relative;top:{top}px"),
+            );
+            let last = block(doc, wrapper, "display:block;height:20px");
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            vec![last, float]
+        });
+        // The float in the card follows the box only to the position the
+        // card's own flow gives it, which is not under test here.
+        let start = if moves { 100.0 } else { 70.0 };
+        assert_eq!(ys[0], start + top as f32, "{top} {float_height}");
+    }
+}
+
+#[test]
+fn a_float_in_an_offset_block_that_holds_the_one_box_counts_from_the_normal_flow_position() {
+    // The block that holds the box, and the float beside it, are offset; the
+    // block they sit in is not. The box ends at 90 and the float at 100 in the
+    // flow, or at 101.
+    for (top, float_height, moves) in [
+        (-7, 10, true),
+        (7, 10, true),
+        (-7, 11, false),
+        (7, 11, false),
+    ] {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                let inner = block(
+                    doc,
+                    parent,
+                    &format!("display:block;position:relative;top:{top}px"),
+                );
+                block(doc, inner, "display:block;height:30px");
+                block(
+                    doc,
+                    inner,
+                    &format!("float:left;width:10px;height:{float_height}px"),
+                );
+            }),
+            if moves { 100.0 } else { 60.0 },
+            "{top} {float_height}"
+        );
+    }
+}
+
+#[test]
+fn a_float_of_an_offset_card_counts_from_the_normal_flow_position_of_the_box_in_it() {
+    // The card and the wrapper that holds its last box are offset by different
+    // amounts. The float is the card's, so it carries the card's offset only.
+    for (card_top, wrapper_top, float_height, moves) in [
+        (5, -7, 10, true),
+        (-5, 7, 10, true),
+        (5, -7, 11, false),
+        (-5, 7, 11, false),
+    ] {
+        let mut last = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let card = block(
+                doc,
+                body,
+                &format!("display:block;padding-bottom:30px;position:relative;top:{card_top}px"),
+            );
+            block(doc, card, "display:block;height:40px");
+            block(doc, card, "display:block;height:30px");
+            let wrapper = block(
+                doc,
+                card,
+                &format!("display:block;position:relative;top:{wrapper_top}px"),
+            );
+            last = block(doc, wrapper, "display:block;height:20px");
+            block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+        });
+        let start = if moves { 100.0 } else { 70.0 };
+        assert_eq!(
+            page_flow_y(&doc, last),
+            start + (card_top + wrapper_top) as f32,
+            "{card_top} {wrapper_top} {float_height}"
+        );
+    }
+}
+
+#[test]
+fn a_float_between_the_boxes_of_a_tied_run_moves_with_it() {
+    // The float between the second box and the card does not cut the run the
+    // boxes make with the card, which moves as a whole.
+    let (mut second, mut card, mut only) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        second = block(doc, body, "display:block;height:30px;break-after:avoid");
+        block(doc, body, "float:left;width:10px;height:5px");
+        card = block(doc, body, "display:block;padding-bottom:15px");
+        only = block(doc, card, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, second), 100.0);
+    assert_eq!(page_flow_y(&doc, card), 130.0);
+    assert_eq!(page_flow_y(&doc, only), 130.0);
+}
+
+#[test]
+fn a_float_after_a_tied_run_that_ends_the_card_moves_with_the_run_unless_it_crosses() {
+    // The run of the two boxes moves with the padding below it; the float
+    // after the run counts from where the run ends, not from its first box.
+    for (float_height, moves) in [(10, true), (11, false)] {
+        let ys = card_boxes(|doc, card| {
+            let first = block(doc, card, "display:block;height:10px;break-after:avoid");
+            let second = block(doc, card, "display:block;height:10px");
+            let float = block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            vec![first, second, float]
+        });
+        let expected = if moves {
+            [100.0, 110.0, 120.0]
+        } else {
+            [70.0, 80.0, 90.0]
+        };
+        assert_eq!(ys, expected, "{float_height}");
+    }
+}
+
+#[test]
+fn a_float_after_an_inner_block_of_boxes_counts_for_the_last_box_in_it() {
+    // The float is in the card after a wrapper of two boxes; the last of them
+    // ends the card and moves with its padding unless the float crosses.
+    for (float_height, moves) in [(10, true), (11, false)] {
+        let ys = card_boxes(|doc, card| {
+            let wrapper = block(doc, card, "display:block");
+            block(doc, wrapper, "display:block;height:10px");
+            let last = block(doc, wrapper, "display:block;height:10px");
+            block(
+                doc,
+                card,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            vec![last]
+        });
+        assert_eq!(ys, [if moves { 100.0 } else { 80.0 }], "{float_height}");
+    }
+}
+
+/// `body > div(padding-bottom:15px) > [A 30, B 30, middle, C 35]` on 100px
+/// pages, where `ties` is the CSS of B and C that avoids the break between
+/// them, and `middle` adds what sits between B and C. Returns the page-flow y
+/// of A, B and C.
+fn chain_with_float(
+    (b_css, c_css): (&str, &str),
+    middle: impl FnOnce(&mut Document, usize),
+) -> [f32; 3] {
+    let (mut ids, mut card) = ([0; 3], 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, "display:block;padding-bottom:15px");
+        ids[0] = block(doc, card, "display:block;height:30px");
+        ids[1] = block(doc, card, &format!("display:block;height:30px;{b_css}"));
+        middle(doc, card);
+        ids[2] = block(doc, card, &format!("display:block;height:35px;{c_css}"));
+    });
+    ids.map(|id| page_flow_y(&doc, id))
+}
+
+const TIED_AFTER: (&str, &str) = ("break-after:avoid", "");
+const TIED_BEFORE: (&str, &str) = ("", "break-before:avoid");
+
+#[test]
+fn a_float_between_the_boxes_of_a_tied_chain_does_not_cut_it() {
+    // The chain of B and C moves with the padding below it, and the floats
+    // with it, however the break between them is avoided. A float that ends at
+    // the page end at the latest goes along; one that crosses it keeps the
+    // chain where it is.
+    for ties in [TIED_AFTER, TIED_BEFORE] {
+        for (floats, moves) in [
+            (&[10][..], true),
+            (&[10, 12][..], true),
+            (&[40][..], true),
+            (&[41][..], false),
+            (&[10, 60][..], false),
+        ] {
+            let ys = chain_with_float(ties, |doc, card| {
+                for height in floats {
+                    block(
+                        doc,
+                        card,
+                        &format!("float:left;width:10px;height:{height}px"),
+                    );
+                }
+            });
+            let expected = if moves {
+                [0.0, 100.0, 130.0]
+            } else {
+                [0.0, 30.0, 60.0]
+            };
+            assert_eq!(ys, expected, "{ties:?} {floats:?}");
+        }
+    }
+}
+
+#[test]
+fn a_float_of_several_lines_between_the_boxes_of_a_chain_does_not_cut_it() {
+    // The float has places to break at inside it, which the boxes of the run
+    // do not: it is no box of the run and is not asked to move whole.
+    let mut ys = [0; 3];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let card = block(doc, body, "display:block;padding-bottom:15px");
+        ys[0] = block(doc, card, "display:block;height:30px");
+        ys[1] = block(doc, card, "display:block;height:30px;break-after:avoid");
+        let float = block(
+            doc,
+            card,
+            "float:left;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(float, ["aaa"; 3].join(" "));
+        ys[2] = block(doc, card, "display:block;height:35px");
+    });
+    assert_eq!(ys.map(|id| page_flow_y(&doc, id)), [0.0, 100.0, 130.0]);
+}
+
+#[test]
+fn a_float_before_a_chain_that_starts_the_block_leaves_it_as_it_was() {
+    // The first box is tied to the one after it, and starts the block: the
+    // page breaks before the second box, whether a float comes first or not.
+    for leading_float in [false, true] {
+        let (mut first, mut second) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let card = block(doc, body, "display:block;padding-bottom:15px");
+            if leading_float {
+                block(doc, card, "float:left;width:10px;height:10px");
+            }
+            first = block(doc, card, "display:block;height:50px;break-after:avoid");
+            second = block(doc, card, "display:block;height:40px");
+        });
+        assert_eq!(
+            [page_flow_y(&doc, first), page_flow_y(&doc, second)],
+            [0.0, 100.0],
+            "{leading_float}"
+        );
+    }
+}
+
+#[test]
+fn a_float_among_the_boxes_of_a_chain_in_an_inner_block_does_not_cut_it() {
+    // The wrapper that holds the chain ends the card: the chain moves with the
+    // padding of the card below the wrapper.
+    let mut ys = [0; 3];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let card = block(doc, body, "display:block;padding-bottom:15px");
+        let wrapper = block(doc, card, "display:block");
+        ys[0] = block(doc, wrapper, "display:block;height:30px");
+        ys[1] = block(doc, wrapper, "display:block;height:30px;break-after:avoid");
+        block(doc, wrapper, "float:left;width:10px;height:10px");
+        ys[2] = block(doc, wrapper, "display:block;height:35px");
+    });
+    assert_eq!(ys.map(|id| page_flow_y(&doc, id)), [0.0, 100.0, 130.0]);
+}
+
+#[test]
+fn floats_in_every_gap_of_a_chain_of_three_do_not_cut_it() {
+    let mut ys = [0; 4];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let card = block(doc, body, "display:block;padding-bottom:15px");
+        ys[0] = block(doc, card, "display:block;height:20px");
+        ys[1] = block(doc, card, "display:block;height:30px;break-after:avoid");
+        block(doc, card, "float:left;width:10px;height:5px");
+        ys[2] = block(doc, card, "display:block;height:25px;break-after:avoid");
+        block(doc, card, "float:left;width:10px;height:5px");
+        ys[3] = block(doc, card, "display:block;height:20px");
+    });
+    assert_eq!(
+        ys.map(|id| page_flow_y(&doc, id)),
+        [0.0, 100.0, 130.0, 155.0]
+    );
+}
+
+/// `body > div(padding-bottom:15px) > [A 30, B 30 (break-after:avoid), C]` on
+/// 100px pages, where `build` makes C and returns the boxes to look at.
+/// Returns the page-flow y of A, B and those boxes.
+fn chain_ending_in(build: impl FnOnce(&mut Document, usize) -> Vec<usize>) -> Vec<f32> {
+    let (mut ids, mut card) = (Vec::new(), 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, "display:block;padding-bottom:15px");
+        ids.push(block(doc, card, "display:block;height:30px"));
+        ids.push(block(
+            doc,
+            card,
+            "display:block;height:30px;break-after:avoid",
+        ));
+        ids.extend(build(doc, card));
+    });
+    ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
+}
+
+#[test]
+fn a_chain_that_ends_in_one_row_of_a_flex_grid_or_table_moves_with_the_edges() {
+    // A container that holds one row has nowhere to break at: it moves with
+    // the boxes it is tied to, and the padding of the parent with them.
+    for css in ["display:flex", "display:grid", "display:table"] {
+        assert_eq!(
+            chain_ending_in(|doc, card| vec![block(doc, card, &format!("height:35px;{css}"))]),
+            [0.0, 100.0, 130.0],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_chain_that_ends_in_a_grid_of_two_rows_moves_whole_with_the_edges() {
+    // A grid moves whole when it ends at the page end, rows or not.
+    assert_eq!(
+        chain_ending_in(|doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-rows:17px 18px");
+            vec![
+                grid,
+                block(doc, grid, "display:block"),
+                block(doc, grid, "display:block"),
+            ]
+        }),
+        [0.0, 100.0, 130.0, 130.0, 147.0]
+    );
+}
+
+#[test]
+fn a_chain_that_ends_in_a_stacked_flex_or_table_breaks_between_its_last_items() {
+    // The page breaks between the items or rows, so the chain stays and the
+    // last one moves with the padding.
+    assert_eq!(
+        chain_ending_in(|doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            vec![
+                block(doc, column, "display:block;height:17px"),
+                block(doc, column, "display:block;height:18px"),
+            ]
+        }),
+        [0.0, 30.0, 60.0, 100.0]
+    );
+    assert_eq!(
+        chain_ending_in(|doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            [17, 18]
+                .map(|height| {
+                    let group = block(doc, table, "display:table-row-group");
+                    let row = block(doc, group, "display:table-row");
+                    block(
+                        doc,
+                        row,
+                        &format!("display:table-cell;padding:0;height:{height}px"),
+                    );
+                    row
+                })
+                .to_vec()
+        }),
+        [0.0, 30.0, 60.0, 100.0]
+    );
+}
+
+/// `body > div(parent_css) > [div(before px), p(paragraph_css)]` where the
+/// paragraph is `lines` lines of 10px Ahem text, 30px wide, on 100px pages.
+/// Returns the page-flow y of the paragraph, its height and the height of the
+/// div.
+fn paragraph_in(
+    parent_css: &str,
+    before: u32,
+    paragraph_css: &str,
+    lines: usize,
+) -> (f32, f32, f32) {
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        parent = block(doc, body, &format!("display:block;{parent_css}"));
+        block(doc, parent, &format!("display:block;height:{before}px"));
+        paragraph = block(
+            doc,
+            parent,
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
+        );
+        doc.append_text(paragraph, vec!["aaa"; lines].join(" "));
+    });
+    assert!(doc.nodes[paragraph].is_ifc_root());
+    (
+        page_flow_y(&doc, paragraph),
+        doc.nodes[paragraph].layout.size.height,
+        doc.nodes[parent].layout.size.height,
+    )
+}
+
+#[test]
+fn an_avoiding_paragraph_after_a_box_moves_whole_with_the_edges_that_would_break_away() {
+    // The paragraph ends at 80 and the 30px of padding below it run past the
+    // page end. Nothing may break inside the paragraph, so the page breaks
+    // before it, and the padding is not left alone.
+    for avoid in ["break-inside:avoid", "break-inside:avoid-page"] {
+        assert_eq!(
+            paragraph_in("padding-bottom:30px", 10, avoid, 7),
+            (100.0, 70.0, 200.0),
+            "{avoid}"
+        );
+    }
+    // The edges of a block between it and the parent count too: 20px of
+    // padding below the paragraph still fit the page, the 10px of the parent
+    // do not.
+    let mut paragraph = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:10px");
+        block(doc, parent, "display:block;height:10px");
+        let wrapper = block(doc, parent, "display:block;padding-bottom:20px");
+        paragraph = block(
+            doc,
+            wrapper,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;\
+             break-inside:avoid",
+        );
+        doc.append_text(paragraph, ["aaa"; 7].join(" "));
+    });
+    assert_eq!(page_flow_y(&doc, paragraph), 100.0);
+    // Without `break-inside` the page breaks between its lines instead.
+    assert_eq!(
+        paragraph_in("padding-bottom:30px", 10, "", 7),
+        (10.0, 110.0, 150.0)
+    );
+    // Without edges below it, it stays where it is.
+    assert_eq!(
+        paragraph_in("", 10, "break-inside:avoid", 9),
+        (10.0, 90.0, 100.0)
+    );
+}
+
+#[test]
+fn an_avoiding_paragraph_that_cannot_fit_a_page_with_the_edges_gives_up_its_last_lines() {
+    // The paragraph and 30px of padding are more than a page together, so no
+    // page holds both. The paragraph still goes to the next page, where it
+    // fits, and its last two lines go on with the padding: a break between
+    // lines beats one between the last line and the padding.
+    for lines in [8, 9] {
+        assert_eq!(
+            paragraph_in("padding-bottom:30px", 10, "break-inside:avoid", lines),
+            (100.0, 120.0, 250.0),
+            "{lines} lines"
+        );
+    }
+    // Where the paragraph starts its page there is no better break.
+    assert_eq!(
+        paragraph_in("padding-bottom:30px", 0, "break-inside:avoid", 9),
+        (0.0, 120.0, 150.0)
+    );
+    // The same with the edges of the paragraph itself.
+    assert_eq!(
+        paragraph_in("", 0, "break-inside:avoid;padding-bottom:30px", 8),
+        (0.0, 150.0, 150.0)
+    );
+}
+
+#[test]
+fn an_avoiding_paragraph_with_a_height_of_its_own_moves_whole_with_the_edges() {
+    // The edges follow the box, not its lines: its 80px end at 90, and the
+    // padding below does not fit. No page break goes between the lines, so
+    // the box goes to the next page whole, as Chromium prints it.
+    for height in ["height:80px", "min-height:80px"] {
+        let (y, box_height, _) = paragraph_in(
+            "padding-bottom:30px",
+            10,
+            &format!("break-inside:avoid;{height}"),
+            3,
+        );
+        assert_eq!((y, box_height), (100.0, 80.0), "{height}");
+    }
+    // Where box and edges fit a page, nothing moves.
+    let (y, box_height, parent_height) = paragraph_in(
+        "padding-bottom:30px",
+        10,
+        "break-inside:avoid;height:60px",
+        3,
+    );
+    assert_eq!((y, box_height, parent_height), (10.0, 60.0, 100.0));
 }

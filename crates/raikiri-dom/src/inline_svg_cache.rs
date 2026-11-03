@@ -5,9 +5,10 @@
 //! allocator overhead and caller-held clones are outside this accounting.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::Document;
+use crate::inline_svg_style::InlineSvgElementDeclarations;
 
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 256;
@@ -29,6 +30,9 @@ struct RasterEntry {
     node: usize,
     viewport: (u32, u32),
     style: String,
+    /// The declarations of the subtree's elements that the raster was drawn
+    /// with, part of the key beside `style`.
+    descendants: Arc<[InlineSvgElementDeclarations]>,
     raster: InlineSvgRaster,
     bytes: usize,
 }
@@ -79,6 +83,14 @@ impl Clone for InlineSvgCache {
 }
 
 impl InlineSvgCache {
+    /// The memo, locked. A panic while it was held leaves it consistent, so a
+    /// poisoned lock is taken over.
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub(crate) fn clear(&mut self) {
         *self
             .0
@@ -92,11 +104,7 @@ impl Document {
     /// document's paint memo. Failures and oversized sources are not memoized.
     #[doc(hidden)]
     pub fn cached_svg_subtree(&self, node: usize) -> Result<Option<Arc<str>>, String> {
-        let mut cache = self
-            .inline_svg_cache
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut cache = self.inline_svg_cache.lock();
         if let Some(entry) = cache.sources.iter().find(|entry| entry.node == node) {
             return Ok(Some(Arc::clone(&entry.source)));
         }
@@ -119,25 +127,47 @@ impl Document {
     }
 
     /// Finds pixels for an exact viewport and exact resolved style key.
-    /// The caller includes every input to its SVG rasterizer in `style`.
+    /// The caller includes every input to its SVG rasterizer in `style` and in
+    /// the declarations it recognizes with `descendants`, which is asked about
+    /// the declarations of each candidate, the most recently used first, and
+    /// says whether they are the ones now in force.
+    ///
+    /// `descendants` runs without the memo locked, so that a long comparison
+    /// does not hold up other paints of the document.
     #[doc(hidden)]
     pub fn cached_inline_svg_raster(
         &self,
         node: usize,
         viewport: (u32, u32),
         style: &str,
+        mut descendants: impl FnMut(&[InlineSvgElementDeclarations]) -> bool,
     ) -> Option<InlineSvgRaster> {
-        let mut cache = self
+        let candidates: Vec<_> = self
             .inline_svg_cache
-            .0
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let at = cache.rasters.iter().position(|entry| {
-            entry.node == node && entry.viewport == viewport && entry.style == style
-        })?;
-        let entry = cache.rasters.remove(at)?;
-        let raster = entry.raster.clone();
-        cache.rasters.push_back(entry);
+            .rasters
+            .iter()
+            .rev()
+            .filter(|entry| {
+                entry.node == node && entry.viewport == viewport && entry.style == style
+            })
+            .map(|entry| (Arc::clone(&entry.descendants), entry.raster.clone()))
+            .collect();
+        let (found, raster) = candidates
+            .into_iter()
+            .find(|(declarations, _)| descendants(declarations))?;
+        // The entry is the most recently used again, unless it was evicted
+        // meanwhile.
+        let mut cache = self.inline_svg_cache.lock();
+        if let Some(at) = cache.rasters.iter().position(|entry| {
+            entry.node == node
+                && entry.viewport == viewport
+                && entry.style == style
+                && Arc::ptr_eq(&entry.descendants, &found)
+        }) && let Some(entry) = cache.rasters.remove(at)
+        {
+            cache.rasters.push_back(entry);
+        }
         Some(raster)
     }
 
@@ -150,27 +180,38 @@ impl Document {
         node: usize,
         viewport: (u32, u32),
         style: String,
+        descendants: Vec<InlineSvgElementDeclarations>,
         raster: InlineSvgRaster,
     ) {
-        let mut cache = self
-            .inline_svg_cache
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let bytes = raster
             .rgba
             .capacity()
             .saturating_add(style.capacity())
             .saturating_add(
+                descendants
+                    .iter()
+                    .map(|element| {
+                        element
+                            .declarations
+                            .capacity()
+                            .saturating_add(std::mem::size_of::<InlineSvgElementDeclarations>())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
                 std::mem::size_of::<RasterEntry>()
                     + std::mem::size_of::<Vec<u8>>()
                     + 2 * std::mem::size_of::<usize>(),
             );
+        let mut cache = self.inline_svg_cache.lock();
         if !cache.make_room(bytes) {
             return;
         }
         if let Some(at) = cache.rasters.iter().position(|entry| {
-            entry.node == node && entry.viewport == viewport && entry.style == style
+            entry.node == node
+                && entry.viewport == viewport
+                && entry.style == style
+                && *entry.descendants == *descendants
         }) {
             let previous = cache.rasters.remove(at).expect("the entry was found");
             cache.bytes -= previous.bytes;
@@ -179,6 +220,7 @@ impl Document {
             node,
             viewport,
             style,
+            descendants: descendants.into(),
             raster,
             bytes,
         });

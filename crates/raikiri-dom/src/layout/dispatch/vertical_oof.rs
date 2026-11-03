@@ -35,6 +35,7 @@ mod alignment;
 
 pub(super) use alignment::{
     align_hoisted_children, align_hoisted_children_in_grid, hoisted_overflow_rect,
+    overflow_contribution,
 };
 
 /// The writing mode resolved against the DOM by the last style bridge.

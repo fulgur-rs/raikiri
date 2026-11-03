@@ -52,3 +52,77 @@ fn first_piece_is_local_to_each_line_and_accepts_empty_pieces() {
         assert_eq!(line[first[&10]].source_owner, Some(expected));
     }
 }
+
+#[test]
+fn transformed_block_slices_keep_only_the_page_edges() {
+    let mut original = piece(10, None, 0);
+    original.border_box = raikiri_dom::BoxRect {
+        x: 3.0,
+        y: 10.0,
+        width: 40.0,
+        height: 60.0,
+    };
+    original.content_box = raikiri_dom::BoxRect {
+        x: 5.0,
+        y: 15.0,
+        width: 36.0,
+        height: 50.0,
+    };
+    original.has_start_edge = true;
+    original.has_end_edge = true;
+    let base = IfcPosition {
+        x: 20.0,
+        y: 100.0,
+        shift_y: 5.0,
+    };
+    let page = |start, end| {
+        Some(crate::walk::PageLines::AlongY {
+            start,
+            end,
+            paint_shift: 5.0,
+        })
+    };
+    let middle = transformed_block_piece(original, page(120.0, 160.0), base).unwrap();
+    assert_eq!(
+        middle.border_box,
+        raikiri_dom::BoxRect {
+            x: 3.0,
+            y: 20.0,
+            width: 40.0,
+            height: 40.0
+        }
+    );
+    assert_eq!(
+        middle.content_box,
+        raikiri_dom::BoxRect {
+            x: 5.0,
+            y: 20.0,
+            width: 36.0,
+            height: 40.0
+        }
+    );
+    assert!(!middle.has_start_edge && !middle.has_end_edge);
+    let first = transformed_block_piece(original, page(110.0, 140.0), base).unwrap();
+    assert!(first.has_start_edge && !first.has_end_edge);
+    let last = transformed_block_piece(original, page(140.0, 170.0), base).unwrap();
+    assert!(!last.has_start_edge && last.has_end_edge);
+    assert!(transformed_block_piece(original, page(180.0, 200.0), base).is_none());
+    assert_eq!(
+        transformed_block_piece(original, None, base)
+            .unwrap()
+            .border_box,
+        original.border_box
+    );
+    let along_x = crate::walk::PageLines::AlongX(crate::walk::FlowBand {
+        left: 0.0,
+        right: 100.0,
+        right_to_left: false,
+        root_transform: Affine::IDENTITY,
+    });
+    assert_eq!(
+        transformed_block_piece(original, Some(along_x), base)
+            .unwrap()
+            .border_box,
+        original.border_box
+    );
+}

@@ -9,6 +9,7 @@ use raikiri_dom::{BoxRect, Document, InlineBoxPiece, Node, NodeKind};
 use raikiri_style::PseudoElem;
 use raikiri_style::property::{DisplayValue, PositionValue, ZIndexValue};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 #[derive(Clone, Copy)]
 pub(crate) struct BackgroundSlice {
@@ -95,6 +96,33 @@ struct Group {
     /// The owner's own boxes on every line, painted below the rest of the
     /// group and the groups with negative stack levels nested in it.
     boxes: Scene,
+}
+
+impl Group {
+    /// An empty group as `spec` describes it.
+    fn of(spec: &GroupSpec) -> Self {
+        Self {
+            scene: Scene::new(),
+            opacity: spec.opacity,
+            transform: None,
+            level: spec.level,
+            parent: spec.parent,
+            children: Vec::new(),
+            owner: spec.owner,
+            boxes: Scene::new(),
+        }
+    }
+}
+
+/// What a paragraph's pieces say about one of its groups, apart from the
+/// paint that goes into it.
+struct GroupSpec {
+    /// The group's opacity, when it composites in a layer of its own.
+    opacity: Option<f32>,
+    level: i32,
+    parent: Option<usize>,
+    /// The element or typographic box whose paint the group composites.
+    owner: usize,
 }
 
 /// A composited group or box placed in its parent's paint: the parent
@@ -195,15 +223,13 @@ impl PieceFacts {
     }
 }
 
-pub(super) struct TypographicPaint {
-    normal: Scene,
-    /// Boxes laid out beside the lines outside every group, placed in
-    /// `normal` like groups.
-    root_children: Vec<Child>,
-    /// In-flow blocks inside the paragraph's inline content, in the order
-    /// they were placed.
-    blocks: Vec<Scene>,
-    groups: Vec<Group>,
+/// The groups that the pieces of a paragraph form, and the group around each
+/// of its fragments: what the pieces fix whichever of the paragraph's lines
+/// are painted, so that every fragmentainer of a paragraph can paint into
+/// groups made from one shape.
+#[derive(Default)]
+pub(super) struct GroupShape {
+    groups: Vec<GroupSpec>,
     nearest_groups: HashMap<FragmentKey, Option<usize>>,
     piece_groups: HashMap<FragmentKey, Option<usize>>,
     /// The innermost group of a translucent inline element around each
@@ -211,7 +237,10 @@ pub(super) struct TypographicPaint {
     element_groups: HashMap<usize, Option<usize>>,
 }
 
-impl TypographicPaint {
+impl GroupShape {
+    /// The shape of the groups that the `pieces` of `paragraph`, whose lines
+    /// are in `root`, form.
+    ///
     /// A non-atomic inline element with an opacity below one composites its
     /// fragments on the paragraph's lines as one group, as does one
     /// positioned below the paragraph's blocks, and so do the
@@ -219,20 +248,12 @@ impl TypographicPaint {
     /// An atomic `::before` or `::after` with a transform is a group too,
     /// turned as a whole (CSS Transforms 1 §6), and so is one positioned
     /// below the paragraph's blocks. The groups nest as their boxes do.
-    pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
-        let mut paint = Self {
-            normal: Scene::new(),
-            root_children: Vec::new(),
-            blocks: Vec::new(),
-            groups: Vec::new(),
-            nearest_groups: HashMap::new(),
-            piece_groups: HashMap::new(),
-            element_groups: HashMap::new(),
-        };
+    pub(super) fn of(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Rc<Self> {
+        let mut shape = Self::default();
         let facts = PieceFacts::of(paragraph, root, pieces);
-        paint.allocate_groups(paragraph, pieces, &facts);
-        paint.index_piece_groups(pieces);
-        paint
+        shape.allocate_groups(paragraph, pieces, &facts);
+        shape.index_piece_groups(pieces);
+        Rc::new(shape)
     }
 
     /// Allocates the groups of the fragments of `pieces`, and finds the
@@ -270,7 +291,7 @@ impl TypographicPaint {
                     // elements around it.
                     None => {
                         break enclosing_element(paragraph.document, next)
-                            .and_then(|element| self.element_group(paragraph, element));
+                            .and_then(|element| element_group_in(self, paragraph, element));
                     }
                 }
             };
@@ -281,17 +302,13 @@ impl TypographicPaint {
                         .entry((key.node, opacity.map(f32::to_bits), group))
                         .or_insert_with(|| {
                             let index = self.groups.len();
-                            self.groups.push(Group {
-                                scene: Scene::new(),
+                            self.groups.push(GroupSpec {
                                 opacity,
-                                transform: None,
                                 level: raikiri_dom::paint_rules::pseudo_stack_level(
                                     cascade, key.node,
                                 ),
                                 parent: group,
-                                children: Vec::new(),
                                 owner: key.node,
-                                boxes: Scene::new(),
                             });
                             index
                         });
@@ -325,64 +342,148 @@ impl TypographicPaint {
             cached_group(key, &piece_parents, &mut self.piece_groups);
         }
     }
+}
+
+/// Where the groups of the inline elements of a paragraph are recorded: in
+/// its shape while that is made, and in the paint that has the shape after.
+trait ElementGroups {
+    /// The innermost group around the element `id`, once it is known.
+    fn known(&self, id: usize) -> Option<Option<usize>>;
+    /// Adds a group, and returns its index.
+    fn push(&mut self, spec: GroupSpec) -> usize;
+    /// Records the innermost group around the element `id`.
+    fn record(&mut self, id: usize, group: Option<usize>);
+}
+
+impl ElementGroups for GroupShape {
+    fn known(&self, id: usize) -> Option<Option<usize>> {
+        self.element_groups.get(&id).copied()
+    }
+
+    fn push(&mut self, spec: GroupSpec) -> usize {
+        self.groups.push(spec);
+        self.groups.len() - 1
+    }
+
+    fn record(&mut self, id: usize, group: Option<usize>) {
+        self.element_groups.insert(id, group);
+    }
+}
+
+impl ElementGroups for TypographicPaint {
+    fn known(&self, id: usize) -> Option<Option<usize>> {
+        self.later_element_groups
+            .get(&id)
+            .or_else(|| self.shape.element_groups.get(&id))
+            .copied()
+    }
+
+    fn push(&mut self, spec: GroupSpec) -> usize {
+        self.groups.push(Group::of(&spec));
+        self.groups.len() - 1
+    }
+
+    fn record(&mut self, id: usize, group: Option<usize>) {
+        self.later_element_groups.insert(id, group);
+    }
+}
+
+/// The innermost group of a translucent inline element of `paragraph`
+/// around `id`, an element or generated box, `id` included, or of one
+/// positioned below the paragraph's blocks (see
+/// [`raikiri_dom::paint_rules::negative_inline_group`]), or of one
+/// positioned with a stack level of its own (see
+/// [`raikiri_dom::paint_rules::inline_stacking_group`]). The walk up
+/// stops at the paragraph root and at any box that is not an inline
+/// element. Elements with `display: contents` form no group.
+fn element_group_in(
+    groups: &mut impl ElementGroups,
+    paragraph: Paragraph<'_>,
+    id: usize,
+) -> Option<usize> {
+    let start =
+        raikiri_dom::generated_content::generated_origin(id).map_or(id, |(element, _)| element);
+    let mut path = Vec::new();
+    let mut group = None;
+    for (id, opacity) in inline_ancestors(paragraph, start) {
+        if let Some(cached) = groups.known(id) {
+            group = cached;
+            break;
+        }
+        path.push((id, opacity));
+    }
+    // Allocate the outer groups first, in the order their elements are
+    // first painted.
+    for (id, opacity) in path.into_iter().rev() {
+        if opacity.is_some()
+            || raikiri_dom::paint_rules::negative_inline_group(
+                paragraph.document,
+                paragraph.cascade,
+                paragraph.root_id,
+                id,
+            )
+            || raikiri_dom::paint_rules::inline_stacking_group(
+                paragraph.document,
+                paragraph.cascade,
+                paragraph.root_id,
+                id,
+            )
+        {
+            group = Some(groups.push(GroupSpec {
+                opacity,
+                level: element_stack_level(paragraph.cascade, id),
+                parent: group,
+                owner: id,
+            }));
+        }
+        groups.record(id, group);
+    }
+    group
+}
+
+pub(super) struct TypographicPaint {
+    normal: Scene,
+    /// Boxes laid out beside the lines outside every group, placed in
+    /// `normal` like groups.
+    root_children: Vec<Child>,
+    /// In-flow blocks inside the paragraph's inline content, in the order
+    /// they were placed.
+    blocks: Vec<Scene>,
+    groups: Vec<Group>,
+    shape: Rc<GroupShape>,
+    /// The innermost group of a translucent inline element around each
+    /// element that the shape does not know, the element included.
+    later_element_groups: HashMap<usize, Option<usize>>,
+}
+
+impl TypographicPaint {
+    /// The paint of the groups of `pieces`, as [`GroupShape::of`] shapes them.
+    #[cfg(test)]
+    pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
+        Self::on(&GroupShape::of(paragraph, root, pieces))
+    }
+
+    /// An empty paint with the groups of `shape`.
+    pub(super) fn on(shape: &Rc<GroupShape>) -> Self {
+        Self {
+            normal: Scene::new(),
+            root_children: Vec::new(),
+            blocks: Vec::new(),
+            groups: shape.groups.iter().map(Group::of).collect(),
+            shape: Rc::clone(shape),
+            later_element_groups: HashMap::new(),
+        }
+    }
 
     /// The innermost group of a translucent inline element of `paragraph`
-    /// around `id`, an element or generated box, `id` included, or of one
-    /// positioned below the paragraph's blocks (see
-    /// [`raikiri_dom::paint_rules::negative_inline_group`]), or of one
-    /// positioned with a stack level of its own (see
-    /// [`raikiri_dom::paint_rules::inline_stacking_group`]). The walk up
-    /// stops at the paragraph root and at any box that is not an inline
-    /// element. Elements with `display: contents` form no group.
+    /// around `id`; see [`element_group_in`].
     pub(super) fn element_group(&mut self, paragraph: Paragraph<'_>, id: usize) -> Option<usize> {
-        let start =
-            raikiri_dom::generated_content::generated_origin(id).map_or(id, |(element, _)| element);
-        let mut path = Vec::new();
-        let mut group = None;
-        for (id, opacity) in inline_ancestors(paragraph, start) {
-            if let Some(&cached) = self.element_groups.get(&id) {
-                group = cached;
-                break;
-            }
-            path.push((id, opacity));
-        }
-        // Allocate the outer groups first, in the order their elements are
-        // first painted.
-        for (id, opacity) in path.into_iter().rev() {
-            if opacity.is_some()
-                || raikiri_dom::paint_rules::negative_inline_group(
-                    paragraph.document,
-                    paragraph.cascade,
-                    paragraph.root_id,
-                    id,
-                )
-                || raikiri_dom::paint_rules::inline_stacking_group(
-                    paragraph.document,
-                    paragraph.cascade,
-                    paragraph.root_id,
-                    id,
-                )
-            {
-                let index = self.groups.len();
-                self.groups.push(Group {
-                    scene: Scene::new(),
-                    opacity,
-                    transform: None,
-                    level: element_stack_level(paragraph.cascade, id),
-                    parent: group,
-                    children: Vec::new(),
-                    owner: id,
-                    boxes: Scene::new(),
-                });
-                group = Some(index);
-            }
-            self.element_groups.insert(id, group);
-        }
-        group
+        element_group_in(self, paragraph, id)
     }
 
     pub(super) fn nearest(&self, id: usize, owner: usize) -> Option<usize> {
-        self.nearest_groups
+        self.shape
+            .nearest_groups
             .get(&FragmentKey {
                 node: id,
                 owner: Some(owner),
@@ -391,7 +492,7 @@ impl TypographicPaint {
             .or_else(|| {
                 (id == owner)
                     .then(|| {
-                        self.nearest_groups.get(&FragmentKey {
+                        self.shape.nearest_groups.get(&FragmentKey {
                             node: id,
                             owner: None,
                         })
@@ -403,7 +504,8 @@ impl TypographicPaint {
     }
 
     pub(super) fn piece_group(&self, piece: &InlineBoxPiece) -> Option<usize> {
-        self.piece_groups
+        self.shape
+            .piece_groups
             .get(&FragmentKey {
                 node: piece.node,
                 owner: piece.source_owner,

@@ -17,7 +17,7 @@
 //!   functions themselves)
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
@@ -64,6 +64,86 @@ struct CollectionCache {
     generation: Cell<Option<u64>>,
     named_version: RefCell<Option<raikiri_dom::document::NamedElementVersion>>,
     nodes: RefCell<Vec<usize>>,
+    /// How names are looked up in `nodes`; it starts over whenever they are
+    /// resolved again.
+    names: RefCell<NameLookups>,
+}
+
+/// How the first element of a name is found in the nodes a collection has
+/// resolved (DOM §4.2.10.2 `namedItem`).
+///
+/// The first lookup scans the nodes: a collection that is asked once, or
+/// asked again only after each mutation, pays no more than the scan. The
+/// second lookup of the same nodes builds the first element of every name in
+/// one pass, and every later one is a hash lookup, so asking for each of the
+/// N names costs O(N) rather than O(N²). A change the host makes to ids, names
+/// or the tree starts the lookups over, as resolving the nodes again does.
+#[derive(Debug, Default)]
+struct NameLookups {
+    scanned: bool,
+    first: Option<NameIndex>,
+}
+
+/// The first element of every name, and the native named-element version of
+/// the document it was read from.
+#[derive(Debug)]
+struct NameIndex {
+    version: raikiri_dom::document::NamedElementVersion,
+    first: HashMap<String, usize>,
+}
+
+impl NameLookups {
+    /// The first of `nodes` named `name`.
+    fn first_named(&mut self, doc: &Document, nodes: &[usize], name: &str) -> Option<usize> {
+        #[cfg(test)]
+        tests::NAME_LOOKUPS.with(|count| count.set(count.get() + 1));
+        // Renaming an element or changing the tree natively, as a host does,
+        // does not move the script generation that resolved `nodes`, so the
+        // index also has to be read from the document as it is now.
+        let version = doc.named_element_version();
+        if self
+            .first
+            .as_ref()
+            .is_some_and(|index| index.version != *version)
+        {
+            *self = Self::default();
+        }
+        if let Some(index) = &self.first {
+            return index.first.get(name).copied();
+        }
+        if !std::mem::replace(&mut self.scanned, true) {
+            return nodes.iter().copied().find(|&n| has_name(doc, n, name));
+        }
+        let index = NameIndex {
+            version: version.clone(),
+            first: first_by_name(doc, nodes),
+        };
+        self.first.insert(index).first.get(name).copied()
+    }
+}
+
+/// The first of `nodes`, for each name that some node has in the `has_name`
+/// sense: its `id`, or its `name` when it is an HTML element.
+fn first_by_name(doc: &Document, nodes: &[usize]) -> HashMap<String, usize> {
+    #[cfg(test)]
+    tests::NAME_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+    let mut first = HashMap::new();
+    let mut note = |name: &str, node: usize| {
+        if !name.is_empty() && !first.contains_key(name) {
+            first.insert(name.to_owned(), node);
+        }
+    };
+    for &node in nodes {
+        if let Some(id) = doc.element_attribute(node, "id") {
+            note(id, node);
+        }
+        if doc.element_namespace_uri(node) == Some(HTML_NS)
+            && let Some(name) = doc.element_attribute(node, "name")
+        {
+            note(name, node);
+        }
+    }
+    first
 }
 
 /// Run `f` over the nodes `source` currently contains, in collection order.
@@ -84,12 +164,15 @@ fn with_live_nodes<T>(
 ) -> JsResult<T> {
     match source {
         CollectionSource::Static(nodes) => {
+            // Read from the tree on each access, so no lookup may outlive it.
+            cache.names.take();
             return with_state(context, |s| {
                 let doc = s.host.document();
                 f(doc, nodes)
             });
         }
         CollectionSource::ChildNodes(node) => {
+            cache.names.take();
             let node = *node;
             return with_state(context, |s| {
                 let doc = s.host.document();
@@ -133,6 +216,7 @@ fn with_live_nodes<T>(
         (fresh, named_version)
     })?;
     *cache.nodes.borrow_mut() = fresh;
+    cache.names.take();
     *cache.named_version.borrow_mut() = named_version;
     cache.generation.set(Some(generation));
     let cached = cache.nodes.borrow();
@@ -234,13 +318,17 @@ impl HtmlCollectionSource {
         if name.is_empty() {
             return Ok(None);
         }
-        let found = self.with_nodes(context, |doc, nodes| {
-            nodes.iter().copied().find(|&n| has_name(doc, n, name))
-        })?;
-        match found {
+        match self.first_named(name, context)? {
             Some(node) => Ok(Some(wrap(context, node)?.into())),
             None => Ok(None),
         }
+    }
+
+    /// The first element, in collection order, named `name`.
+    fn first_named(&self, name: &str, context: &mut Context) -> JsResult<Option<usize>> {
+        self.with_nodes(context, |doc, nodes| {
+            self.cache.names.borrow_mut().first_named(doc, nodes, name)
+        })
     }
 }
 
@@ -385,10 +473,7 @@ fn html_collection_named_item(
     if name.is_empty() {
         return Ok(JsValue::null());
     }
-    let found = source.with_nodes(context, |doc, nodes| {
-        nodes.iter().copied().find(|&n| has_name(doc, n, &name))
-    })?;
-    match found {
+    match source.first_named(&name, context)? {
         Some(node) => Ok(wrap(context, node)?.into()),
         None => Ok(JsValue::null()),
     }

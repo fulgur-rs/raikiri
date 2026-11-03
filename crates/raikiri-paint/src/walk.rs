@@ -1579,6 +1579,12 @@ fn paint_list_marker_with_snapshots(
         computed,
         pixel_source,
     ) {
+        let paint_y =
+            match document.list_marker_image_top(node_id, (page_flow.0, page_flow.2), paint_y) {
+                Some(Some(top)) => top,
+                Some(None) => return,
+                None => paint_y,
+            };
         let transform = list_marker_image_transform(
             document,
             node_id,
@@ -2575,6 +2581,8 @@ pub(crate) struct BackgroundEnv {
     /// Whether the borders cover the outer edge of the background (see
     /// [`border_hides_background_edge`]).
     pub border_hides_edge: bool,
+    /// Used geometry insets when the painted line widths differ from layout.
+    pub border_insets: Option<Edges<f32>>,
     /// The raster output's device pixel grid, absent for a vector output.
     pub device_grid: Option<DeviceGrid>,
     /// The page area in the box's own coordinates, which a `fixed` layer is

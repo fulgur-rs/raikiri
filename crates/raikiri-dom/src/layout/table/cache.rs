@@ -24,6 +24,19 @@ pub(in crate::layout) struct TableCache {
 }
 
 impl TableCache {
+    pub(in crate::layout) fn centered_block_edges(
+        &self,
+        table: usize,
+        epoch: crate::layout::cache_context::CacheEpoch,
+    ) -> Option<Line<f32>> {
+        self.borders
+            .get(&table)
+            .filter(|(_, cached_epoch, _)| {
+                *cached_epoch == epoch && self.publication_epoch == Some(epoch)
+            })
+            .and_then(|(_, _, prepared)| prepared.borders.as_ref()?.block_outer())
+    }
+
     fn synchronize(&mut self, epoch: crate::layout::cache_context::CacheEpoch) {
         if self.publication_epoch != Some(epoch) {
             self.clear();
@@ -117,6 +130,10 @@ pub(super) fn prepared_borders(
     let cell_index =
         (collapse && !grid.rows.is_empty() && grid.n_cols > 0).then(|| CellIndex::new(grid));
     let collapsed_rows = collapsed_rows(doc, grid);
+    if !vertical_writing && let Some(index) = cell_index.as_ref() {
+        let state = borders.as_mut().expect("collapsed border state");
+        resolve_centered_block_borders(doc, state, grid, index, table_idx, parent_width);
+    }
     // A vertical table stacks its columns along the block axis, which the
     // collapse rules here do not model.
     let collapsed_cols = if vertical_writing {
@@ -164,7 +181,9 @@ pub(super) fn prepared_borders(
             (Some(_), None) => (None, index),
             (None, _) => (Some(grid), index),
         };
-        if let Some(resolved) = resolved {
+        if let Some(resolved) = resolved
+            && (vertical_writing || shown.is_some())
+        {
             resolve_collapsed_borders(
                 doc,
                 borders.as_mut().expect("collapsed border state"),
@@ -196,7 +215,7 @@ pub(super) fn prepared_borders(
     let kept_rows: Vec<usize> = (0..collapsed_rows.len())
         .filter(|&row| !collapsed_rows[row])
         .collect();
-    let collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
+    let mut collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
         (None, ..) => CollapsedLines::separate(&table_border),
         (Some(index), None, _) => compute_collapsed_lines(
             doc,
@@ -251,6 +270,11 @@ pub(super) fn prepared_borders(
             }
         }
     };
+    if let Some(outer) = borders.as_ref().and_then(BorderState::block_outer) {
+        collapsed.outer_top = outer.start;
+        collapsed.outer_bottom = outer.end;
+        collapsed.row_overlaps.fill(0.0);
+    }
     let prepared = Rc::new(PreparedBorders {
         collapsed_rows,
         collapsed_cols,

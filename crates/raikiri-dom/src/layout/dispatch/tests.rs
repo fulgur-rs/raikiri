@@ -844,3 +844,160 @@ fn a_grid_scroll_container_aligns_by_its_clamped_baseline() {
     );
     assert_eq!(scroller, sibling);
 }
+
+fn vertical_collapse_output(
+    doc: &mut crate::Document,
+    child: usize,
+    run_mode: RunMode,
+    hidden: bool,
+    shared: bool,
+) -> LayoutOutput {
+    use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
+    use crate::layout::protocol::AvailableSpace;
+
+    crate::layout::test_support::with_ahem(doc);
+    let cascade = crate::layout::test_support::cascaded(doc);
+    let mut session = LayoutSession::bridged(doc, &cascade);
+    if hidden {
+        session.context.size_contained_measure.push(child);
+    }
+    let mut owner = BlockFormattingContext::new();
+    let mut context = owner.root_block_context();
+    context.set_width(50.0);
+    context.set_origin_resolved(true);
+    let output = session.compute_child_layout_with_block_ctx(
+        NodeId::from(child),
+        LayoutInput {
+            run_mode,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: None,
+                height: Some(50.0),
+            },
+            parent_size: Size {
+                width: None,
+                height: Some(50.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::Definite(50.0),
+            },
+            vertical_margins_are_collapsible: Line::TRUE,
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+        },
+        shared.then_some(&mut context),
+    );
+    if hidden {
+        assert_eq!(session.context.size_contained_measure.pop(), Some(child));
+    }
+    output
+}
+
+#[test]
+fn empty_vertical_measurements_keep_block_axis_collapse_metadata() {
+    for mode in ["vertical-lr", "vertical-rl", "sideways-lr", "sideways-rl"] {
+        for run_mode in [RunMode::ComputeSize, RunMode::PerformLayout] {
+            for kind in ["nested", "contained", "hidden", "hidden-children"] {
+                let mut doc = crate::Document::new();
+                let parent = doc.append_element(
+                    Some(0),
+                    "div",
+                    Some(format!("display:block;writing-mode:{mode}")),
+                );
+                let containment = match kind {
+                    "nested" => "",
+                    "hidden-children" => ";contain:size;contain-intrinsic-size:0px",
+                    _ => ";contain:size",
+                };
+                let child = doc.append_element(
+                    Some(parent),
+                    "div",
+                    Some(format!(
+                        "display:block;inline-size:50px;block-size:0{containment}"
+                    )),
+                );
+                if matches!(kind, "nested" | "hidden-children") {
+                    let inner = doc.append_element(
+                        Some(child),
+                        "div",
+                        Some("display:block;inline-size:50px;block-size:0"),
+                    );
+                    if kind == "hidden-children" {
+                        doc.append_text(inner, "z");
+                    }
+                }
+                let output = vertical_collapse_output(
+                    &mut doc,
+                    child,
+                    run_mode,
+                    kind.starts_with("hidden"),
+                    true,
+                );
+                assert_eq!(
+                    output.size,
+                    Size {
+                        width: 0.0,
+                        height: 50.0
+                    },
+                    "geometry: {mode}/{run_mode:?}/{kind}"
+                );
+                assert!(
+                    output.margins_can_collapse_through,
+                    "metadata: {mode}/{run_mode:?}/{kind}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_collapse_metadata_respects_context_and_content_boundaries() {
+    for run_mode in [RunMode::ComputeSize, RunMode::PerformLayout] {
+        for (tag, extra, text, shared) in [
+            ("div", "", "", false),
+            ("div", "display:flow-root", "", true),
+            ("div", "overflow:hidden", "", true),
+            ("div", "contain:layout", "", true),
+            ("div", "contain:size layout", "", true),
+            ("div", "writing-mode:vertical-rl", "", true),
+            (
+                "div",
+                "writing-mode:horizontal-tb;width:0;height:50px",
+                "",
+                true,
+            ),
+            ("div", "float:left", "", true),
+            ("img", "", "", true),
+            ("fieldset", "border:0;padding:0;min-inline-size:0", "", true),
+            ("div", "", "z", true),
+            ("div", "contain:size", "z", true),
+            ("div", "contain:size;contain-intrinsic-size:0px", "z", true),
+        ] {
+            let mut doc = crate::Document::new();
+            let parent = doc.append_element(
+                Some(0),
+                "div",
+                Some("display:block;writing-mode:vertical-lr"),
+            );
+            let child = doc.append_element(
+                Some(parent),
+                tag,
+                Some(format!(
+                    "display:block;inline-size:50px;block-size:0;{extra}"
+                )),
+            );
+            if !text.is_empty() {
+                doc.append_text(child, text);
+            }
+            let output = vertical_collapse_output(&mut doc, child, run_mode, false, shared);
+            assert!(
+                !output.margins_can_collapse_through,
+                "{run_mode:?}/{tag}/{extra}/{text}/shared={shared}"
+            );
+        }
+    }
+}

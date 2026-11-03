@@ -97,6 +97,7 @@ fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
                     super::image_markers::prepare(&doc, &cascade, &roots, &pages, &cache, &mut work)
                         .map(|markers| {
                             markers
+                                .pages
                                 .values()
                                 .map(std::collections::BTreeMap::len)
                                 .sum::<usize>()

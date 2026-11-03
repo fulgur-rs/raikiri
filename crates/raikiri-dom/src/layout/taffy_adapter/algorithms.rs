@@ -15,6 +15,11 @@ use raikiri_layout_style::values::{
     LengthPercentageAuto, MaybeResolve, Position,
 };
 
+mod flex_baseline;
+mod grid_row_measure;
+pub(crate) use flex_baseline::{Call as FlexReplayCall, source as flex_baseline_source};
+pub(crate) use grid_row_measure::grid_item_row_rooms;
+
 /// The inputs a flex or grid container is laid out with: a `width` of
 /// `stretch` takes the room the caller offers the border box, which has its
 /// margins taken off already (CSS Sizing 4 §5.1), within the `min-width` and
@@ -58,6 +63,12 @@ pub(crate) fn compute_flexbox_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_stretch_width(tree, node, inputs);
+    if inputs.run_mode == crate::layout::protocol::RunMode::ComputeSize
+        && (!tree.context.grid_row_rooms.is_empty()
+            || tree.context.baseline_measure_owners.last() == Some(&usize::from(node)))
+    {
+        return grid_row_measure::compute_layout(tree, node, inputs, false);
+    }
     LayoutOutput::from_taffy(taffy::compute_flexbox_layout(
         tree,
         node.into_taffy(),
@@ -73,6 +84,12 @@ pub(crate) fn compute_grid_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_stretch_width(tree, node, inputs);
+    if inputs.run_mode == crate::layout::protocol::RunMode::ComputeSize
+        && (!tree.context.grid_row_rooms.is_empty()
+            || tree.context.baseline_measure_owners.last() == Some(&usize::from(node)))
+    {
+        return grid_row_measure::compute_layout(tree, node, inputs, true);
+    }
     LayoutOutput::from_taffy(taffy::compute_grid_layout(
         tree,
         node.into_taffy(),

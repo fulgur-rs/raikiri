@@ -257,4 +257,22 @@ fn border_state_missing_computed_border_keeps_retained_width() {
     );
     assert!(state.entries(&tree).is_empty());
     assert_eq!(state.cell(cell).unwrap().paint, None);
+    let metrics = state.block_metrics_before_table_edges(&tree, &grid, 0, None);
+    state.install_block_metrics(metrics);
+    let entries = state.entries(&tree);
+    assert_eq!(entries.len(), 2);
+    tree.with_overrides(entries, |tree| {
+        assert_eq!(
+            tree.table_style(cell).border().top,
+            LengthPercentage::length(3.5)
+        );
+        assert_eq!(
+            tree.table_style(cell).border().left,
+            LengthPercentage::length(7.0)
+        );
+        assert_eq!(
+            tree.table_style(cell).border().right,
+            LengthPercentage::length(7.0)
+        );
+    });
 }

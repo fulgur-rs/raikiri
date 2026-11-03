@@ -147,6 +147,43 @@ pub(crate) fn compute_multicol_layout(
             multicol_definite_dimension(tree, style_of(tree, index).size().width, parent_width)
         })
         .unwrap_or(0.0);
+    // A row flex container or a grid container stretches an auto-height
+    // item to its line or area, a column flex container grows or bases
+    // it on its flex properties, and an absolutely positioned box with
+    // both block insets fills its containing block; the columns then
+    // take that height. Other known heights come from the item's own
+    // content and are rebalanced here.
+    let css = style_of(tree, index);
+    let positioned = tree.nodes[index].layout_position() == Position::Absolute;
+    let inset = css.inset();
+    let inset_height = positioned && !inset.top.is_auto() && !inset.bottom.is_auto();
+    // The layout mode of the container that places this box in flow.
+    let placement = tree.parent_of(index).filter(|_| !positioned).map(|parent| {
+        let container = style_of(tree, parent);
+        let margins = css.margin();
+        let stretched = !margins.top.is_auto()
+            && !margins.bottom.is_auto()
+            && matches!(
+                css.align_self().or(Some(container.align_items())),
+                None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
+            );
+        match tree.nodes[parent].formatting_context {
+            FormattingContext::Flex if container.flex_direction_is_row() => {
+                FlowPlacement::Stretched(stretched)
+            }
+            FormattingContext::Flex => FlowPlacement::ColumnFlex {
+                flexed: css.flex_grow() > 0.0 || css.flex_basis() != Dimension::auto(),
+            },
+            FormattingContext::Grid => FlowPlacement::Stretched(stretched),
+            _ => FlowPlacement::Stretched(false),
+        }
+    });
+    let stretched_height = inputs.known_dimensions.height.is_some()
+        && (inset_height
+            || matches!(
+                placement,
+                Some(FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true })
+            ));
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
@@ -157,6 +194,26 @@ pub(crate) fn compute_multicol_layout(
         .map(|height| {
             multicol_authored_content_height(tree, index, height, parent_width, available_width)
         })
+    } else if stretched_height
+        && (!matches!(placement, Some(FlowPlacement::Stretched(_)))
+            || (inputs.parent_size.height.is_some() && inputs.known_dimensions_are_definite.height))
+    {
+        // An auto-height flex line supplies a content-derived target size,
+        // which must not prevent its columns from balancing. A definite
+        // parent or grid area can constrain the columns instead.
+        // A known size from flex/grid placement is already a border-box
+        // size, independent of the authored box-sizing value.
+        let css = style_of(tree, index);
+        let basis = parent_width.unwrap_or(available_width).max(0.0);
+        let (padding, border) = (css.padding(), css.border());
+        let insets = multicol_resolve_inset(tree, padding.top, basis)
+            + multicol_resolve_inset(tree, padding.bottom, basis)
+            + multicol_resolve_inset(tree, border.top, basis)
+            + multicol_resolve_inset(tree, border.bottom, basis);
+        inputs
+            .known_dimensions
+            .height
+            .map(|height| (height - insets).max(0.0))
     } else {
         None
     };
@@ -367,41 +424,6 @@ pub(crate) fn compute_multicol_layout(
                     + multicol_resolve_inset(tree, border.bottom, basis)
             }
         });
-        // A row flex container or a grid container stretches an auto-height
-        // item to its line or area, a column flex container grows or bases
-        // it on its flex properties, and an absolutely positioned box with
-        // both block insets fills its containing block; the columns then
-        // take that height. Other known heights come from the item's own
-        // content and are rebalanced here.
-        let positioned = tree.nodes[index].layout_position() == Position::Absolute;
-        let inset = css.inset();
-        let inset_height = positioned && !inset.top.is_auto() && !inset.bottom.is_auto();
-        // The layout mode of the container that places this box in flow.
-        let placement = tree.parent_of(index).filter(|_| !positioned).map(|parent| {
-            let container = style_of(tree, parent);
-            let stretched = matches!(
-                css.align_self().or(Some(container.align_items())),
-                None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
-            );
-            match tree.nodes[parent].formatting_context {
-                FormattingContext::Flex if container.flex_direction_is_row() => {
-                    FlowPlacement::Stretched(stretched)
-                }
-                FormattingContext::Flex => FlowPlacement::ColumnFlex {
-                    flexed: css.flex_grow() > 0.0 || css.flex_basis() != Dimension::auto(),
-                },
-                FormattingContext::Grid => FlowPlacement::Stretched(stretched),
-                _ => FlowPlacement::Stretched(false),
-            }
-        });
-        let stretched_height = inputs.known_dimensions.height.is_some()
-            && (inset_height
-                || matches!(
-                    placement,
-                    Some(
-                        FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true }
-                    )
-                ));
         let lineless_definite = available_height.is_some() || stretched_height;
         // An auto-basis item of a column flex container that does not grow
         // keeps its content height unless flexing shrinks it, so its known
@@ -469,8 +491,14 @@ pub(crate) fn compute_multicol_layout(
         };
         // Balanced columns size an auto-height container even under a
         // maximum height, which only bounds the balanced columns.
-        if fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite) {
+        let balances_height =
+            fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite);
+        if balances_height {
             output.size.height = used_height.max(minimum);
+        }
+        // The principal fragment paints the same border box that the parent
+        // receives, even when the balanced column content is shorter.
+        if balances_height || stretched_height {
             for fragment in &mut tree.fragment_tree.fragments {
                 if fragment.node_id == index && fragment.parent.is_none() {
                     fragment.rect.height = output.size.height;

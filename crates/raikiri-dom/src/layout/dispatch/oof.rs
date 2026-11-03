@@ -342,8 +342,9 @@ struct GridAreaBasis {
 /// The overrides that keep `candidates`, boxes in a containing block of `size`,
 /// from being sized under their content: those of
 /// [`super::content_limits::table_size_overrides`], the sizes of
-/// [`super::content_limits::ratio_stated_size_clamps`] and the minimum width of
-/// [`super::content_limits::ratio_width_floors`].
+/// [`super::content_limits::ratio_stated_size_clamps`], the minimum width of
+/// [`super::content_limits::ratio_width_floors`] and the bounds of
+/// [`super::content_limits::ratio_bound_overrides`].
 fn size_overrides_in(
     tree: &mut LayoutSession<'_>,
     candidates: &[NodeId],
@@ -359,6 +360,9 @@ fn size_overrides_in(
         tree, candidates, size,
     ));
     overrides.extend(super::content_limits::ratio_width_floors(
+        tree, candidates, size,
+    ));
+    overrides.extend(super::content_limits::ratio_bound_overrides(
         tree, candidates, size,
     ));
     overrides

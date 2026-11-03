@@ -121,6 +121,17 @@ fn source(uses: usize) -> String {
     )
 }
 
+/// An SVG of `count` rectangles whose paint comes from a page stylesheet, so
+/// that every one of them holds declarations the serialized source lacks.
+fn styled_source(count: usize) -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" color=\"red\">{}</svg>",
+        "<rect class=\"s\" width=\"2\" height=\"2\"/>".repeat(count)
+    )
+}
+
+const STYLED_RULE: &str = ".s{fill:#336699;stroke:#112233;stroke-width:2;opacity:.9;fill-opacity:.8;stroke-dasharray:1 2}";
+
 fn image_probe(kind: &str, count: usize) {
     let provider = SvgProvider(
         source(if kind == "source" { 500 } else { 1 }).into_bytes(),
@@ -176,15 +187,18 @@ fn image_probe(kind: &str, count: usize) {
     phase("resource_drop", || drop(resources));
 }
 
-fn paint_probe(count: usize) {
+fn paint_probe(count: usize, styled: bool) {
     let resources = RenderResources::new();
     let svg = if count == 0 {
         String::new()
+    } else if styled {
+        styled_source(count)
     } else {
         source(count)
     };
+    let rule = if styled { STYLED_RULE } else { "" };
     let html = format!(
-        "<!doctype html><style>@page{{size:50px 50px;margin:0}}body{{margin:0}}</style>{svg}"
+        "<!doctype html><style>@page{{size:50px 50px;margin:0}}body{{margin:0}}{rule}</style>{svg}"
     );
     let result = layout(&html, &resources);
     let page = result.page(0).unwrap();
@@ -226,6 +240,14 @@ fn paint_probe(count: usize) {
                 );
             }
         });
+        let declarations =
+            raikiri_dom::inline_svg_style::inline_svg_element_declarations(document, cascade, node)
+                .unwrap();
+        phase("debug_key_100", || {
+            for _ in 0..100 {
+                std::hint::black_box(format!("{declarations:?}"));
+            }
+        });
         let serialized = document.serialize_svg_subtree(node).unwrap().unwrap();
         phase("parse_100", || {
             for _ in 0..100 {
@@ -264,13 +286,14 @@ fn svg_cache_scaling() {
     let case = std::env::var("SVG_CACHE_CASE").unwrap_or("paint:1".into());
     let (kind, count) = case.split_once(':').unwrap();
     let count = count.parse::<usize>().unwrap();
-    assert!(count <= 500);
+    assert!(count <= 500 || kind == "styled");
     // Initialize shared fonts and layout infrastructure outside the measurements.
     let resources = RenderResources::new();
     drop(layout("<!doctype html><body></body>", &resources));
     match kind {
         "source" | "scenes" => image_probe(kind, count),
-        "paint" => paint_probe(count),
+        "paint" => paint_probe(count, false),
+        "styled" => paint_probe(count, true),
         _ => panic!("unknown probe case"),
     }
 }
