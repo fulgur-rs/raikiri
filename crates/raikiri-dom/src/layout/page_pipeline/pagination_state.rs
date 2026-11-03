@@ -8,12 +8,12 @@ use super::{
     FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix,
     LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, PageBox, PageCandidate,
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
-    PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
-    TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
-    avoided_box_moves, block_effective_y, block_fits_page_step, box_avoids_page_break_inside,
-    box_changes_page_name, box_occupies_column, box_sets_page_name, break_margins,
-    closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain, collapses_through,
-    collapses_with_previous_block, content_overflow_end, current_abs_y,
+    PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts,
+    TextLineIndex, TrailingFlexChildren, TransitionLanding, TransitionMove,
+    accumulated_relative_offset_y, avoided_box_moves, block_effective_y, block_fits_page_step,
+    box_avoids_page_break_inside, box_changes_page_name, box_occupies_column, box_sets_page_name,
+    break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
+    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, follows_flow_content,
     forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
@@ -285,6 +285,8 @@ pub(super) struct PaginationState {
     pub(super) deferred_shifts: DeferredShifts,
     pub(super) subtree_shifts: SubtreeShifts,
     float_gaps: super::external_float_gap::Index,
+    current_candidate_rank: usize,
+    next_candidate_rank: usize,
     pub(super) float_shifts: FloatShifts,
     pub(super) reach: PageReach,
     pub(super) page_names: PageNames,
@@ -326,6 +328,8 @@ impl PaginationState {
             deferred_shifts: DeferredShifts::default(),
             subtree_shifts: SubtreeShifts::default(),
             float_gaps: super::external_float_gap::Index::default(),
+            current_candidate_rank: 0,
+            next_candidate_rank: 0,
             float_shifts: FloatShifts::default(),
             reach: PageReach::default(),
             page_names,
@@ -345,6 +349,42 @@ impl PaginationState {
         }
     }
 
+    pub(super) fn prepare_float_gaps(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        candidates: &[PageCandidate],
+    ) {
+        self.float_gaps.prepare(document, cascade, body_id);
+        self.float_gaps.assign_visits(document, candidates);
+    }
+
+    fn queue_prefixes(&mut self, consumed: Vec<super::external_float_gap::Removal>, page: u32) {
+        for removal in consumed {
+            let Some(rank) = self.float_gaps.first_visit(removal.root) else {
+                // Candidate-free text overflow changes only painted lines.
+                continue;
+            };
+            self.deferred_shifts
+                .pending_prefixes
+                .entry(rank)
+                .or_default()
+                .push(PendingPrefix {
+                    split: LineSplit {
+                        root: removal.root,
+                        first_moved: 0,
+                        shift: -removal.removed,
+                        growth: removal.growth,
+                        page,
+                    },
+                    ancestor_growth: removal.ancestor_growth,
+                });
+        }
+        self.deferred_shifts
+            .activate_prefixes(self.current_candidate_rank, &mut self.subtree_shifts);
+    }
+
     /// Starts the placement of `candidate`: skips the lines of a repeated
     /// table header and candidates that are not source nodes, settles the
     /// shifts that end or begin at it, and decides the page type it compares
@@ -356,7 +396,8 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
     ) -> Result<Option<CandidateEntry>, LayoutError> {
-        self.float_gaps.prepare(document, env.cascade, env.body_id);
+        self.current_candidate_rank = self.next_candidate_rank;
+        self.next_candidate_rank += 1;
         let node_id = candidate.node_id;
         // Header lines stay together and are placed from the table's rows,
         // rather than acquiring independent text-page shifts.
@@ -1338,22 +1379,14 @@ impl PaginationState {
             forced_before && in_row_flex_container(document, cascade, node_id);
         if landing.is_finite() {
             if !lands_after_forced_break {
-                for (root, removed, growth) in self.float_gaps.discard_in_holder(
+                let consumed = self.float_gaps.discard_in_holder(
                     document,
                     cascade,
                     holder,
                     landing.node_delta,
                     body_id,
-                    &mut self.subtree_shifts,
-                ) {
-                    self.deferred_shifts.line_splits.push(LineSplit {
-                        root,
-                        first_moved: 0,
-                        shift: -removed,
-                        growth,
-                        page: target_page,
-                    });
-                }
+                );
+                self.queue_prefixes(consumed, target_page);
             }
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
@@ -1614,24 +1647,18 @@ impl PaginationState {
         text: &mut TextPosition,
         block_id: usize,
         delta: f32,
-        consumed: Vec<(usize, f32, f32)>,
+        consumed: Vec<super::external_float_gap::Removal>,
         page: u32,
     ) {
         self.flow_shift += delta;
         text.effective_y += delta;
-        for (root, removed, growth) in consumed {
-            if root == block_id {
-                text.effective_y -= removed;
-                text.first_line_shift -= removed;
+        for removal in &consumed {
+            if removal.root == block_id {
+                text.effective_y -= removal.removed;
+                text.first_line_shift -= removal.removed;
             }
-            self.deferred_shifts.line_splits.push(LineSplit {
-                root,
-                first_moved: 0,
-                shift: -removed,
-                growth,
-                page,
-            });
         }
+        self.queue_prefixes(consumed, page);
     }
 
     /// Keeps the lines of the text from breaking badly at the end of the
@@ -2444,6 +2471,8 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
     ) {
+        self.deferred_shifts
+            .activate_prefixes(self.current_candidate_rank, &mut self.subtree_shifts);
         let FlowEnv {
             cascade,
             body_id,

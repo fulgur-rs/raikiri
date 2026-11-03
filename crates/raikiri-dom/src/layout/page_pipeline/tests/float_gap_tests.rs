@@ -88,6 +88,12 @@ fn keep_after_a_float(
     };
     let mut state = pagination_state_before_first_candidate(doc.nodes.len());
     let mut session = crate::layout::context::LayoutSession::resumed(&mut doc, cascade);
+    state.prepare_float_gaps(
+        &mut session,
+        cascade,
+        body,
+        std::slice::from_ref(&candidate),
+    );
     let blocks = pagination_state::LineBlocks::find(
         &session,
         &env,

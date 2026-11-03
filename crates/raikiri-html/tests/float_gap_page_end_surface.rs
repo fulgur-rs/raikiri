@@ -573,3 +573,98 @@ fn a_float_declaration_on_an_absolute_box_does_not_retain_the_prefix() {
         );
     }
 }
+
+fn assert_word_on_page(document: &DocumentLayout, word: &str, page: u32, x: f32, top: f32) {
+    let page = document.page(page).unwrap();
+    let run = page
+        .text_runs()
+        .into_iter()
+        .find(|run| run.text.trim() == word)
+        .unwrap();
+    assert_eq!(
+        (run.origin.0, run.origin.1 - BASELINE_BELOW_LINE_TOP),
+        (x, top),
+        "{word}"
+    );
+}
+
+fn short_spacer_boxes(document: &DocumentLayout) -> Vec<(u32, f32)> {
+    let mut found = Vec::new();
+    for index in 0..3 {
+        if let Some(page) = document.page(index) {
+            found.extend(
+                page.fragments()
+                    .filter(|fragment| fragment.kind() == FragmentKind::Box)
+                    .map(|fragment| fragment.rect())
+                    .filter(|rect| rect.width == 10.0 && rect.height == 5.0)
+                    .map(|rect| (index, rect.y)),
+            );
+        }
+    }
+    found
+}
+
+#[test]
+fn earlier_content_in_a_moving_holder_does_not_take_a_later_paragraphs_correction() {
+    for (fixed, after) in [(false, 35.0), (true, 65.0)] {
+        let root = narrow("", "Y");
+        let root = if fixed {
+            format!("<article style='height:60px'>{root}</article>")
+        } else {
+            root
+        };
+        let rest = format!(
+            "<section style='break-inside:avoid'><div style='width:10px;height:5px;background:cyan;font:5px/5px Ahem'>P</div>{root}</section>{}",
+            narrow("", "Z")
+        );
+        let document = lay_out(&after_left_float(60, 20, &rest));
+        assert_eq!(short_spacer_boxes(&document), [(1, 0.0)], "fixed {fixed}");
+        assert_word_on_page(&document, "Y", 1, 0.0, 5.0);
+        assert_word_on_page(&document, "Z", 1, 0.0, after);
+    }
+}
+
+#[test]
+fn each_future_gap_owner_keeps_its_correction_until_it_is_visited() {
+    let rest = format!(
+        "<section style='break-inside:avoid;min-height:60px'><div style='width:10px;height:5px;background:magenta;font:5px/5px Ahem'>P</div>{}{}</section>{}",
+        narrow("height:0", "Y"),
+        narrow("height:0;text-indent:5px;color:cyan", "W"),
+        narrow("", "Z")
+    );
+    let document = lay_out(&after_left_float(60, 20, &rest));
+    assert_eq!(short_spacer_boxes(&document), [(1, 0.0)]);
+    assert_word_on_page(&document, "Y", 1, 0.0, 5.0);
+    assert_word_on_page(&document, "W", 1, 5.0, 5.0);
+    assert_word_on_page(&document, "Z", 1, 0.0, 60.0);
+}
+
+#[test]
+fn shrinking_a_block_child_keeps_an_ancestors_fixed_top_absolute_box_in_place() {
+    let rest = format!(
+        "<section style='position:relative;break-inside:avoid'><div style='position:absolute;top:70px;left:50px;width:10px;height:10px'>Q</div><div style='width:10px;height:5px;background:magenta;font:5px/5px Ahem'>P</div>{}<span>Z</span></section>{}",
+        narrow("", "Y"),
+        narrow("", "W")
+    );
+    let document = lay_out(&after_left_float(60, 20, &rest));
+    assert_word_on_page(&document, "Q", 1, 50.0, 70.0);
+    assert_word_on_page(&document, "Y", 1, 0.0, 5.0);
+    assert_word_on_page(&document, "Z", 1, 0.0, 35.0);
+    assert_word_on_page(&document, "W", 1, 0.0, 65.0);
+    assert_eq!(short_spacer_boxes(&document), [(1, 0.0)]);
+}
+
+#[test]
+fn shrinking_a_block_child_keeps_a_static_absolute_box_with_its_line() {
+    let rest = format!(
+        "<section style='break-inside:avoid'><div style='width:10px;height:5px;background:magenta;font:5px/5px Ahem'>P</div>{}<span>Z</span><span style='position:absolute;left:50px;width:10px;height:10px'>Q</span></section>{}",
+        narrow("", "Y"),
+        narrow("", "W")
+    );
+    let document = lay_out(&after_left_float(60, 20, &rest));
+    assert_word_on_page(&document, "Q", 1, 50.0, 35.0);
+    assert_word_on_page(&document, "Y", 1, 0.0, 5.0);
+    assert_word_on_page(&document, "Z", 1, 0.0, 35.0);
+    assert_word_on_page(&document, "W", 1, 0.0, 65.0);
+    assert_eq!(short_spacer_boxes(&document), [(1, 0.0)]);
+}

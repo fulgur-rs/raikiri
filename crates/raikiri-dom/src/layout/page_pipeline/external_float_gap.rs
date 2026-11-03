@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// A removed prefix and the ancestor corrections that must start with it.
+pub(super) struct Removal {
+    pub(super) root: usize,
+    pub(super) removed: f32,
+    pub(super) growth: f32,
+    pub(super) ancestor_growth: Vec<(usize, f32)>,
+}
+
 /// Consumes only a proven empty prefix below inherited floats. Owned boxes
 /// keep their layout relative to the full-width lines below that prefix.
 pub(super) fn discard(
@@ -10,8 +18,7 @@ pub(super) fn discard(
     root: usize,
     delta: f32,
     body_id: usize,
-    shifts: &mut SubtreeShifts,
-) -> (f32, f32) {
+) -> Removal {
     let gap = document
         .ifc_layout_node(root)
         .and_then(|node| node.ifc.as_ref())
@@ -20,7 +27,12 @@ pub(super) fn discard(
         .map_or(0.0, |lines| lines.external_float_gap);
     let removed = gap.min(delta).max(0.0);
     if removed <= 0.001 {
-        return (0.0, 0.0);
+        return Removal {
+            root,
+            removed: 0.0,
+            growth: 0.0,
+            ancestor_growth: Vec::new(),
+        };
     }
     let boxes: Vec<usize> = document
         .ifc_layout_node(root)
@@ -52,6 +64,7 @@ pub(super) fn discard(
         lines.external_float_gap -= removed;
         lines.discarded_float_gap += removed;
     }
+    let mut ancestor_growth = Vec::new();
     shrink_ancestors_after_content_change(
         document,
         cascade,
@@ -60,9 +73,14 @@ pub(super) fn discard(
         -removed,
         body_id,
         &IfcBoxShifts::default(),
-        Some(shifts),
+        Some(&mut ancestor_growth),
     );
-    (removed, growth)
+    Removal {
+        root,
+        removed,
+        growth,
+        ancestor_growth,
+    }
 }
 
 /// Source intervals and float owners prepared once for a pagination attempt.
@@ -72,6 +90,7 @@ pub(super) struct Index {
     order: Vec<usize>,
     ends: Vec<usize>,
     roots: BTreeMap<usize, (usize, usize)>,
+    first_visits: HashMap<usize, usize>,
     floats: HashMap<usize, Vec<usize>>,
     #[cfg(test)]
     float_reads: usize,
@@ -219,6 +238,83 @@ impl Index {
         }
     }
 
+    /// Schedules corrections by the actual candidate walk, including reordered
+    /// flex and grid items, rather than by the source-tree order.
+    pub(super) fn assign_visits(
+        &mut self,
+        document: &mut super::super::context::LayoutSession<'_>,
+        candidates: &[PageCandidate],
+    ) {
+        if self.roots.is_empty() {
+            return;
+        }
+        let mut visits = vec![usize::MAX; self.order.len()];
+        for (rank, candidate) in candidates.iter().enumerate() {
+            if let Some(visit) = visits.get_mut(candidate.node_id) {
+                *visit = (*visit).min(rank);
+            }
+        }
+        let mut source = vec![
+            0;
+            self.order
+                .iter()
+                .filter(|&&order| order != usize::MAX)
+                .count()
+        ];
+        for (node, &order) in self.order.iter().enumerate() {
+            if order != usize::MAX {
+                source[order] = node;
+            }
+        }
+        for &node in source.iter().rev() {
+            for &child in &document.nodes[node].children {
+                visits[node] = visits[node].min(visits[child]);
+            }
+        }
+        self.roots.retain(|_, &mut (root, _)| {
+            if visits[root] == usize::MAX {
+                // Zero-height text overflow has no candidates, but its painted
+                // lines still move. Without owned boxes or height growth it
+                // needs no correction in the candidate flow.
+                let paint_only = document.ifc_layout_node(root).is_some_and(|node| {
+                    node.layout.size.height == 0.0
+                        && node.ifc.as_ref().is_some_and(|ifc| ifc.boxes.is_empty())
+                        && lines_shift_growth(
+                            document,
+                            root,
+                            -node
+                                .ifc
+                                .as_ref()
+                                .unwrap()
+                                .lines
+                                .as_ref()
+                                .unwrap()
+                                .external_float_gap,
+                        ) == 0.0
+                });
+                if paint_only {
+                    return true;
+                }
+                if let Some(lines) = document
+                    .table_layout_node_mut(root)
+                    .ifc
+                    .as_mut()
+                    .and_then(|ifc| ifc.lines.as_mut())
+                {
+                    lines.external_float_gap = 0.0;
+                }
+                false
+            } else {
+                self.first_visits.insert(root, visits[root]);
+                true
+            }
+        });
+    }
+
+    pub(super) fn first_visit(&self, root: usize) -> Option<usize> {
+        self.first_visits.get(&root).copied()
+    }
+
     /// Removes only prefixes whose floats remain outside the moving holder.
     pub(super) fn discard_in_holder(
         &mut self,
@@ -227,8 +323,7 @@ impl Index {
         holder: usize,
         delta: f32,
         body_id: usize,
-        shifts: &mut SubtreeShifts,
-    ) -> Vec<(usize, f32, f32)> {
+    ) -> Vec<Removal> {
         self.prepare(document, cascade, body_id);
         if self.roots.is_empty() {
             return Vec::new();
@@ -280,12 +375,12 @@ impl Index {
                 .map_or(0.0, |lines| lines.external_float_gap);
             let moved_by = delta + current_abs_y(document, root) - original_top;
             let allowed = moved_by.min(gap - retained).max(0.0);
-            let (removed, growth) = discard(document, cascade, root, allowed, body_id, shifts);
-            if gap - removed <= 0.001 {
+            let removal = discard(document, cascade, root, allowed, body_id);
+            if gap - removal.removed <= 0.001 {
                 self.roots.remove(&order);
             }
-            if removed > 0.0 {
-                consumed.push((root, removed, growth));
+            if removal.removed > 0.0 {
+                consumed.push(removal);
             }
         }
         consumed

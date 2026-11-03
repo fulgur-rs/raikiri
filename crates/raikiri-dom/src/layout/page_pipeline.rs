@@ -4121,6 +4121,7 @@ fn paginate_flow(
         insets,
         page_box,
     };
+    state.prepare_float_gaps(document, cascade, body_id, &candidates);
     let mut candidates = candidates.into_iter();
     // Each candidate is placed while the page limit lets pagination reach the
     // page the flow is on.
@@ -5976,6 +5977,18 @@ fn follow_ifc_block(
     old_bottom: f32,
     delta: f32,
 ) -> IfcBoxShifts {
+    follow_ifc_block_with_oof(document, root, block, old_top, old_bottom, delta, None)
+}
+
+fn follow_ifc_block_with_oof(
+    document: &mut Document,
+    root: usize,
+    block: usize,
+    old_top: f32,
+    old_bottom: f32,
+    delta: f32,
+    allowed_oof: Option<&HashSet<usize>>,
+) -> IfcBoxShifts {
     let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
         return IfcBoxShifts::default();
     };
@@ -6010,6 +6023,7 @@ fn follow_ifc_block(
         let location = &mut document.nodes[b].layout.location;
         let follows = if kind == IfcBoxKind::OutOfFlow {
             location.y >= old_bottom - 0.01
+                && allowed_oof.is_none_or(|allowed| allowed.contains(&b))
         } else {
             later && location.y >= old_top - 0.01
         };
@@ -8918,6 +8932,9 @@ struct DeferredShifts {
     /// shift once they are reached, and are on its page or after it; its texts
     /// before that line stay where they are.
     line_splits: Vec<LineSplit>,
+    /// Prefix corrections wait for their owner's first candidate. Moving a
+    /// holder can remove a descendant's prefix before earlier siblings visit.
+    pending_prefixes: BTreeMap<usize, Vec<PendingPrefix>>,
     /// What the flow after a paragraph gives back once pagination leaves it,
     /// when a text inside it took a whole line shift but its box grew by less:
     /// `(paragraph, correction, page the flow was on before that text)`.
@@ -8925,6 +8942,11 @@ struct DeferredShifts {
     /// The page the flow goes back to, at the earliest, at the next candidate
     /// in the flow after such a paragraph: the box ends before its moved lines.
     page_floor: Option<u32>,
+}
+
+struct PendingPrefix {
+    split: LineSplit,
+    ancestor_growth: Vec<(usize, f32)>,
 }
 
 /// Lines of a paragraph moved down inside it: see [`DeferredShifts`].
@@ -8946,6 +8968,23 @@ struct LineSplit {
 }
 
 impl DeferredShifts {
+    fn activate_prefixes(&mut self, rank: usize, shifts: &mut SubtreeShifts) {
+        while self
+            .pending_prefixes
+            .first_key_value()
+            .is_some_and(|(&first, _)| first <= rank)
+        {
+            let (_, prefixes) = self
+                .pending_prefixes
+                .pop_first()
+                .expect("a reached prefix exists");
+            for prefix in prefixes {
+                self.line_splits.push(prefix.split);
+                shifts.growth.extend(prefix.ancestor_growth);
+            }
+        }
+    }
+
     /// Adds to `flow_shift` every pending shift that `node_id` has reached,
     /// and drops them: the corrections of the paragraphs it left, then the
     /// line splits. Returns the last page that a line split it reached moved
@@ -10422,7 +10461,7 @@ fn move_line_block(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
     gaps: &mut external_float_gap::Index,
-) -> (f32, Vec<(usize, f32, f32)>) {
+) -> (f32, Vec<external_float_gap::Removal>) {
     let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
     let moved = if nested {
         first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start)
@@ -10435,7 +10474,7 @@ fn move_line_block(
     let delta = Some(target_y + relative - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
-    let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id, shifts);
+    let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
@@ -10731,7 +10770,7 @@ fn shrink_ancestors_after_content_change(
     mut float_delta: f32,
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
-    mut changes: Option<&mut SubtreeShifts>,
+    mut changes: Option<&mut Vec<(usize, f32)>>,
 ) {
     if (delta >= 0.0 && float_delta >= 0.0) || !delta.is_finite() {
         return;
@@ -10753,13 +10792,26 @@ fn shrink_ancestors_after_content_change(
         let followed = if changes.is_some() && flow_delta.abs() > 0.001 {
             let layout = document.nodes[child].layout;
             let top = pagination_child_parent_y(document, parent, child, layout.location.y);
-            follow_ifc_block(
+            let allowed_oof = document
+                .ifc_layout_node(parent)
+                .and_then(|node| node.ifc.as_ref())
+                .into_iter()
+                .flat_map(|ifc| &ifc.boxes)
+                .filter(|item| item.kind == IfcBoxKind::OutOfFlow)
+                .filter(|item| {
+                    out_of_flow_follow(document, cascade, parent, item.node)
+                        == Some(OutOfFlowFollow::OnLine)
+                })
+                .map(|item| item.node)
+                .collect();
+            follow_ifc_block_with_oof(
                 document,
                 parent,
                 child,
                 top,
                 top + layout.size.height - size_delta,
                 flow_delta,
+                Some(&allowed_oof),
             )
         } else {
             IfcBoxShifts::default()
@@ -10791,7 +10843,7 @@ fn shrink_ancestors_after_content_change(
         if let Some(records) = changes.as_mut()
             && (passed - flow_delta).abs() > 0.001
         {
-            records.growth.push((parent, passed - flow_delta));
+            records.push((parent, passed - flow_delta));
         }
         let owns_floats = holds_floats(document, cascade, parent);
         float_delta = if owns_floats {
