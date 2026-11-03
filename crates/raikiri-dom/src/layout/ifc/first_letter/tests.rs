@@ -4,6 +4,16 @@ use shodo::limits::{LimitExceeded, LimitKind, Limits};
 use shodo::{AtomicSizes, LayoutContext};
 
 mod ancestor_walk_tests;
+mod continuation_tests;
+mod scan_tests;
+
+thread_local! {
+    /// How many bytes of text the first-letter lookahead has handed to the
+    /// first-letter search, probes included.
+    pub(super) static SCANNED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times the container of a text was looked up.
+    pub(super) static CONTAINER_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 fn paragraph_builder(
     fixture: &Fixture,
