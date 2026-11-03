@@ -112,6 +112,7 @@ struct FragmentedFloatOutput<'a> {
     adjoins_top_margin: bool,
     fragmentainer: Option<usize>,
     placements: &'a mut Vec<IfcBoxFragment>,
+    earliest_float_top: &'a mut f32,
     oof_candidates: &'a mut OofCandidates,
 }
 
@@ -179,6 +180,8 @@ pub(crate) fn layout_with_boxes_in(
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
+            external_float_gap: 0.0,
+            discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
@@ -392,6 +395,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
+            external_float_gap: 0.0,
+            discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
@@ -574,6 +579,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         oof_candidates,
         height: max_height,
         beside_floats,
+        external_float_gap: 0.0,
+        discarded_float_gap: 0.0,
         escaping_margin,
         leading_block_margin: None,
         block_line_starts,
@@ -770,6 +777,9 @@ fn run_boxes_segment(
     if !top_margin_escapes {
         ctx.commit_strut();
     }
+    let inherited_float_end =
+        (ctx.cleared_threshold(Clear::Both).unwrap_or(top_edge) - top_edge).max(0.0);
+    let mut earliest_float_top = f32::INFINITY;
     let mut cursor: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -961,6 +971,7 @@ fn run_boxes_segment(
                                 adjoins_top_margin: false,
                                 fragmentainer,
                                 placements: &mut fragment_box_placements,
+                                earliest_float_top: &mut earliest_float_top,
                                 oof_candidates: &mut oof_candidates,
                             },
                         ));
@@ -1105,6 +1116,7 @@ fn run_boxes_segment(
                                 adjoins_top_margin: false,
                                 fragmentainer,
                                 placements: &mut fragment_box_placements,
+                                earliest_float_top: &mut earliest_float_top,
                                 oof_candidates: &mut oof_candidates,
                             },
                         ));
@@ -1134,6 +1146,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
                         },
                     ));
@@ -1181,6 +1194,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
                         },
                     ));
@@ -1202,6 +1216,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: top_margin_escapes && leading_margin_open,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
                         },
                     ));
@@ -1407,6 +1422,7 @@ fn run_boxes_segment(
                     adjoins_top_margin: false,
                     fragmentainer,
                     placements: &mut fragment_box_placements,
+                    earliest_float_top: &mut earliest_float_top,
                     oof_candidates: &mut oof_candidates,
                 },
             );
@@ -1435,6 +1451,22 @@ fn run_boxes_segment(
         after_forced,
         marker_pending: marker_pending.is_some(),
     };
+    // Uniformly removing this prefix preserves the full-width line layout:
+    // no inherited float reaches any owned content in the retained suffix.
+    let external_float_gap = if horizontal
+        && start.first
+        && fragmentainer.is_none()
+        && block_line_starts.is_empty()
+        && generated_block_starts.is_empty()
+        && lines
+            .first()
+            .is_some_and(|line| line.block_offset() >= inherited_float_end)
+        && earliest_float_top >= inherited_float_end
+    {
+        inherited_float_end
+    } else {
+        0.0
+    };
     RunBoxesOutcome {
         lines: IfcLines {
             width,
@@ -1443,6 +1475,8 @@ fn run_boxes_segment(
             object_text_prefixes: Default::default(),
             oof_candidates,
             beside_floats: beside,
+            external_float_gap,
+            discarded_float_gap: 0.0,
             escaping_margin,
             leading_block_margin,
             block_line_starts,
@@ -1475,11 +1509,13 @@ fn commit_fragmented_float(
         adjoins_top_margin,
         fragmentainer,
         placements,
+        earliest_float_top,
         oof_candidates,
     } = output;
     let node = float.node;
     let (top, mut child_candidates) =
         commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
+    *earliest_float_top = earliest_float_top.min(top);
     oof_candidates.append(&mut child_candidates);
     if perform && let Some(fragmentainer) = fragmentainer {
         let layout = tree.nodes[node].layout;

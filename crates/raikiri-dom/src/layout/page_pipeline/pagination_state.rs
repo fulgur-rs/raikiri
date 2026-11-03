@@ -284,6 +284,7 @@ pub(super) struct PaginationState {
     pub(super) current_page: u32,
     pub(super) deferred_shifts: DeferredShifts,
     pub(super) subtree_shifts: SubtreeShifts,
+    float_gaps: super::external_float_gap::Index,
     pub(super) float_shifts: FloatShifts,
     pub(super) reach: PageReach,
     pub(super) page_names: PageNames,
@@ -324,6 +325,7 @@ impl PaginationState {
             current_page: 0,
             deferred_shifts: DeferredShifts::default(),
             subtree_shifts: SubtreeShifts::default(),
+            float_gaps: super::external_float_gap::Index::default(),
             float_shifts: FloatShifts::default(),
             reach: PageReach::default(),
             page_names,
@@ -354,6 +356,7 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
     ) -> Result<Option<CandidateEntry>, LayoutError> {
+        self.float_gaps.prepare(document, env.cascade, env.body_id);
         let node_id = candidate.node_id;
         // Header lines stay together and are placed from the table's rows,
         // rather than acquiring independent text-page shifts.
@@ -469,6 +472,11 @@ impl PaginationState {
         {
             return Ok(());
         }
+        let discarded_gap = text_ifc_root
+            .and_then(|root| document.ifc_layout_node(root))
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .map_or(0.0, |lines| lines.discarded_float_gap);
         let mut text = TextPosition {
             effective_y: if uses_positioned_coordinates {
                 positioned_text_start_y(document, text_lines, node_id, text_ifc_root)
@@ -490,7 +498,8 @@ impl PaginationState {
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
-        let ifc_root = ifc_root.map(|(root, offset)| (root, offset + text.first_line_shift));
+        let ifc_root =
+            ifc_root.map(|(root, offset)| (root, offset + text.first_line_shift - discarded_gap));
         self.note_positioned_paragraph(document, candidate);
         place_text_candidate(
             document,
@@ -742,7 +751,14 @@ impl PaginationState {
             ..
         } = *env;
         let node_id = candidate.node_id;
-        let height = candidate.height;
+        let height = document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .filter(|lines| lines.discarded_float_gap > 0.0)
+            .map_or(candidate.height, |_| {
+                document.nodes[node_id].layout.size.height
+            });
         reach_page(control, self.current_page)?;
         // A fixed-height direct block that fits on the physical paper is
         // monolithic in this minimal paginator.
@@ -957,7 +973,11 @@ impl PaginationState {
         // Copy layout data before any break adjustment so the immutable node
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
-        let height = candidate.height;
+        let height = if box_avoids_page_break_inside(document, node_id, computed.break_inside) {
+            super::external_float_gap::fit_height(document, candidate)
+        } else {
+            candidate.height
+        };
         place_first_table_header(
             document,
             &mut self.table_headers,
@@ -1317,6 +1337,25 @@ impl PaginationState {
         let row_flex_break_before =
             forced_before && in_row_flex_container(document, cascade, node_id);
         if landing.is_finite() {
+            if !lands_after_forced_break {
+                for (root, removed, growth) in self.float_gaps.discard_in_holder(
+                    document,
+                    cascade,
+                    holder,
+                    landing.node_delta,
+                    body_id,
+                    &mut self.subtree_shifts,
+                    entry.page_before_candidate,
+                ) {
+                    self.deferred_shifts.line_splits.push(LineSplit {
+                        root,
+                        first_moved: 0,
+                        shift: -removed,
+                        growth,
+                        page: target_page,
+                    });
+                }
+            }
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -1550,7 +1589,7 @@ impl PaginationState {
             }) {
                 reach_page(control, target_page)?;
                 let target_y = page_origins.origin(target_page);
-                let delta = move_line_block(
+                let (delta, consumed) = move_line_block(
                     document,
                     cascade,
                     body_id,
@@ -1561,9 +1600,23 @@ impl PaginationState {
                     page_origins.origin(self.current_page),
                     &mut self.subtree_shifts,
                     entry.page_before_candidate,
+                    &mut self.float_gaps,
                 );
                 self.flow_shift += delta;
                 text.effective_y += delta;
+                for (root, removed, growth) in consumed {
+                    if root == block_id {
+                        text.effective_y -= removed;
+                        text.first_line_shift -= removed;
+                    }
+                    self.deferred_shifts.line_splits.push(LineSplit {
+                        root,
+                        first_moved: 0,
+                        shift: -removed,
+                        growth,
+                        page: target_page,
+                    });
+                }
             }
         }
         Ok(())
@@ -1847,7 +1900,7 @@ impl PaginationState {
                             )?;
                         } else {
                             reach_page(control, page)?;
-                            let delta = move_line_block(
+                            let (delta, consumed) = move_line_block(
                                 document,
                                 cascade,
                                 body_id,
@@ -1858,9 +1911,23 @@ impl PaginationState {
                                 page_start,
                                 &mut self.subtree_shifts,
                                 entry.page_before_candidate,
+                                &mut self.float_gaps,
                             );
                             self.flow_shift += delta;
                             text.effective_y += delta;
+                            for (root, removed, growth) in consumed {
+                                if root == block_id {
+                                    text.effective_y -= removed;
+                                    text.first_line_shift -= removed;
+                                }
+                                self.deferred_shifts.line_splits.push(LineSplit {
+                                    root,
+                                    first_moved: 0,
+                                    shift: -removed,
+                                    growth,
+                                    page,
+                                });
+                            }
                         }
                         moved_whole = true;
                     }

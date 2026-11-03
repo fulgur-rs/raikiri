@@ -4,6 +4,7 @@ use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
 mod column_replaced;
+mod external_float_gap;
 pub(super) mod float_resumption;
 mod footnotes;
 mod fragment_sources;
@@ -5298,7 +5299,7 @@ impl AvoidedBreaks {
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
         let avoided_end = if avoids_break_inside {
-            Some(page_box_end)
+            Some(flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin)
         } else {
             unplaced_line
                 .filter(|line| {
@@ -10420,7 +10421,8 @@ fn move_line_block(
     page_start: f32,
     shifts: &mut SubtreeShifts,
     flow_page: u32,
-) -> f32 {
+    gaps: &mut external_float_gap::Index,
+) -> (f32, Vec<(usize, f32, f32)>) {
     let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
     let moved = if nested {
         first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start)
@@ -10433,6 +10435,8 @@ fn move_line_block(
     let delta = Some(target_y + relative - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
+    let consumed =
+        gaps.discard_in_holder(document, cascade, moved, delta, body_id, shifts, flow_page);
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
@@ -10447,7 +10451,7 @@ fn move_line_block(
             &followed_ifc_boxes,
         );
     }
-    delta
+    (delta, consumed)
 }
 
 /// How far a page transition moved a box and why.
@@ -10712,13 +10716,30 @@ fn shrink_ancestors_after_margin_truncation(
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
 ) {
-    if delta >= 0.0 || !delta.is_finite() {
+    shrink_ancestors_after_content_change(
+        document, cascade, node, delta, delta, flow_root, ifc_boxes, None,
+    );
+}
+
+/// Propagates a shortened content extent separately from its owned floats.
+/// Bounds can absorb either change before the containing flow is reached.
+#[allow(clippy::too_many_arguments)]
+fn shrink_ancestors_after_content_change(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node: usize,
+    delta: f32,
+    mut float_delta: f32,
+    flow_root: usize,
+    ifc_boxes: &IfcBoxShifts,
+    mut changes: Option<(&mut SubtreeShifts, u32)>,
+) {
+    if (delta >= 0.0 && float_delta >= 0.0) || !delta.is_finite() {
         return;
     }
     let mut child = node;
     let mut flow_delta = delta;
     let mut size_delta = delta;
-    let mut float_delta = delta;
     let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
     while let Some(parent) = walk.current() {
         walk.advance(document);
@@ -10730,9 +10751,28 @@ fn shrink_ancestors_after_margin_truncation(
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
+        let followed = if changes.is_some() && flow_delta.abs() > 0.001 {
+            let layout = document.nodes[child].layout;
+            let top = pagination_child_parent_y(document, parent, child, layout.location.y);
+            follow_ifc_block(
+                document,
+                parent,
+                child,
+                top,
+                top + layout.size.height - size_delta,
+                flow_delta,
+            )
+        } else {
+            IfcBoxShifts::default()
+        };
+        let ifc_boxes = if followed.boxes.is_empty() {
+            ifc_boxes
+        } else {
+            &followed
+        };
         shift_later_block_siblings(document, parent, child, flow_delta);
         let old_height = document.nodes[parent].layout.size.height;
-        let Some(adjusted) = grown_auto_height(
+        let adjusted = grown_auto_height(
             document,
             cascade,
             parent,
@@ -10740,14 +10780,26 @@ fn shrink_ancestors_after_margin_truncation(
             flow_delta,
             size_delta,
             float_delta,
-            child == node,
+            changes.is_some() || child == node,
             flow_root,
             ifc_boxes,
-        ) else {
+        );
+        let Some(adjusted) = adjusted else {
+            if let Some((records, _)) = changes.as_mut()
+                && flow_delta.abs() > 0.001
+            {
+                records.growth.push((parent, -flow_delta));
+            }
             break;
         };
         document.nodes[parent].layout.size.height = adjusted.height;
         let (old_flow, new_flow) = adjusted.flow_heights;
+        let passed = new_flow - old_flow;
+        if let Some((records, _)) = changes.as_mut()
+            && (passed - flow_delta).abs() > 0.001
+        {
+            records.growth.push((parent, passed - flow_delta));
+        }
         let owns_floats = holds_floats(document, cascade, parent);
         float_delta = if owns_floats {
             0.0

@@ -163,7 +163,7 @@ fn a_first_line_that_moves_to_a_page_past_the_limit_halts_the_layout() {
 }
 
 #[test]
-fn a_paragraph_whose_lines_cannot_move_goes_to_the_next_page_whole_with_its_gap() {
+fn a_whole_paragraph_move_discards_the_inherited_float_gap() {
     // An inline box among the lines, or a float of the paragraph's own, keeps
     // the lines from moving down inside the box: it moves whole.
     for (name, css) in [
@@ -183,14 +183,24 @@ fn a_paragraph_whose_lines_cannot_move_goes_to_the_next_page_whole_with_its_gap(
             text,
         );
         kept.unwrap();
-        assert!(state.deferred_shifts.line_splits.is_empty(), "{name}");
+        assert_eq!(
+            state.deferred_shifts.line_splits,
+            [LineSplit {
+                root,
+                first_moved: 0,
+                shift: -10.0,
+                growth: -10.0,
+                page: 1,
+            }],
+            "{name}"
+        );
         assert_eq!(
             (
                 state.flow_shift,
                 position.effective_y,
                 position.first_line_shift
             ),
-            (15.0, 110.0, 0.0),
+            (15.0, 100.0, -10.0),
             "{name}"
         );
         assert_eq!(doc.nodes[root].layout.location.y, 100.0, "{name}");
