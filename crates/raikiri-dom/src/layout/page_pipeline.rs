@@ -7969,17 +7969,12 @@ fn tail_edges_move(edges: f32, float_reach: f32, candidate: &PageCandidate, fit:
 }
 
 /// The block size of the bottom padding and border of the block `node_id`
-/// that close it below its last box, when they follow that box: the block is
-/// not the body, stacks its boxes in block flow, and has a height that is that
-/// of its content.
-fn closing_edges_of(
-    document: &super::context::LayoutSession<'_>,
-    node_id: usize,
-    body_id: usize,
-) -> Option<f32> {
+/// that close it below its last box, when they follow that box: the block
+/// stacks its boxes in block flow, and has a height that is that of its
+/// content. The body is such a block as well.
+fn closing_edges_of(document: &super::context::LayoutSession<'_>, node_id: usize) -> Option<f32> {
     let node = &document.nodes[node_id];
-    (node_id != body_id
-        && node.kind() == NodeKind::Element
+    (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
         && moves_later_siblings(document, node_id)
         && height_follows_content(document, node_id))
@@ -8138,7 +8133,7 @@ fn lone_box_with_floats(
         match boxes[..] {
             [] if current != node_id => break,
             [only]
-                if closing_edges_of(document, current, body_id).is_some()
+                if closing_edges_of(document, current).is_some()
                     && is_plain_block_box(document, only) =>
             {
                 // The box sits at its normal-flow position, less the
@@ -8151,7 +8146,7 @@ fn lone_box_with_floats(
             // know whether the document has any: a column flex container
             // then moves whole only if its item holds nothing to break at.
             [only]
-                if closing_edges_of(document, current, body_id).is_some()
+                if closing_edges_of(document, current).is_some()
                     && container_moves_whole(document, cascade, only, true) =>
             {
                 content_end += normal_flow_y(document, cascade, body_id, only);
@@ -9476,6 +9471,22 @@ fn lines_between_blocks(
     Some(start?..end)
 }
 
+/// Whether the lines `run` of the paragraph `root` are the last of its content:
+/// no block child comes after them. The run ends where the next block child
+/// begins, or at the last line.
+fn run_ends_paragraph(document: &Document, root: usize, run: &std::ops::Range<usize>) -> bool {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            !lines
+                .block_line_starts
+                .iter()
+                .any(|&(_, after)| after >= run.end)
+        })
+}
+
 /// The first of the lines `line_metrics` (block-start and block-end edges
 /// relative to `effective_y`) that crosses the end of the page from
 /// `page_start` to `page_end` without starting the next page, if it is not the
@@ -9572,6 +9583,9 @@ struct ParagraphLineFit {
     /// Whether every line fits the page but the last does not with
     /// `tail_edges` below it.
     tail_overflows: bool,
+    /// Whether every line fits the page but the last does not with the edges
+    /// below it, a paragraph of one line included.
+    edges_overflow: bool,
 }
 
 impl ParagraphLineFit {
@@ -9582,6 +9596,16 @@ impl ParagraphLineFit {
     /// moving.
     fn gains_from_moving_tall_block(&self, first_line_bottom: f32, page_step: f32) -> bool {
         self.leaves_too_few_orphans() && block_fits_page_step(first_line_bottom, page_step)
+    }
+
+    /// Whether the lines all fit the page, but not with the padding and border
+    /// below the last one, and the page cannot give up the `widows` lines the
+    /// edges ask for and keep the `orphans`: a paragraph of one line has no
+    /// break between lines, and with more only the last line could go to the
+    /// next page, which leaves a break inside the lines that violates one of
+    /// the two.
+    fn edges_leave_too_few_lines(&self) -> bool {
+        self.edges_overflow && self.total_lines.saturating_sub(self.widows) < self.orphans
     }
 
     /// Whether the break leaves fewer than `orphans` lines on the page, or
@@ -9679,11 +9703,11 @@ impl ParagraphLineFit {
         } else {
             0.0
         };
-        let tail_overflows = tail_edges > 0.0
-            && !needs_break
+        let edges_overflow = !needs_break
             && line_metrics
                 .last()
-                .is_some_and(|(_, bottom)| effective_y + bottom + tail_edges > page_end + 0.001);
+                .is_some_and(|(_, bottom)| effective_y + bottom + edges > page_end + 0.001);
+        let tail_overflows = tail_edges > 0.0 && edges_overflow;
         Self {
             total_lines,
             starts_on_page,
@@ -9694,6 +9718,7 @@ impl ParagraphLineFit {
             violates_line_constraints,
             tail_edges,
             tail_overflows,
+            edges_overflow,
         }
     }
 }

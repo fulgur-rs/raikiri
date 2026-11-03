@@ -32,6 +32,7 @@ mod part_containing_block_tests;
 mod percent_column_width_tests;
 mod rowspan_tests;
 mod sparse_border_tests;
+mod vertical_row_measurement_tests;
 mod vertical_static_position_tests;
 mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;
@@ -111,6 +112,7 @@ fn resolve_column_widths_in_session(
             None,
             false,
         )
+        .widths
     })
 }
 
@@ -121,7 +123,7 @@ fn resolve_row_heights_in_session(
     spacing: (f32, f32),
 ) -> Result<Vec<f32>, raikiri_traits::LayoutError> {
     with_layout_session(document, |session| {
-        super::resolve_row_heights(session, grid, column_widths, spacing)
+        super::resolve_row_heights(session, grid, column_widths, spacing, None)
     })
 }
 
@@ -153,6 +155,7 @@ fn place_cells_in_session(
                 row_origins: origins.1,
                 row_spacing: spacing.1,
                 vertical_writing,
+                vertical_rows: None,
                 height_is_definite: true,
                 stretch_height_is_resolved: false,
             },

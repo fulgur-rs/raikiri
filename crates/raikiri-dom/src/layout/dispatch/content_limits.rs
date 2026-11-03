@@ -2838,7 +2838,7 @@ fn stretch_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> 
 /// offers it: the width of its containing block less its margins, an `auto`
 /// margin counting for nothing, and no more than the `room` the parent leaves
 /// it (CSS Sizing 3 §3.1.1). Without a containing block width, that room.
-pub(super) fn stretch_fit_width(
+pub(in crate::layout) fn stretch_fit_width(
     tree: &LayoutSession<'_>,
     idx: usize,
     inputs: &LayoutInput,

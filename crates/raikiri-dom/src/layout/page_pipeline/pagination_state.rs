@@ -27,8 +27,9 @@ use super::{
     page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
     place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
     positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    reset_inline_x_for_page_transition, run_ends_paragraph, run_tail_move, shift_paragraph_lines,
+    shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name,
+    text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -2044,6 +2045,17 @@ impl PaginationState {
             .get(node_id)
             .and_then(|owned| owned.lines.first())
             .map_or(run.start, |line| line.line);
+        // The padding and border of the paragraph below its last line stay
+        // with the last line of the run, when no block child comes after it:
+        // that block is what they follow instead. Those of the boxes around
+        // the paragraph follow its edges.
+        let closing_edges = if run_ends_paragraph(document, root, &run) {
+            let layout = &document.nodes[root].layout;
+            (layout.padding.bottom + layout.border.bottom)
+                .max(candidate.context.lines_closing_edges())
+        } else {
+            0.0
+        };
         let mut page = self
             .current_page
             .max(page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001));
@@ -2058,7 +2070,7 @@ impl PaginationState {
                 page_start + page_step,
                 cascade.computed[root].orphans,
                 cascade.computed[root].widows,
-                0.0,
+                closing_edges,
             );
             let run_top = text.effective_y + metrics[0].0;
             let run_height = metrics[metrics.len() - 1].1 - metrics[0].0;
@@ -2069,14 +2081,28 @@ impl PaginationState {
                     || (run_top > page_start + 0.001
                         && fit
                             .gains_from_moving_tall_block(metrics[0].1 - metrics[0].0, page_step)));
-            let (moves, repeat): (Vec<LineBreakMove>, bool) = match fit.fix(
-                &metrics,
-                text.effective_y,
-                page,
-                page_origins,
-                can_move_block,
-                || true,
-            ) {
+            // The padding and border below the last line do not fit, and the
+            // page cannot give up the widows and keep the orphans: the break
+            // inside the lines would leave too few of them on one side. The
+            // block that holds them has a break before the lines, between
+            // them and the box above, and Chromium takes that one instead.
+            // Judged once more from the next page, the lines break there
+            // inside as the edges ask when they still do not fit.
+            let edges_leave_too_few_lines =
+                fit.edges_leave_too_few_lines() && run_top > page_start + 0.001;
+            let fix = if edges_leave_too_few_lines {
+                LineBreakFix::MoveBlock
+            } else {
+                fit.fix(
+                    &metrics,
+                    text.effective_y,
+                    page,
+                    page_origins,
+                    can_move_block,
+                    || true,
+                )
+            };
+            let (moves, repeat): (Vec<LineBreakMove>, bool) = match fix {
                 LineBreakFix::MoveLines(moves) => (moves, false),
                 LineBreakFix::MoveBlock => {
                     page = page.saturating_add(1);

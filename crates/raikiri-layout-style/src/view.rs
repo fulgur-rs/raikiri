@@ -27,6 +27,7 @@ pub struct LayoutStyleView<'a> {
     /// that owns it (see [`Self::with_hidden_table_height`]).
     hidden_table_height: bool,
     pub(crate) collapsing_table_height: bool,
+    pub(crate) collapsing_table_width: bool,
     pub(crate) table_item_align_self: Option<values::AlignSelf>,
     pub(crate) table_item_justify_self: Option<values::AlignSelf>,
 }
@@ -68,6 +69,7 @@ impl<'a> LayoutStyleView<'a> {
             swapped_oof_alignment: false,
             hidden_table_height: false,
             collapsing_table_height: false,
+            collapsing_table_width: false,
             table_item_align_self: None,
             table_item_justify_self: None,
         }
@@ -90,6 +92,7 @@ impl<'a> LayoutStyleView<'a> {
             swapped_oof_alignment: false,
             hidden_table_height: false,
             collapsing_table_height: false,
+            collapsing_table_width: false,
             table_item_align_self: None,
             table_item_justify_self: None,
         }
@@ -172,6 +175,49 @@ impl<'a> LayoutStyleView<'a> {
         self.hidden_table_height = true;
         self.collapsing_table_height = true;
         self
+    }
+
+    /// Let a vertical table measure the width its collapsed rows leave.
+    /// The parent consumes that width without reapplying authored limits or
+    /// deriving another width from its aspect ratio.
+    pub fn with_collapsing_table_width(
+        mut self,
+        align_items: values::AlignItems,
+        justify_items: values::AlignItems,
+        flex: bool,
+    ) -> Self {
+        let mut alignment = if flex {
+            self.align_self().unwrap_or(align_items)
+        } else if self.geometry_transposed() {
+            self.bridge_align_self().unwrap_or(align_items)
+        } else {
+            self.bridge_justify_self().unwrap_or(justify_items)
+        };
+        if !self.length(LengthProperty::Width).dimension().is_auto()
+            && matches!(
+                alignment.keyword,
+                values::AlignItemsKeyword::Normal | values::AlignItemsKeyword::Stretch
+            )
+        {
+            alignment.keyword = values::AlignItemsKeyword::Start;
+        }
+        if !flex && !self.geometry_transposed() {
+            self.table_item_justify_self = Some(alignment);
+        } else {
+            self.table_item_align_self = Some(alignment);
+        }
+        self.collapsing_table_width = true;
+        self
+    }
+
+    /// The horizontal size as read by a table's measuring parent.
+    #[inline]
+    pub(crate) fn library_width(&self, property: LengthProperty) -> LengthValue<'a> {
+        if self.collapsing_table_width {
+            self.with_payload(Cow::Owned(L::Auto), property)
+        } else {
+            self.length(property)
+        }
     }
 
     /// Whether the table resolves its authored stretch height before the

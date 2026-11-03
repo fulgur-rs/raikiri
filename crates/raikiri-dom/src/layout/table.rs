@@ -68,7 +68,9 @@ pub(crate) mod headers;
 pub(crate) mod row_moves;
 mod rowspan;
 mod spanned_rows;
+mod vertical_rows;
 use cell_index::CellIndex;
+use vertical_rows::{RowTrackView, VerticalRows, natural_widths as vertical_row_widths};
 
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
@@ -755,6 +757,7 @@ fn compute_table_layout_checked(
         // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
         let table_size = doc.table_style(table_idx).size();
+        let resolves_item_width = !table_size.width.is_auto() && item_owns_width(doc, table_idx);
 
         // The size of the content of a flex column item (the measure behind its
         // automatic minimum size, CSS Flexbox 1 §4.5) is that of its rows and
@@ -793,7 +796,10 @@ fn compute_table_layout_checked(
         let stretch_wrapper_room =
             stretch_room.filter(|_| absolute_table || !parent_is_flex_or_grid);
         let effective_known = Size {
-            width: inputs.known_dimensions.width,
+            width: inputs
+                .known_dimensions
+                .width
+                .filter(|_| !resolves_item_width),
             height: inputs
                 .known_dimensions
                 .height
@@ -889,26 +895,40 @@ fn compute_table_layout_checked(
         // already names border-box room rather than a content-box width.
         let effective_known = Size {
             width: effective_known.width.or_else(|| {
-                stated_table_width(table_size.width, &inputs)
-                    .or(stretch_ratio_width)
-                    .map(|width| {
-                        // Vertical tables resolve physical width separately from
-                        // inline tracks, retaining their existing width basis.
-                        if vertical_writing {
-                            return width;
-                        }
-                        let width =
-                            if matches!(table_size.width.expand(), ExpandedDimension::Stretch) {
-                                width
-                            } else {
-                                width + lift_w
-                            };
-                        let maximum = max_w_outer.filter(|maximum| {
-                            min_w_outer.is_none_or(|minimum| minimum <= *maximum)
-                        });
-                        apply_wrapper_width_bounds(width, min_w_outer, maximum)
-                            .max(padding_border_size.width)
-                    })
+                let stated = if resolves_item_width
+                    && matches!(table_size.width.expand(), ExpandedDimension::Stretch)
+                {
+                    inputs
+                        .parent_size
+                        .width
+                        .or(match inputs.available_space.width {
+                            AvailableSpace::Definite(room) => Some(room),
+                            _ => None,
+                        })
+                        .map(|room| {
+                            crate::layout::dispatch::content_limits::stretch_fit_width(
+                                doc, table_idx, &inputs, room,
+                            )
+                        })
+                } else {
+                    stated_table_width(table_size.width, &inputs)
+                };
+                stated.or(stretch_ratio_width).map(|width| {
+                    // Vertical tables resolve physical width separately from
+                    // inline tracks, retaining their existing width basis.
+                    if vertical_writing && !resolves_item_width {
+                        return width;
+                    }
+                    let width = if matches!(table_size.width.expand(), ExpandedDimension::Stretch) {
+                        width
+                    } else {
+                        width + lift_w
+                    };
+                    let maximum = max_w_outer
+                        .filter(|maximum| min_w_outer.is_none_or(|minimum| minimum <= *maximum));
+                    apply_wrapper_width_bounds(width, min_w_outer, maximum)
+                        .max(padding_border_size.width)
+                })
             }),
             ..effective_known
         };
@@ -1113,19 +1133,7 @@ fn compute_table_layout_checked(
         // immediately before the next visible row, so collapsed row boxes
         // stay at the preceding row's bottom rather than below the gap.
         let groups = row_groups(doc, table_idx, &grid);
-        let mut row_gaps = vec![0.0; collapsed_rows.len()];
-        for group in &groups {
-            let mut seen_visible = false;
-            for row in group.rows.clone() {
-                if !collapsed_rows[row] {
-                    if seen_visible {
-                        row_gaps[row - 1] = border_spacing.1;
-                    }
-                    seen_visible = true;
-                }
-            }
-            row_gaps[group.rows.end - 1] = border_spacing.1;
-        }
+        let row_gaps = row_track_gaps(&groups, collapsed_rows, border_spacing.1);
         let specified_width = stated_table_width(table_size.width, &inputs);
         let fixed_columns_collapse = columns_collapse
             && table_layout == TableLayoutValue::Fixed
@@ -1206,7 +1214,7 @@ fn compute_table_layout_checked(
         } else {
             let fixed_intrinsic =
                 table_layout == TableLayoutValue::Fixed && specified_width.is_some();
-            let intrinsic_grid = if columns_collapse && !fixed_intrinsic {
+            let intrinsic_grid = if columns_collapse && !fixed_intrinsic && !vertical_writing {
                 without_collapsed_columns(&grid, collapsed_cols, false)
             } else {
                 grid.clone()
@@ -1219,6 +1227,31 @@ fn compute_table_layout_checked(
                 ..inputs
             };
             let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
+                if vertical_writing {
+                    let probe = LayoutInput {
+                        available_space: Size {
+                            width: available_space,
+                            height: intrinsic_inputs.available_space.height,
+                        },
+                        ..intrinsic_inputs
+                    };
+                    let (_, cell_max) = measure_cell_widths(
+                        doc,
+                        &intrinsic_grid,
+                        probe,
+                        table_column_available_space(&probe, distrib_insets.width),
+                        border_spacing.0,
+                        true,
+                    );
+                    let rows = VerticalRows::new(
+                        vertical_row_widths(&intrinsic_grid, &cell_max, border_spacing.0),
+                        &groups,
+                        collapsed_rows,
+                        border_spacing.0,
+                        0.0,
+                    );
+                    return rows.outer_width(border_spacing.0) + padding_border_size.width;
+                }
                 if fixed_intrinsic {
                     let insets = pad.left
                         + pad.right
@@ -1254,6 +1287,7 @@ fn compute_table_layout_checked(
                     None,
                     vertical_writing,
                 )
+                .widths
                 .iter()
                 .sum::<f32>()
                     + distrib_insets.width
@@ -1437,43 +1471,51 @@ fn compute_table_layout_checked(
                 distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
             }
         };
-        let natural_widths = columns_collapse.then(|| {
+        let mut natural_sizing = columns_collapse.then(|| {
             let natural_pass = ColumnPass {
                 overlap_width: columns_in_place
                     .as_ref()
                     .map_or(overlap_w, |columns| columns.overlap_width),
                 ..pass
             };
-            let mut widths = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+            let mut sizing = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
                 resolve_table_columns(doc, &mut grid, &natural_pass, natural_insets_width)
             });
-            grow_columns(&mut widths, natural_insets_width, None);
-            widths
+            grow_columns(&mut sizing.widths, natural_insets_width, None);
+            sizing
         });
-        let mut column_widths = if fixed_columns_collapse {
-            natural_widths
+        let mut column_sizing = if fixed_columns_collapse {
+            let natural = natural_sizing
                 .as_ref()
-                .expect("collapsed columns have their natural widths")
-                .iter()
-                .zip(collapsed_cols)
-                .map(|(&width, &hidden)| if hidden { 0.0 } else { width })
-                .collect()
+                .expect("collapsed columns have their natural widths");
+            ColumnSizing {
+                widths: natural
+                    .widths
+                    .iter()
+                    .zip(collapsed_cols)
+                    .map(|(&width, &hidden)| if hidden { 0.0 } else { width })
+                    .collect(),
+                vertical_rows: None,
+            }
         } else if columns_collapse {
             let mut remaining = without_collapsed_columns(&grid, collapsed_cols, false);
-            let mut widths =
-                resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
-            collapsed_cols
-                .iter()
-                .map(|collapsed| {
-                    if *collapsed {
-                        0.0
-                    } else {
-                        widths.next().unwrap_or(0.0)
-                    }
-                })
-                .collect()
+            let sizing = resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width);
+            let mut widths = sizing.widths.into_iter();
+            ColumnSizing {
+                widths: collapsed_cols
+                    .iter()
+                    .map(|collapsed| {
+                        if *collapsed {
+                            0.0
+                        } else {
+                            widths.next().unwrap_or(0.0)
+                        }
+                    })
+                    .collect(),
+                vertical_rows: sizing.vertical_rows,
+            }
         } else {
-            let widths = resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width);
+            let sizing = resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width);
             // A table that shrinks to fit is held to its `max-width`, but not
             // below the min-content width of its columns, whatever room it is
             // measured in: the max-content width a parent adds to its own
@@ -1483,8 +1525,9 @@ fn compute_table_layout_checked(
             // room the limit leaves, which they fill no further than their
             // min-content widths allow. A table that a caller sizes, or that
             // states a width, is cut to the limit by that width instead.
-            let outer =
-                widths.iter().sum::<f32>() - overlap_w + spacing.width + padding_border_size.width;
+            let outer = sizing.widths.iter().sum::<f32>() - overlap_w
+                + spacing.width
+                + padding_border_size.width;
             let capped_room = max_w_outer.filter(|&maximum| {
                 outer > maximum
                     && !vertical_writing
@@ -1506,20 +1549,25 @@ fn compute_table_layout_checked(
                     };
                     resolve_table_columns(doc, &mut grid, &capped, distrib_insets.width)
                 }
-                None => widths,
+                None => sizing,
             }
         };
-
         if !fixed_columns_collapse {
             grow_columns(
-                &mut column_widths,
+                &mut column_sizing.widths,
                 distrib_insets.width,
                 columns_collapse.then_some(&collapsed_cols[..]),
             );
         }
+        // A collapsed inline column retains its contribution to row sizing.
+        let row_widths = natural_sizing
+            .as_mut()
+            .and_then(|sizing| sizing.vertical_rows.take())
+            .or_else(|| column_sizing.vertical_rows.take());
+        let column_widths = column_sizing.widths;
 
-        // The table's width follows from its columns alone, so it is settled
-        // before the rows are sized: the caption wraps at that width, and a
+        // Settle physical width before natural heights: the caption wraps
+        // at that width, and a
         // flex or grid parent's height has to give up the caption's share
         // before the rows can use the rest.
         // Content extents net of collapsed-line overlaps, plus the separated
@@ -1543,44 +1591,38 @@ fn compute_table_layout_checked(
             }
             x
         };
-        // Vertical tables stack each column's inline track along the physical
-        // height, so the physical spacing applies across that stack: the
-        // vertical gap between and around the stacked tracks, the horizontal gap
-        // on both sides of the single physical column. Every stacked track is as
-        // wide as its cell, so the column is as wide as the widest cell. The
-        // columns share the width of a cell that spans several of them, less the
-        // spacing between them, so the cell is as wide as those columns and that
-        // spacing.
-        let vertical_cell_width = grid
-            .cells
-            .iter()
-            .map(|cell| {
-                let start = usize::from(cell.col_start).min(column_widths.len());
-                let end = (start + usize::from(cell.col_span)).min(column_widths.len());
-                column_widths[start..end].iter().sum::<f32>()
-                    + border_spacing.0 * (end - start).saturating_sub(1) as f32
-            })
-            .chain(column_widths.iter().copied())
-            .fold(0.0, f32::max);
-        let vertical_content_width = vertical_cell_width + border_spacing.0 * 2.0;
-        // CSS 2.1 §17.5.2: the used table width is at least the columns plus
-        // the spacing and borders, even when the specified width is smaller.
+        // Physical row widths are independent of the columns' inline tracks.
+        let mut vertical_row_layout = None;
         let min_table_width = content_width + padding_border_size.width;
         let final_width = if vertical_writing {
-            // The width of a vertical table is its extent along the block axis,
-            // which its rows set and the room around it does not change, so a
-            // table that states no width shrinks to them. Only a stated width,
-            // or the used width a flex or grid parent gives its item, sets it.
-            effective_known
+            let natural = row_widths.expect("vertical column sizing measures physical rows");
+            let full_spacing = border_spacing.0 * (natural.len() + 1) as f32;
+            let minimum = natural.iter().sum::<f32>() + full_spacing + padding_border_size.width;
+            let requested = effective_known
                 .width
                 .filter(|_| specified_width.is_some() || parent_is_flex_or_grid)
-                .unwrap_or_else(|| {
-                    clamp_min_max(
-                        vertical_content_width + padding_border_size.width,
-                        min_w_outer,
-                        max_w_outer,
-                    )
-                })
+                .unwrap_or(minimum)
+                .max(minimum);
+            let outer = clamp_min_max(requested, min_w_outer, max_w_outer);
+            let rows = VerticalRows::new(
+                natural,
+                &groups,
+                collapsed_rows,
+                border_spacing.0,
+                (outer - padding_border_size.width - full_spacing).max(0.0),
+            );
+            let used = rows.outer_width(border_spacing.0) + padding_border_size.width;
+            vertical_row_layout = Some(rows);
+            let keeps_assigned_width = !absolute_table
+                && !flex_column_parent
+                && doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+                    doc.nodes[parent].formatting_context == FormattingContext::Flex
+                });
+            if keeps_assigned_width {
+                outer.max(used)
+            } else {
+                used
+            }
         } else if fixed_columns_collapse {
             min_table_width
         } else {
@@ -1651,9 +1693,18 @@ fn compute_table_layout_checked(
         });
 
         // Row heights
-        let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
+        let height_widths = natural_sizing
+            .as_ref()
+            .map_or(column_widths.as_slice(), |sizing| sizing.widths.as_slice());
+        let measurement_rows = vertical_row_layout.as_ref().map(VerticalRows::natural);
         let mut row_heights = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-            resolve_row_heights(doc, &mut grid, height_widths, border_spacing)
+            resolve_row_heights(
+                doc,
+                &mut grid,
+                height_widths,
+                border_spacing,
+                measurement_rows,
+            )
         })?;
         if let Some(columns) = columns_in_place {
             columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
@@ -1671,8 +1722,8 @@ fn compute_table_layout_checked(
         // it gives is the size the table ends up with (stretched, grown, or
         // from the basis), and the rows take what the table leaves them
         // whether there is one or several. A vertical table is left out: its
-        // row tracks run along the physical width, and the sum that sizes the
-        // box counts them once for each column.
+        // physical row tracks run across its width; its inline extent is
+        // resolved from the column tracks below.
         let parent_sizes_rows = parent_is_flex_or_grid && !vertical_writing;
         let known_target = assigned_grid_height
             .or(effective_known.height)
@@ -1742,9 +1793,8 @@ fn compute_table_layout_checked(
 
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
         // Vertical tables stack the columns along the physical height, so the
-        // physical spacing applies across that stack: the vertical gap between
-        // and around the stacked tracks, the horizontal gap on both sides of
-        // the single physical column. Each column is as high as the cells that
+        // vertical spacing applies between and around those inline tracks.
+        // Each column is as high as the cells that
         // start in it ask, the columns of a cell that spans several sharing its
         // height. The table is at least as high as its authored height or
         // `min-height` and its caption ask, which the columns share in
@@ -1886,6 +1936,20 @@ fn compute_table_layout_checked(
         };
         let col_origins = track_origins(&column_widths, &col_steps, x_origin);
         let row_origins = track_origins(&row_heights, &row_steps, y_origin);
+        let reverse_rows = matches!(
+            table_writing_mode(doc, table_idx),
+            WritingMode::VerticalRl | WritingMode::SidewaysRl
+        );
+        let vertical_row_origins = vertical_row_layout.as_ref().map(|rows| {
+            rows.origins(
+                x_origin,
+                reverse_rows,
+                (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
+            )
+        });
+        let visible_rows = vertical_row_layout
+            .as_ref()
+            .map(|rows| rows.visible(collapsed_rows));
         let cell_candidates = place_cells(
             doc,
             &mut grid,
@@ -1900,6 +1964,7 @@ fn compute_table_layout_checked(
                 row_origins: &row_origins,
                 row_spacing: border_spacing.1,
                 vertical_writing,
+                vertical_rows: visible_rows,
                 height_is_definite: vertical_writing || specified_height.is_some(),
                 stretch_height_is_resolved: stretch_room.is_some(),
             },
@@ -1934,13 +1999,19 @@ fn compute_table_layout_checked(
             let mut final_candidates = reposition_cells_for_vertical_writing(
                 doc,
                 &mut grid,
-                &vertical_tracks,
-                (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
-                Point {
-                    x: x_origin,
-                    y: y_origin,
+                VerticalPlacement {
+                    inline_tracks: &vertical_tracks,
+                    rows: visible_rows.expect("vertical rows are measured"),
+                    row_origins: vertical_row_origins
+                        .as_deref()
+                        .expect("vertical rows have origins"),
+                    origin: Point {
+                        x: x_origin,
+                        y: y_origin,
+                    },
+                    spacing: border_spacing.1,
+                    reverse: reverse_rows,
                 },
-                border_spacing.1,
                 cell_candidates,
             );
             oof_candidates.append(&mut final_candidates);
@@ -1955,7 +2026,14 @@ fn compute_table_layout_checked(
                 &column_widths,
                 &row_heights,
                 (&col_origins, &row_origins),
-                vertical_writing,
+                visible_rows.map(|rows| VerticalPartRows {
+                    rows,
+                    origins: vertical_row_origins
+                        .as_deref()
+                        .expect("vertical rows have origins"),
+                    inline_origin: y_origin,
+                    inline_extent: spanned_size(&vertical_tracks, border_spacing.1),
+                }),
             )
         });
         if let Some(parts) = &parts {
@@ -1994,6 +2072,30 @@ pub(super) fn item_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
                 != super::dispatch::used_writing_mode(doc, parent).is_vertical() => {}
         _ => return false,
     }
+    table_has_collapsed_rows(doc, table)
+}
+
+pub(super) fn item_owns_width(doc: &LayoutSession<'_>, table: usize) -> bool {
+    if doc.nodes[table].formatting_context != FormattingContext::Table
+        || doc.nodes[table].layout_position() == Position::Absolute
+        || !table_writing_mode(doc, table).is_vertical()
+    {
+        return false;
+    }
+    let Some(parent) = doc.taffy_parent_of(table) else {
+        return false;
+    };
+    match doc.nodes[parent].formatting_context {
+        FormattingContext::Grid => {}
+        FormattingContext::Flex
+            if doc.physical_style(parent).flex_direction_is_row()
+                == super::dispatch::used_writing_mode(doc, parent).is_vertical() => {}
+        _ => return false,
+    }
+    table_has_collapsed_rows(doc, table)
+}
+
+fn table_has_collapsed_rows(doc: &LayoutSession<'_>, table: usize) -> bool {
     let mut pending = doc.nodes[table].children.clone();
     while let Some(child) = pending.pop() {
         let node = &doc.nodes[child];
@@ -2021,7 +2123,8 @@ pub(super) fn item_style<'a>(
     role: crate::layout::style_views::ReadRole,
 ) -> LayoutStyleView<'a> {
     let view = doc.query_style(table, role);
-    if !item_owns_height(doc, table) {
+    let owns_width = item_owns_width(doc, table);
+    if !owns_width && !item_owns_height(doc, table) {
         return view;
     }
     let parent = doc.taffy_parent_of(table).expect("table item has a parent");
@@ -2032,7 +2135,11 @@ pub(super) fn item_style<'a>(
         crate::layout::style_views::ReadRole::GridContainer
     };
     let parent = doc.query_style(parent, parent_role);
-    view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex)
+    if owns_width {
+        view.with_collapsing_table_width(parent.align_items(), parent.justify_items(), flex)
+    } else {
+        view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex)
+    }
 }
 
 fn table_layout_output(
@@ -2388,6 +2495,13 @@ fn position_source_table_parts(
     doc.place_anonymous_table_parts(table);
 }
 
+struct VerticalPartRows<'a> {
+    rows: RowTrackView<'a>,
+    origins: &'a [f32],
+    inline_origin: f32,
+    inline_extent: f32,
+}
+
 /// The boxes of the rows and row groups of `table` in table coordinates:
 /// each part spans the rows of the cells it holds.
 fn source_part_boxes(
@@ -2397,7 +2511,7 @@ fn source_part_boxes(
     columns: &[f32],
     rows: &[f32],
     origins: (&[f32], &[f32]),
-    vertical: bool,
+    vertical: Option<VerticalPartRows<'_>>,
 ) -> std::collections::HashMap<usize, BoxLayout> {
     let boundary = doc.table_parts_boundary(table);
     let mut parts: std::collections::HashMap<usize, BoxLayout> = Default::default();
@@ -2408,18 +2522,6 @@ fn source_part_boxes(
         .map_or(0.0, |(x, width)| {
             x + width - col_x.first().copied().unwrap_or(0.0)
         });
-    let mut vertical_rows: std::collections::HashMap<usize, BoxLayout> = Default::default();
-    if vertical {
-        for cell in &grid.cells {
-            let layout = cell
-                .resolved
-                .expect("cells were positioned before source parts");
-            vertical_rows
-                .entry(usize::from(cell.row))
-                .and_modify(|row| extend_part_bounds(row, &layout))
-                .or_insert(layout);
-        }
-    }
     for (index, &marker) in grid.rows.iter().enumerate() {
         let mut rect = BoxLayout::new();
         rect.location = Point {
@@ -2430,8 +2532,15 @@ fn source_part_boxes(
             width,
             height: rows[index],
         };
-        if let Some(layout) = vertical_rows.get(&index) {
-            rect = *layout;
+        if let Some(vertical) = &vertical {
+            rect.location = Point {
+                x: vertical.origins[index],
+                y: vertical.inline_origin,
+            };
+            rect.size = Size {
+                width: vertical.rows.widths[index],
+                height: vertical.inline_extent,
+            };
         }
         for id in doc
             .inclusive_ancestors(doc.ifc_source_owner(marker))
@@ -3128,7 +3237,7 @@ fn resolve_table_columns(
     grid: &mut TableGrid,
     pass: &ColumnPass,
     insets_width: f32,
-) -> Vec<f32> {
+) -> ColumnSizing {
     let insets = Size {
         width: insets_width,
         height: 0.0,
@@ -3171,8 +3280,23 @@ fn resolve_table_columns(
             pass.vertical_writing,
         );
     };
+    let vertical_rows = pass.vertical_writing.then(|| {
+        let column_space = table_column_available_space(&pass.inputs, insets_width);
+        let (_, cell_max) = measure_cell_widths(
+            doc,
+            grid,
+            pass.inputs,
+            column_space,
+            pass.border_spacing_x,
+            true,
+        );
+        vertical_row_widths(grid, &cell_max, pass.border_spacing_x)
+    });
     normalize_fixed_cells(doc, grid, avail, pass.border_spacing_x);
-    resolve_fixed_column_widths(grid, avail, pass.overlap_width)
+    ColumnSizing {
+        widths: resolve_fixed_column_widths(grid, avail, pass.overlap_width),
+        vertical_rows,
+    }
 }
 
 fn normalize_fixed_cells(
@@ -3262,20 +3386,15 @@ fn cell_numeric_minimum(doc: &LayoutSession<'_>, cell: usize) -> Option<f32> {
 // Column sizing — ported from Blitz L3 (table layout design)
 // ---------------------------------------------------------------------------
 
-fn resolve_column_widths(
+/// Intrinsic physical widths before cells from different rows are combined.
+fn measure_cell_widths(
     doc: &mut LayoutSession<'_>,
     grid: &TableGrid,
     inputs: LayoutInput,
-    padding_border_size: Size<f32>,
+    column_space: AvailableSpace,
     spacing: f32,
-    percent_width_cap: Option<f32>,
     vertical_writing: bool,
-) -> Vec<f32> {
-    #[cfg(test)]
-    tests::COLUMN_RESOLUTIONS.with(|count| count.set(count.get() + 1));
-    let n = grid.n_cols as usize;
-    let column_space = table_column_available_space(&inputs, padding_border_size.width);
-    // (B) Measure each cell
+) -> (Vec<f32>, Vec<f32>) {
     let mut cell_min = vec![0.0f32; grid.cells.len()];
     let mut cell_max = vec![0.0f32; grid.cells.len()];
     for (i, cell) in grid.cells.iter().enumerate() {
@@ -3329,6 +3448,31 @@ fn resolve_column_widths(
         cell_min[i] = min;
         cell_max[i] = max;
     }
+
+    (cell_min, cell_max)
+}
+
+/// Columns and the independent block-axis rows measured for a vertical table.
+struct ColumnSizing {
+    widths: Vec<f32>,
+    vertical_rows: Option<Vec<f32>>,
+}
+
+fn resolve_column_widths(
+    doc: &mut LayoutSession<'_>,
+    grid: &TableGrid,
+    inputs: LayoutInput,
+    padding_border_size: Size<f32>,
+    spacing: f32,
+    percent_width_cap: Option<f32>,
+    vertical_writing: bool,
+) -> ColumnSizing {
+    #[cfg(test)]
+    tests::COLUMN_RESOLUTIONS.with(|count| count.set(count.get() + 1));
+    let n = grid.n_cols as usize;
+    let column_space = table_column_available_space(&inputs, padding_border_size.width);
+    let (cell_min, cell_max) =
+        measure_cell_widths(doc, grid, inputs, column_space, spacing, vertical_writing);
 
     // (C.1) Aggregate colspan==1
     let mut col_min = vec![0.0f32; n];
@@ -3496,7 +3640,7 @@ fn resolve_column_widths(
 
     // (C.4) Distribute - auto only (fixed deferred to Wave4)
     let insets = padding_border_size.width;
-    match inputs.known_dimensions.width {
+    let widths = match inputs.known_dimensions.width {
         Some(w) => {
             let avail = f32_max_compat(w - insets, 0.0);
             distribute_columns_with_authored(
@@ -3541,6 +3685,10 @@ fn resolve_column_widths(
                 }
             }
         },
+    };
+    ColumnSizing {
+        widths,
+        vertical_rows: vertical_writing.then(|| vertical_row_widths(grid, &cell_max, spacing)),
     }
 }
 
@@ -3824,6 +3972,24 @@ struct RowGroup {
     /// at the bottom: it keeps its height while a body group can take the
     /// extra.
     fixed: bool,
+}
+
+/// Gaps after each row, including each group's closing edge after collapse.
+fn row_track_gaps(groups: &[RowGroup], hidden: &[bool], spacing: f32) -> Vec<f32> {
+    let mut gaps = vec![0.0; hidden.len()];
+    for group in groups {
+        let mut seen_visible = false;
+        for row in group.rows.clone() {
+            if !hidden[row] {
+                if seen_visible {
+                    gaps[row - 1] = spacing;
+                }
+                seen_visible = true;
+            }
+        }
+        gaps[group.rows.end - 1] = spacing;
+    }
+    gaps
 }
 
 /// Grow the row heights `sizes` until they sum to `target`, the way browsers
@@ -4124,6 +4290,7 @@ fn resolve_row_heights(
     grid: &mut TableGrid,
     column_widths: &[f32],
     spacing: (f32, f32),
+    vertical_rows: Option<RowTrackView<'_>>,
 ) -> Result<Vec<f32>, raikiri_traits::LayoutError> {
     let mut row_heights = vec![0.0f32; grid.rows.len()];
     // The rows without an authored height stretch first when a spanning cell
@@ -4149,7 +4316,10 @@ fn resolve_row_heights(
     let mut spanning = Vec::new();
     for cell in &mut grid.cells {
         let columns = cell_column_range(cell, column_widths.len())?;
-        let cell_width = spanned_size(&column_widths[columns], spacing.0);
+        let cell_width = vertical_rows.map_or_else(
+            || spanned_size(&column_widths[columns], spacing.0),
+            |rows| rows.cell_width(cell),
+        );
         let h = measure_cell(doc, cell, cell_width);
         let start = cell.row as usize;
         let end_row = (start + cell.row_span as usize).min(row_heights.len());
@@ -4497,6 +4667,7 @@ struct CellPlacementTracks<'a> {
     row_origins: &'a [f32],
     row_spacing: f32,
     vertical_writing: bool,
+    vertical_rows: Option<RowTrackView<'a>>,
     /// The table states its own height, so the height of a cell is definite
     /// for the percentage heights of the cell's children. A vertical table
     /// keeps the height definite whatever it states.
@@ -4523,6 +4694,7 @@ fn place_cells(
         row_origins: row_y,
         row_spacing,
         vertical_writing,
+        vertical_rows,
         height_is_definite,
         stretch_height_is_resolved,
     } = tracks;
@@ -4579,10 +4751,15 @@ fn place_cells(
         // overlaps for *positioning*; shrinking the box by the overlap as
         // well would double-count the absorbed line. Separated borders add
         // the spanned gaps instead, matching the origin differences.
-        let cell_width = column_widths[start_col..end_col].iter().sum::<f32>()
-            + col_gaps[start_col..end_col.saturating_sub(1).max(start_col)]
-                .iter()
-                .sum::<f32>();
+        let cell_width = vertical_rows.map_or_else(
+            || {
+                column_widths[start_col..end_col].iter().sum::<f32>()
+                    + col_gaps[start_col..end_col.saturating_sub(1).max(start_col)]
+                        .iter()
+                        .sum::<f32>()
+            },
+            |rows| rows.cell_width(cell),
+        );
         let cell_height = spanned_rows.height(start_row..end_row)
             + spanned_rows.nonzero_gaps(start_row..end_row.saturating_sub(1).max(start_row)) as f32
                 * row_spacing;
@@ -4848,6 +5025,15 @@ fn grow_tracks(tracks: &mut [f32], extra: f32) {
     }
 }
 
+struct VerticalPlacement<'a> {
+    inline_tracks: &'a [f32],
+    rows: RowTrackView<'a>,
+    row_origins: &'a [f32],
+    origin: Point<f32>,
+    spacing: f32,
+    reverse: bool,
+}
+
 /// Re-map the already measured table grid from horizontal physical axes to
 /// vertical writing-mode axes. Vertical cells are re-laid out at their final
 /// physical dimensions and aligned on their block axis. Orthogonal horizontal
@@ -4855,12 +5041,17 @@ fn grow_tracks(tracks: &mut [f32], extra: f32) {
 fn reposition_cells_for_vertical_writing(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    tracks: &[f32],
-    cell_width: f32,
-    origin: Point<f32>,
-    spacing: f32,
+    placement: VerticalPlacement<'_>,
     cell_candidates: Vec<(usize, OofCandidates)>,
 ) -> OofCandidates {
+    let VerticalPlacement {
+        inline_tracks: tracks,
+        rows,
+        row_origins,
+        origin,
+        spacing,
+        reverse,
+    } = placement;
     let mut final_candidates = OofCandidates::new();
     // Zero-height columns still place their cells, as in the measurement pass.
     if !tracks.iter().sum::<f32>().is_finite() {
@@ -4887,11 +5078,18 @@ fn reposition_cells_for_vertical_writing(
             + spanned_size(&tracks[..col_start], spacing)
             + if col_start > 0 { spacing } else { 0.0 };
         let height = spanned_size(&tracks[col_start..col_end], spacing);
+        let cell_width = rows.cell_width(cell);
+        let row = usize::from(cell.row);
+        let cell_x = if reverse {
+            row_origins[row] + rows.widths[row] - cell_width
+        } else {
+            row_origins[row]
+        };
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };
         let old_location = layout.location;
-        layout.location = Point { x: origin.x, y };
+        layout.location = Point { x: cell_x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
         let cell_writing_mode = table_writing_mode(doc, cell.node_id);
@@ -4902,7 +5100,7 @@ fn reposition_cells_for_vertical_writing(
             // depends on that height is laid out again, and the room around
             // the content is spread again.
             let mut candidate_offset = Point {
-                x: origin.x - old_location.x,
+                x: cell_x - old_location.x,
                 y: y - old_location.y,
             };
             if let Some(alignment) = cell.alignment {
@@ -4917,7 +5115,7 @@ fn reposition_cells_for_vertical_writing(
                             layout,
                         );
                         candidates = fresh;
-                        candidate_offset = Point { x: origin.x, y };
+                        candidate_offset = Point { x: cell_x, y };
                         Some(natural)
                     }
                     _ => None,
@@ -4982,7 +5180,7 @@ fn reposition_cells_for_vertical_writing(
         // both static-position areas and which descendants the cell claims.
         layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
         candidates = output.oof_candidates;
-        candidates.translate(Point { x: origin.x, y });
+        candidates.translate(Point { x: cell_x, y });
         final_candidates.append(&mut candidates);
         doc.store_layout(cell.node_id, layout);
     }
@@ -6240,7 +6438,8 @@ impl ColumnsInPlace {
         for cell in &mut grid.cells {
             if self.in_place.used_widths(cell.node_id) != self.remaining.used_widths(cell.node_id) {
                 let columns = cell_column_range(cell, column_widths.len())?;
-                measure_cell(doc, cell, spanned_size(&column_widths[columns], spacing.0));
+                let width = spanned_size(&column_widths[columns], spacing.0);
+                measure_cell(doc, cell, width);
             }
         }
         Ok(())

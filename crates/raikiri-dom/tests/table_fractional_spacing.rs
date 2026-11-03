@@ -53,15 +53,31 @@ fn boxes(body: &str, scale: Option<f32>) -> Vec<(String, [f32; 4])> {
 
 #[test]
 fn raster_table_spacing_matches_chromium() {
-    let data: serde_json::Value =
-        serde_json::from_str(include_str!("data/table-fractional-spacing.json")).expect("oracle");
+    check_table_oracle(include_str!("data/table-fractional-spacing.json"));
+}
+
+#[test]
+fn vertical_rows_keep_their_own_block_extents_and_positions() {
+    check_table_oracle(include_str!("data/table-vertical-rows.json"));
+}
+
+#[test]
+fn collapsed_vertical_rows_take_their_share_before_disappearing() {
+    check_table_oracle(include_str!("data/table-vertical-collapse.json"));
+}
+
+fn check_table_oracle(source: &str) {
+    let data: serde_json::Value = serde_json::from_str(source).expect("oracle");
     let mut mismatches = Vec::new();
     for case in data["cases"].as_array().expect("cases") {
         let scale = case["device_scale"].as_f64().expect("scale") as f32;
         let actual = boxes(case["html"].as_str().expect("markup"), Some(scale));
         for entry in case["expected"].as_array().expect("boxes") {
             let id = entry[0].as_str().expect("id");
-            let (_, got) = actual.iter().find(|(name, _)| name == id).expect("box");
+            let (_, got) = actual
+                .iter()
+                .find(|(name, _)| name == id)
+                .unwrap_or_else(|| panic!("{}: missing #{id}", case["label"]));
             let want: Vec<_> = (1..5)
                 .map(|i| entry[i].as_f64().expect("coordinate") as f32)
                 .collect();

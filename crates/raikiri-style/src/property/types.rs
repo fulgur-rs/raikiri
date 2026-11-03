@@ -6655,6 +6655,15 @@ css_keywords!(OverflowWrap {
 /// unsupported. Column-specific values stay distinct from generic values
 /// so pagination does not apply column-only constraints.
 ///
+/// # Chromium printing compatibility
+///
+/// The Level 4 draft's `always` spelling is an intentional extension beyond
+/// the Level 3 grammar above. Chromium 152.0.7977.82 rejects it on
+/// `break-before` and `break-after`, leaving ordinary paged content without
+/// a forced break. This type retains the value and layout honors its
+/// nearest-context semantics. For an explicit page break, use `page` or
+/// legacy `page-break-*: always`, whose remapping is shown below.
+///
 /// # `page-break-before` / `page-break-after` (CSS2.1 legacy shorthand)
 ///
 /// CSS Fragmentation Module Level 3 §3.4 "Page Break Aliases"

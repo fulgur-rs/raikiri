@@ -7,6 +7,7 @@ use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 mod calc_handle_tests;
+mod collapsing_table_width_tests;
 mod core_tests;
 mod inline_box_tests;
 mod math_tests;
