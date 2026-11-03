@@ -1227,6 +1227,15 @@ impl PaginationState {
             reach_page(control, target_page)?;
         }
         let lands_after_forced_break = forced_transition && !margin_pushes_box_on;
+        if pending_break_applies && is_floating_box_for_pagination(document, cascade, node_id) {
+            document.context.float_resumption_boundaries.insert(
+                node_id,
+                super::float_resumption::Boundary {
+                    page_origin: page_origins.origin(target_page),
+                    relative_offset,
+                },
+            );
+        }
         // A negative block-start margin can pull a forced-break box
         // back into the preceding page.  Keep the break boundary for
         // following siblings (and for page count), but materialize

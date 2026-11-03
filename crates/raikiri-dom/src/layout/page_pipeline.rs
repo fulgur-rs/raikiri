@@ -4,6 +4,7 @@ use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
 mod column_replaced;
+pub(super) mod float_resumption;
 mod footnotes;
 mod fragment_sources;
 mod grid_rows;
@@ -3022,6 +3023,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // Walk the boxes with the page value each inherits. Floats are no part of
     // the page flow, and their insides are not walked.
     let mut cleared = Vec::new();
+    document.context.float_resumption_candidates.clear();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut pending = vec![(0_usize, None::<&str>, false)];
@@ -3042,6 +3044,7 @@ fn clear_floats_at_forced_breaks<'name>(
         // own then.
         let mut page_start_inherited = at_page_start_float && !before_text;
         let mut float_after_break = false;
+        let mut page_start_float = None;
         // Whether the float that started the page took its own break-before
         // or a change of named page there, and not just the break of the box
         // before it.
@@ -3065,6 +3068,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 after_forced_break = false;
                 float_after_break = false;
                 float_own_break = false;
+                page_start_float = None;
                 page_start_inherited = false;
                 previous_page_name = Some(inherited);
                 continue;
@@ -3103,6 +3107,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 continue;
             }
             if is_float(document, child) {
+                let carries_flow_break = after_forced_break && !float_after_break;
                 page_start_inherited = false;
                 // The first float right after a forced break goes to the new
                 // page, so it clears the earlier page's floats too; the floats
@@ -3131,6 +3136,9 @@ fn clear_floats_at_forced_breaks<'name>(
                     );
                     cleared.push(child);
                     float_after_break = true;
+                    if carries_flow_break {
+                        page_start_float = Some(child);
+                    }
                 }
                 continue;
             }
@@ -3140,6 +3148,7 @@ fn clear_floats_at_forced_breaks<'name>(
             let beside_page_start_float =
                 std::mem::take(&mut float_after_break) || starts_at_inherited;
             let float_took_own_break = std::mem::take(&mut float_own_break);
+            let resumed_float = page_start_float.take();
             last_block = Some(child);
             let start_page_name = if has_named_pages {
                 match propagated_start_page_name_with_transposed_axes(
@@ -3189,6 +3198,12 @@ fn clear_floats_at_forced_breaks<'name>(
                 // Layout clears the floats before the one that starts the
                 // page, not that float.
                 cleared_to_float_floor.push(child);
+                if let Some(float) = resumed_float {
+                    document
+                        .context
+                        .float_resumption_candidates
+                        .push((float, child));
+                }
             } else if forced {
                 document.record_pass_override(
                     child,
@@ -3470,32 +3485,35 @@ fn layout_pages_core(
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    let (slices, moved) = layout_pages_attempt(
-        document,
-        cascade,
-        page_box,
-        page_steps,
-        page_widths,
-        control,
-        false,
-    )?;
-    if !moved {
-        return Ok(slices);
+    let mut resumptions = float_resumption::Plan::default();
+    let mut unpaged_plain_columns = false;
+    for _ in 0..3 {
+        let (slices, moved, next) = layout_pages_attempt(
+            document,
+            cascade,
+            page_box,
+            page_steps,
+            page_widths,
+            control,
+            PageAttempt {
+                unpaged_plain_columns,
+                resumptions: &resumptions,
+            },
+        )?;
+        if !moved && next == resumptions {
+            return Ok(slices);
+        }
+        unpaged_plain_columns |= moved;
+        resumptions = next;
     }
-    // The columns of a multicol container were filled page by page where the
-    // container began, and the flow then moved the container, so they stand
-    // in the wrong pages. Laying the document out again with the container's
-    // columns left whole keeps them in the pages the flow cuts them into.
-    layout_pages_attempt(
-        document,
-        cascade,
-        page_box,
-        page_steps,
-        page_widths,
-        control,
-        true,
-    )
-    .map(|(slices, _)| slices)
+    Err(LayoutError::Internal {
+        message: "page float resumption did not stabilize".to_string(),
+    })
+}
+
+struct PageAttempt<'a> {
+    unpaged_plain_columns: bool,
+    resumptions: &'a float_resumption::Plan,
 }
 
 /// Lay out and break `document` into pages once, and whether pagination
@@ -3509,12 +3527,16 @@ fn layout_pages_attempt(
     page_steps: &[f32],
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
-    unpaged_plain_columns: bool,
-) -> Result<(Vec<PageSlice>, bool), LayoutError> {
+    attempt: PageAttempt<'_>,
+) -> Result<(Vec<PageSlice>, bool, float_resumption::Plan), LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
     let mut session = super::context::LayoutSession::with_cascade(document, cascade);
-    session.context.unpaged_plain_columns = unpaged_plain_columns;
+    session.context.unpaged_plain_columns = attempt.unpaged_plain_columns;
+    session.context.float_resumptions = attempt.resumptions.clone();
+    if !attempt.resumptions.is_empty() {
+        session.layout_dirty = true;
+    }
     // A root with `display: none` generates no boxes, so there is nothing to
     // lay out or break into later pages: the document prints as a single
     // blank page.
@@ -3532,6 +3554,7 @@ fn layout_pages_attempt(
                 page_name: None,
             }],
             false,
+            float_resumption::Plan::default(),
         ));
     }
     layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
@@ -3592,7 +3615,12 @@ fn layout_pages_attempt(
     // The pages were cut from layouts run since the first pass, which take the
     // same limit.
     take_recursion_failure(&mut session)?;
-    Ok((slices, session.context.page_filled_columns_moved))
+    let resumptions = float_resumption::Plan::collect(&session, cascade);
+    Ok((
+        slices,
+        session.context.page_filled_columns_moved,
+        resumptions,
+    ))
 }
 
 /// The direction in which the pages of `document` continue, when they follow

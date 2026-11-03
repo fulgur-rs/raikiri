@@ -18,6 +18,17 @@ pub(crate) struct LayoutContext {
     pub(super) table_cache: super::table::cache::TableCache,
     pub(crate) ifc_width_probe: bool,
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
+    /// Placements and completed empty boxes retained from the preceding page walk.
+    pub(crate) float_resumptions: super::page_pipeline::float_resumption::Plan,
+    /// Floats taking a preceding normal-flow break, with the flow resumed beside them.
+    pub(crate) float_resumption_candidates: Vec<(usize, usize)>,
+    /// Page origins chosen when a float takes a pending forced break.
+    pub(crate) float_resumption_boundaries:
+        HashMap<usize, super::page_pipeline::float_resumption::Boundary>,
+    /// Whether each performed normal-flow child layout introduced clearance.
+    pub(crate) block_clearance: HashMap<usize, bool>,
+    /// Escaping struts that still adjoin the clearing box's own top margin.
+    pub(crate) clearance_resumption_offsets: HashMap<usize, f32>,
     /// Whether the column container whose children are being laid out across
     /// its whole width lays them out again in its columns afterwards, so that
     /// whatever a column container inside them settles is redone and is not

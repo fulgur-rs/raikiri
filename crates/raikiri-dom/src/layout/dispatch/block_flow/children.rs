@@ -318,6 +318,7 @@ pub(super) fn layout(
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut pending_has_clearance = false;
+    let mut completed_boundary = None;
     let mut leading = true;
     if !collapse_start {
         ctx.commit_strut();
@@ -485,7 +486,9 @@ pub(super) fn layout(
             }
             let position = ctx.place_floated_box(
                 output.size + margin.sum_axes(),
-                if leading && collapse_start {
+                if let Some(top) = tree.context.float_resumptions.float_top(usize::from(child)) {
+                    top
+                } else if leading && collapse_start {
                     flow.end
                 } else {
                     flow.end + pending.resolve()
@@ -534,7 +537,10 @@ pub(super) fn layout(
             .binary_search(&usize::from(child))
             .is_ok()
             .then(|| ctx.page_start_float_floor())
-            .flatten();
+            .flatten()
+            .into_iter()
+            .chain(tree.context.float_resumptions.flow_top(usize::from(child)))
+            .reduce(f32::max);
         // An `auto` width fills the room, but a table, a compressible
         // replaced box and a button take their own size then; `stretch` fills
         // it for them too (CSS Sizing 4 §5.1).
@@ -610,7 +616,9 @@ pub(super) fn layout(
         let adjoining_clearance = ctx.has_adjoining_float(style.clear);
         if !same {
             let margins = pending.collapse_with_margin(margin.top);
-            let hypothetical = if joins {
+            let hypothetical = if let Some(boundary) = completed_boundary {
+                boundary
+            } else if joins {
                 ctx.hypothetical_top_position(margins)
                     .unwrap_or(flow.end + margins.resolve())
             } else {
@@ -679,13 +687,15 @@ pub(super) fn layout(
         let saved = ctx.snapshot();
         let mut final_pass = resolved && joins && style.clear == Clear::None && floor.is_none();
         let mut guess = slot_y
-            .unwrap_or(if joins {
+            .unwrap_or(if let Some(boundary) = completed_boundary {
+                boundary
+            } else if joins {
                 flow.end
             } else {
                 flow.end + pending.collapse_with_margin(margin.top).resolve()
             })
             .max(clear_y);
-        let (output, top, top_set, bottom_set, clearance, floated_end, adjoining) = loop {
+        let (output, top, top_set, bottom_set, clearance, used_clearance, floated_end, adjoining) = loop {
             let (output, floated_end, adjoining) = if same {
                 let right_inset = width - left - child_width;
                 let mut sub = ctx.sub_context_for_collapsing_child(
@@ -711,16 +721,27 @@ pub(super) fn layout(
             };
             let top_set = output.top_margin.collapse_with_margin(margin.top);
             let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
-            let hypothetical = if joins && resolved {
+            let hypothetical = if let Some(boundary) = completed_boundary {
+                boundary
+            } else if joins && resolved {
                 ctx.hypothetical_top_position(pending.collapse_with_set(top_set))
                     .unwrap_or(flow.end)
             } else {
                 flow.end + pending.collapse_with_set(top_set).resolve()
             };
-            let clearance = (style.clear != Clear::None || floor.is_some())
+            let completed = tree
+                .context
+                .float_resumptions
+                .completed_at(usize::from(child), output.size.height);
+            let used_clearance = (style.clear != Clear::None || floor.is_some())
                 && ((joins && adjoining_clearance) || hypothetical < clear_y);
-            let top = if let Some(slot_y) = slot_y {
+            let clearance = completed.is_some() || used_clearance;
+            let top = if let Some(completed) = completed {
+                completed
+            } else if let Some(slot_y) = slot_y {
                 slot_y
+            } else if let (Some(boundary), false) = (completed_boundary, clearance) {
+                boundary
             } else if clearance && joins && !resolved && !adjoining_clearance {
                 // A provisional origin leaves out part of the margins that
                 // escape above this block, so an earlier float's edge sits
@@ -750,12 +771,36 @@ pub(super) fn layout(
                 top_set,
                 bottom_set,
                 clearance,
+                used_clearance,
                 floated_end,
                 adjoining,
             );
         };
         if held_margins {
             tree.context.held_margins.pop();
+        }
+        if inputs.run_mode == RunMode::PerformLayout
+            && style.clear != Clear::None
+            && !tree.context.float_resumption_candidates.is_empty()
+        {
+            tree.context
+                .block_clearance
+                .insert(usize::from(child), used_clearance);
+            let before = ctx.leading_margin_set(pending);
+            if used_clearance
+                && joins
+                && output.margins_can_collapse_through
+                && output.size.height == 0.0
+                && before.collapse_with_set(top_set) == top_set
+            {
+                tree.context
+                    .clearance_resumption_offsets
+                    .insert(usize::from(child), before.resolve());
+            } else {
+                tree.context
+                    .clearance_resumption_offsets
+                    .remove(&usize::from(child));
+            }
         }
         ctx.add_child_floated_content_height_contribution(guess + floated_end);
         ctx.merge_adjoining_floats(adjoining);
@@ -804,6 +849,17 @@ pub(super) fn layout(
             commit(tree, child, order, child_metrics, &output, location, margin);
             flow.placed.push(child);
         }
+        if let Some(boundary) = tree
+            .context
+            .float_resumptions
+            .completed_at(usize::from(child), output.size.height)
+        {
+            // This box completed at the preceding fragment's end. Margins
+            // adjoining it are consumed before the next content resumes.
+            completed_boundary = Some(boundary);
+        } else if clearance || !output.margins_can_collapse_through {
+            completed_boundary = None;
+        }
         if output.margins_can_collapse_through && !clearance {
             pending = pending
                 .collapse_with_set(top_set)
@@ -839,7 +895,9 @@ pub(super) fn layout(
     // Margins that collapsed through every child have joined the top margin of
     // this box, so they lie outside of it and leave no room below the content.
     let collapsed_into_start = leading && collapse_start;
-    if pending_has_clearance || !(collapse_end || collapsed_into_start) {
+    if let Some(boundary) = completed_boundary {
+        flow.end = boundary;
+    } else if pending_has_clearance || !(collapse_end || collapsed_into_start) {
         flow.end += pending.resolve();
     }
     flow
