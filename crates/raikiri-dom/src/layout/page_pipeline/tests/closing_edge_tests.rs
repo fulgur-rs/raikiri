@@ -649,8 +649,9 @@ fn a_block_that_holds_one_row_of_boxes_moves_whole() {
 }
 
 #[test]
-fn a_box_after_the_last_one_keeps_the_edges_from_following_it() {
-    // A float after the box is in the parent, whose edges stay below it.
+fn the_last_box_moves_with_the_enclosed_float_and_the_edges_below_it() {
+    // The float ends within the page, but the padding after it does not.
+    // The last flow box moves with both, to the break before that box.
     let (mut parent, mut middle) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         parent = block(doc, body, "display:flow-root;padding-bottom:30px");
@@ -658,9 +659,9 @@ fn a_box_after_the_last_one_keeps_the_edges_from_following_it() {
         middle = block(doc, parent, "display:block;height:50px");
         block(doc, parent, "float:left;width:20px;height:5px");
     });
-    assert_eq!(page_flow_y(&doc, middle), 40.0);
-    // The float ends 5px below the box and the flow root holds it.
-    assert_eq!(doc.nodes[parent].layout.size.height, 125.0);
+    assert_eq!(page_flow_y(&doc, middle), 100.0);
+    // The float follows the moved box, and the flow root holds its tail.
+    assert_eq!(doc.nodes[parent].layout.size.height, 185.0);
 }
 
 #[test]

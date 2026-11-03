@@ -710,3 +710,188 @@ fn an_oversized_first_avoiding_piece_starts_its_float_on_the_next_page() {
         );
     }
 }
+
+#[test]
+fn a_cards_closing_edges_follow_the_float_that_extends_below_its_last_box() {
+    for (outer, card, child, float, prefix, c_top, f_top, z_top) in [
+        ("", "padding-bottom:30px", "", "float:left", "", 0, 20, 90),
+        (
+            "",
+            "border-bottom:30px solid",
+            "",
+            "float:right",
+            "",
+            0,
+            20,
+            90,
+        ),
+        (
+            "padding-bottom:10px",
+            "padding-bottom:20px",
+            "",
+            "float:left",
+            "",
+            0,
+            20,
+            90,
+        ),
+        (
+            "",
+            "padding-bottom:30px",
+            "",
+            "float:left",
+            "<div style='height:10px'>S</div>",
+            0,
+            20,
+            90,
+        ),
+        (
+            "",
+            "padding-bottom:30px;position:relative;top:7px",
+            "",
+            "float:left",
+            "",
+            7,
+            27,
+            90,
+        ),
+        (
+            "",
+            "padding-bottom:30px",
+            "position:relative;top:7px",
+            "float:left",
+            "",
+            7,
+            20,
+            90,
+        ),
+        (
+            "",
+            "padding-bottom:30px",
+            "",
+            "float:left;position:relative;top:7px",
+            "",
+            0,
+            // A float's layout rectangle is in flow coordinates; paint adds
+            // its 7px relative offset, as on the unfragmented control.
+            20,
+            90,
+        ),
+        (
+            "",
+            "padding-bottom:30px",
+            "",
+            "float:left;margin-bottom:5px",
+            "",
+            0,
+            20,
+            95,
+        ),
+        (
+            "",
+            "padding-bottom:40px",
+            "margin-bottom:-10px",
+            "float:left",
+            "",
+            0,
+            10,
+            90,
+        ),
+    ] {
+        let body = format!(
+            "{prefix}<div style='{outer}'><div id=o style='display:flow-root;{card}'>\
+            <div style='height:60px'>A</div><div style='height:60px'>B</div>\
+            <div id=c style='height:20px;{child}'>C</div>\
+            <div id=f style='{float};width:20px;height:40px'>f</div></div></div>\
+            <div id=z style='height:20px'>Z</div>"
+        );
+        for (id, top, height) in [("c", c_top, 20), ("f", f_top, 40), ("z", z_top, 20)] {
+            assert_eq!(
+                small_pages(&body, id),
+                [None, Some((top, top + height))],
+                "{id}: {body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn closing_edges_distinguish_escaping_fitting_and_crossing_floats() {
+    for (display, padding, float_height, child_style, expected_c, expected_f, expected_z) in [
+        (
+            "block",
+            30,
+            40,
+            "",
+            vec![Some((120, 140))],
+            vec![Some((140, 180))],
+            vec![Some((170, 190))],
+        ),
+        (
+            "flow-root",
+            20,
+            40,
+            "",
+            vec![Some((120, 140)), None],
+            vec![Some((140, 180)), None],
+            vec![None, Some((0, 20))],
+        ),
+        (
+            "flow-root",
+            30,
+            70,
+            "",
+            vec![Some((120, 140)), None],
+            vec![Some((140, 200)), Some((0, 10))],
+            vec![None, Some((40, 60))],
+        ),
+        (
+            "flow-root",
+            30,
+            40,
+            "margin-bottom:-10px",
+            vec![Some((120, 140)), None],
+            vec![Some((130, 170)), None],
+            vec![None, Some((0, 20))],
+        ),
+    ] {
+        let body = format!(
+            "<div style='display:{display};padding-bottom:{padding}px'>\
+            <div style='height:60px'>A</div><div style='height:60px'>B</div>\
+            <div id=c style='height:20px;{child_style}'>C</div>\
+            <div id=f style='float:left;width:20px;height:{float_height}px'>f</div></div>\
+            <div id=z style='height:20px'>Z</div>"
+        );
+        for (id, expected) in [("c", expected_c), ("f", expected_f), ("z", expected_z)] {
+            assert_eq!(small_pages(&body, id), expected, "{id}: {body}");
+        }
+    }
+}
+
+#[test]
+fn a_preceding_float_stays_while_the_last_box_moves_with_closing_edges() {
+    let body = "<div style='display:flow-root;padding-bottom:30px'>\
+        <div id=f style='float:left;width:20px;height:180px'>f</div>\
+        <div style='height:60px'>A</div><div style='height:60px'>B</div>\
+        <div id=c style='height:20px'>C</div></div>\
+        <div id=z style='height:20px'>Z</div>";
+    assert_eq!(small_pages(body, "f"), [Some((0, 180)), None]);
+    assert_eq!(small_pages(body, "c"), [None, Some((0, 20))]);
+    assert_eq!(small_pages(body, "z"), [None, Some((50, 70))]);
+}
+
+#[test]
+fn an_avoided_chain_moves_with_the_enclosed_float_and_closing_edges() {
+    let body = "<div style='display:flow-root;padding-bottom:30px'>\
+        <div style='height:60px'>A</div><div id=b style='height:60px'>B</div>\
+        <div id=c style='height:20px;break-before:avoid'>C</div>\
+        <div id=f style='float:left;width:20px;height:40px'>f</div></div>\
+        <div id=z style='height:20px'>Z</div>";
+    for (id, top, height) in [("b", 0, 60), ("c", 60, 20), ("f", 80, 40), ("z", 150, 20)] {
+        assert_eq!(
+            small_pages(body, id),
+            [None, Some((top, top + height))],
+            "{id}"
+        );
+    }
+}
