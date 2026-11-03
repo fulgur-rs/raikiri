@@ -11,8 +11,10 @@ use std::collections::HashMap;
 /// How far apart two positions may be and still be the same edge.
 const EDGE_TOLERANCE: f32 = 0.001;
 
-/// Layout child positions reused within one pagination pass. The pass moves
-/// boxes without changing child lists; every query still reads their current
+/// Layout child positions reused within one pagination pass by the checks of
+/// whether a box begins its page: a column piece that travels with the content
+/// before it, and a forced break at the start of a page. The pass moves boxes
+/// without changing child lists; every query still reads their current
 /// positions, sizes and box classifications.
 #[derive(Default)]
 pub(super) struct ChildPositions {
@@ -22,6 +24,16 @@ pub(super) struct ChildPositions {
 }
 
 impl ChildPositions {
+    /// Whether the page that starts at `page_start` holds nothing above
+    /// `node_id` but the leading edges of the plain blocks around it: the box
+    /// is the first thing in each of them, and whatever comes before the
+    /// outermost of them ends on an earlier page.
+    ///
+    /// A forced break before such a box describes the boundary that already
+    /// opened the page. A page does not break between the start of a block and
+    /// its first child (CSS Break 3 §4.1), so the break is carried to the block
+    /// that the box begins and happens before that block's padding and border,
+    /// which stay with the box on the new page.
     pub(super) fn begins_page_below_leading_edges(
         &mut self,
         document: &Document,
@@ -47,6 +59,8 @@ impl ChildPositions {
                         #[cfg(test)]
                         {
                             *indexed_children += children.len();
+                            super::tests::PARENT_CHILD_STEPS
+                                .with(|count| count.set(count.get() + children.len()));
                         }
                         children
                             .iter()
@@ -132,38 +146,6 @@ fn holds_first_child(document: &Document, cascade: &CascadeResult, parent: usize
             && !node.is_multicol_container()
             && !is_floating_box_for_pagination(document, cascade, parent)
             && !has_unusual_coordinates(document, parent))
-}
-
-/// Whether the page that starts at `page_start` holds nothing above
-/// `node_id` but the leading edges of the plain blocks around it: the box is
-/// the first thing in each of them, and whatever comes before the outermost
-/// of them ends on an earlier page.
-///
-/// A forced break before such a box describes the boundary that already
-/// opened the page. A page does not break between the start of a block and its
-/// first child (CSS Break 3 §4.1), so the break is carried to the block that
-/// the box begins and happens before that block's padding and border, which
-/// stay with the box on the new page.
-pub(super) fn begins_page_below_leading_edges(
-    document: &Document,
-    cascade: &CascadeResult,
-    body_id: usize,
-    node_id: usize,
-    page_start: f32,
-) -> bool {
-    begins_page_with_positions(
-        document,
-        cascade,
-        body_id,
-        node_id,
-        page_start,
-        |parent, child| {
-            document.nodes[parent]
-                .layout_children()
-                .iter()
-                .position(|&id| id == child)
-        },
-    )
 }
 
 fn begins_page_with_positions(

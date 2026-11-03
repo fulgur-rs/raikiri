@@ -8,6 +8,9 @@ thread_local! {
     pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
     pub(super) static FLOAT_SUBTREE_WALKS: Cell<usize> = const { Cell::new(0) };
     pub(super) static FLOAT_PREFILTER_VISITS: Cell<usize> = const { Cell::new(0) };
+    /// Children of a parent read to find where a box sits among them or what
+    /// renders before it.
+    pub(super) static PARENT_CHILD_STEPS: Cell<usize> = const { Cell::new(0) };
     /// Moves recorded, queries for the pending move of a child, and moves
     /// read to answer them.
     pub(super) static SIBLING_SHIFT_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
@@ -38,6 +41,7 @@ mod column_projection_tests;
 mod fragment_sources_tests;
 mod geometry_lookup_tests;
 mod grid_row_tests;
+mod leading_box_scan_tests;
 mod line_ranges_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;

@@ -1,6 +1,17 @@
 use super::*;
 use crate::layout::page_pipeline::page_start::ChildPositions;
-use crate::layout::page_pipeline::page_start::begins_page_below_leading_edges;
+
+/// [`ChildPositions::begins_page_below_leading_edges`] for one query.
+fn begins_page_below_leading_edges(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_start: f32,
+) -> bool {
+    ChildPositions::default()
+        .begins_page_below_leading_edges(document, cascade, body_id, node_id, page_start)
+}
 
 #[test]
 fn cached_page_start_queries_read_current_preceding_geometry() {
