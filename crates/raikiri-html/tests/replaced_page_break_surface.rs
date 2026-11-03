@@ -943,3 +943,31 @@ fn an_image_that_does_not_fit_below_the_padding_takes_only_the_wrappers_that_sta
     // The padded wrapper stays where it starts, and grows to hold what moved.
     assert_eq!(extents_of("o", &body)[0], Some((8, 600)), "{body}");
 }
+
+#[test]
+fn a_float_moves_with_its_first_replaced_child() {
+    for side in ["left", "right"] {
+        let body = format!(
+            "<div style='height:300px'></div><div id=o style='width:300px;float:{side};background:blue'>{}</div>",
+            block_image(400)
+        );
+        for id in ["o", "i"] {
+            assert_eq!(
+                extents_of(id, &body),
+                [None, Some((0, 400))],
+                "{side} / {id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_nested_float_moves_with_its_first_replaced_child() {
+    let body = format!(
+        "<div style='height:300px'></div><section><div id=o style='width:300px;float:left'>{}</div></section>",
+        block_image(400)
+    );
+    for id in ["o", "i"] {
+        assert_eq!(extents_of(id, &body), [None, Some((0, 400))], "{id}");
+    }
+}

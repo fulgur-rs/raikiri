@@ -1282,9 +1282,21 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_float
                     && has_block_leading_content(document, node_id)
                     && !is_body
-                    && (free_to_break_before || node.display() == DisplayValue::InlineBlock)
+                    && (free_to_break_before
+                        || is_float
+                        || node.display() == DisplayValue::InlineBlock)
                     && !document.context.pagination_on_transposed_axes)
-                    .then(|| lineless_leading_piece_end(document, cascade, body_id, node_id))
+                    .then(|| {
+                        // A float's parallel flow keeps its first indivisible
+                        // piece even without leading edges. Its owner moves;
+                        // the children remain outside the outer candidate walk.
+                        if is_float {
+                            super::lineless_piece_end(document, cascade, body_id, node_id, 0)
+                                .map(|(end, _)| end)
+                        } else {
+                            lineless_leading_piece_end(document, cascade, body_id, node_id)
+                        }
+                    })
                     .flatten();
                 let column_replaced_piece = (in_flow_container
                     && !is_body

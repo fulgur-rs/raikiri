@@ -631,3 +631,82 @@ fn a_child_on_a_later_page_takes_its_parent_to_the_page_after_it() {
     assert_eq!(extents(body, "o"), [None, None, Some((0, 400))]);
     assert_eq!(extents(body, "i"), [None, None, Some((0, 400))]);
 }
+
+#[test]
+fn a_float_moves_with_its_first_avoiding_child() {
+    for side in ["left", "right"] {
+        let body = format!(
+            "{SPACER}<div id=o style='width:300px;float:{side};background:blue'><div id=i style='height:400px;background:green;break-inside:avoid'></div></div>"
+        );
+        for id in ["o", "i"] {
+            assert_eq!(extents(&body, id), [None, Some((0, 400))], "{side} / {id}");
+        }
+    }
+}
+
+#[test]
+fn a_nested_float_moves_with_its_first_avoiding_child() {
+    let body = format!(
+        "{SPACER}<section><div id=o style='width:300px;float:left'><div id=i style='height:400px;break-inside:avoid'></div></div></section>"
+    );
+    for id in ["o", "i"] {
+        assert_eq!(extents(&body, id), [None, Some((0, 400))], "{id}");
+    }
+}
+
+#[test]
+fn a_float_stays_when_only_the_tail_after_its_first_avoiding_piece_crosses_the_page() {
+    let body = format!(
+        "{SPACER}<div id=o style='width:300px;float:left'><div id=i style='height:200px;break-inside:avoid'></div><div style='height:400px'></div></div>"
+    );
+    assert_eq!(extents(&body, "o"), [Some((308, 600)), Some((0, 308))]);
+    assert_eq!(extents(&body, "i"), [Some((308, 508)), None]);
+}
+
+#[test]
+fn a_float_with_splittable_content_keeps_its_existing_page_break() {
+    let body = format!(
+        "{SPACER}<div id=o style='width:300px;float:left'><div id=i style='height:400px'></div></div>"
+    );
+    for id in ["o", "i"] {
+        assert_eq!(
+            extents(&body, id),
+            [Some((308, 600)), Some((0, 108))],
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn a_float_does_not_leave_a_page_its_first_piece_already_starts() {
+    for prefix in [
+        "<style>body{margin:0}</style>",
+        "<div style='height:300px;break-after:page'></div>",
+    ] {
+        let body = format!(
+            "{prefix}<div id=o style='width:300px;float:left'><div id=i style='height:400px;break-inside:avoid'></div></div>"
+        );
+        let expected = if prefix.starts_with("<style>") {
+            vec![Some((0, 400))]
+        } else {
+            vec![None, Some((0, 400))]
+        };
+        for id in ["o", "i"] {
+            assert_eq!(extents(&body, id), expected, "{prefix} / {id}");
+        }
+    }
+}
+
+#[test]
+fn an_oversized_first_avoiding_piece_starts_its_float_on_the_next_page() {
+    let body = format!(
+        "{SPACER}<div id=o style='width:300px;float:left'><div id=i style='height:750px;break-inside:avoid'></div></div>"
+    );
+    for id in ["o", "i"] {
+        assert_eq!(
+            extents(&body, id),
+            [None, Some((0, 600)), Some((0, 150))],
+            "{id}"
+        );
+    }
+}
