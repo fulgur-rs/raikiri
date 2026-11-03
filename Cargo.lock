@@ -2601,7 +2601,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raikiri"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-bench"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyrender",
  "criterion",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-cascade-diff"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bytes",
  "raikiri-html",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-dom"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bitflags",
  "criterion",
@@ -2677,7 +2677,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-html"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bytes",
  "criterion",
@@ -2701,7 +2701,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-js"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-layout-diff"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "raikiri-dom",
  "raikiri-html",
@@ -2759,11 +2759,11 @@ dependencies = [
 
 [[package]]
 name = "raikiri-layout-geometry"
-version = "0.0.6"
+version = "0.0.7"
 
 [[package]]
 name = "raikiri-layout-style"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "cssparser",
  "raikiri-layout-geometry",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-net"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "data-url",
  "flate2",
@@ -2789,7 +2789,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-paint"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2810,7 +2810,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-style"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "criterion",
  "cssparser",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-svg"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "cssparser",
  "raikiri-traits",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-traits"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bytes",
  "libc",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-vrt"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-wpt"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
