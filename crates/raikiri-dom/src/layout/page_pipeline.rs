@@ -6992,6 +6992,8 @@ fn grown_auto_height(
             (end - moved_by, end)
         } else if *shifted && (ifc_boxes.shifted.contains(&child) || siblings_moved) {
             (end - flow_delta, end)
+        } else if *shifted && ifc_boxes.boxes.contains(&child) {
+            (end, end)
         } else if *shifted {
             (end, end + flow_delta)
         } else {
