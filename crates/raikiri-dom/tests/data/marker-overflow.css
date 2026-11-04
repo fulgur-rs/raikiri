@@ -1,0 +1,1 @@
+@page{size:320px 160px;margin:0}body{margin:0;background:white;font:20px/20px Ahem}p{margin:0}.item{display:list-item;width:100px;height:40px;margin-left:40px;list-style-position:outside}.multi{column-count:2;column-gap:20px;column-rule:200px solid red;orphans:1;widows:1}.item::marker{content:"X";color:blue}
