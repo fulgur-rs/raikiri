@@ -18,6 +18,8 @@ fn the_parent_measures_collapsed_width_without_reapplying_bounds_or_ratio() {
             axis: Axis::X,
             min: true,
             max: true,
+            size: None,
+            main_min: None,
         }),
     ] {
         let own = LayoutStyleView::new(

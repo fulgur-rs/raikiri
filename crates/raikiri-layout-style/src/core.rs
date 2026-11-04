@@ -130,10 +130,19 @@ impl LayoutStyleView<'_> {
     /// The preferred size.
     #[inline]
     pub fn size(&self) -> Size<Dimension> {
-        self.size_axes(
+        let mut size = self.size_axes(
             self.library_width(LengthProperty::Width).dimension(),
             self.library_height(LengthProperty::Height).dimension(),
-        )
+        );
+        if let Some(held) = self.context.held_cross_size
+            && let Some(cross) = held.size
+        {
+            match held.axis {
+                Axis::X => size.width = Dimension::length(cross),
+                Axis::Y => size.height = Dimension::length(cross),
+            }
+        }
+        size
     }
     /// The minimum size.
     #[inline]
@@ -149,7 +158,19 @@ impl LayoutStyleView<'_> {
             self.library_width(LengthProperty::MinWidth).auto(false),
             height,
         );
-        self.with_held_cross_size(min, |held| held.min)
+        let mut min = self.with_held_cross_size(min, |held| held.min);
+        if let Some(held) = self.context.held_cross_size
+            && let Some(floor) = held.main_min
+        {
+            let main = match held.axis {
+                Axis::X => &mut min.height,
+                Axis::Y => &mut min.width,
+            };
+            if main.is_auto() {
+                *main = LengthPercentageAuto::length(floor);
+            }
+        }
+        min
     }
     /// The physical minimum height used by a vertical table's column sizing.
     ///
@@ -185,9 +206,11 @@ impl LayoutStyleView<'_> {
             self.library_width(LengthProperty::Width).auto(false),
             self.library_height(LengthProperty::Height).auto(false),
         );
-        match held.axis {
-            Axis::X => limit.width = stated.width,
-            Axis::Y => limit.height = stated.height,
+        match (held.axis, held.size) {
+            (Axis::X, Some(size)) => limit.width = LengthPercentageAuto::length(size),
+            (Axis::Y, Some(size)) => limit.height = LengthPercentageAuto::length(size),
+            (Axis::X, None) => limit.width = stated.width,
+            (Axis::Y, None) => limit.height = stated.height,
         }
         limit
     }
