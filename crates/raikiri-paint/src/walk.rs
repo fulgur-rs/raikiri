@@ -1586,11 +1586,20 @@ fn paint_list_marker_with_snapshots(
                 Some(None) => return,
                 None => paint_y,
             };
+        // Empty items use a minimum paint extent above, but their marker
+        // still starts from the actual principal border box.
+        let border_box_width = document
+            .get_node(node_id)
+            .expect("a painted marker retains its originating item")
+            .layout()
+            .size
+            .width;
         let transform = list_marker_image_transform(
             document,
             node_id,
-            computed,
+            &cascade.computed[node_id],
             (paint_x, paint_y),
+            border_box_width,
             padding_left,
             &decoded,
         );
@@ -1690,13 +1699,14 @@ fn list_marker_image(
 }
 
 /// The transform that maps the pixels of `decoded`, the image of the marker
-/// of `node_id`, onto the marker box placed from `origin` and the left
-/// padding of the item.
+/// of `node_id`, onto the marker box placed from the border-box `origin`
+/// and width of the item. Inside markers also use its left padding.
 fn list_marker_image_transform(
     document: &Document,
     node_id: usize,
     computed: &ComputedValues,
     origin: (f32, f32),
+    border_box_width: f32,
     padding_left: f32,
     decoded: &raikiri_traits::DecodedImage,
 ) -> Affine {
@@ -1706,6 +1716,7 @@ fn list_marker_image_transform(
     let marker_rect = document.standalone_marker_image_rect(
         computed,
         origin,
+        border_box_width,
         padding_left,
         raikiri_traits::ImageRasterSize {
             width: marker_width,

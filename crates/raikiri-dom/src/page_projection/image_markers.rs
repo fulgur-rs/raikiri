@@ -260,7 +260,7 @@ pub(super) fn prepare(
                     if !root.is_repeat && *marker_page != Some(page.page_index) {
                         continue;
                     }
-                    let Some(style) = computed_for_id(cascade, root.node)
+                    let Some(_) = computed_for_id(cascade, root.node)
                         .filter(|style| style.visibility == Visibility::Visible)
                     else {
                         continue;
@@ -275,8 +275,9 @@ pub(super) fn prepare(
                     markers.insert(
                         id,
                         document.standalone_marker_image_rect(
-                            style,
+                            &cascade.computed[owner],
                             (x, y + offset_y),
+                            layout.size.width,
                             layout.padding.left,
                             *size,
                         ),

@@ -1082,3 +1082,49 @@ fn a_delegated_atomic_line_keeps_its_original_fit_after_parent_marker_leading() 
     let (_, marker) = doc.page_marker_image(0, NodeId::new(owner as u64)).unwrap();
     assert_eq!(marker.y, 65.0);
 }
+
+#[test]
+fn outside_image_has_a_seven_pixel_gap_from_the_border_box() {
+    // Chromium 152: the gap is independent of font size, image size,
+    // padding and border, and follows the item's inline direction.
+    for font in [10, 20, 40] {
+        for size in [5, 10, 20] {
+            for direction in ["ltr", "rtl"] {
+                for (padding, border) in [(0, 0), (12, 3)] {
+                    for columns in ["", "column-count:2;column-gap:0;"] {
+                        let (doc, _, owner) = fixture_with_page(0, size, 200.0, |doc, owner| {
+                            doc.set_element_attribute(owner, "style", format!(
+                                "display:list-item;list-style:outside url(https://images.test/marker.png);width:200px;height:60px;font:{font}px/60px Ahem;direction:{direction};padding:0 {padding}px;border:{border}px solid red;{columns}"
+                            )).unwrap();
+                        });
+                        let (_, rect) =
+                            doc.page_marker_image(0, NodeId::new(owner as u64)).unwrap();
+                        // The list's 40px left padding fixes the item's left edge.
+                        let expected = if direction == "ltr" {
+                            40.0 - size as f32 - 7.0
+                        } else {
+                            40.0 + 200.0 + 2.0 * (padding + border) as f32 + 7.0
+                        };
+                        assert_eq!(
+                            rect.x, expected,
+                            "font={font}, size={size}, {direction}, padding={padding}, border={border}, {columns}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn outside_image_uses_the_item_direction_even_when_the_marker_overrides_it() {
+    for (direction, marker, expected) in [("ltr", "rtl", 23.0), ("rtl", "ltr", 147.0)] {
+        let (doc, _, owner) = fixture_with(0, 10, |doc, owner| {
+            doc.set_element_attribute(owner, "style", format!("display:list-item;list-style:outside url(https://images.test/marker.png);width:100px;height:40px;direction:{direction}")).unwrap();
+            let sheet = doc.append_element(Some(0), "style", None::<&str>);
+            doc.append_text(sheet, format!("li::marker{{direction:{marker}}}"));
+        });
+        let (_, rect) = doc.page_marker_image(0, NodeId::new(owner as u64)).unwrap();
+        assert_eq!(rect.x, expected, "item {direction}, marker {marker}");
+    }
+}
