@@ -1825,7 +1825,9 @@ fn compute_table_layout_checked(
             // The row-height pass excludes vertical flex/grid items, but
             // their assigned inline extent still sizes the column tracks.
             let inline_target = if parent_is_flex_or_grid {
-                assigned_grid_height.or(effective_known.height)
+                assigned_grid_height
+                    .or(effective_known.height)
+                    .map(|height| height - sharing_insets_height)
             } else {
                 known_target
             };
