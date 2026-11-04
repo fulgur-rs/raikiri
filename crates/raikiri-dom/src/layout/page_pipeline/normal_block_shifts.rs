@@ -253,8 +253,35 @@ pub(crate) struct NormalBlockShifts {
     dirty: HashSet<usize>,
     dirty_order: BinaryHeap<(usize, usize)>,
     depths: HashMap<usize, usize>,
-    arithmetic_magnitude: f64,
+    maximum_input: f64,
+    absolute_deltas: f64,
+    quantum_exponent: Option<i32>,
     arithmetic_updates: f64,
+}
+
+/// Exponent of the greatest power-of-two step dividing a finite nonzero f32.
+fn binary_quantum(value: f32) -> Option<i32> {
+    if !value.is_finite() || value == 0.0 {
+        return None;
+    }
+    let bits = value.abs().to_bits();
+    let exponent = (bits >> 23) as i32;
+    let fraction = bits & 0x7f_ffff;
+    let (significand, scale) = if exponent == 0 {
+        (fraction, -149)
+    } else {
+        (fraction | (1 << 23), exponent - 150)
+    };
+    Some(scale + significand.trailing_zeros() as i32)
+}
+
+/// Upper bound for a sum of nonnegative magnitudes, including rounding.
+fn upper_sum(left: f64, right: f64) -> f64 {
+    if right == 0.0 {
+        left
+    } else {
+        (left + right).next_up()
+    }
 }
 
 impl NormalBlockShifts {
@@ -268,20 +295,52 @@ impl NormalBlockShifts {
         self.parents.insert(parent, Parent::new(leaves));
     }
 
+    fn observe_quantum(&mut self, value: f32) {
+        self.quantum_exponent = self
+            .quantum_exponent
+            .into_iter()
+            .chain(binary_quantum(value))
+            .min();
+    }
+
     fn observe_magnitudes(&mut self, values: [f32; 3]) {
-        for end in values.into_iter().filter(|end| end.is_finite()) {
-            self.arithmetic_magnitude = self.arithmetic_magnitude.max(f64::from(end).abs());
+        for value in values.into_iter().filter(|value| value.is_finite()) {
+            self.maximum_input = self.maximum_input.max(f64::from(value).abs());
+            self.observe_quantum(value);
         }
     }
 
-    /// Keep estimated wide-arithmetic error well below pagination's 0.001px
-    /// comparisons. This does not promise bitwise identity with sequential
-    /// f32 additions, which accumulate a different rounding error.
+    fn observe_geometry(&mut self, values: [f32; 3]) {
+        if values.iter().any(|value| !value.is_finite()) {
+            self.maximum_input = f64::INFINITY;
+        }
+        self.observe_magnitudes(values);
+    }
+
+    /// Exact binary-grid sums need no update-count limit. Otherwise keep the
+    /// estimated wide-arithmetic error below pagination's 0.001px comparisons.
+    /// Neither case promises bitwise identity with sequential f32 additions.
     pub(crate) fn can_defer(&self, delta: f32) -> bool {
-        let magnitude = self.arithmetic_magnitude + f64::from(delta).abs();
+        let magnitude = upper_sum(
+            upper_sum(self.maximum_input, self.absolute_deltas),
+            f64::from(delta).abs(),
+        );
+        if !delta.is_finite() || !magnitude.is_finite() || magnitude > f64::from(f32::MAX) {
+            return false;
+        }
+        let quantum = self
+            .quantum_exponent
+            .into_iter()
+            .chain(binary_quantum(delta))
+            .min();
+        // All operands are multiples of the shared step. Below 2^53 steps,
+        // every intermediate sum is exactly representable in f64.
+        if quantum.is_none_or(|exponent| magnitude < 2.0_f64.powi(exponent + 53)) {
+            return true;
+        }
         // Allow for both pending and maximum paths through up to 64 levels.
         let operations = 128.0 * (self.arithmetic_updates + 1.0) + 128.0;
-        delta.is_finite() && f64::EPSILON * operations * magnitude < 0.0001
+        f64::EPSILON * operations * magnitude < 0.0001
     }
 
     pub(crate) fn mark_dirty(&mut self, node: usize) {
@@ -349,7 +408,8 @@ impl NormalBlockShifts {
         if owner != parent || !self.can_defer(delta) {
             return false;
         }
-        self.arithmetic_magnitude += f64::from(delta).abs();
+        self.observe_quantum(delta);
+        self.absolute_deltas = upper_sum(self.absolute_deltas, f64::from(delta).abs());
         self.arithmetic_updates += 1.0;
         let parent = self.parents.get_mut(&parent).unwrap();
         if delta != 0.0 && delta.is_finite() {
@@ -406,7 +466,7 @@ impl crate::Document {
         let layout = &self.nodes[node].layout;
         let magnitudes = [layout.location.y, layout.size.height, layout.margin.bottom];
         if let Some(state) = self.normal_block_shifts.as_mut() {
-            state.observe_magnitudes(magnitudes);
+            state.observe_geometry(magnitudes);
             if state.can_defer(0.0) {
                 state.mark_dirty(source);
             } else {
@@ -451,7 +511,7 @@ pub(super) fn begin(document: &mut LayoutSession<'_>, cascade: &CascadeResult, b
         return;
     }
     debug_assert!(document.normal_block_shifts.is_none());
-    let mut arithmetic_magnitude = 0.0_f64;
+    let mut arithmetic = NormalBlockShifts::default();
     let mut depths = HashMap::new();
     let mut pending: Vec<_> = document
         .nodes
@@ -462,12 +522,10 @@ pub(super) fn begin(document: &mut LayoutSession<'_>, cascade: &CascadeResult, b
         .collect();
     while let Some((node, depth)) = pending.pop() {
         if depths.insert(node, depth).is_some() {
-            continue; // cov:ignore: defensive duplicate-node guard after source-tree validation.
+            continue; // cov:ignore: defensive duplicate-node guard for the source-tree invariant.
         }
         let layout = &document.nodes[node].layout;
-        for value in [layout.location.y, layout.size.height, layout.margin.bottom] {
-            arithmetic_magnitude = arithmetic_magnitude.max(f64::from(value).abs());
-        }
+        arithmetic.observe_geometry([layout.location.y, layout.size.height, layout.margin.bottom]);
         #[cfg(test)]
         DEPTH_WORK.with(|work| work.set(work.get() + 1));
         pending.extend(
@@ -485,11 +543,8 @@ pub(super) fn begin(document: &mut LayoutSession<'_>, cascade: &CascadeResult, b
         .map(|(id, _)| (depths[&id], id))
         .collect();
     parents.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
-    document.normal_block_shifts = Some(Box::new(NormalBlockShifts {
-        depths,
-        arithmetic_magnitude,
-        ..Default::default()
-    }));
+    arithmetic.depths = depths;
+    document.normal_block_shifts = Some(Box::new(arithmetic));
     for (_, parent) in parents {
         let mut children = Vec::new();
         let ordered = super::pagination_child_order_borrowed(document, cascade, parent);
@@ -503,25 +558,27 @@ pub(super) fn begin(document: &mut LayoutSession<'_>, cascade: &CascadeResult, b
                 children.push(child);
             }
         }
-        let leaves = children
-            .into_iter()
-            .map(|child| {
-                let follows = document.nodes[child].kind() == NodeKind::Element
-                    && document.nodes[child].display() != DisplayValue::None
-                    && !matches!(
-                        document.nodes[child].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    );
-                Leaf {
-                    node: child,
-                    ends: leaf_ends(document, cascade, body, parent, child),
-                    follows,
-                    float_follows: follows
-                        && (super::is_floating_box_for_pagination(document, cascade, child)
-                            || document.contributes_layout_offset(child)),
-                }
-            })
-            .collect();
+        let mut leaves = Vec::with_capacity(children.len());
+        for child in children {
+            let Some(ends) = leaf_ends(document, cascade, body, parent, child) else {
+                document.abandon_normal_block_shifts();
+                return;
+            };
+            let follows = document.nodes[child].kind() == NodeKind::Element
+                && document.nodes[child].display() != DisplayValue::None
+                && !matches!(
+                    document.nodes[child].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                );
+            leaves.push(Leaf {
+                node: child,
+                ends,
+                follows,
+                float_follows: follows
+                    && (super::is_floating_box_for_pagination(document, cascade, child)
+                        || document.contributes_layout_offset(child)),
+            });
+        }
         document
             .normal_block_shifts
             .as_mut()
@@ -539,13 +596,14 @@ pub(super) fn begin(document: &mut LayoutSession<'_>, cascade: &CascadeResult, b
     }
 }
 
+/// Finite ends and deliberate empty channels, or a derived numeric overflow.
 fn leaf_ends(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
     body: usize,
     parent: usize,
     child: usize,
-) -> Ends {
+) -> Option<Ends> {
     #[cfg(test)]
     super::tests::record_normal_sibling_work(2, 1);
     let node = &document.nodes[child];
@@ -553,7 +611,7 @@ fn leaf_ends(
         || node.display() == DisplayValue::None
         || node.layout_position() == Position::Absolute
     {
-        return Ends::EMPTY;
+        return Some(Ends::EMPTY);
     }
     let layout = &node.layout;
     let top = super::pagination_child_parent_y(
@@ -567,19 +625,20 @@ fn leaf_ends(
             cascade.computed[child].float,
             FloatValue::Left | FloatValue::Right
         ) {
-            Ends([
-                f32::NEG_INFINITY,
-                f32::NEG_INFINITY,
-                top + layout.size.height + layout.margin.bottom,
-            ])
+            let end = top + layout.size.height + layout.margin.bottom;
+            end.is_finite()
+                .then_some(Ends([f32::NEG_INFINITY, f32::NEG_INFINITY, end]))
         } else {
-            Ends::EMPTY
+            Some(Ends::EMPTY)
         };
     }
     let end =
         top + layout.size.height - super::layout_relative_offset_y(document, cascade, body, child);
-    let float_end = branch_float_end(document, cascade, body, child, top);
-    Ends([end, end, float_end])
+    if !end.is_finite() {
+        return None;
+    }
+    let float_end = branch_float_end(document, cascade, body, child, top)?;
+    Some(Ends([end, end, float_end]))
 }
 
 fn branch_float_end(
@@ -588,36 +647,41 @@ fn branch_float_end(
     body: usize,
     child: usize,
     top: f32,
-) -> f32 {
+) -> Option<f32> {
     if super::holds_floats(document, cascade, child)
         // cov:ignore: abs/fixed hold floats above; running positions are normalized by cascade.
-        || !matches!(
-            document.nodes[child].position(),
-            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-        )
-        || (cascade.computed[child].float == FloatValue::Footnote
-            && super::is_floating_box_for_pagination(document, cascade, child))
+        || !matches!(document.nodes[child].position(), PositionValue::Static | PositionValue::Relative | PositionValue::Sticky)
+        || (cascade.computed[child].float == FloatValue::Footnote && super::is_floating_box_for_pagination(document, cascade, child))
     {
-        return f32::NEG_INFINITY;
+        return Some(f32::NEG_INFINITY);
     }
     if let Some(state) = document.normal_block_shifts.as_ref()
         && let Some(len) = state.len(child)
     {
         let end = state.range(child, 0..len).unwrap().0[2];
+        if end == f32::NEG_INFINITY {
+            return Some(end);
+        }
         let correction = if document.contributes_layout_offset(child) {
             super::super::ifc::outside_marker::box_leading(document, child)
         } else {
             document.pagination_local_y(child)
         };
-        return end + top
+        let projected = end + top
             - super::layout_relative_offset_y(document, cascade, body, child)
             - correction;
+        return projected.is_finite().then_some(projected);
     }
     let mut end = f32::NEG_INFINITY;
-    super::visit_same_bfc_floats_in_subtree(document, cascade, body, child, top, |_, bottom| {
-        end = end.max(bottom)
-    });
-    end
+    let finite = super::visit_same_bfc_floats_in_subtree(
+        document,
+        cascade,
+        body,
+        child,
+        top,
+        |_, bottom| end = end.max(bottom),
+    );
+    finite.then_some(end)
 }
 
 /// Refreshes only branches changed by explicit geometry writes, deepest first.
@@ -643,7 +707,10 @@ pub(super) fn refresh(
             .unwrap()
             .position(node);
         if let Some((owner, _)) = position {
-            let ends = leaf_ends(document, cascade, body, owner, node);
+            let Some(ends) = leaf_ends(document, cascade, body, owner, node) else {
+                document.abandon_normal_block_shifts();
+                return;
+            };
             let state = document.normal_block_shifts.as_mut().unwrap();
             state.set_ends(node, ends);
             if !state.can_defer(0.0) {

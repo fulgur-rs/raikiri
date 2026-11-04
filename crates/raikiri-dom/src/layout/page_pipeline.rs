@@ -7230,7 +7230,8 @@ fn has_float_below(
 
 /// Visits each left or right float end in `branch`, in `parent`'s flow
 /// coordinates. Traversal stops at an independent BFC so its floats stay
-/// represented by its border box.
+/// represented by its border box. Returns false if any reached float end
+/// is nonfinite; the remaining finite ends are still visited.
 fn visit_same_bfc_floats_in_subtree(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7238,11 +7239,11 @@ fn visit_same_bfc_floats_in_subtree(
     branch: usize,
     branch_top: f32,
     mut visit: impl FnMut(usize, f32),
-) {
+) -> bool {
     // A box without an element in it has no float to visit, which the walk
     // below would find out only after the style queries about the box.
     if document.nodes[branch].kind() != NodeKind::Element || !has_element_child(document, branch) {
-        return;
+        return true;
     }
     if holds_floats(document, cascade, branch)
         || (matches!(cascade.computed[branch].float, FloatValue::Footnote)
@@ -7253,16 +7254,17 @@ fn visit_same_bfc_floats_in_subtree(
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
         )
     {
-        return;
+        return true;
     }
     // A box with no float below it that the walk reaches has nothing to
     // visit, and the style queries of the walk below are skipped. A box that
     // holds its floats itself is rejected above, so its subtree is not read.
     if !has_float_below(document, cascade, branch) {
-        return;
+        return true;
     }
     #[cfg(test)]
     tests::FLOAT_SUBTREE_WALKS.with(|count| count.set(count.get() + 1));
+    let mut finite = true;
     let branch_offset = branch_top
         - layout_relative_offset_y(document, cascade, body_id, branch)
         - if document.contributes_layout_offset(branch) {
@@ -7320,6 +7322,8 @@ fn visit_same_bfc_floats_in_subtree(
                 + layout.margin.bottom;
             if bottom.is_finite() {
                 visit(child, bottom);
+            } else {
+                finite = false;
             }
             continue;
         }
@@ -7341,6 +7345,7 @@ fn visit_same_bfc_floats_in_subtree(
                 .map(|&descendant| (descendant, child_offset)),
         );
     }
+    finite
 }
 
 /// The content-box height of `block` when it is definite: a length, or a

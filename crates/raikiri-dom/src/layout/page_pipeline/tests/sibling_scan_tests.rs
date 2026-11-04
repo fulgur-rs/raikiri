@@ -441,18 +441,27 @@ fn a_first_middle_or_last_float_keeps_normal_sibling_work_below_quadratic() {
 }
 
 #[test]
-fn the_1024_block_acceptance_fixture_does_not_abandon_deferred_updates() {
-    super::super::normal_block_shifts::FALLBACKS.with(|count| count.set(0));
-    let count = 1024;
-    let ys = paginated_blocks(count, &[]);
-    assert_eq!(
-        ys,
-        (0..count)
-            .map(|index| index as f32 * 100.0)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        super::super::normal_block_shifts::FALLBACKS.with(std::cell::Cell::get),
-        0
-    );
+fn ordinary_documents_up_to_the_default_page_limit_keep_deferred_updates() {
+    for count in [1024, 4096, 10_000] {
+        super::super::normal_block_shifts::FALLBACKS.with(|count| count.set(0));
+        NORMAL_SIBLING_WORK.with(|work| work.set([0; 3]));
+        let ys = paginated_blocks(count, &[]);
+        assert_eq!(
+            ys,
+            (0..count)
+                .map(|index| index as f32 * 100.0)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            super::super::normal_block_shifts::FALLBACKS.with(std::cell::Cell::get),
+            0,
+            "count={count}"
+        );
+        let work = NORMAL_SIBLING_WORK.with(std::cell::Cell::get);
+        assert!(
+            work[0] <= count + 2 && work[1] <= count && work[2] <= count * 5,
+            "count={count} work={work:?}"
+        );
+        eprintln!("normal_long_document count={count} work={work:?} fallback=0");
+    }
 }

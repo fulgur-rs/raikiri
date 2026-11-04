@@ -519,6 +519,8 @@ fn extreme_geometry_is_checked_before_cancellation_hides_its_magnitude() {
     for initially_large in [false, true] {
         let mut fixture = block_fixture("", |doc, root| {
             doc.append_element(Some(root), "div", Some("display:block"));
+            let unit = doc.append_element(Some(root), "div", Some("display:block"));
+            doc.nodes[unit].layout.location.y = 1.0;
         });
         let root = fixture.root;
         let child = fixture.doc.nodes[root].children[0];
@@ -583,7 +585,7 @@ fn exported_float_ends_ignore_pending_offsets_of_noncontributing_branches() {
         |_, end| reference = reference.max(end),
     );
     assert!(reference.is_finite());
-    assert_eq!(after, reference);
+    assert_eq!(after, Some(reference));
     assert_eq!(after, before);
     session.finish_normal_block_shifts();
     assert_eq!(
@@ -594,7 +596,7 @@ fn exported_float_ends_ignore_pending_offsets_of_noncontributing_branches() {
             branch,
             session.pagination_local_y(branch)
         ),
-        reference
+        Some(reference)
     );
 }
 
@@ -610,6 +612,7 @@ fn refreshing_an_extent_at_the_arithmetic_limit_flushes_other_pending_siblings()
     let last = fixture.doc.nodes[root].children[1];
     fixture.doc.nodes[last].layout.location.y = 1_000_000.0;
     let mut session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+    session.nodes[first].layout.margin.bottom = f32::MIN_POSITIVE;
     begin(&mut session, &fixture.cascade, root);
     super::super::shift_later_block_siblings(&mut session, root, first, 7.5);
     session.mark_pagination_extent_dirty(first);
@@ -711,7 +714,7 @@ fn out_of_flow_and_footnote_boundaries_match_the_existing_float_visitor() {
         );
         assert_eq!(
             branch_float_end(&session, &fixture.cascade, root, root, 0.0),
-            reference
+            Some(reference)
         );
         eprintln!(
             "float_boundary style={style} holds={} active={}",
@@ -719,4 +722,234 @@ fn out_of_flow_and_footnote_boundaries_match_the_existing_float_visitor() {
             super::super::is_floating_box_for_pagination(&session, &fixture.cascade, root)
         );
     }
+}
+
+#[test]
+fn binary_quantum_handles_zero_subnormal_powers_and_adjacent_values() {
+    for value in [0.0, -0.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        assert_eq!(binary_quantum(value), None);
+    }
+    for (value, expected) in [
+        (1.0, 0),
+        (2.0, 1),
+        (0.5, -1),
+        (1.25, -2),
+        (0.1, -27),
+        (f32::MIN_POSITIVE, -126),
+        (f32::from_bits(1), -149),
+        (f32::from_bits(2), -148),
+        (f32::MAX, 104),
+        (1.0_f32.next_up(), -23),
+    ] {
+        assert_eq!(binary_quantum(value), Some(expected));
+        assert_eq!(binary_quantum(-value), Some(expected));
+    }
+}
+
+#[test]
+fn exact_grid_updates_do_not_accumulate_a_spurious_roundoff_budget() {
+    let mut state = NormalBlockShifts::default();
+    state.insert(2, vec![leaf(3, 1000.0, true), leaf(4, 2000.0, true)]);
+    state.arithmetic_updates = 1e30;
+    assert!(state.can_defer(40.0));
+    assert!(state.can_defer(0.25));
+    assert!(!state.can_defer(2.0_f32.powi(-100)));
+    assert!(state.shift_after(2, 3, 0.25));
+    assert_eq!(state.pending(4), 0.25);
+    state.set_ends(4, Ends([2.0_f32.powi(-100), 0.0, 0.0]));
+    assert!(!state.can_defer(40.0));
+    assert!(!state.can_defer(f32::INFINITY));
+    assert!(!state.can_defer(f32::NAN));
+    let zero = NormalBlockShifts {
+        arithmetic_updates: 1e30,
+        ..Default::default()
+    };
+    assert!(zero.can_defer(0.0));
+}
+
+#[test]
+fn the_exact_grid_limit_uses_a_strict_upper_bound() {
+    let limit = 2.0_f32.powi(53);
+    for (value, expected) in [
+        (limit.next_down(), true),
+        (limit, false),
+        (limit.next_up(), false),
+    ] {
+        let mut state = NormalBlockShifts::default();
+        state.insert(
+            2,
+            vec![Leaf {
+                node: 3,
+                ends: Ends([value, 1.0, 0.0]),
+                follows: true,
+                float_follows: true,
+            }],
+        );
+        assert_eq!(state.can_defer(0.0), expected);
+    }
+}
+
+#[test]
+fn nonfinite_raw_geometry_cannot_enter_the_exact_grid_path() {
+    for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        let mut state = NormalBlockShifts::default();
+        state.observe_geometry([value, 0.0, 0.0]);
+        assert!(!state.can_defer(0.0));
+    }
+}
+
+#[test]
+fn derived_nonfinite_extents_abandon_even_an_exact_coarse_grid() {
+    use crate::layout::ifc::test_support::block_fixture;
+    for case in 0..3 {
+        let mut fixture = block_fixture("", |doc, root| {
+            let child = doc.append_element(
+                Some(root),
+                "div",
+                Some(if case == 1 {
+                    "display:block;float:left"
+                } else {
+                    "display:block"
+                }),
+            );
+            if case == 2 {
+                doc.append_element(Some(child), "div", Some("display:block;float:left"));
+            }
+        });
+        let root = fixture.root;
+        let child = fixture.doc.nodes[root].children[0];
+        let mut session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+        if case == 0 {
+            session.nodes[child].layout.location.y = 1e38;
+            session.nodes[child].layout.size.height = 3e38;
+        } else if case == 1 {
+            session.nodes[child].layout.location.y = -3e38;
+            session.nodes[child].layout.margin.bottom = -3e38;
+        } else {
+            session.nodes[child].layout.location.y = 1e38;
+            let float = session.nodes[child].children[0];
+            session.nodes[float].layout.size.height = 3e38;
+        }
+        begin(&mut session, &fixture.cascade, root);
+        assert!(session.normal_block_shifts.is_none(), "case={case}");
+    }
+}
+
+#[test]
+fn a_derived_overflow_during_refresh_flushes_pending_coordinates() {
+    use crate::layout::ifc::test_support::block_fixture;
+    let mut fixture = block_fixture("", |doc, root| {
+        doc.append_element(Some(root), "div", Some("display:block"));
+        doc.append_element(Some(root), "div", Some("display:block"));
+    });
+    let root = fixture.root;
+    let first = fixture.doc.nodes[root].children[0];
+    let last = fixture.doc.nodes[root].children[1];
+    let mut session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+    session.nodes[first].layout.location.y = 1e38;
+    session.nodes[last].layout.location.y = 2e38;
+    begin(&mut session, &fixture.cascade, root);
+    assert!(session.normal_block_shifts.is_some());
+    let delta = 1e36_f32;
+    super::super::shift_later_block_siblings(&mut session, root, first, delta);
+    session.nodes[first].layout.size.height = 3e38;
+    session.mark_pagination_extent_dirty(first);
+    refresh(&mut session, &fixture.cascade, root, root);
+    assert!(session.normal_block_shifts.is_none());
+    assert_eq!(
+        session.nodes[last].layout.location.y,
+        (f64::from(2e38_f32) + f64::from(delta)) as f32
+    );
+}
+
+#[test]
+fn an_exact_wide_sum_still_has_to_fit_the_public_coordinate_type() {
+    let mut state = NormalBlockShifts::default();
+    state.insert(
+        2,
+        vec![Leaf {
+            node: 3,
+            ends: Ends([f32::MAX, f32::MAX, f32::MAX]),
+            follows: true,
+            float_follows: true,
+        }],
+    );
+    assert!(state.can_defer(0.0));
+    assert!(!state.can_defer(f32::MAX));
+}
+
+#[test]
+fn a_float_visitor_must_not_hide_an_overflow_that_a_later_shift_can_restore() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+    use crate::layout::test_support::page_box_800x600;
+    let mut fixture = block_fixture_with_ahem("", |doc, root| {
+        doc.append_element(Some(root), "div", Some("display:block"));
+        let branch = doc.append_element(Some(root), "div", Some("display:block"));
+        doc.append_element(
+            Some(branch),
+            "span",
+            Some("display:block;float:left;width:10px;height:10px"),
+        );
+        doc.append_element(
+            Some(branch),
+            "span",
+            Some("display:block;float:left;width:10px;height:10px"),
+        );
+        doc.append_text(branch, "x");
+    });
+    crate::layout::layout_single_page(&mut fixture.doc, &fixture.cascade, page_box_800x600())
+        .unwrap();
+    let root = fixture.root;
+    let first = fixture.doc.nodes[root].children[0];
+    let branch = fixture.doc.nodes[root].children[1];
+    let one = fixture.doc.nodes[branch].children[0];
+    let two = fixture.doc.nodes[branch].children[1];
+    let mut session = LayoutSession::bridged(&mut fixture.doc, &fixture.cascade);
+    assert!(!super::super::moves_later_siblings(&session, branch));
+    for node in 0..session.node_count() {
+        session.nodes[node].layout.location.y = 0.0;
+        session.nodes[node].layout.size.height = 0.0;
+        session.nodes[node].layout.margin.bottom = 0.0;
+    }
+    session.nodes[branch].layout.location.y = 2e38;
+    session.nodes[one].layout.location.y = 2e38;
+    session.nodes[two].layout.location.y = -2e38;
+    for node in [one, two] {
+        session.nodes[node].layout.size.height = 1e37;
+    }
+    let mut before = f32::NEG_INFINITY;
+    let finite_before = super::super::visit_same_bfc_floats_in_subtree(
+        &session,
+        &fixture.cascade,
+        root,
+        branch,
+        2e38,
+        |_, end| before = before.max(end),
+    );
+    assert!(!finite_before);
+    assert_eq!(before, 1e37);
+    begin(&mut session, &fixture.cascade, root);
+    assert!(session.normal_block_shifts.is_none());
+    super::super::shift_later_block_siblings(&mut session, root, first, -1e38);
+    let mut after = f32::NEG_INFINITY;
+    let finite_after = super::super::visit_same_bfc_floats_in_subtree(
+        &session,
+        &fixture.cascade,
+        root,
+        branch,
+        session.pagination_local_y(branch),
+        |_, end| after = after.max(end),
+    );
+    assert!(finite_after);
+    assert!(after.is_finite() && after > 3e38);
+    assert_eq!(
+        branch_float_end(
+            &session,
+            &fixture.cascade,
+            root,
+            branch,
+            session.pagination_local_y(branch)
+        ),
+        Some(after)
+    );
 }
