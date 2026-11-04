@@ -288,3 +288,168 @@ fn hoisted_static_positions_follow_only_their_moved_ancestor() {
         ]
     );
 }
+
+#[test]
+fn reversed_alignment_replay_rejects_damaged_calls_and_snapshots() {
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "div",
+        Some("display:flex;flex-wrap:wrap-reverse;width:100px;height:100px"),
+    );
+    let a = doc.append_element(
+        Some(root),
+        "div",
+        Some("width:100px;height:150px;flex:none"),
+    );
+    let b = doc.append_element(Some(root), "div", Some("width:100px;height:20px;flex:none"));
+    let hidden = doc.append_element(Some(root), "div", Some("display:none"));
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let (capture, output) = capture(&mut tree, root);
+    let calls = capture.calls.unwrap();
+    let before: Vec<_> = tree.nodes.iter().map(|node| node.layout).collect();
+    let check = |calls: &[FlexReplayCall],
+                 input,
+                 output: &LayoutOutput,
+                 layouts: &[raikiri_layout_geometry::BoxLayout]| {
+        wrap_reverse::candidate(&tree, root.into(), input, calls, output, |child| {
+            layouts.get(child).copied()
+        })
+    };
+    let corrected = check(&calls, inputs(), &output, &before).unwrap();
+    assert_eq!(
+        corrected
+            .layouts
+            .iter()
+            .find(|&&(child, _)| child == a)
+            .unwrap()
+            .1
+            .location
+            .y,
+        -50.0
+    );
+    for extra in [false, true] {
+        let mut damaged = calls.clone();
+        if extra {
+            damaged.push(calls[0].clone());
+        } else {
+            damaged.remove(0);
+        }
+        assert!(check(&damaged, inputs(), &output, &before).is_none());
+    }
+    assert!(
+        check(
+            &calls,
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                ..inputs()
+            },
+            &output,
+            &before
+        )
+        .is_none()
+    );
+    assert!(
+        check(
+            &calls,
+            inputs(),
+            &LayoutOutput {
+                size: Size::ZERO,
+                ..output.clone()
+            },
+            &before
+        )
+        .is_none()
+    );
+    for mode in 0..7 {
+        let mut damaged = before.clone();
+        match mode {
+            0 => damaged[a].margin.top += 1.0,
+            1 => damaged[a].location.x += 1.0,
+            2 => damaged[a].location.y = f32::INFINITY,
+            3 => damaged[a].location.y = -1000.0,
+            4 => damaged[b].location.y -= 1.0,
+            5 => {
+                damaged[b].location = corrected
+                    .layouts
+                    .iter()
+                    .find(|&&(child, _)| child == b)
+                    .unwrap()
+                    .1
+                    .location
+            }
+            _ => damaged[hidden].location.y = 1.0,
+        }
+        assert!(check(&calls, inputs(), &output, &damaged).is_none());
+    }
+    assert!(check(&calls, inputs(), &output, &[]).is_none());
+    assert_eq!(
+        before,
+        tree.nodes
+            .iter()
+            .map(|node| node.layout)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn positive_cross_room_retains_stretch_and_used_auto_margins() {
+    for child_style in ["height:20px;margin-top:auto", "", "height:20px"] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Some("display:flex;flex-wrap:wrap-reverse;width:100px;height:100px"),
+        );
+        let child = doc.append_element(
+            Some(root),
+            "div",
+            Some(&format!("width:100px;{child_style}")),
+        );
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+        let (capture, output) = capture(&mut tree, root);
+        let before = tree.nodes[child].layout;
+        assert!(
+            wrap_reverse::candidate(
+                &tree,
+                root.into(),
+                inputs(),
+                capture.calls.as_deref().unwrap(),
+                &output,
+                |child| Some(tree.nodes[child].layout)
+            )
+            .is_none()
+        );
+        if child_style.is_empty() {
+            assert_eq!(before.size.height, 100.0);
+        } else {
+            assert_eq!(before.location.y, 80.0);
+            if child_style.contains("margin") {
+                assert_eq!(before.margin.top, 80.0);
+            } else {
+                assert_eq!(before.margin.top, 0.0);
+                // A stale position alone must not masquerade as negative
+                // free space when both positional replays still have room.
+                assert!(
+                    wrap_reverse::candidate(
+                        &tree,
+                        root.into(),
+                        inputs(),
+                        capture.calls.as_deref().unwrap(),
+                        &output,
+                        |child| {
+                            let mut stale = tree.nodes[child].layout;
+                            stale.location.y += 1.0;
+                            Some(stale)
+                        }
+                    )
+                    .is_none()
+                );
+            }
+        }
+    }
+}

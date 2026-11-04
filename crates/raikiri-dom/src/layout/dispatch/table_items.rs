@@ -10,7 +10,9 @@ use super::inline_baseline;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{LayoutInput, LayoutOutput, NodeId, RunMode};
 use crate::layout::style_views::ReadRole;
-use crate::layout::taffy_adapter::algorithms::{FlexReplayCall, flex_baseline_source};
+use crate::layout::taffy_adapter::algorithms::{
+    FlexReplayCall, flex_baseline_source, wrap_reverse,
+};
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::values::{AlignItemsKeyword, Direction, Position, ResolveOrZero};
@@ -96,15 +98,16 @@ pub(super) fn layout(
         },
     );
     let replay = flex
-        && parent.flex_direction_is_row()
-        && super::TaffyChildIter::new_for_session(tree, idx).any(|child| {
-            let margin = tree.query_style(child, ReadRole::FlexItem).margin();
-            margin.top.is_auto()
-                || margin.bottom.is_auto()
-                || (parent.flex_lines_are_reversed()
-                    && (crate::layout::table::item_owns_height(tree, child)
-                        || crate::layout::table::item_owns_width(tree, child)))
-        });
+        && (wrap_reverse::required(tree, node)
+            || (parent.flex_direction_is_row()
+                && super::TaffyChildIter::new_for_session(tree, idx).any(|child| {
+                    let margin = tree.query_style(child, ReadRole::FlexItem).margin();
+                    margin.top.is_auto()
+                        || margin.bottom.is_auto()
+                        || (parent.flex_lines_are_reversed()
+                            && (crate::layout::table::item_owns_height(tree, child)
+                                || crate::layout::table::item_owns_width(tree, child)))
+                })));
     tree.context.table_item_captures.push(Capture {
         container: idx,
         sizes: HashMap::new(),
@@ -117,6 +120,17 @@ pub(super) fn layout(
         .pop()
         .expect("table capture was pushed before layout");
     if flex {
+        if let Some(correction) = capture.calls.as_deref().and_then(|calls| {
+            wrap_reverse::candidate(tree, node, inputs, calls, &output, |child| {
+                Some(tree.nodes[child].layout)
+            })
+        }) {
+            for (child, layout) in correction.layouts {
+                tree.set_unrounded_layout(NodeId::from(child), &layout);
+                tree.install_root_static_position_overrides(NodeId::from(child));
+            }
+            output = correction.output;
+        }
         super::flex_cross_margins::normalize(
             tree,
             idx,

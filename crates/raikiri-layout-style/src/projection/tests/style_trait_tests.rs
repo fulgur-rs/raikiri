@@ -231,3 +231,20 @@ fn owned_and_borrowed_projections_agree() {
     );
     same!(FI, flex_basis, flex_grow, flex_shrink, align_self);
 }
+
+#[test]
+fn flex_alignment_hint_leaves_block_and_grid_alignment_unchanged() {
+    query(&ComputedValues::initial(), |view| {
+        let plain = TaffyStyle::new(view);
+        let probe = plain.with_flex_align_content(values::AlignContent::FLEX_START);
+        assert_eq!(FC::align_content(&probe), taffy::AlignContent::FLEX_START);
+        assert_eq!(BC::align_content(&probe), BC::align_content(&plain));
+        assert_eq!(
+            taffy::GridContainerStyle::align_content(&probe),
+            taffy::GridContainerStyle::align_content(&plain)
+        );
+        assert_eq!(CS::size(&probe), CS::size(&plain));
+        assert_eq!(CS::margin(&probe), CS::margin(&plain));
+        assert_ne!(FC::align_content(&plain), FC::align_content(&probe));
+    });
+}

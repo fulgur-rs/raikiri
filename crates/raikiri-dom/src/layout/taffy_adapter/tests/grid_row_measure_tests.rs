@@ -294,3 +294,65 @@ fn measuring_an_overflowing_auto_margin_flex_baseline_keeps_geometry_private() {
         before
     );
 }
+
+#[test]
+fn measuring_reversed_overflow_exports_the_placed_baseline_without_geometry() {
+    for margin in ["", "margin:auto 0"] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Some("display:flex;flex-wrap:wrap-reverse;width:100px;height:100px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Some(&format!("width:100px;height:150px;flex:none;{margin}")),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Some("position:absolute;width:3px;height:3px"),
+        );
+        doc.append_element(Some(root), "div", Some("display:none;width:3px;height:3px"));
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+        let before: Vec<_> = tree.nodes.iter().map(|node| node.layout).collect();
+        let inputs = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            known_dimensions: Size {
+                width: Some(100.0),
+                height: Some(100.0),
+            },
+            parent_size: Size {
+                width: Some(800.0),
+                height: Some(600.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+            ..LayoutInput::HIDDEN
+        };
+        let measured =
+            tree.with_baseline_measure(root, |tree| tree.compute_child_layout(root.into(), inputs));
+        assert_eq!(measured.baselines.first, Some(100.0));
+        assert_eq!(
+            tree.nodes
+                .iter()
+                .map(|node| node.layout)
+                .collect::<Vec<_>>(),
+            before
+        );
+        let placed = tree.compute_child_layout(
+            root.into(),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                ..inputs
+            },
+        );
+        assert_eq!(measured.baselines, placed.baselines);
+        assert_eq!(measured.size, placed.size);
+    }
+}

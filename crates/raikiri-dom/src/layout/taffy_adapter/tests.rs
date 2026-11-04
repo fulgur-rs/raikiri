@@ -24,6 +24,7 @@ use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 mod cache_keys_tests;
 mod cache_mode_tests;
 mod child_filter_tests;
+mod flex_wrap_reverse_tests;
 mod float_tests;
 mod grid_info_tests;
 mod grid_row_measure_tests;
