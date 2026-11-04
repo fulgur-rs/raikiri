@@ -146,6 +146,83 @@ fn hidden_and_contents_wrappers_keep_the_positioned_block_sequence() {
 }
 
 #[test]
+fn positioned_contents_wrappers_do_not_own_their_descendants_flow() {
+    for position in ["absolute", "relative", "static"] {
+        let body = format!(
+            "<div style='position:absolute;top:75px;left:0'><div style='display:contents;position:{position}'><p style='margin:0'>A</p></div><p style='margin:0'>B</p></div><p style='margin:0'>Z</p>"
+        );
+        assert_eq!(
+            lines_of(&body, |text| text == "A"),
+            [(1, 5.0)],
+            "{position}"
+        );
+        assert_eq!(
+            lines_of(&body, |text| text == "B"),
+            [(1, 35.0)],
+            "{position}"
+        );
+        assert_eq!(
+            lines_of(&body, |text| text == "Z"),
+            [(0, 5.0)],
+            "{position}"
+        );
+    }
+}
+
+#[test]
+fn reflowed_absolute_lines_escape_clips_below_their_containing_block() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><div style='height:10px;overflow:hidden'><div style='position:absolute;top:25px;left:0;height:50%;orphans:1;widows:1'>C<br>D<br>E<br>F</div></div>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "F"), [(2, 5.0)]);
+}
+
+#[test]
+fn reflowed_absolute_lines_keep_their_own_and_containing_blocks_clips() {
+    for (ancestor, wrapper, child, expected, clip_id, clip_y, clip_height) in [
+        ("", "position:relative;", "", vec![], "wrapper", 60.0, 10.0),
+        (
+            "",
+            "",
+            "overflow:hidden;",
+            vec![(2, -5.0)],
+            "child",
+            0.0,
+            48.0,
+        ),
+        (
+            "height:150px;overflow:hidden;",
+            "",
+            "",
+            vec![],
+            "outer",
+            -100.0,
+            150.0,
+        ),
+    ] {
+        let body = positioned(
+            "top:75px;width:80px",
+            &format!("<p style='margin:0'>A</p><p style='margin:0'>B</p><div id=wrapper style='{wrapper}height:10px;overflow:hidden'><div id=child style='{child}position:absolute;top:25px;left:0;height:50%;orphans:1;widows:1'>C<br>D<br>E<br>F</div></div>"),
+        ).replace("<div style='position:relative;height:300px'>", &format!("<div id=outer style='position:relative;height:300px;{ancestor}'>"));
+        // Raw text runs remain enumerable under paint clips. Clipped lines
+        // must not trigger pagination repairs beyond the inherited edge.
+        assert_eq!(
+            lines_of(&body, |text| text == "F"),
+            expected,
+            "{ancestor}/{wrapper}/{child}"
+        );
+        let clips = with_pages(&body, |index, page| {
+            page.overflow_clips()
+                .filter(|clip| page.dom().attr(clip.node, "id") == Some(clip_id))
+                .map(|clip| (index, clip.clip.rect.y, clip.clip.rect.height))
+                .collect()
+        });
+        assert!(clips.contains(&(1, clip_y, clip_height)), "{clips:?}");
+    }
+}
+
+#[test]
 fn a_block_inside_an_inline_wrapper_grows_its_positioned_flow() {
     let body = "<div style='position:relative;height:300px'><div id=o style='position:absolute;top:75px;width:80px;background:blue'><span><div>A<br>B</div></span>C</div></div>";
     for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 65.0)] {

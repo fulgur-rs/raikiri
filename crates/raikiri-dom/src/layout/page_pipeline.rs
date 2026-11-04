@@ -2392,9 +2392,11 @@ fn positioned_line_moves(
 fn is_unfixed_absolute_box(document: &Document, node_id: usize) -> bool {
     let fixed = |id: usize| {
         document.nodes[id].kind() == NodeKind::Element
+            && !document.nodes[id].generates_no_box()
             && document.nodes[id].position() == &PositionValue::Fixed
     };
     document.nodes[node_id].kind() == NodeKind::Element
+        && !document.nodes[node_id].generates_no_box()
         && document.nodes[node_id].position() == &PositionValue::Absolute
         && !document.ancestors(node_id).any(fixed)
 }

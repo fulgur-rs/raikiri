@@ -256,6 +256,20 @@ pub(super) fn keep(
     while let Some(event) = pending.pop() {
         match event {
             Event::Box(node) => {
+                if document.nodes[node].is_display_none() {
+                    continue;
+                }
+                if document.nodes[node].generates_no_box() {
+                    pending.extend(
+                        document.nodes[node]
+                            .children
+                            .iter()
+                            .rev()
+                            .copied()
+                            .map(Event::Box),
+                    );
+                    continue;
+                }
                 if node != owner
                     && (matches!(
                         document.nodes[node].position(),
@@ -263,9 +277,6 @@ pub(super) fn keep(
                     ) || document.nodes[node].display().is_atomic_inline_level()
                         || is_floating_box_for_pagination(document, env.cascade, node))
                 {
-                    continue;
-                }
-                if document.nodes[node].is_display_none() {
                     continue;
                 }
                 if node != owner && document.nodes[node].size_containment.height {
@@ -366,7 +377,7 @@ fn keep_run(
     let relative = relative_offset_below_owner(document, env, owner, root);
     let start =
         current_abs_y(document, root) - relative + node.layout.padding.top + node.layout.border.top;
-    let clip_end = visible_end(document, env.cascade, root) - relative;
+    let clip_end = visible_end(document, env, root) - relative;
     metrics.truncate(metrics.partition_point(|&(top, _)| start + top < clip_end - 0.001));
     for (_, bottom) in &mut metrics {
         *bottom = bottom.min(clip_end - start);
@@ -429,9 +440,7 @@ fn keep_run(
     };
     for (line, shift, page) in moves {
         // Earlier moves can grow an auto clip, while a fixed clip stays put.
-        if env.page_origins.origin(page)
-            >= visible_end(document, env.cascade, root) - relative - 0.001
-        {
+        if env.page_origins.origin(page) >= visible_end(document, env, root) - relative - 0.001 {
             break;
         }
         reach_page(env.control, page)?;
@@ -510,12 +519,33 @@ fn keep_run(
     Ok(())
 }
 
-pub(super) fn visible_end(document: &Document, cascade: &CascadeResult, root: usize) -> f32 {
-    document
-        .inclusive_ancestors(root)
-        .filter(|&id| element_clips_overflow(document, cascade, id))
-        .map(|id| clip_block_end(document, cascade, id, current_abs_y(document, id)))
-        .fold(f32::INFINITY, f32::min)
+pub(super) fn visible_end(
+    document: &super::super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    root: usize,
+) -> f32 {
+    let mut ancestors = Vec::new();
+    for id in document.inclusive_ancestors(root) {
+        ancestors.push(id);
+        if id == env.roots.element {
+            break;
+        }
+    }
+    let mut clip = candidates::ClipBounds::unclipped();
+    for id in ancestors.into_iter().rev() {
+        let node = &document.nodes[id];
+        if node.kind() != NodeKind::Element || node.in_ifc_subtree() {
+            continue;
+        }
+        clip = clip.descend(
+            document,
+            env.cascade,
+            id,
+            current_abs_y(document, id),
+            id == env.roots.contents || id == env.roots.element,
+        );
+    }
+    clip.end
 }
 
 // Relative offsets below the absolute owner paint after fragmentation. The
@@ -564,7 +594,7 @@ fn keep_whole_box(
     let page = env.page_origins.page_index_for_y(top + 0.001);
     if top > env.page_origins.origin(page) + 0.001
         && (top + document.nodes[node].layout.size.height)
-            .min(visible_end(document, env.cascade, node) - relative)
+            .min(visible_end(document, env, node) - relative)
             > env.page_origins.page_end(page) + 0.001
     {
         let target = page.saturating_add(1);

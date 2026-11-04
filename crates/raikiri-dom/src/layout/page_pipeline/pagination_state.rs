@@ -6,9 +6,9 @@ use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
     ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
     FootnoteAreas, ForcedBreakHolder, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError,
-    LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, PageBox,
-    PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach,
-    ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
+    LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, NodeKind,
+    PageBox, PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins,
+    PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
     TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_effective_y,
     block_fits_page_step, box_avoids_page_break_inside, box_changes_page_name, box_occupies_column,
@@ -2427,10 +2427,12 @@ impl PaginationState {
             let owner = document
                 .inclusive_ancestors(root)
                 .find(|&id| {
-                    matches!(
-                        document.nodes[id].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    )
+                    document.nodes[id].kind() == NodeKind::Element
+                        && !document.nodes[id].generates_no_box()
+                        && matches!(
+                            document.nodes[id].position(),
+                            PositionValue::Absolute | PositionValue::Fixed
+                        )
                 })
                 .filter(|&id| is_unfixed_absolute_box(document, id));
             vacant.insert(
@@ -2511,7 +2513,7 @@ impl PaginationState {
             };
             // A clip hides the lines past its edge, and they do not count.
             let fresh_edge =
-                reflowed.then(|| super::positioned_flow::visible_end(document, cascade, root));
+                reflowed.then(|| super::positioned_flow::visible_end(document, env, root));
             if let Some(edge) = fresh_edge.or_else(|| clip_edges.get(&root).copied()) {
                 let start = if reflowed {
                     positioned_text_start_y(document, text_lines, text, Some(root))
