@@ -7002,9 +7002,9 @@ fn grown_auto_height(
         range.0 = range.0.max(before);
         range.1 = range.1.max(after);
     };
-    // `display: contents` children generate no box: their children are laid
-    // out as this box's children. A grid's items follow one another in the
-    // order of their rows.
+    // Contents and non-offset inline wrappers contribute their children to
+    // this box's layout, matching the layout-parent walk. A grid's items
+    // follow one another in the order of their rows.
     if let Some([cached_flow, cached_size, cached_float]) = normal_block_shifts::extents(
         document,
         parent,
@@ -7029,7 +7029,9 @@ fn grown_auto_height(
             #[cfg(test)]
             tests::record_normal_sibling_work(2, 1);
             let child_node = &document.nodes[child];
-            if document.nodes[child].display() == DisplayValue::Contents {
+            if document.nodes[child].display() == DisplayValue::Contents
+                || !document.contributes_layout_offset(child)
+            {
                 unwrapped.extend(child_node.children.iter().rev().copied());
                 continue;
             }

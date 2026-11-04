@@ -103,13 +103,14 @@ pub(crate) fn page_text_owners(
     let off_band = page_lines
         .zip(paragraph_box)
         .is_some_and(|(page, rect)| !page.holds_line(paint_transform, rect));
-    if let Some(node) = document.ifc_layout_node(root_id) {
-        owners.extend(
-            block_pieces(node, off_band)
-                .iter()
-                .map(|(piece, _)| piece.node),
-        );
-    }
+    let node = document
+        .ifc_layout_node(root_id)
+        .expect("positioned lines retain their inline layout root");
+    owners.extend(
+        block_pieces(node, off_band)
+            .iter()
+            .map(|(piece, _)| piece.node),
+    );
     owners
 }
 

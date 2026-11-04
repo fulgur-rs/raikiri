@@ -2486,7 +2486,7 @@ impl PaginationState {
                 continue;
             }
             let Some(Some(paragraph)) = paragraphs.get(&root) else {
-                continue;
+                continue; // cov:ignore: a text-only owner reaches this legacy branch through its own indexed paragraph; descendant block flows take the other branch.
             };
             let text = paragraph.text;
             // Blocks among the lines would stay behind when the lines move.

@@ -39,6 +39,30 @@ fn lay_out(doc: &mut Document, cascade: &raikiri_style::CascadeResult) {
 }
 
 #[test]
+fn an_empty_block_has_no_page_text_owners() {
+    let (mut document, cascade, root_id) = paragraph("", |_, _| {});
+    lay_out(&mut document, &cascade);
+    assert!(
+        page_text_owners(
+            Paragraph {
+                document: &document,
+                cascade: &cascade,
+                root_id
+            },
+            IfcPosition {
+                x: 0.0,
+                y: 0.0,
+                shift_y: 0.0
+            },
+            None,
+            None,
+            Affine::IDENTITY,
+        )
+        .is_empty()
+    );
+}
+
+#[test]
 fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
     struct MarkerPixels;
     impl raikiri_traits::ImagePixelSource for MarkerPixels {

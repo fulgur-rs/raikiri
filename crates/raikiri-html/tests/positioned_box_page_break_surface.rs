@@ -98,6 +98,95 @@ fn positioned(style: &str, content: &str) -> String {
 }
 
 #[test]
+fn static_absolute_children_follow_moved_lines_inside_positioned_blocks() {
+    for content in [
+        "<p style='position:relative;margin:0'>A<span style='position:absolute;left:40px'>T</span><br>B</p><p style='margin:0'>C</p>",
+        "<div style='position:relative'>A<span style='position:absolute;left:40px'>T</span><div>B</div>C</div><p style='margin:0'>D</p>",
+    ] {
+        assert_eq!(
+            lines_of(&positioned("top:75px", content), |text| text == "T"),
+            [(1, 5.0)],
+            "{content}"
+        );
+    }
+}
+
+#[test]
+fn a_fixed_clip_limits_the_growth_passed_to_the_following_block() {
+    let body = positioned(
+        "top:75px",
+        "<div style='height:30px;overflow:hidden'><p style='margin:0'>A</p><p style='margin:0'>B</p></div><p style='margin:0'>C</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "C"), [(1, 10.0)]);
+}
+
+#[test]
+fn hidden_and_contents_wrappers_keep_the_positioned_block_sequence() {
+    for content in [
+        "<p style='margin:0'>A</p><div style='display:none'>X</div><p style='margin:0'>B</p>",
+        "<div style='display:contents'><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+    ] {
+        assert_eq!(
+            tops_per_page(&positioned("top:75px", content)),
+            [vec![], vec![5.0, 35.0]]
+        );
+    }
+}
+
+#[test]
+fn a_block_inside_an_inline_wrapper_grows_its_positioned_flow() {
+    let body = "<div style='position:relative;height:300px'><div id=o style='position:absolute;top:75px;width:80px;background:blue'><span><div>A<br>B</div></span>C</div></div>";
+    for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 65.0)] {
+        assert_eq!(lines_of(body, |found| found == text), [(1, top)]);
+    }
+    let boxes = with_pages(body, |page_index, page| {
+        page.fragments()
+            .filter(|fragment| page.dom().attr(fragment.node(), "id") == Some("o"))
+            .map(|fragment| {
+                let rect = fragment.rect();
+                (page_index, rect.y, rect.height)
+            })
+            .collect()
+    });
+    assert_eq!(boxes, [(0, 75.0, 25.0), (1, 0.0, 90.0)]);
+}
+
+#[test]
+fn inline_wrapper_offsets_do_not_grow_the_positioned_content_twice() {
+    for (style, offset) in [("", 0.0), ("position:relative;top:10px", 10.0)] {
+        let body = format!(
+            "<div style='position:relative;height:300px'><div id=o style='position:absolute;top:75px;width:80px;background:blue'>P<br><span style='{style}'><div>A<br>B</div></span>C</div></div>"
+        );
+        for (text, page, top) in [
+            ("P", 1, 5.0),
+            ("A", 1, 35.0 + offset),
+            ("B", 1, 65.0 + offset),
+            ("C", 2, 5.0),
+        ] {
+            assert_eq!(
+                lines_of(&body, |found| found == text),
+                [(page, top)],
+                "{style} {text}"
+            );
+        }
+        let boxes = with_pages(&body, |page_index, page| {
+            page.fragments()
+                .filter(|fragment| page.dom().attr(fragment.node(), "id") == Some("o"))
+                .map(|fragment| {
+                    let rect = fragment.rect();
+                    (page_index, rect.y, rect.height)
+                })
+                .collect()
+        });
+        assert_eq!(
+            boxes,
+            [(0, 75.0, 25.0), (1, 0.0, 100.0), (2, 0.0, 30.0)],
+            "{style}"
+        );
+    }
+}
+
+#[test]
 fn block_paragraphs_inside_an_absolute_box_move_with_the_following_blocks() {
     for content in [
         "<p style='margin:0'>A</p><p style='margin:0'>B</p>",
@@ -294,6 +383,16 @@ fn a_size_contained_block_moves_as_a_unit_in_the_positioned_flow() {
     for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 65.0)] {
         assert_eq!(lines_of(&body, |found| found == text), [(1, top)], "{text}");
     }
+}
+
+#[test]
+fn a_size_contained_block_that_fits_keeps_its_page_position() {
+    let body = positioned(
+        "top:40px",
+        "<div style='contain:size;height:30px'>A</div><p style='margin:0'>B</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "A"), [(0, 45.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(0, 75.0)]);
 }
 
 #[test]

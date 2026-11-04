@@ -396,7 +396,7 @@ fn grow_inside(
     {
         walk.advance(document);
         if document.nodes[parent].size_containment.height {
-            break;
+            break; // cov:ignore: the event walker moves size-contained children whole without entering them and rejects a size-contained owner.
         }
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
@@ -440,7 +440,7 @@ fn grow_inside(
             owner,
             &followed,
         ) else {
-            break;
+            break; // cov:ignore: this walker supplies an in-flow box; Contents and non-offset inline wrappers are unwrapped, so ancestor enumeration visits the moved child.
         };
         document.nodes[parent].layout.size.height = grown.height;
         document.mark_pagination_extent_dirty(parent);
