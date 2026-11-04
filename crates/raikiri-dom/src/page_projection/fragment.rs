@@ -106,7 +106,13 @@ impl<'a> Fragment<'a> {
         }
     }
 
-    /// Border box in layout space (before translate and relative offsets).
+    /// This fragment's border box in layout space (before translate and relative offsets).
+    ///
+    /// A box crossing a page boundary can have only part of its height in this
+    /// rectangle. Page cuts split the box along the flow axis. A box wholly
+    /// outside the page's flow range may have no fragment on that page.
+    /// This is not the element's unfragmented border box;
+    /// [`Self::content_rect`] retains its whole content box before page cuts.
     ///
     /// In paint order, the enclosing [`crate::PaintEvent::PushTransform`]
     /// events move it where the painter draws it.
