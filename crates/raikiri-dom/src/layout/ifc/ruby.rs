@@ -77,6 +77,9 @@ struct Level {
     annotations: Vec<Part>,
 }
 
+mod containers;
+pub(crate) use containers::{Owner as ContainerOwner, RubyContainers};
+
 /// One ruby segment: bases and the annotation levels paired with them.
 #[derive(Debug, Default)]
 struct Segment {
@@ -104,6 +107,7 @@ pub(super) struct Plan {
 
 /// The paragraph data a ruby container adds to, besides the builder.
 pub(super) struct Sink<'a> {
+    pub(super) containers: &'a mut RubyContainers,
     pub(super) boxes: &'a mut Vec<IfcBox>,
     pub(super) text_nowrap: &'a mut HashMap<u64, bool>,
     pub(super) offsets: &'a mut Vec<(usize, (f32, f32))>,
@@ -697,6 +701,7 @@ enum Letter {
 
 /// Lays the content of ruby parts out in builders of their own.
 struct Content<'a, 'b> {
+    rtc_owner: Option<usize>,
     /// Content goes into the paragraph's own line, not into the content of
     /// a ruby base or annotation.
     in_line: bool,
@@ -754,6 +759,7 @@ impl Content<'_, '_> {
         part: &Part,
         letter: Letter,
         text: usize,
+        rtc_owner: Option<usize>,
     ) -> Result<(NodeId, RubyContent), IfcError> {
         let owner = part.style_owner;
         let paragraph = self.paragraph(owner)?;
@@ -771,7 +777,9 @@ impl Content<'_, '_> {
             (None, None)
         };
         let in_line = std::mem::replace(&mut self.in_line, false);
+        let previous_owner = std::mem::replace(&mut self.rtc_owner, rtc_owner);
         let pushed = self.push_nodes(&mut builder, &part.children, ends, letter);
+        self.rtc_owner = previous_owner;
         self.in_line = in_line;
         pushed?;
         let node = part.element.or(first_text).unwrap_or(text);
@@ -797,6 +805,7 @@ impl Content<'_, '_> {
             if is_skipped(self.doc, id) || is_out_of_flow(self.doc, self.cascade, id) {
                 continue;
             }
+            self.sink.containers.source(id, self.rtc_owner);
             let node = &self.doc.nodes[id];
             if node.kind() == NodeKind::Text {
                 self.push_text(builder, id, ends, letter)?;
@@ -981,6 +990,9 @@ impl Content<'_, '_> {
         root: bool,
         letter: Letter,
     ) -> Result<(), IfcError> {
+        if !root {
+            self.sink.containers.wrapper(ruby);
+        }
         let (segments, out_of_flow) = (
             &plan.segments,
             if anchor { &plan.out_of_flow[..] } else { &[] },
@@ -1048,14 +1060,14 @@ impl Content<'_, '_> {
             let spaces = intra_level_spaces(segment);
             let mut bases = Vec::with_capacity(segment.bases.len());
             for (index, part) in segment.bases.iter().enumerate() {
-                let (node, content) = self.part(part, letter, id)?;
+                let (node, content) = self.part(part, letter, id, self.rtc_owner)?;
                 bases.push(shodo::RubyBase {
                     node,
                     content,
                     align: shodo::RubyAlign::SpaceAround,
                 });
                 if index + 1 < segment.bases.len() && spaces[index] {
-                    let (node, content) = self.space(part, id)?;
+                    let (node, content) = self.space(part, id, self.rtc_owner)?;
                     bases.push(shodo::RubyBase {
                         node,
                         content,
@@ -1065,7 +1077,7 @@ impl Content<'_, '_> {
             }
             let mut levels = Vec::with_capacity(segment.levels.len());
             for level in &segment.levels {
-                levels.push(self.level(ruby, level, &spaces, id)?);
+                levels.push(self.level(ruby, level, &spaces, id, !root)?);
             }
             // Automatic and whole-segment spans always validate, so only the
             // caller's item budget can reject the segment.
@@ -1186,12 +1198,18 @@ impl Content<'_, '_> {
     /// The column of intra-level white space after `part`: its white space,
     /// or an empty box when only another level has white space there. An
     /// empty box takes the id of `text`, the segment's first text.
-    fn space(&mut self, part: &Part, text: usize) -> Result<(NodeId, RubyContent), IfcError> {
+    fn space(
+        &mut self,
+        part: &Part,
+        text: usize,
+        rtc_owner: Option<usize>,
+    ) -> Result<(NodeId, RubyContent), IfcError> {
         let owner = self.space_owner(part);
         let node = part.tail.first().copied().unwrap_or(text);
         let paragraph = self.paragraph(owner)?;
         let mut builder = ParagraphBuilder::new(&paragraph, self.limits);
         for &id in &part.tail {
+            self.sink.containers.source(id, rtc_owner);
             let text = self.doc.nodes[id].text_content().unwrap_or_default();
             builder.push_text(
                 TextSource::Dom {
@@ -1221,9 +1239,13 @@ impl Content<'_, '_> {
         level: &Level,
         spaces: &[bool],
         text: usize,
+        has_wrapper: bool,
     ) -> Result<shodo::RubyLevel, IfcError> {
         if let Some(container) = level.container {
             self.record_element(container);
+            self.sink
+                .containers
+                .container(container, has_wrapper.then_some(ruby));
         }
         // `ruby-position` applies to annotation containers; an anonymous one
         // around `ruby-text` boxes inherits from the ruby container (CSS
@@ -1234,7 +1256,10 @@ impl Content<'_, '_> {
         let spans_all = matches!(level.annotations.as_slice(), [part] if part.element.is_none());
         let mut annotations = Vec::with_capacity(level.annotations.len());
         for (index, part) in level.annotations.iter().enumerate() {
-            let (node, content) = self.part(part, Letter::Annotation, text)?;
+            let (node, content) = self.part(part, Letter::Annotation, text, level.container)?;
+            self.sink
+                .containers
+                .root(node.0 as usize, level.container, part.element.is_some());
             annotations.push(shodo::RubyAnnotation {
                 node,
                 content,
@@ -1246,7 +1271,10 @@ impl Content<'_, '_> {
                 visibility: visibility(self.cascade.computed[part.style_owner].visibility),
             });
             if index + 1 < level.annotations.len() && spaces[index] {
-                let (node, content) = self.space(part, text)?;
+                let (node, content) = self.space(part, text, level.container)?;
+                self.sink
+                    .containers
+                    .root(node.0 as usize, level.container, false);
                 let owner = self.space_owner(part);
                 annotations.push(shodo::RubyAnnotation {
                     node,
@@ -1326,6 +1354,7 @@ pub(super) fn push(
     root: bool,
 ) -> Result<(), IfcError> {
     Content {
+        rtc_owner: None,
         in_line: true,
         doc,
         cascade,

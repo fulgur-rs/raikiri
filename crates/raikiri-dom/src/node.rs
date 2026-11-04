@@ -1133,6 +1133,14 @@ impl Node {
         pieces
     }
 
+    /// Whether a retained paragraph gives `node` a ruby annotation container box.
+    #[doc(hidden)]
+    pub fn ifc_has_ruby_annotation_container(&self, node: usize) -> bool {
+        self.ifc
+            .as_ref()
+            .is_some_and(|root| root.ruby_containers.is_container(node))
+    }
+
     /// Pieces of the inline elements of an ifc root on its lines, in the
     /// root's content box; `None` for a node without lines.
     #[doc(hidden)]
@@ -1148,6 +1156,7 @@ impl Node {
             &lines.lines,
             root.writing_mode,
             content_size,
+            &root.ruby_containers,
             |id| {
                 root.generated_boxes
                     .iter()

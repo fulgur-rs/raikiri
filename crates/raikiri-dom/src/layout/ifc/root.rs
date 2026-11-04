@@ -24,6 +24,7 @@ const MAX_EDGE_PARAGRAPHS: usize = 3;
 /// A block laid out as one shodo paragraph.
 #[derive(Clone)]
 pub(crate) struct IfcRoot {
+    pub(crate) ruby_containers: Arc<super::ruby::RubyContainers>,
     /// `Paragraph` is a cheap clone over shared data, so it is held directly.
     ///
     /// Percentage margins and padding of its inline boxes are resolved
@@ -380,6 +381,7 @@ impl IfcRoot {
             Arc::new(index)
         });
         Self {
+            ruby_containers: meta.ruby_containers,
             line_paragraph: paragraph.clone(),
             paragraph,
             edge_basis: 0.0,
@@ -487,6 +489,7 @@ impl IfcRoot {
     /// A copy without the stored lines, for measuring with lines of its own.
     pub(crate) fn without_lines(&self) -> Self {
         Self {
+            ruby_containers: self.ruby_containers.clone(),
             paragraph: self.paragraph.clone(),
             line_paragraph: self.line_paragraph.clone(),
             edge_basis: self.edge_basis,

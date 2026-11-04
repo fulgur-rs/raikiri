@@ -8068,6 +8068,7 @@ fn inline_border_image_tile_ends(
         &mut scene,
         &cascade.computed[span],
         &piece,
+        false,
         None,
         InlineProgression::new(writing_mode, false),
         false,

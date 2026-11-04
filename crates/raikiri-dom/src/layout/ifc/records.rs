@@ -74,7 +74,13 @@ pub(crate) fn record_inline_boxes(
     geometry: &FlowGeometry,
     edges_of: impl Fn(&LayoutSession<'_>, usize, f32) -> BoxEdges,
 ) {
-    let pieces = inline_box_pieces(lines, ifc.writing_mode, geometry.content_size, |_| None);
+    let pieces = inline_box_pieces(
+        lines,
+        ifc.writing_mode,
+        geometry.content_size,
+        &ifc.ruby_containers,
+        |_| None,
+    );
     // Bounding box of each element's border boxes, in content-box coordinates.
     let mut boxes: HashMap<usize, BoxRect> = HashMap::new();
     for InlineBoxPiece {
@@ -116,7 +122,11 @@ pub(crate) fn record_inline_boxes(
             x: rect.map_or(0.0, |r| r.x - origin.0) + own.0,
             y: rect.map_or(0.0, |r| r.y - origin.1) + own.1,
         };
-        let edges = edges_of(tree, element, geometry.content_size.width);
+        let edges = if ifc.ruby_containers.is_container(element) {
+            BoxEdges::ZERO
+        } else {
+            edges_of(tree, element, geometry.content_size.width)
+        };
         commit_child_layout_with_edges(tree, element, &output, location, edges);
     }
 }

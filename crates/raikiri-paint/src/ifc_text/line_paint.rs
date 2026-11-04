@@ -397,6 +397,7 @@ impl<'a> LinePaint<'a, '_> {
                 paint.box_target(group, piece),
                 cv,
                 piece,
+                false,
                 Some(joined),
                 crate::walk::InlineProgression {
                     vertical: !self.vertical,
@@ -510,6 +511,7 @@ impl<'a> LinePaint<'a, '_> {
                 paint.box_target(group, piece),
                 cv,
                 piece,
+                root_node.ifc_has_ruby_annotation_container(piece.node),
                 background_slices[piece_index].as_ref(),
                 crate::walk::InlineProgression::new(
                     self.writing_mode,

@@ -74,6 +74,7 @@ pub(crate) type ProjectedBuilder = Projected<ParagraphBuilder>;
 /// The part of a [`Projected`] paragraph that the shaping does not change.
 #[derive(Debug)]
 pub(crate) struct ProjectedMeta {
+    pub(crate) ruby_containers: Arc<super::ruby::RubyContainers>,
     /// Writing mode used to shape the paragraph.
     pub(crate) writing_mode: WritingMode,
     /// Line options of the block root.
@@ -866,6 +867,7 @@ pub(crate) fn project_ifc_text_run_builder(
     Ok(Projected {
         paragraph: builder,
         meta: ProjectedMeta {
+            ruby_containers: Arc::default(),
             writing_mode,
             options,
             indent,
@@ -999,6 +1001,7 @@ fn project_children_builder(
     }
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
+    let mut ruby_containers = super::ruby::RubyContainers::default();
     let mut offsets = Vec::new();
     let mut percent_insets = Vec::new();
     let mut cleared_breaks = Vec::new();
@@ -1106,6 +1109,7 @@ fn project_children_builder(
             fonts,
             limits,
             &mut super::ruby::Sink {
+                containers: &mut ruby_containers,
                 boxes: &mut boxes,
                 text_nowrap: &mut text_nowrap,
                 offsets: &mut offsets,
@@ -1355,6 +1359,7 @@ fn project_children_builder(
                         fonts,
                         limits,
                         &mut super::ruby::Sink {
+                            containers: &mut ruby_containers,
                             boxes: &mut boxes,
                             text_nowrap: &mut text_nowrap,
                             offsets: &mut offsets,
@@ -1494,6 +1499,7 @@ fn project_children_builder(
     Ok(Projected {
         paragraph: builder,
         meta: ProjectedMeta {
+            ruby_containers: Arc::new(ruby_containers),
             writing_mode,
             options,
             indent,

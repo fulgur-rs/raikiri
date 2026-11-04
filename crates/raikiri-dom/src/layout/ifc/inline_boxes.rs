@@ -114,12 +114,25 @@ pub(crate) fn inline_box_pieces(
     lines: &[Line],
     writing_mode: WritingMode,
     content_size: PhysicalSize,
+    containers: &super::ruby::RubyContainers,
     generated_edges: impl Fn(u64) -> Option<Sides<f32>>,
 ) -> Vec<InlineBoxPiece> {
     let mut pieces = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
         let axes = IfcAxes::new(writing_mode, line.used_direction());
         let fragments: Vec<Fragment> = line.fragments().collect();
+        let context = PieceContext {
+            line_index,
+            axes,
+            content_size,
+            containers,
+        };
+        let bases = rtc::base_boxes(
+            &fragments,
+            Placement::IDENTITY,
+            line.block_offset(),
+            context,
+        );
         let mut source_spans = Vec::new();
         let has_typographic_box = fragments.iter().any(|fragment| {
             let Fragment::InlineBox(piece) = fragment else {
@@ -149,10 +162,12 @@ pub(crate) fn inline_box_pieces(
                 let mut own = Vec::new();
                 annotation_pieces(
                     *annotation,
-                    Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
-                    line_index,
-                    axes,
-                    content_size,
+                    ParentLine {
+                        bases: &bases,
+                        placement: Placement::IDENTITY,
+                        offset: line.block_offset(),
+                    },
+                    context,
                     &mut own,
                 );
                 annotations.push((annotation.container().0 as usize, own));
@@ -216,6 +231,7 @@ pub(crate) fn inline_box_pieces(
             });
         }
         insert_annotation_pieces(&mut pieces, line_start, annotations);
+        rtc::coalesce(&mut pieces, line_start, containers);
     }
     pieces
 }
@@ -408,18 +424,43 @@ fn annotation_atomics(
 /// Add the pieces of the inline elements in the ruby `annotation`, whose
 /// line `placement` maps to the paragraph, and in the annotations nested in
 /// it. They belong to the paragraph's line `line_index`.
-fn annotation_pieces(
-    annotation: shodo::RubyAnnotationView<'_>,
+#[derive(Clone, Copy)]
+struct ParentLine<'a> {
+    bases: &'a rtc::BaseBoxes,
     placement: Placement,
+    offset: f32,
+}
+
+#[derive(Clone, Copy)]
+struct PieceContext<'a> {
     line_index: usize,
     axes: IfcAxes,
     content_size: PhysicalSize,
+    containers: &'a super::ruby::RubyContainers,
+}
+
+fn annotation_pieces(
+    annotation: shodo::RubyAnnotationView<'_>,
+    parent: ParentLine<'_>,
+    context: PieceContext<'_>,
     pieces: &mut Vec<InlineBoxPiece>,
-) {
+) -> Option<BoxRect> {
+    let PieceContext {
+        line_index,
+        axes,
+        content_size,
+        containers,
+    } = context;
+    let placement = parent
+        .placement
+        .annotation(annotation.transform(), parent.offset);
     let line = annotation.line();
     let fragments: Vec<Fragment> = line.fragments().collect();
+    let bases = rtc::base_boxes(&fragments, placement, line.block_offset(), context);
     let line_start = pieces.len();
     let mut nested_annotations = Vec::new();
+    let owner = rtc::owner(annotation, &fragments, containers);
+    let mut bounds = None;
     for fragment in &fragments {
         match fragment {
             Fragment::InlineBox(piece) => {
@@ -435,6 +476,15 @@ fn annotation_pieces(
                         content_size,
                     )
                 };
+                // Annotation roots and emitted nested ruby content boxes contribute.
+                // Ordinary inline paint overflow leaves these bounds alone.
+                if piece.parent.is_none() {
+                    rtc::include(&mut bounds, rect(piece.rect));
+                } else if containers.is_ruby_wrapper(piece.node.0 as usize) {
+                    rtc::include(&mut bounds, rect(piece.content_rect));
+                }
+                let root = piece.parent.is_none();
+                let parent = if root { owner.or(parent) } else { parent };
                 pieces.push(InlineBoxPiece {
                     node: piece.node.0 as usize,
                     line: line_index,
@@ -449,21 +499,50 @@ fn annotation_pieces(
             }
             Fragment::RubyAnnotation(nested) => {
                 let mut own = Vec::new();
-                annotation_pieces(
+                if let Some(nested_bounds) = annotation_pieces(
                     *nested,
-                    placement.annotation(nested.transform(), line.block_offset()),
-                    line_index,
-                    axes,
-                    content_size,
+                    ParentLine {
+                        bases: &bases,
+                        placement,
+                        offset: line.block_offset(),
+                    },
+                    context,
                     &mut own,
-                );
+                ) {
+                    rtc::include(&mut bounds, nested_bounds);
+                }
                 nested_annotations.push((nested.container().0 as usize, own));
             }
             _ => {}
         }
     }
     insert_annotation_pieces(pieces, line_start, nested_annotations);
+    if let Some(owner) = owner {
+        let transform = annotation.transform();
+        if transform.inline_inline == 0.0 && transform.block_block == 0.0 {
+            bounds = rtc::base_box(annotation, owner, parent, context);
+        }
+        if let Some(rect) = bounds {
+            pieces.insert(
+                line_start,
+                InlineBoxPiece {
+                    node: owner,
+                    line: line_index,
+                    border_box: rect,
+                    content_box: rect,
+                    has_start_edge: true,
+                    has_end_edge: true,
+                    parent: containers.parent(owner),
+                    source_container: containers.parent(owner),
+                    source_owner: None,
+                },
+            );
+        }
+    }
+    bounds
 }
+
+mod rtc;
 
 /// The node of each line's ending forced break, with a box that spans the
 /// line's block extent at its inline start and has no inline size. A `<br>`
