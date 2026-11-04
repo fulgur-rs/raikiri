@@ -244,6 +244,18 @@ fn measuring_an_overflowing_auto_margin_flex_baseline_keeps_geometry_private() {
         "div",
         Some("width:20px;height:200px;flex:none;margin:auto 0"),
     );
+    // Out-of-flow and hidden children cannot supply the flex baseline or
+    // acquire published geometry during this read-only query.
+    doc.append_element(
+        Some(root),
+        "div",
+        Some("position:absolute;width:20px;height:400px;margin:auto 0"),
+    );
+    doc.append_element(
+        Some(root),
+        "div",
+        Some("display:none;width:20px;height:400px;margin:auto 0"),
+    );
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
