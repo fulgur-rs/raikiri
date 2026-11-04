@@ -190,11 +190,7 @@
           10.0,
           10.0
         ]
-      ],
-      "horizontal_unchecked": [
-        "M"
-      ],
-      "horizontal_unchecked_reason": "RAIKIRI-1450: preexisting outside marker spacing differs by 4px. Raw x is retained; its page and y remain checked."
+      ]
     },
     {
       "label": "inside-marker",

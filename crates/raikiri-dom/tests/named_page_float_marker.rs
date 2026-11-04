@@ -94,22 +94,11 @@ fn floats_and_markers_keep_their_printed_page_contexts() {
         }
         let mut expected: Vec<Glyph> = serde_json::from_value(case["glyphs"].clone()).unwrap();
         sort_glyphs(&mut expected);
-        // RAIKIRI-1450 tracks independent outside marker spacing. Retain its
-        // printed x in the fixture and check its page and y in this regression.
-        let horizontal_unchecked: Vec<String> = case["horizontal_unchecked"]
-            .as_array()
-            .map(|values| {
-                values
-                    .iter()
-                    .map(|v| v.as_str().unwrap().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
         if glyphs.len() != expected.len()
             || glyphs.iter().zip(&expected).any(|(got, want)| {
                 got.0 != want.0
                     || got.1 != want.1
-                    || (!horizontal_unchecked.contains(&want.1) && (got.2 - want.2).abs() > 0.05)
+                    || (got.2 - want.2).abs() > 0.05
                     || (got.3 - want.3).abs() > 0.05
             })
         {

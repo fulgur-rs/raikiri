@@ -103,23 +103,32 @@ fn wide_rule_is_below_the_owners_standalone_before_content() {
 
 #[test]
 fn wide_rule_is_below_the_owners_outside_text_marker() {
-    for overflow in ["", "overflow:hidden"] {
-        let actual = raster(
-            "<div class=mc><p>A<br>B<br>C<br>D</p></div>",
-            &format!(
-                ".mc{{display:list-item;list-style-position:outside;margin-left:40px;height:40px;column-rule:200px solid red;{overflow}}}.mc::marker{{content:'X';color:blue}}"
-            ),
-        );
-        let blue = actual
+    let blue_pixels = |image: &[u8]| {
+        image
             .chunks_exact(4)
             .enumerate()
             .filter(|(_, pixel)| *pixel == [0, 0, 255, 255])
             .map(|(pixel, _)| (pixel % 180, pixel / 180))
-            .collect::<Vec<_>>();
-        let expected = (0..20)
-            .flat_map(|y| (16..36).map(move |x| (x, y)))
-            .collect::<Vec<_>>();
-        assert_eq!(blue, expected);
+            .collect::<Vec<_>>()
+    };
+    for overflow in ["", "overflow:hidden"] {
+        let body = "<div class=mc><p>A<br>B<br>C<br>D</p></div>";
+        let css = format!(
+            ".mc{{display:list-item;list-style-position:outside;margin-left:40px;height:40px;{overflow}}}.mc::marker{{content:'X';color:blue}}"
+        );
+        let actual = raster(body, &format!("{css}.mc{{column-rule:200px solid red}}"));
+        let reference = raster(body, &css);
+        let blue = blue_pixels(&actual);
+        assert_eq!(blue, blue_pixels(&reference));
+        // Visible marker placement follows the Chromium Ahem reference. The
+        // hidden variant has an independent clipping difference; compare rule
+        // layering without pinning its existing visibility as the right result.
+        if overflow.is_empty() {
+            let expected = (0..20)
+                .flat_map(|y| (20..40).map(move |x| (x, y)))
+                .collect::<Vec<_>>();
+            assert_eq!(blue, expected);
+        }
     }
 }
 
