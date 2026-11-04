@@ -73,3 +73,74 @@ fn outside_image_pixels_follow_the_first_line() {
     assert_eq!(red_bounds(85, 0), None);
     assert_eq!(red_bounds(85, 1), Some((1, 21)));
 }
+
+#[test]
+fn outside_image_pixels_use_the_border_box_inline_start() {
+    for (direction, marker, width, text, expected) in [
+        ("ltr", "ltr", 100, "z", (13, 33)),
+        ("rtl", "rtl", 100, "z", (177, 197)),
+        ("ltr", "rtl", 100, "z", (13, 33)),
+        ("rtl", "ltr", 100, "z", (177, 197)),
+        ("rtl", "rtl", 0, "", (47, 67)),
+    ] {
+        let (padding, border) = if width == 0 { (0, 0) } else { (12, 3) };
+        let markup = format!(
+            "<!doctype html><style>body{{margin:0;font:20px/30px Ahem}}li{{margin-left:40px;display:list-item;width:{width}px;height:40px;padding:0 {padding}px;border:{border}px solid black;direction:{direction};list-style-image:url(https://images.test/red.png)}}li::marker{{direction:{marker}}}</style><li>{text}</li>"
+        );
+        let mut parsed =
+            raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
+        let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../raikiri-dom/tests/data/text-autospace"
+        )))
+        .unwrap();
+        parsed.dom.set_font_collection(fonts);
+        let cascade = raikiri_html::build_cascaded(&parsed).unwrap();
+        parsed
+            .dom
+            .prepare_list_marker_images(&cascade, &RedPixels, None);
+        let page = square_page(240.0);
+        let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+        parsed
+            .dom
+            .project_pages(&cascade, page, &pages, &[])
+            .unwrap();
+        let mut scene = Scene::new();
+        crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+            &mut scene,
+            &parsed.dom,
+            &cascade,
+            page,
+            pages[0].content_origin_y,
+            0,
+            pages.len() as u32,
+            true,
+            None,
+            None,
+            page.width,
+        )
+        .unwrap();
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            240,
+            240,
+        );
+        let columns: Vec<_> = rgba
+            .chunks_exact(4)
+            .enumerate()
+            .filter_map(|(i, p)| {
+                (p[0] > 200 && p[1] < 50 && p[2] < 50 && p[3] > 200).then_some(i % 240)
+            })
+            .collect();
+        let bounds = columns
+            .iter()
+            .min()
+            .zip(columns.iter().max())
+            .map(|(&a, &b)| (a, b + 1));
+        assert_eq!(
+            bounds,
+            Some(expected),
+            "{direction}, marker {marker}, width {width}"
+        );
+    }
+}

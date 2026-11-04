@@ -10,17 +10,23 @@ use raikiri_style::property::{ContentComponent, CounterStyle, DisplayValue, List
 use raikiri_style::{CascadeResult, CounterStyleRegistry, PseudoElem, resolve_custom_counter};
 
 impl Document {
-    /// Place a standalone image marker using the built-in painter's origin.
+    /// Place a standalone image marker from the principal border-box origin.
+    /// Outside images have a 7px gap from the border box's inline-start edge.
+    /// `computed` is the item's style, not the marker's text direction.
     pub fn standalone_marker_image_rect(
         &self,
         computed: &raikiri_style::ComputedValues,
         origin: (f32, f32),
+        border_box_width: f32,
         padding_left: f32,
         size: raikiri_traits::ImageRasterSize,
     ) -> raikiri_traits::PaintRect {
         let offset = match computed.list_style_position {
             raikiri_style::ListStylePosition::Inside => padding_left,
-            _ => padding_left - size.width - 4.0,
+            _ if computed.direction == raikiri_style::property::Direction::Rtl => {
+                border_box_width + 7.0
+            }
+            _ => -size.width - 7.0,
         };
         raikiri_traits::PaintRect::new(origin.0 + offset, origin.1, size.width, size.height)
     }

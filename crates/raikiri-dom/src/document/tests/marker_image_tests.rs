@@ -931,14 +931,14 @@ fn standalone_image_marker_sits_inside_or_before_the_padding_edge() {
         width: 8.0,
         height: 6.0,
     };
-    // An inside marker starts at the content edge; an outside one ends 4px
-    // before it.
+    // An inside marker starts at the content edge; an outside one ends 7px
+    // before the border box.
     assert_eq!(
-        doc.standalone_marker_image_rect(&cascade.computed[inside], (2.0, 3.0), 10.0, size),
+        doc.standalone_marker_image_rect(&cascade.computed[inside], (2.0, 3.0), 100.0, 10.0, size),
         raikiri_traits::PaintRect::new(12.0, 3.0, 8.0, 6.0)
     );
     assert_eq!(
-        doc.standalone_marker_image_rect(&cascade.computed[outside], (2.0, 3.0), 10.0, size),
-        raikiri_traits::PaintRect::new(0.0, 3.0, 8.0, 6.0)
+        doc.standalone_marker_image_rect(&cascade.computed[outside], (2.0, 3.0), 100.0, 10.0, size),
+        raikiri_traits::PaintRect::new(-13.0, 3.0, 8.0, 6.0)
     );
 }
