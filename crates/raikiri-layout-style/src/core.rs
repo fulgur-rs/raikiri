@@ -151,6 +151,15 @@ impl LayoutStyleView<'_> {
         );
         self.with_held_cross_size(min, |held| held.min)
     }
+    /// The physical minimum height used by a vertical table's column sizing.
+    ///
+    /// Unlike [`Self::min_size`], this retains the cell's numeric minimum on
+    /// the table's inline axis, including scoped overrides. The table resolves
+    /// it without a percentage basis and accounts for box sizing.
+    #[inline]
+    pub fn vertical_table_cell_min_height(&self) -> LengthPercentageAuto {
+        self.library_height(LengthProperty::MinHeight).auto(false)
+    }
     /// The maximum size.
     #[inline]
     pub fn max_size(&self) -> Size<LengthPercentageAuto> {

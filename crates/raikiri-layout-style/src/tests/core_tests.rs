@@ -55,6 +55,34 @@ fn cell_minimum_height_is_auto_but_other_boxes_keep_it() {
 }
 
 #[test]
+fn vertical_table_cell_minimum_preserves_scopes_without_changing_row_minimum() {
+    let mut cv = ComputedValues::initial();
+    cv.min_height = L::Px(20.0);
+    let prepared = PreparedStyle::new(
+        &cv,
+        StyleMetadata {
+            flags: StyleFlags::TABLE_CELL,
+            ..StyleMetadata::default()
+        },
+        &[],
+    )
+    .unwrap();
+    let overrides = [PropertyOverride::length(
+        LengthProperty::MinHeight,
+        LengthValue::computed(L::Px(30.0)).unwrap(),
+    )
+    .unwrap()];
+    for (scoped, expected) in [(&[][..], 20.0), (&overrides[..], 30.0)] {
+        let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], scoped);
+        assert_eq!(
+            view.vertical_table_cell_min_height(),
+            LengthPercentageAuto::length(expected)
+        );
+        assert_eq!(view.min_size().height, LengthPercentageAuto::auto());
+    }
+}
+
+#[test]
 fn flex_basis_override_can_replace_content() {
     let mut cv = ComputedValues::initial();
     cv.flex_basis = raikiri_style::ComputedFlexBasis::Content;
