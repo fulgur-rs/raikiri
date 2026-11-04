@@ -57,13 +57,15 @@ impl LetterGroups {
     }
 }
 
+type ParagraphLetterGroups = HashMap<(usize, bool), Arc<LetterGroups>>;
+
 /// The [`LetterGroups`] of the paragraphs built so far, by root, with the
 /// element generation of the cascade they were built for.
 ///
 /// Every run of a paragraph is classified against the same table, so it is
 /// built once per paragraph rather than once per run.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct LetterGroupCache(pub(super) RefCell<(u64, HashMap<usize, Arc<LetterGroups>>)>);
+pub(crate) struct LetterGroupCache(pub(super) RefCell<(u64, ParagraphLetterGroups)>);
 
 impl LetterGroupCache {
     /// Forgets every table, as for a new projection.
@@ -80,6 +82,17 @@ impl Document {
         cascade: &CascadeResult,
         root: usize,
     ) -> Arc<LetterGroups> {
+        self.cached_letter_groups_mode(cascade, root, true)
+    }
+
+    pub(super) fn cached_letter_groups_mode(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        separate_first_line: bool,
+    ) -> Arc<LetterGroups> {
+        let separate_first_line =
+            separate_first_line && paint_rules::first_line_opacity_layer(self, root).is_some();
         let generation = cascade.element_generation();
         let mut cache = self.page_projection.letter_groups.0.borrow_mut();
         if cache.0 != generation {
@@ -88,14 +101,26 @@ impl Document {
         Arc::clone(
             cache
                 .1
-                .entry(root)
-                .or_insert_with(|| Arc::new(self.letter_groups(cascade, root))),
+                .entry((root, separate_first_line))
+                .or_insert_with(|| {
+                    Arc::new(self.letter_groups_mode(cascade, root, separate_first_line))
+                }),
         )
     }
 
     /// The opacity groups of the `::first-letter` fragments of paragraph
     /// `root`, numbered in the order the paragraph retains the fragments.
+    #[cfg(test)]
     pub(super) fn letter_groups(&self, cascade: &CascadeResult, root: usize) -> LetterGroups {
+        self.letter_groups_mode(cascade, root, true)
+    }
+
+    fn letter_groups_mode(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        separate_first_line: bool,
+    ) -> LetterGroups {
         let mut table = LetterGroups::default();
         let Some(node) = self.ifc_layout_node(root) else {
             return table; // cov:ignore: paragraph roots come from the arena
@@ -127,7 +152,9 @@ impl Document {
                 path.push(key);
                 match node.ifc_typographic_parent(key.0) {
                     Some(parent) => key = (parent, owner),
-                    None => break self.letter_source_group(cascade, root, owner),
+                    None => {
+                        break self.letter_source_group(cascade, root, owner, separate_first_line);
+                    }
                 }
             };
             for key in path.into_iter().rev() {
@@ -181,19 +208,22 @@ impl Document {
         cascade: &CascadeResult,
         root: usize,
         owner: usize,
+        separate_first_line: bool,
     ) -> Option<usize> {
         if let Some((element, pseudo)) = generated_content::generated_origin(owner) {
             let kind = match pseudo {
                 PseudoElem::After => GeneratedKind::After,
                 _ => GeneratedKind::Before,
             };
-            return super::generated_group(self, cascade, root, element, kind)
-                .or_else(|| self.inline_opacity_group(cascade, root, element));
+            return super::generated_group(self, cascade, root, element, kind, separate_first_line)
+                .or_else(|| {
+                    self.inline_opacity_group_mode(cascade, root, element, separate_first_line)
+                });
         }
         let anchor = match self.get_node(owner)?.kind() {
             NodeKind::Text => self.parent_of(owner)?,
             _ => owner, // cov:ignore: letters come from text or generated content
         };
-        self.inline_opacity_group(cascade, root, anchor)
+        self.inline_opacity_group_mode(cascade, root, anchor, separate_first_line)
     }
 }

@@ -9,6 +9,17 @@ fn cascaded(doc: &Document) -> CascadeResult {
 }
 
 #[test]
+fn negative_levels_reject_missing_nodes_and_computed_values() {
+    let mut doc = Document::new();
+    let node = doc.append_element(Some(doc.root_index()), "div", Some("display:flex"));
+    doc.mark_in_document_flags();
+    let mut cascade = cascaded(&doc);
+    assert!(NegativeLevels::new(&doc, &cascade, usize::MAX, true).is_empty());
+    cascade.computed.truncate(node);
+    assert!(NegativeLevels::new(&doc, &cascade, node, true).is_empty());
+}
+
+#[test]
 fn empty_table_cell_classification_walks_text_children() {
     let mut doc = Document::new();
     let table = doc.append_element(

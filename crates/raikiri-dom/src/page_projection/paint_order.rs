@@ -123,6 +123,8 @@ const LETTER_GROUP_LIMIT: &str = "::first-letter opacity groups past the id limi
 
 #[derive(Clone, Copy)]
 enum Frame {
+    EndNegative,
+    EndNegativeContext(usize),
     Visit(usize),
     Paragraph(usize),
     /// An anonymous cell's paragraph in a table part that defers: its
@@ -287,13 +289,14 @@ struct PageItems<'a> {
     full_paragraph_listing: bool,
     paragraph_listings: RefCell<ParagraphListings<'a>>,
     paragraph_nodes: RefCell<Option<HashMap<usize, Arc<HashSet<usize>>>>>,
-    paragraph_slots: RefCell<HashMap<usize, Arc<structure::PageParagraphSlots>>>,
+    paragraph_slots: RefCell<HashMap<(usize, bool), Arc<structure::PageParagraphSlots>>>,
 }
 
 impl<'a> PageItems<'a> {
     /// The `::first-letter` opacity groups of paragraph `root`.
     fn letter_groups(&self, root: usize) -> Arc<LetterGroups> {
-        self.document.cached_letter_groups(self.cascade, root)
+        self.document
+            .cached_letter_groups_mode(self.cascade, root, self.source_lines.is_some())
     }
 
     fn of(&self, node_id: usize) -> &[&'a PageFragmentItem] {
@@ -433,24 +436,25 @@ impl Document {
             RunSource::Text(node) => self.parent_of(usize::try_from(node.0).ok()?)?,
             RunSource::Generated(owner, kind @ (GeneratedKind::Before | GeneratedKind::After)) => {
                 let owner = usize::try_from(owner.0).ok()?;
-                if let Some(group) = generated_group(self, cascade, root, owner, kind) {
+                if let Some(group) = generated_group(self, cascade, root, owner, kind, true) {
                     return Some(NodeId::new(group as u64));
                 }
                 owner
             }
             _ => return None,
         };
-        self.inline_opacity_group(cascade, root, start)
+        self.inline_opacity_group_mode(cascade, root, start, true)
             .map(|group| NodeId::new(group as u64))
     }
 
     /// The innermost inline opacity group of paragraph `root` that contains
     /// `start`, walking up from `start` itself to the paragraph root.
-    fn inline_opacity_group(
+    fn inline_opacity_group_mode(
         &self,
         cascade: &CascadeResult,
         root: usize,
         start: usize,
+        separate_first_line: bool,
     ) -> Option<usize> {
         let owner = self.ifc_source_owner(root);
         for id in self.inclusive_ancestors(start) {
@@ -462,7 +466,7 @@ impl Document {
                 return None;
             }
             let cv = cascade.computed.get(id)?;
-            if is_inline_group(self, cascade, root, id, node, cv) {
+            if is_inline_group(self, cascade, root, id, node, cv, separate_first_line) {
                 return Some(id);
             }
             // Anything but an inline element or a `display: contents` one is
@@ -605,7 +609,7 @@ impl Document {
         if !groups.is_empty() {
             // Each group joins the boxes at its place in tree order before
             // the stable sort, so equal keys keep tree order.
-            let structure = self.paragraph_structure(cascade, root);
+            let structure = self.paragraph_structure_for_part(cascade, root, part);
             let position = &structure.positions;
             let mut groups: Vec<(Option<(usize, u8)>, usize)> = groups
                 .into_iter()
@@ -809,7 +813,7 @@ impl Document {
         if self.get_node(root).is_none() {
             return Vec::new();
         }
-        self.paragraph_structure(cascade, root)
+        self.paragraph_structure_for_part(cascade, root, part)
             .boxes
             .get(&(group, part))
             .cloned()
@@ -961,10 +965,13 @@ fn pseudo_opacity_group(
     cascade: &CascadeResult,
     root: usize,
     id: usize,
+    separate_first_line: bool,
 ) -> Option<usize> {
     (paint_rules::pseudo_forms_group(cascade, id)
         || paint_rules::negative_pseudo_group(document, cascade, root, id)
-        || paint_rules::pseudo_stacking_group(document, cascade, root, id))
+        || paint_rules::pseudo_stacking_group(document, cascade, root, id)
+        || (separate_first_line
+            && paint_rules::first_line_stacking_group(document, cascade, root, id)))
     .then_some(id)
 }
 
@@ -999,6 +1006,7 @@ fn generated_group(
     root: usize,
     element: usize,
     kind: GeneratedKind,
+    separate_first_line: bool,
 ) -> Option<usize> {
     let pseudo = if kind == GeneratedKind::After {
         PseudoElem::After
@@ -1010,6 +1018,7 @@ fn generated_group(
         cascade,
         root,
         crate::generated_content::generated_node_id(element, pseudo),
+        separate_first_line,
     )
 }
 
@@ -1134,10 +1143,13 @@ fn is_inline_group(
     id: usize,
     node: &crate::Node,
     cv: &raikiri_style::ComputedValues,
+    separate_first_line: bool,
 ) -> bool {
     (node.display().is_inline_flow() && cv.opacity < 1.0)
         || paint_rules::negative_inline_group(document, cascade, root, id)
         || paint_rules::inline_stacking_group(document, cascade, root, id)
+        || (separate_first_line
+            && paint_rules::first_line_stacking_group(document, cascade, root, id))
 }
 
 #[cfg(test)]

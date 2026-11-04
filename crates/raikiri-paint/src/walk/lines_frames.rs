@@ -255,7 +255,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cascade,
                 node_id,
                 |negative| !below || !negative,
-                |owner| !leaving || !in_left_group(document, cascade, node_id, owner, None),
+                |owner| {
+                    (!leaving || !in_left_group(document, cascade, node_id, owner, None))
+                        && !self
+                            .negative_levels
+                            .text_leaves(document, cascade, node_id, owner)
+                },
             )
         {
             t.push(crate::PaintTraceEvent::Text(node_id));
@@ -306,7 +311,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // Appendix E steps 3, 4 and 7).
         let (below, _, above, left) = self
             .record_lines(frame)
-            .map(|lines| lines.finish_leaving_groups(leaves_groups(&self.deferral_scopes)))
+            .map(|lines| {
+                lines.finish_leaving_groups(
+                    leaves_groups(&self.deferral_scopes),
+                    &self.negative_levels,
+                )
+            })
             .unwrap_or_default();
         leave_groups(
             &mut self.order,
@@ -337,8 +347,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// `text_clip` is the clip of its lines, if any.
     fn finish_lines_in_place(&mut self, frame: &LinesFrame, text_clip: Option<Rect>) {
         if let Some(lines) = self.record_lines(frame) {
-            if leaves_groups(&self.deferral_scopes) {
-                let left = finish_lines_leaving_groups(self.scene, lines);
+            if leaves_groups(&self.deferral_scopes) || !self.negative_levels.is_empty() {
+                let left = finish_lines_leaving_groups(
+                    self.scene,
+                    lines,
+                    leaves_groups(&self.deferral_scopes),
+                    &self.negative_levels,
+                );
                 leave_groups(
                     &mut self.order,
                     &mut self.deferral_scopes,

@@ -46,7 +46,11 @@ fn list_paragraph_content<'a>(
     let line_boxes = if part == LinePart::All {
         Arc::default()
     } else {
-        Arc::clone(&document.paragraph_structure(items.cascade, root).line_boxes)
+        Arc::clone(
+            &document
+                .paragraph_structure_for_part(items.cascade, root, part)
+                .line_boxes,
+        )
     };
     ParagraphListing {
         document,
@@ -154,9 +158,9 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
         {
             return self.list_pseudo_group(group, events);
         }
-        let structure = self
-            .document
-            .paragraph_structure(self.items.cascade, self.root);
+        let structure =
+            self.document
+                .paragraph_structure_for_part(self.items.cascade, self.root, self.part);
         let Some(content) = structure.contents.get(&self.group) else {
             return Vec::new();
         };
@@ -241,9 +245,9 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
     /// paragraph. Pieces whose letters come from no element listed here, such
     /// as the root's own text, go first.
     fn held_letters<'p>(&self, pieces: &[LetterPiece<'p>], first: usize) -> Vec<HeldLetter<'p>> {
-        let structure = self
-            .document
-            .paragraph_structure(self.items.cascade, self.root);
+        let structure =
+            self.document
+                .paragraph_structure_for_part(self.items.cascade, self.root, self.part);
         let listed = &structure.members[&self.group];
         pieces
             .iter()
@@ -297,7 +301,14 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
         // after this content with its boxes, images and text. Its
         // `::first-letter` slot still follows.
         if matches!(kind, GeneratedKind::Before | GeneratedKind::After)
-            && let Some(pseudo) = generated_group(document, items.cascade, root, node_id, kind)
+            && let Some(pseudo) = generated_group(
+                document,
+                items.cascade,
+                root,
+                node_id,
+                kind,
+                self.part != LinePart::All,
+            )
         {
             if pseudo_on_paragraph(items, root, node_id, kind, self.lines)
                 && !nested.contains(&pseudo)
@@ -351,6 +362,7 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
                 root,
                 node_id,
                 GeneratedKind::Before,
+                self.part != LinePart::All,
             )
             .is_some()
         {

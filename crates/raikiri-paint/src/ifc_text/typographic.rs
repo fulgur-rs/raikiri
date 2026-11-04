@@ -215,6 +215,12 @@ impl PieceFacts {
                     paragraph.root_id,
                     piece.node,
                 )
+                || raikiri_dom::paint_rules::first_line_stacking_group(
+                    paragraph.document,
+                    cascade,
+                    paragraph.root_id,
+                    piece.node,
+                )
             {
                 facts.grouped.insert(key);
             }
@@ -423,6 +429,12 @@ fn element_group_in(
                 id,
             )
             || raikiri_dom::paint_rules::inline_stacking_group(
+                paragraph.document,
+                paragraph.cascade,
+                paragraph.root_id,
+                id,
+            )
+            || raikiri_dom::paint_rules::first_line_stacking_group(
                 paragraph.document,
                 paragraph.cascade,
                 paragraph.root_id,
@@ -684,7 +696,7 @@ impl TypographicPaint {
                         order.push(parent);
                     }
                 }
-                None if level >= 0 && leaves.is_some_and(|leaves| leaves(owner)) => {
+                None if leaves.is_some_and(|leaves| leaves(owner)) => {
                     left.push((index, owner, child.3));
                 }
                 None => roots.push(child),

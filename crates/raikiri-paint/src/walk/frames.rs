@@ -10,6 +10,8 @@ use raikiri_style::CascadeResult;
 
 #[derive(Clone)]
 pub(super) enum PaintFrame<'a> {
+    EndNegative,
+    EndNegativeContext(usize),
     Visit(VisitFrame),
     AnonymousParagraph(AnonymousParagraphFrame<'a>),
     RestoreTransform(Affine),
@@ -277,8 +279,10 @@ pub(super) fn leaves_groups(deferral_scopes: &[DeferralLayer<'_>]) -> bool {
 pub(super) fn finish_lines_leaving_groups(
     scene: &mut impl PaintScene,
     lines: crate::ifc_text::HeldLines<'_>,
+    leaving: bool,
+    negative: &paint_rules::NegativeLevels,
 ) -> Vec<(usize, anyrender::Scene)> {
-    let (below, blocks, above, left) = lines.finish_leaving_groups(true);
+    let (below, blocks, above, left) = lines.finish_leaving_groups(leaving, negative);
     scene.append_scene(below, Affine::IDENTITY);
     for block in blocks {
         scene.append_scene(block, Affine::IDENTITY);

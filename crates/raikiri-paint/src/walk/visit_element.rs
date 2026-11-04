@@ -23,12 +23,14 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             return;
         }
         let cv = &cascade.computed[node_id];
+        self.begin_negative_box(node_id);
         let Some(element) = self.element_box(BoxInputs::of(visit), node, layout) else {
             return;
         };
         self.open_opacity_group(&element);
         let has_column_rules = document.column_rules(cascade, node_id).next().is_some();
         let mut before_advance = self.paint_box(&element, has_column_rules);
+        self.begin_negative_context(node_id);
         let children = self.paint_children(&element);
         let offsets = self.generated_offsets(&element, &children);
         let overflow_clip_pushed = self.open_clips(&element);

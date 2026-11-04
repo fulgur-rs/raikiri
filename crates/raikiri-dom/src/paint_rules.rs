@@ -14,6 +14,9 @@ use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 
+mod negative_levels;
+pub use negative_levels::NegativeLevels;
+
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
 ///
 /// `None` skips the check. An inline `<canvas>` and floated boxes stay on
@@ -1949,6 +1952,36 @@ pub fn negative_pseudo_group(
             && pseudo_stack_level(cascade, id) < 0
             && outside_inline_stacking_contexts(document, cascade, root, element)
             && !within_translucent_first_line(document, root, id)
+    })
+}
+
+/// Whether an integer-z inline box forms a context inside a translucent first line.
+/// Source-fragment event lists do not split first lines and use the other
+/// inline-group predicates instead.
+pub fn first_line_stacking_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    let generated = crate::generated_content::generated_origin(id);
+    let cv = crate::generated_content::computed_for_id(cascade, id);
+    cv.is_some_and(|cv| {
+        let inline = match generated {
+            Some((_, pseudo)) => {
+                matches!(pseudo, PseudoElem::Before | PseudoElem::After) && generates_box(cv)
+            }
+            None => {
+                document
+                    .get_node(id)
+                    .is_some_and(|node| node.kind() == NodeKind::Element)
+                    && cv.display.is_inline_flow()
+            }
+        };
+        inline
+            && matches!(cv.position, PositionValue::Relative | PositionValue::Sticky)
+            && matches!(cv.z_index, ZIndexValue::Integer(_))
+            && within_translucent_first_line(document, root, id)
     })
 }
 

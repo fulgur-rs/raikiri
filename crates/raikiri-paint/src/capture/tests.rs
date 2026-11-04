@@ -50,6 +50,37 @@ fn reset_drops_open_captures() {
 }
 
 #[test]
+fn negative_prefix_copies_only_inner_clips_and_reset_forgets_them() {
+    let mut inner = Scene::new();
+    let mut capture = CaptureScene::new(&mut inner);
+    assert_eq!(capture.clip_prefix(0).1, 0);
+    capture.track_clips();
+    let rect = Rect::new(0.0, 0.0, 10.0, 20.0);
+    capture.push_clip_layer(Affine::IDENTITY, &rect);
+    let depth = capture.layer_depth();
+    capture.push_layer(
+        BlendMode::default(),
+        0.5,
+        Affine::IDENTITY,
+        &rect,
+        None,
+        None,
+    );
+    capture.push_clip_layer(Affine::translate((3.0, 4.0)), &rect);
+    let (prefix, count) = capture.clip_prefix(depth);
+    assert_eq!(count, 1);
+    assert_eq!(prefix.commands.len(), 1);
+    let anyrender::recording::RenderCommand::PushClipLayer(clip) = &prefix.commands[0] else {
+        panic!("expected only the inner clip");
+    };
+    assert_eq!(clip.transform, Affine::translate((3.0, 4.0)));
+    capture.reset();
+    assert_eq!(capture.layer_depth(), 0);
+    assert_eq!(capture.clip_prefix(0).1, 0);
+    assert!(capture.clip_prefix(0).0.commands.is_empty());
+}
+
+#[test]
 fn resources_and_context_come_from_the_wrapped_scene() {
     let mut inner = Scene::new();
     let mut capture = CaptureScene::new(&mut inner);
