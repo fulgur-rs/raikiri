@@ -1239,6 +1239,36 @@ fn named_page() {
 }
 
 #[test]
+fn absolute_paragraph_box_precedes_its_first_line() {
+    let result = assert_same_order(
+        "<div style='position:relative;height:300px'><div style='position:absolute;top:75px'>\
+         <p id='first'>A</p><p>B</p></div></div>",
+        "@page { size:100px 100px; margin:0 } body { margin:0; font:20px/30px Ahem } p { margin:0 }",
+    );
+    let first = by_id(&result, "first");
+    let pages: Vec<_> = result.pages().collect();
+    let before = walker_steps(&pages[0]);
+    assert!(before.contains(&Step::Box(first)));
+    assert!(!before.contains(&Step::Text(first)));
+    assert!(walker_steps(&pages[1]).contains(&Step::Text(first)));
+}
+
+#[test]
+fn absolute_inline_groups_follow_their_page_owned_lines() {
+    for level in [-1, 1] {
+        let result = assert_same_order(
+            &format!(
+                "<div style='position:relative;height:300px'><div style='position:absolute;top:75px'>\
+                <p><span style='position:relative;z-index:{level}'>A<br>B</span><br>\
+                <span style='position:relative;z-index:1'>C<br>D</span></p></div></div>"
+            ),
+            "@page { size:100px 100px; margin:0 } body { margin:0; font:20px/30px Ahem } p { margin:0 }",
+        );
+        assert!(result.page_count() >= 3);
+    }
+}
+
+#[test]
 fn absolute_continuation() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
     let result = assert_same_order(

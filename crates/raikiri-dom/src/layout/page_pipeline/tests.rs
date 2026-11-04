@@ -3,6 +3,8 @@ use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view};
 use raikiri_layout_style::values::Clear;
 
+mod positioned_followers_tests;
+
 thread_local! {
     pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
     pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };

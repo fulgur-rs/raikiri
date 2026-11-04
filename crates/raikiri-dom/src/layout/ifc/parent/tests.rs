@@ -48,6 +48,7 @@ fn a_cyclic_oof_owner_chain_falls_back_to_its_initial_coordinate() {
             follow_static_y: true,
             initial_owner_origin: Some(Point::ZERO),
             initial_static_origin: Some(Point::ZERO),
+            placement: None,
         },
     );
 

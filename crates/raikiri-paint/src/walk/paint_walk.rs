@@ -104,6 +104,9 @@ pub(super) struct PaintWalk<'w, S> {
     pub(super) left_groups: HashMap<usize, anyrender::Scene>,
     /// Paragraphs whose text below their blocks was traced before the blocks.
     pub(super) traced_below: HashSet<usize>,
+    /// Text owners whose lines paint on this page, shared by the paragraph's
+    /// ordinary, negative and deferred inline trace steps.
+    pub(super) trace_text_owners: HashMap<usize, HashSet<usize>>,
     /// Each open layer collects the content that waits for its end. The
     /// outermost layer closes after the whole body.
     pub(super) deferral_scopes: Vec<DeferralLayer<'w>>,
@@ -394,6 +397,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 self.document,
                 self.cascade,
                 root,
+                self.trace_text_owners.get(&root),
                 |negative| negative,
                 |owner| {
                     !self
@@ -452,6 +456,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 document,
                 cascade,
                 root,
+                self.trace_text_owners.get(&root),
                 |_| true,
                 |owner| {
                     in_left_group(document, cascade, root, owner, Some(node_id))

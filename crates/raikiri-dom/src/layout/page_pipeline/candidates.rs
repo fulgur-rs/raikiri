@@ -28,6 +28,82 @@ use std::collections::HashMap;
 /// whole, but the page it starts on stays.
 const HIDDEN_BOX_SLIVER: f32 = 1.0;
 
+/// Overflow edges inherited by normal and absolutely positioned descendants.
+#[derive(Clone, Copy)]
+pub(super) struct ClipBounds {
+    pub(super) end: f32,
+    pub(super) fixed_end: f32,
+    pub(super) absolute_end: f32,
+}
+
+impl ClipBounds {
+    pub(super) fn unclipped() -> Self {
+        Self {
+            end: f32::INFINITY,
+            fixed_end: f32::INFINITY,
+            absolute_end: f32::INFINITY,
+        }
+    }
+
+    pub(super) fn descend(
+        self,
+        document: &LayoutSession<'_>,
+        cascade: &CascadeResult,
+        node_id: usize,
+        raw_y: f32,
+        is_body: bool,
+    ) -> Self {
+        let (clip_end, fixed_clip_end) = if document.context.pagination_on_transposed_axes {
+            (f32::INFINITY, f32::INFINITY)
+        } else {
+            // Only a fixed clip that comes down the flow unchanged is
+            // known: an absolutely positioned box has its own.
+            let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
+                PositionValue::Absolute if raw_y < self.absolute_end => {
+                    (self.absolute_end, f32::INFINITY)
+                }
+                PositionValue::Absolute if self.absolute_end.is_finite() => {
+                    let layout = &document.nodes[node_id].layout;
+                    (
+                        raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
+                        f32::INFINITY,
+                    )
+                }
+                PositionValue::Absolute | PositionValue::Fixed => (f32::INFINITY, f32::INFINITY),
+                _ => (self.end, self.fixed_end),
+            };
+            if !is_body && super::element_clips_overflow(document, cascade, node_id) {
+                let own = super::clip_block_end(document, cascade, node_id, raw_y);
+                // A clip on a box whose height follows its content grows
+                // with what is pushed down inside it.
+                let own_fixed = if height_follows_content(document, node_id) {
+                    f32::INFINITY
+                } else {
+                    own
+                };
+                (inherited.min(own), inherited_fixed.min(own_fixed))
+            } else {
+                (inherited, inherited_fixed)
+            }
+        };
+        let absolute_clip_end = if clip_end != self.absolute_end
+            && crate::layout::fixed::establishes_absolute_containing_block(
+                document,
+                node_id,
+                &cascade.computed[node_id],
+            ) {
+            clip_end
+        } else {
+            self.absolute_end
+        };
+        Self {
+            end: clip_end,
+            fixed_end: fixed_clip_end,
+            absolute_end: absolute_clip_end,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(super) struct CandidateFlowContext {
     pub(super) is_float_descendant: bool,
@@ -1580,49 +1656,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // sliver of its content. A fixed box is not clipped here. A
                 // document paginated on transposed axes is not measured at
                 // all: the overflow that clips its flow is not the one on y.
-                let (clip_end, fixed_clip_end) = if document.context.pagination_on_transposed_axes {
-                    (f32::INFINITY, f32::INFINITY)
-                } else {
-                    // Only a fixed clip that comes down the flow unchanged is
-                    // known: an absolutely positioned box has its own.
-                    let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
-                        PositionValue::Absolute if raw_y < frame.absolute_clip_end => {
-                            (frame.absolute_clip_end, f32::INFINITY)
-                        }
-                        PositionValue::Absolute if frame.absolute_clip_end.is_finite() => {
-                            let layout = &document.nodes[node_id].layout;
-                            (
-                                raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
-                                f32::INFINITY,
-                            )
-                        }
-                        PositionValue::Absolute | PositionValue::Fixed => {
-                            (f32::INFINITY, f32::INFINITY)
-                        }
-                        _ => (frame.clip_end, frame.fixed_clip_end),
-                    };
-                    if !is_body && super::element_clips_overflow(document, cascade, node_id) {
-                        let own = super::clip_block_end(document, cascade, node_id, raw_y);
-                        // A clip on a box whose height follows its content grows
-                        // with what is pushed down inside it.
-                        let own_fixed = if height_follows_content(document, node_id) {
-                            f32::INFINITY
-                        } else {
-                            own
-                        };
-                        (inherited.min(own), inherited_fixed.min(own_fixed))
-                    } else {
-                        (inherited, inherited_fixed)
-                    }
-                };
-                let absolute_clip_end = if clip_end != frame.absolute_clip_end
-                    && crate::layout::fixed::establishes_absolute_containing_block(
-                        document, node_id, computed,
-                    ) {
-                    clip_end
-                } else {
-                    frame.absolute_clip_end
-                };
+                let clip = ClipBounds {
+                    end: frame.clip_end,
+                    fixed_end: frame.fixed_clip_end,
+                    absolute_end: frame.absolute_clip_end,
+                }
+                .descend(document, cascade, node_id, raw_y, is_body);
+                let (clip_end, fixed_clip_end, absolute_clip_end) =
+                    (clip.end, clip.fixed_end, clip.absolute_end);
                 let child_order = pagination_child_order(document, cascade, node_id);
                 // The closing edges of this block, and of the blocks that it
                 // ends in turn, follow its last box in the flow: a float after

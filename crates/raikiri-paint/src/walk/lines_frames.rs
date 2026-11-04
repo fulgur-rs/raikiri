@@ -254,6 +254,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 document,
                 cascade,
                 node_id,
+                self.trace_text_owners.get(&node_id),
                 |negative| !below || !negative,
                 |owner| {
                     (!leaving || !in_left_group(document, cascade, node_id, owner, None))

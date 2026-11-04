@@ -6,9 +6,9 @@ use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
     ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
     FootnoteAreas, ForcedBreakHolder, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError,
-    LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, PageBox,
-    PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach,
-    ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
+    LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, NodeKind,
+    PageBox, PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins,
+    PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
     TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_effective_y,
     block_fits_page_step, box_avoids_page_break_inside, box_changes_page_name, box_occupies_column,
@@ -74,6 +74,8 @@ impl From<LayoutError> for Halt {
 /// The text of an absolutely positioned box whose lines are kept whole on a
 /// page: see [`PaginationState::keep_positioned_lines`].
 struct PositionedParagraph {
+    /// The nearest absolute box that owns this internal flow.
+    owner: usize,
     /// The first text of the paragraph that was placed.
     text: usize,
     /// Where the first line of that text starts, in the coordinates of the
@@ -94,7 +96,7 @@ impl Halt {
 
 /// Lets placement reach `page_index`, or halts it there when `page_index` is
 /// past the page limit of a control that truncates at it.
-fn reach_page(control: &PageLayoutControl<'_>, page_index: u32) -> Result<(), Halt> {
+pub(super) fn reach_page(control: &PageLayoutControl<'_>, page_index: u32) -> Result<(), Halt> {
     if control.within_page_limit(page_index)? {
         Ok(())
     } else {
@@ -2399,11 +2401,9 @@ impl PaginationState {
         Ok(())
     }
 
-    /// Remembers the paragraph that holds the text `candidate` when it is the
-    /// absolutely positioned box itself, so that [`Self::keep_positioned_lines`]
-    /// can judge its lines once the flow around the box has settled. A box
-    /// that holds blocks of its own is left alone, as are the boxes in a fixed
-    /// box and the boxes of vertical or transposed pagination.
+    /// Remembers the absolute owner of the paragraph holding `candidate` for
+    /// [`Self::keep_positioned_lines`], after the outer flow has settled.
+    /// Fixed ancestors and vertical or transposed pagination are excluded.
     fn note_positioned_paragraph(
         &mut self,
         document: &LayoutSession<'_>,
@@ -2424,14 +2424,25 @@ impl PaginationState {
                 .ifc_layout_node(root)
                 .and_then(|node| node.ifc.as_ref())
                 .is_some_and(|ifc| ifc.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
+            let owner = document
+                .inclusive_ancestors(root)
+                .find(|&id| {
+                    document.nodes[id].kind() == NodeKind::Element
+                        && !document.nodes[id].generates_no_box()
+                        && matches!(
+                            document.nodes[id].position(),
+                            PositionValue::Absolute | PositionValue::Fixed
+                        )
+                })
+                .filter(|&id| is_unfixed_absolute_box(document, id));
             vacant.insert(
-                (horizontal
-                    && !document.context.pagination_on_transposed_axes
-                    && is_unfixed_absolute_box(document, root))
-                .then_some(PositionedParagraph {
-                    text: candidate.node_id,
-                    first_raw_y: candidate.raw_y,
-                }),
+                owner
+                    .filter(|_| horizontal && !document.context.pagination_on_transposed_axes)
+                    .map(|owner| PositionedParagraph {
+                        owner,
+                        text: candidate.node_id,
+                        first_raw_y: candidate.raw_y,
+                    }),
             );
         }
     }
@@ -2458,17 +2469,41 @@ impl PaginationState {
             text_lines,
             ..
         } = *env;
-        let mut paragraphs: Vec<(usize, PositionedParagraph)> =
-            std::mem::take(&mut self.positioned_paragraphs)
-                .into_iter()
-                .filter_map(|(root, paragraph)| Some((root, paragraph?)))
-                .collect();
+        let paragraphs = std::mem::take(&mut self.positioned_paragraphs);
         // A box inside another sits where the lines of the outer one leave it,
         // so the outer boxes come first.
-        paragraphs
-            .sort_by_cached_key(|&(root, _)| (document.inclusive_ancestors(root).count(), root));
-        for (root, paragraph) in paragraphs {
+        let owners: std::collections::HashSet<_> = paragraphs
+            .values()
+            .flatten()
+            .map(|paragraph| paragraph.owner)
+            .collect();
+        let mut owners: Vec<_> = owners.into_iter().collect();
+        owners.sort_by_cached_key(|&owner| (document.inclusive_ancestors(owner).count(), owner));
+        let followers = std::cell::OnceCell::new();
+        for root in owners {
+            if !lines_can_shift_inside(document, cascade, root) {
+                let followers = followers
+                    .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
+                super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;
+                followers.flush(document, control)?;
+                continue;
+            }
+            let Some(Some(paragraph)) = paragraphs.get(&root) else {
+                continue; // cov:ignore: a text-only owner reaches this legacy branch through its own indexed paragraph; descendant block flows take the other branch.
+            };
             let text = paragraph.text;
+            let reflowed = followers
+                .get()
+                .is_some_and(|followers| followers.was_reflowed(document, root));
+            let mut current_lines = TextLineIndex::default();
+            let text_lines = if reflowed {
+                current_lines
+                    .prepare_for(document, text, || control.check_aborted())
+                    .map_err(Halt::Failed)?;
+                &current_lines
+            } else {
+                text_lines
+            };
             // Blocks among the lines would stay behind when the lines move.
             let Some(mut line_metrics) = lines_can_shift_inside(document, cascade, root)
                 .then(|| paragraph_line_bounds(document, text, text_lines))
@@ -2477,8 +2512,15 @@ impl PaginationState {
                 continue;
             };
             // A clip hides the lines past its edge, and they do not count.
-            if let Some(&edge) = clip_edges.get(&root) {
-                let visible = edge - paragraph.first_raw_y;
+            let fresh_edge =
+                reflowed.then(|| super::positioned_flow::visible_end(document, env, root));
+            if let Some(edge) = fresh_edge.or_else(|| clip_edges.get(&root).copied()) {
+                let start = if reflowed {
+                    positioned_text_start_y(document, text_lines, text, Some(root))
+                } else {
+                    paragraph.first_raw_y
+                };
+                let visible = edge - start;
                 line_metrics
                     .truncate(line_metrics.partition_point(|&(top, _)| top < visible - 0.001));
             }
@@ -2493,7 +2535,7 @@ impl PaginationState {
                     let y = current_abs_y(document, root) + shift;
                     materialize_y(document, root, y);
                 } else {
-                    shift_paragraph_lines(
+                    let growth = shift_paragraph_lines(
                         document,
                         cascade,
                         &LineMove {
@@ -2503,7 +2545,15 @@ impl PaginationState {
                             shift,
                         },
                     );
+                    if growth.abs() > 0.001 {
+                        followers
+                            .get_or_init(|| super::positioned_flow::HeightFollowers::new(document))
+                            .queue_resize(document, root);
+                    }
                 }
+            }
+            if let Some(followers) = followers.get() {
+                followers.flush(document, control)?;
             }
         }
         Ok(())

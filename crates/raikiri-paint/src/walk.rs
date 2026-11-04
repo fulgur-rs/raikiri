@@ -2131,6 +2131,7 @@ pub(crate) fn paint_document_impl(
         early_boxes: Vec::new(),
         left_groups: std::collections::HashMap::new(),
         traced_below: std::collections::HashSet::new(),
+        trace_text_owners: std::collections::HashMap::new(),
         deferral_scopes: vec![DeferralLayer::new(true, LayerClose::Paint)],
         stack,
         clip_scopes: Vec::new(),
@@ -2157,9 +2158,11 @@ fn traced_text(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
+    page_owners: Option<&std::collections::HashSet<usize>>,
     admits: impl Fn(bool) -> bool,
     keeps: impl Fn(usize) -> bool,
 ) -> bool {
+    let keeps = |owner| page_owners.is_none_or(|owners| owners.contains(&owner)) && keeps(owner);
     let below = |start: usize| {
         document
             .inclusive_ancestors(start)
