@@ -321,18 +321,72 @@ fn reflowed_ratio_widths_refresh_the_childs_line_ownership() {
 
 #[test]
 fn a_reflowed_text_owner_notifies_its_own_height_dependent_children() {
+    for (style, expected) in [
+        ("top:0;height:50%", vec![(0, 75.0, 25.0), (1, 0.0, 52.5)]),
+        (
+            "top:0;height:100px;max-height:50%",
+            vec![(0, 75.0, 25.0), (1, 0.0, 52.5)],
+        ),
+        (
+            "top:0;height:10px;min-height:50%",
+            vec![(0, 75.0, 25.0), (1, 0.0, 52.5)],
+        ),
+        (
+            "top:0;bottom:0",
+            vec![(0, 75.0, 25.0), (1, 0.0, 100.0), (2, 0.0, 30.0)],
+        ),
+    ] {
+        let body = positioned(
+            "top:75px;width:80px",
+            &format!(
+                "<p style='margin:0'>P</p><p style='margin:0'>Q</p><div style='position:absolute;top:0;left:0;min-height:50%;padding-top:10px;orphans:1;widows:1'>A<br>B<br>C<br>D<div id=g style='position:absolute;left:60px;width:5px;{style};background:red'></div></div>"
+            ),
+        );
+        for (text, page, top) in [("A", 1, 5.0), ("B", 1, 35.0), ("C", 1, 65.0), ("D", 2, 5.0)] {
+            assert_eq!(
+                lines_of(&body, |found| found == text),
+                [(page, top)],
+                "{text}"
+            );
+        }
+        assert_eq!(boxes_named(&body, "g"), expected, "{style}");
+    }
+}
+
+#[test]
+fn fixed_descendants_keep_the_viewport_while_absolute_blocks_grow() {
     let body = positioned(
         "top:75px;width:80px",
-        "<p style='margin:0'>P</p><p style='margin:0'>Q</p><div style='position:absolute;top:0;left:0;min-height:50%;padding-top:10px;orphans:1;widows:1'>A<br>B<br>C<br>D<div id=g style='position:absolute;top:0;left:60px;width:5px;height:50%;background:red'></div></div>",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><div id=f style='position:fixed;left:70px;top:0;width:10px;height:10px;background:red'></div>",
     );
-    for (text, page, top) in [("A", 1, 5.0), ("B", 1, 35.0), ("C", 1, 65.0), ("D", 2, 5.0)] {
-        assert_eq!(
-            lines_of(&body, |found| found == text),
-            [(page, top)],
-            "{text}"
-        );
-    }
-    assert_eq!(boxes_named(&body, "g"), [(0, 75.0, 25.0), (1, 0.0, 52.5)]);
+    assert_eq!(lines_of(&body, |text| text == "A"), [(1, 5.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(1, 35.0)]);
+    assert_eq!(
+        boxes_named(&body, "f"),
+        [(0, 0.0, 10.0), (1, 0.0, 10.0), (2, 0.0, 10.0)]
+    );
+}
+
+#[test]
+fn several_growing_containing_blocks_reflow_their_own_children() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<div style='position:relative'><p style='margin:0'>A</p><p style='margin:0'>B</p><div id=a style='position:absolute;left:60px;bottom:0;width:5px;height:50%'></div></div><div style='position:relative'><p style='margin:0'>C</p><p style='margin:0'>D</p><div id=b style='position:absolute;left:60px;bottom:0;width:5px;height:50%'></div></div><div id=c style='position:absolute;left:70px;bottom:0;width:5px;height:10px;max-height:100%'></div>",
+    );
+    assert_eq!(boxes_named(&body, "a"), [(1, 17.5, 42.5)]);
+    assert_eq!(boxes_named(&body, "b"), [(1, 95.0, 5.0), (2, 0.0, 30.0)]);
+    assert_eq!(boxes_named(&body, "c"), [(2, 20.0, 10.0)]);
+}
+
+#[test]
+fn a_static_position_before_the_growing_blocks_is_not_followed() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<div style='position:absolute;width:10px;height:50%'>T</div><p style='margin:0'>A</p><p style='margin:0'>B</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "T"), [(1, 5.0)]);
+    assert_eq!(lines_of(&body, |text| text == "A"), [(1, 5.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(1, 35.0)]);
 }
 
 #[test]

@@ -19,7 +19,7 @@ pub(super) struct HeightFollowers {
     owners: HashMap<usize, Vec<usize>>,
     static_owners: HashMap<usize, Vec<usize>>,
     source_order: Vec<usize>,
-    dirty: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    dirty: std::cell::RefCell<std::collections::BTreeMap<usize, std::collections::BTreeSet<usize>>>,
     reflowed: std::cell::RefCell<HashSet<usize>>,
 }
 
@@ -63,6 +63,14 @@ impl HeightFollowers {
             .is_some_and(|coordinate| coordinate.placement.is_some())
     }
 
+    fn needs_reflow(style: &raikiri_layout_style::LayoutStyleView<'_>) -> bool {
+        let inset = style.inset();
+        follows_height(style.size().height)
+            || follows_height(style.min_size().height)
+            || follows_height(style.max_size().height)
+            || !inset.top.is_auto() && !inset.bottom.is_auto()
+    }
+
     fn follows_static_line(document: &Document, node: usize) -> bool {
         is_unfixed_absolute_box(document, node)
             && document
@@ -92,32 +100,23 @@ impl HeightFollowers {
         // Cached in-flow extents describe the pre-reflow subtrees. Materialize
         // deferred moves before the positioning pass replaces their layouts.
         document.finish_normal_block_shifts();
-        dirty.sort_by_cached_key(|&parent| {
+        dirty.sort_by_cached_key(|(parent, _)| {
             (
-                document.inclusive_ancestors(parent).count(),
-                self.source_order[parent],
+                document.inclusive_ancestors(*parent).count(),
+                self.source_order[*parent],
             )
         });
-        for parent in dirty {
+        for (parent, nodes) in dirty {
             control.check_aborted().map_err(Halt::Failed)?;
             let mut groups = std::collections::BTreeMap::new();
-            for &node in &self.owners[&parent] {
+            for node in nodes {
                 let style = document.physical_style(node);
                 let inset = style.inset();
-                if !(follows_height(style.size().height)
-                    || follows_height(style.min_size().height)
-                    || follows_height(style.max_size().height)
-                    || !inset.top.is_auto() && !inset.bottom.is_auto())
-                {
-                    continue;
-                }
-                let Some(placement) = document
+                let placement = document
                     .oof_coordinates
                     .get(&node)
                     .and_then(|coordinate| coordinate.placement)
-                else {
-                    continue;
-                };
+                    .expect("only captured positioned children are queued for reflow");
                 let offset = document
                     .layout_offset_of(node)
                     .expect("a positioned child has a layout origin");
@@ -166,18 +165,18 @@ impl HeightFollowers {
         document: &super::super::context::LayoutSession<'_>,
         parent: usize,
     ) {
-        if self.owners.get(&parent).is_some_and(|nodes| {
-            nodes.iter().any(|&node| {
-                let style = document.physical_style(node);
-                let inset = style.inset();
-                Self::can_reflow(document, node)
-                    && (follows_height(style.size().height)
-                        || follows_height(style.min_size().height)
-                        || follows_height(style.max_size().height)
-                        || !inset.top.is_auto() && !inset.bottom.is_auto())
-            })
-        }) {
-            self.dirty.borrow_mut().insert(parent);
+        if let Some(nodes) = self.owners.get(&parent) {
+            for &node in nodes {
+                if Self::can_reflow(document, node)
+                    && Self::needs_reflow(&document.physical_style(node))
+                {
+                    self.dirty
+                        .borrow_mut()
+                        .entry(parent)
+                        .or_default()
+                        .insert(node);
+                }
+            }
         }
     }
 
@@ -220,13 +219,13 @@ impl HeightFollowers {
         for &node in nodes {
             let style = document.physical_style(node);
             let inset = style.inset();
-            if follows_height(style.size().height)
-                || follows_height(style.min_size().height)
-                || follows_height(style.max_size().height)
-                || !inset.top.is_auto() && !inset.bottom.is_auto()
-            {
+            if Self::needs_reflow(&style) {
                 if Self::can_reflow(document, node) {
-                    self.dirty.borrow_mut().insert(parent);
+                    self.dirty
+                        .borrow_mut()
+                        .entry(parent)
+                        .or_default()
+                        .insert(node);
                 }
                 continue;
             }
