@@ -590,10 +590,11 @@ impl LayoutSession<'_> {
         idx: usize,
         item: raikiri_layout_style::LayoutStyleView<'_>,
     ) -> Option<raikiri_layout_style::HeldCrossSize> {
+        use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
         use raikiri_layout_style::{Axis, HeldCrossSize};
-        if item.aspect_ratio().is_none() || self.container_is_vertical(idx) {
-            return None;
-        }
+        let ratio = item
+            .aspect_ratio()
+            .filter(|_| !self.container_is_vertical(idx))?;
         let is_row = self
             .taffy_parent_of(idx)
             .is_none_or(|container| self.physical_style(container).flex_direction_is_row());
@@ -620,12 +621,51 @@ impl LayoutSession<'_> {
         if !states_a_size(cross) {
             return None;
         }
+        // Limits of its own on the cross axis clamp the cross size the item
+        // states before the ratio gives it a main size, which is why the main
+        // size and the width of a container that wraps the item follow the
+        // clamped cross size.
+        let size = stated_cross_within_limits(cross, cross_min, cross_max);
+        // A held minimum would win over a maximum the item states on the cross
+        // axis, unless it is the clamped cross size.
+        let held_min = !main_min.is_auto()
+            && is_no_limit(cross_min)
+            && (size.is_some() || cross_max.is_auto());
+        let held_max = !main_max.is_auto() && cross_max.is_auto();
+        // The minimum of the main axis that the flex algorithm carries across
+        // the ratio from the cross minimum would win over a maximum the item
+        // states on the main axis, when it is larger: the maximum is the
+        // minimum then. A smaller one is left alone, as it is not the minimum
+        // that the item shrinks to.
+        let carried_cross_min = if held_min {
+            size
+        } else {
+            match cross_min.expand() {
+                ExpandedLengthPercentageAuto::Length(min) if min > 0.0 => Some(min),
+                _ => None,
+            }
+        };
+        // The automatic minimum of a scroll container is zero, and the item
+        // shrinks to it whatever the cross minimum is.
+        let overflow = item.overflow();
+        let scrolls_on_main = if is_row { overflow.x } else { overflow.y }.is_scroll_container();
+        let main_floor = carried_cross_min
+            .filter(|_| !scrolls_on_main)
+            .and_then(|cross| {
+                let carried = if is_row { cross * ratio } else { cross / ratio };
+                match (main_min.is_auto(), main_max.expand()) {
+                    (true, ExpandedLengthPercentageAuto::Length(max)) if carried > max => Some(max),
+                    _ => None,
+                }
+            });
         let held = HeldCrossSize {
             axis,
-            min: !main_min.is_auto() && cross_min.is_auto() && cross_max.is_auto(),
-            max: !main_max.is_auto() && cross_max.is_auto(),
+            min: held_min,
+            max: held_max,
+            size,
+            main_min: main_floor,
         };
-        (held.min || held.max).then_some(held)
+        (held.min || held.max || held.size.is_some()).then_some(held)
     }
 
     /// The aspect ratio the flex algorithm is told about the flex item `idx`.
@@ -872,6 +912,51 @@ fn states_a_size(size: raikiri_layout_style::values::Dimension) -> bool {
     matches!(
         size.expand(),
         ExpandedDimension::Length(_) | ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
+    )
+}
+
+/// Whether `limit` is `auto` or zero: a minimum or maximum that clamps nothing.
+fn is_no_limit(limit: raikiri_layout_style::values::LengthPercentageAuto) -> bool {
+    use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
+    match limit.expand() {
+        ExpandedLengthPercentageAuto::Auto => true,
+        ExpandedLengthPercentageAuto::Length(length) => length <= 0.0,
+        _ => false,
+    }
+}
+
+/// The cross size a flex item states, within the limits it states on the same
+/// axis, when it states some and every one of them is a length: the cross size
+/// the item has before its ratio gives it a main size. `None` where it states
+/// no limit (the stated size is then the size it has) or a limit that waits
+/// for a container to resolve.
+fn stated_cross_within_limits(
+    cross: raikiri_layout_style::values::Dimension,
+    min: raikiri_layout_style::values::LengthPercentageAuto,
+    max: raikiri_layout_style::values::LengthPercentageAuto,
+) -> Option<f32> {
+    use raikiri_layout_style::values::{ExpandedDimension, ExpandedLengthPercentageAuto};
+    let ExpandedDimension::Length(size) = cross.expand() else {
+        return None;
+    };
+    let min = match min.expand() {
+        ExpandedLengthPercentageAuto::Auto => None,
+        ExpandedLengthPercentageAuto::Length(min) => Some(min),
+        _ => return None,
+    };
+    let max = match max.expand() {
+        ExpandedLengthPercentageAuto::Auto => None,
+        ExpandedLengthPercentageAuto::Length(max) => Some(max),
+        _ => return None,
+    };
+    // A minimum of zero limits nothing: the bridge reports one for a flex item
+    // whose automatic minimum is not content based.
+    if max.is_none() && min.is_none_or(|min| min <= 0.0) {
+        return None;
+    }
+    Some(
+        size.min(max.unwrap_or(f32::INFINITY))
+            .max(min.unwrap_or(0.0)),
     )
 }
 

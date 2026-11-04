@@ -307,7 +307,12 @@ pub enum FlexItemRatio {
 /// the item states with it. An item that states its cross size keeps it: only
 /// the cross size that is `auto` follows the ratio. The limit that would be
 /// carried across is reported as the cross size itself, which clamps nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// The cross size an item states is the one it has within the limits it states
+/// on the same axis, and the ratio gives the main size from that one: where the
+/// item states such limits, `size` is the clamped cross size, which is what is
+/// reported as the preferred size and as a held limit.
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[doc(hidden)]
 pub struct HeldCrossSize {
     /// The cross axis of the item.
@@ -316,6 +321,14 @@ pub struct HeldCrossSize {
     pub min: bool,
     /// Whether the maximum size of the cross axis is held.
     pub max: bool,
+    /// The cross size the item has, when it states limits of its own on the
+    /// cross axis that clamp the one it states.
+    pub size: Option<f32>,
+    /// The minimum size of the main axis reported where the item states none,
+    /// instead of the one carried across the ratio from the cross minimum,
+    /// which would win over the smaller maximum size of the main axis the item
+    /// states: that maximum.
+    pub main_min: Option<f32>,
 }
 
 /// How a grid parent reads the preferred aspect ratio of an item.
