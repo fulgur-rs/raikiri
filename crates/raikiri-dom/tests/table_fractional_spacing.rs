@@ -66,6 +66,11 @@ fn collapsed_vertical_rows_take_their_share_before_disappearing() {
     check_table_oracle(include_str!("data/table-vertical-collapse.json"));
 }
 
+#[test]
+fn collapsed_vertical_cells_keep_zero_width_and_column_height() {
+    check_table_oracle(include_str!("data/table-vertical-collapse-cells.json"));
+}
+
 fn check_table_oracle(source: &str) {
     let data: serde_json::Value = serde_json::from_str(source).expect("oracle");
     let mut mismatches = Vec::new();

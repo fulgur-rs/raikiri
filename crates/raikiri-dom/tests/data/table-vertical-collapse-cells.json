@@ -1,0 +1,122 @@
+{
+  "viewport": [
+    800,
+    600
+  ],
+  "fontLoaded": true,
+  "source": "Chromium152.0.7977.82, 800x600 standards viewport, body margin8, loaded Ahem10px/10px, td padding0, border-spacing0; RAIKIRI-1339",
+  "cases": [
+    {
+      "label": "vertical-rl-inherited-cell",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:0\"><tr id=r style=\"visibility:collapse\"><td id=c style=\"width:60px;height:80px;padding:0\">x</td></tr><tr id=r2><td id=d style=\"width:40px;height:30px;padding:0\">y</td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          80
+        ],
+        [
+          "c",
+          48,
+          8,
+          0,
+          80
+        ],
+        [
+          "d",
+          8,
+          8,
+          40,
+          80
+        ]
+      ]
+    },
+    {
+      "label": "vertical-rl-horizontal-cell",
+      "html": "<table id=t style=\"writing-mode:vertical-rl;border-spacing:0\"><tr id=r style=\"visibility:collapse\"><td id=c style=\"writing-mode:horizontal-tb;width:60px;height:80px;padding:0\">x</td></tr><tr id=r2><td id=d style=\"width:40px;height:30px;padding:0\">y</td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          80
+        ],
+        [
+          "c",
+          48,
+          8,
+          0,
+          80
+        ],
+        [
+          "d",
+          8,
+          8,
+          40,
+          80
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-inherited-cell",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:0\"><tr id=r style=\"visibility:collapse\"><td id=c style=\"width:60px;height:80px;padding:0\">x</td></tr><tr id=r2><td id=d style=\"width:40px;height:30px;padding:0\">y</td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          80
+        ],
+        [
+          "c",
+          8,
+          8,
+          0,
+          80
+        ],
+        [
+          "d",
+          8,
+          8,
+          40,
+          80
+        ]
+      ]
+    },
+    {
+      "label": "vertical-lr-horizontal-cell",
+      "html": "<table id=t style=\"writing-mode:vertical-lr;border-spacing:0\"><tr id=r style=\"visibility:collapse\"><td id=c style=\"writing-mode:horizontal-tb;width:60px;height:80px;padding:0\">x</td></tr><tr id=r2><td id=d style=\"width:40px;height:30px;padding:0\">y</td></tr></table>",
+      "device_scale": 1,
+      "expected": [
+        [
+          "t",
+          8,
+          8,
+          40,
+          80
+        ],
+        [
+          "c",
+          8,
+          8,
+          0,
+          80
+        ],
+        [
+          "d",
+          8,
+          8,
+          40,
+          80
+        ]
+      ]
+    }
+  ]
+}
