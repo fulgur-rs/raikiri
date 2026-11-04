@@ -179,8 +179,10 @@ fn keep_run(
     };
     let mut metrics = positioned_owned_text_line_bounds(document, &owned)
         .expect("a line event retains its line records");
-    let start = current_abs_y(document, root) + node.layout.padding.top + node.layout.border.top;
-    let clip_end = visible_end(document, env.cascade, root);
+    let relative = relative_offset_below_owner(document, env, owner, root);
+    let start =
+        current_abs_y(document, root) - relative + node.layout.padding.top + node.layout.border.top;
+    let clip_end = visible_end(document, env.cascade, root) - relative;
     metrics.truncate(metrics.partition_point(|&(top, _)| start + top < clip_end - 0.001));
     for (_, bottom) in &mut metrics {
         *bottom = bottom.min(clip_end - start);
@@ -243,7 +245,9 @@ fn keep_run(
     };
     for (line, shift, page) in moves {
         // Earlier moves can grow an auto clip, while a fixed clip stays put.
-        if env.page_origins.origin(page) >= visible_end(document, env.cascade, root) - 0.001 {
+        if env.page_origins.origin(page)
+            >= visible_end(document, env.cascade, root) - relative - 0.001
+        {
             break;
         }
         reach_page(env.control, page)?;
@@ -322,6 +326,21 @@ fn visible_end(document: &Document, cascade: &CascadeResult, root: usize) -> f32
         .fold(f32::INFINITY, f32::min)
 }
 
+// Relative offsets below the absolute owner paint after fragmentation. The
+// owner's positioned anchor and its ancestors remain in the page coordinate.
+fn relative_offset_below_owner(
+    document: &Document,
+    env: &FlowEnv<'_>,
+    owner: usize,
+    node: usize,
+) -> f32 {
+    document
+        .inclusive_ancestors(node)
+        .take_while(|&id| id != owner)
+        .map(|id| layout_relative_offset_y(document, env.cascade, env.body_id, id))
+        .sum()
+}
+
 fn exported_float_end(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -348,14 +367,13 @@ fn keep_whole_box(
     reach: &mut PageReach,
     followers: &HeightFollowers,
 ) -> Result<(), Halt> {
-    let top = current_abs_y(document, node);
+    let relative = relative_offset_below_owner(document, env, owner, node);
+    let top = current_abs_y(document, node) - relative;
     let page = env.page_origins.page_index_for_y(top + 0.001);
     if top > env.page_origins.origin(page) + 0.001
-        && (top + document.nodes[node].layout.size.height).min(visible_end(
-            document,
-            env.cascade,
-            node,
-        )) > env.page_origins.page_end(page) + 0.001
+        && (top + document.nodes[node].layout.size.height)
+            .min(visible_end(document, env.cascade, node) - relative)
+            > env.page_origins.page_end(page) + 0.001
     {
         let target = page.saturating_add(1);
         reach_page(env.control, target)?;

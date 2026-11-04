@@ -187,6 +187,30 @@ fn inline_wrapper_offsets_do_not_grow_the_positioned_content_twice() {
 }
 
 #[test]
+fn relative_block_offsets_are_applied_after_the_internal_page_breaks() {
+    for content in [
+        "<div style='position:relative;top:35px'>A</div><div>B</div>",
+        "<div style='position:relative;top:20px'><div style='position:relative;top:15px'>A</div></div><div>B</div>",
+    ] {
+        let body = positioned("top:40px", content);
+        assert_eq!(lines_of(&body, |text| text == "A"), [(0, 80.0)]);
+        assert_eq!(lines_of(&body, |text| text == "B"), [(0, 75.0)]);
+    }
+}
+
+#[test]
+fn relative_offsets_preserve_the_painted_clip_and_whole_box_positions() {
+    for content in [
+        "<div style='height:60px;overflow:hidden'><div style='position:relative;top:35px'>A</div></div><div>B</div>",
+        "<div style='position:relative;top:35px;contain:size;height:60px'>A</div><div>B</div>",
+    ] {
+        let body = positioned("top:40px", content);
+        assert_eq!(lines_of(&body, |text| text == "A"), [(0, 80.0)]);
+        assert_eq!(lines_of(&body, |text| text == "B"), [(1, 5.0)]);
+    }
+}
+
+#[test]
 fn block_paragraphs_inside_an_absolute_box_move_with_the_following_blocks() {
     for content in [
         "<p style='margin:0'>A</p><p style='margin:0'>B</p>",
