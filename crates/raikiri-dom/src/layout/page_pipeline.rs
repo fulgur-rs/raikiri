@@ -5507,7 +5507,9 @@ impl AvoidedBreaks {
             .row_groups
             .get(&node_id)
             .copied()
-            .filter(|&(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end))
+            .filter(|&(end, _)| {
+                item_tail || row_group_moves(flow_y, end - raw_y, page_start, page_end)
+            })
             .map(|(_, lead)| lead);
         // A trailing flex item may extend into the containing flex box's
         // continuation at the page edge. Earlier items still move intact when
@@ -8857,7 +8859,7 @@ fn container_item_tail(
     cascade: &CascadeResult,
     node_id: usize,
     has_named_pages: bool,
-) -> Option<usize> {
+) -> Option<(usize, Option<usize>)> {
     let node = &document.nodes[node_id];
     // A grid moves whole, so only flex containers and tables are left.
     if !matches!(node.display(), DisplayValue::Flex | DisplayValue::Table)
@@ -8893,7 +8895,7 @@ fn container_item_tail(
                     &before[before.len().saturating_sub(1)..],
                     &[last],
                 ))
-            .then_some(last)
+            .then_some((last, None))
         }
         _ => {
             // A cell that spans rows ties the rows it spans together, and the
@@ -8932,29 +8934,39 @@ fn container_item_tail(
                     _ => return None,
                 }
             }
-            let (&(last, group), before) = rows.split_last()?;
+            let (&(mut last, group), mut before) = rows.split_last()?;
+            let mut fallback = None;
+            if let Some(group) = group
+                .filter(|&group| avoids_page_break_inside(cascade.computed[group].break_inside))
+            {
+                // The group's first row represents the whole avoided group.
+                // Mandatory breaks were excluded for the table above.
+                let first = rows.iter().position(|&(_, held)| held == Some(group))?;
+                if let Some(&(previous, _)) = before.last()
+                    && before.len() > first
+                    && !break_between_is_avoided(document, cascade, &[previous], &[last])
+                {
+                    fallback = Some(last);
+                }
+                last = rows[first].0;
+                before = &rows[..first];
+            }
             // The boxes that start the last row's side of the break and end
             // the other side of it: a group is one of them where the break is
             // the group's own edge.
             let mut next = vec![last];
             let mut previous = Vec::new();
-            if let Some(group) = group {
-                // Browsers move a group that avoids breaks inside it whole
-                // with the edges, which is not done here.
-                if avoids_page_break_inside(cascade.computed[group].break_inside)
-                    && before.iter().any(|&(_, held)| held == Some(group))
-                {
-                    return None;
-                }
-                if before.last().is_none_or(|&(_, held)| held != Some(group)) {
-                    next.push(group);
-                }
+            if let Some(group) = group
+                && before.last().is_none_or(|&(_, held)| held != Some(group))
+            {
+                next.push(group);
             }
             if let Some(&(row, held)) = before.last() {
                 previous.push(row);
                 previous.extend(held.filter(|&held| group != Some(held)));
             }
-            (!break_between_is_avoided(document, cascade, &previous, &next)).then_some(last)
+            (!break_between_is_avoided(document, cascade, &previous, &next))
+                .then_some((last, fallback))
         }
     }
 }
