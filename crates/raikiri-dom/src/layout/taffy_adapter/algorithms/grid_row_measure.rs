@@ -104,6 +104,22 @@ fn native_layout(
         taffy::compute_flexbox_layout(probe, node.into_taffy(), inputs.into_taffy())
     });
     if !grid
+        && let Some(correction) = super::wrap_reverse::candidate(
+            probe.tree,
+            node,
+            inputs,
+            probe
+                .flex_calls
+                .as_deref()
+                .expect("flex probe records callbacks"),
+            &output,
+            |child| probe.layouts.get(&child).copied(),
+        )
+    {
+        probe.layouts.extend(correction.layouts);
+        output = correction.output;
+    }
+    if !grid
         && output.baselines.first.is_some()
         && probe
             .tree

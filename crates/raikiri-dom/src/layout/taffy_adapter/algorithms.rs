@@ -17,6 +17,7 @@ use raikiri_layout_style::values::{
 
 mod flex_baseline;
 mod grid_row_measure;
+pub(crate) mod wrap_reverse;
 pub(crate) use flex_baseline::{Call as FlexReplayCall, source as flex_baseline_source};
 pub(crate) use grid_row_measure::grid_item_row_rooms;
 

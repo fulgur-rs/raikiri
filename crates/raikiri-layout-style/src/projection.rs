@@ -32,13 +32,20 @@ use taffy::{
 /// A [`LayoutStyleView`] as the style Taffy's algorithms read.
 #[derive(Clone, Copy)]
 #[doc(hidden)]
-pub struct TaffyStyle<'a>(LayoutStyleView<'a>);
+pub struct TaffyStyle<'a>(LayoutStyleView<'a>, Option<crate::values::AlignContent>);
 
 impl<'a> TaffyStyle<'a> {
     /// Project `view` onto Taffy's style traits.
     #[inline]
     pub const fn new(view: LayoutStyleView<'a>) -> Self {
-        Self(view)
+        Self(view, None)
+    }
+
+    /// Override only flex line alignment for an algorithm replay.
+    #[inline]
+    pub const fn with_flex_align_content(mut self, alignment: crate::values::AlignContent) -> Self {
+        self.1 = Some(alignment);
+        self
     }
 }
 
@@ -216,9 +223,12 @@ impl FlexboxContainerStyle for TaffyStyle<'_> {
         flex_direction -> taffy::FlexDirection,
         flex_wrap -> taffy::FlexWrap,
     }
+    #[inline]
+    fn align_content(&self) -> taffy::AlignContent {
+        self.1.unwrap_or_else(|| self.0.align_content()).to_taffy()
+    }
     convert! {
         gap -> taffy::Size<taffy::LengthPercentage>,
-        align_content -> taffy::AlignContent,
         justify_content -> taffy::JustifyContent,
         align_items -> taffy::AlignItems,
     }
