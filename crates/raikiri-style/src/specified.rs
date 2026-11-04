@@ -2084,9 +2084,6 @@ impl SpecifiedValues {
             && block_size.is_none()
             && precedence.inline_size.is_none()
             && precedence.block_size.is_none()
-            && !(!keeps_keywords
-                && self.writing_mode.is_vertical()
-                && content_keyword(declared_height.clone()).is_some())
         {
             self.height_keyword = marks_keyword(declared_height);
             return None;
@@ -2112,9 +2109,7 @@ impl SpecifiedValues {
                     precedence.block_size,
                 ),
                 pick(
-                    // Physical height is the inline size here; keep its
-                    // keyword even though the horizontal fallback is auto.
-                    declared_height.clone(),
+                    self.height.clone(),
                     precedence.height,
                     inline_size.clone(),
                     precedence.inline_size,

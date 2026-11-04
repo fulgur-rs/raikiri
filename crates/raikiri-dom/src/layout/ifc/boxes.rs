@@ -3631,7 +3631,11 @@ fn content_keyword_width(
     parent_size: Size<Option<f32>>,
 ) -> Option<OwnWidth> {
     let size = tree.physical_style(node).size();
-    let keyword = if horizontal { size.width } else { size.height };
+    let keyword = if horizontal {
+        size.width
+    } else {
+        tree.vertical_ifc_height(node)
+    };
     // A percentage against an indefinite size leaves no room, which sizes the
     // child like `auto`.
     let basis = if horizontal {

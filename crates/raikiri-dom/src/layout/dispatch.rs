@@ -1637,7 +1637,10 @@ fn compute_ifc_root(
     {
         block_ctx = None;
     }
-    let style = block_flow::style_input::physical(tree, idx);
+    let mut style = block_flow::style_input::physical(tree, idx);
+    if inputs.sizing_mode == SizingMode::InherentSize {
+        style.size.height = tree.vertical_ifc_height(idx);
+    }
     // A column container that wraps its items does not take the width it
     // stretches an item with an `auto` width to as definite while it asks for
     // the item's height, so that height follows from the width the item has

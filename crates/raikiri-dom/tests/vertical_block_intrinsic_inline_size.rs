@@ -578,6 +578,22 @@ fn vertical_rl_inline_size_fit_content() {
 }
 
 #[test]
+fn vertical_lr_grid_ratio_keyword_control() {
+    check(
+        r#"<div id="container" style="display:grid;grid-template-columns:auto;width:min-content"><div id="target" style="aspect-ratio:2/1;writing-mode:vertical-lr;width:100px;height:min-content"></div></div>"#,
+        &[("target", (100.0, 50.0)), ("container", (100.0, 50.0))],
+    );
+}
+
+#[test]
+fn vertical_rl_grid_ratio_keyword_control() {
+    check(
+        r#"<div id="container" style="display:grid;grid-template-columns:auto;width:min-content"><div id="target" style="aspect-ratio:2/1;writing-mode:vertical-rl;width:100px;height:min-content"></div></div>"#,
+        &[("target", (100.0, 50.0)), ("container", (100.0, 50.0))],
+    );
+}
+
+#[test]
 fn horizontal_min_content() {
     check(
         r#"<div id="target" style="width:min-content">aa bbbb</div>"#,
