@@ -142,7 +142,9 @@ fn marker_render_info_uses_author_content_and_falls_back_to_list_style() {
         "display: list-item",
         Some("li::marker { display: none }"),
     );
-    assert!(marker_render_info(&document, &cascade, first).is_none());
+    let (_, content) = marker_render_info(&document, &cascade, first)
+        .expect("author display does not suppress the marker");
+    assert_eq!(content, "• ");
 }
 
 #[test]

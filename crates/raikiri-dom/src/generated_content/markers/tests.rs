@@ -39,6 +39,52 @@ fn generated_pseudo_content_with_snapshots<'a>(
 }
 
 #[test]
+fn marker_display_is_computed_but_does_not_suppress_the_marker() {
+    for (authored, expected) in [
+        ("none", DisplayValue::None),
+        ("block", DisplayValue::Block),
+        ("contents", DisplayValue::Contents),
+        ("inline-flex", DisplayValue::InlineFlex),
+    ] {
+        let sheet = format!("li::marker {{ display:{authored}; content:'M' }}");
+        let (document, cascade, first, hidden) = list_fixture(
+            "display:list-item;list-style:inside none",
+            "display:none",
+            Some(&sheet),
+        );
+        let marker = &cascade.pseudo[&(
+            raikiri_style::StyleNodeId::new(first as u64),
+            raikiri_style::PseudoElem::Marker,
+        )];
+        assert_eq!(marker.display, expected);
+        assert!(crate::generated_content::inside_marker_in_flow(
+            &cascade, first
+        ));
+        let (style, text) = marker_render_info(&document, &cascade, first).unwrap();
+        assert_eq!(style.display, expected);
+        assert_eq!(text, "M");
+        assert!(!crate::generated_content::marker_is_enabled(
+            &cascade, hidden
+        ));
+        assert!(marker_render_info(&document, &cascade, hidden).is_none());
+    }
+}
+
+#[test]
+fn marker_content_none_still_suppresses_an_ignored_display_declaration() {
+    let (document, cascade, first, _) = list_fixture(
+        "display:list-item;list-style:inside decimal",
+        "display:list-item",
+        Some("li::marker {display:none;content:none}"),
+    );
+    assert!(!crate::generated_content::marker_is_enabled(
+        &cascade, first
+    ));
+    let (_, text) = marker_render_info(&document, &cascade, first).unwrap();
+    assert!(text.is_empty());
+}
+
+#[test]
 fn list_marker_text_formats_ordinals_and_styles() {
     let (mut document, cascade, first, second) =
         list_fixture("display: list-item", "display: list-item", None);
@@ -307,7 +353,7 @@ fn marker_render_info_reuses_shared_quote_depth_when_snapshots_are_missing() {
     document.append_text(
         style,
         "div { quotes: '<' '>' '[' ']' } div::before { content: open-quote } \
-         li { display: list-item } li::marker { content: open-quote counter(list-item) close-quote }",
+         li { display: list-item } li::marker { display:none;content: open-quote counter(list-item) close-quote }",
     );
     let host = document.append_element(Some(document.root_index()), "div", None::<&str>);
     let item = document.append_element(Some(host), "li", None::<&str>);
@@ -325,6 +371,75 @@ fn marker_render_info_reuses_shared_quote_depth_when_snapshots_are_missing() {
     assert_eq!(marker(&CounterSnapshots::default()), "[1]");
     let shared = crate::counter_snapshots(&document, &cascade).expect("counter snapshots");
     assert_eq!(marker(&shared), "[1]");
+}
+
+#[test]
+fn marker_display_keeps_quote_depth_for_following_generated_content() {
+    use raikiri_style::PseudoElem::{After, Before};
+    for (marker_rule, owner_style, expected_marker, probe_depth, closing) in [
+        ("", "display:list-item", Some("["), 2, "}]>"),
+        ("display:none", "display:list-item", Some("["), 2, "}]>"),
+        (
+            "display:none;content:none",
+            "display:list-item",
+            Some(""),
+            1,
+            "]>",
+        ),
+        ("display:none", "display:none", None, 1, "]>"),
+    ] {
+        let mut document = Document::new();
+        let sheet = document.append_element(Some(document.root_index()), "style", None::<&str>);
+        document.append_text(
+            sheet,
+            format!(
+                "section {{quotes:'<' '>' '[' ']' '{{' '}}'}} \
+                 section::before {{content:open-quote}} \
+                 section::after {{content:close-quote close-quote close-quote}} \
+                 li::marker {{content:open-quote;{marker_rule}}} \
+                 aside::before,aside::after {{display:none;content:open-quote}} \
+                 span::before {{content:open-quote}}"
+            ),
+        );
+        let host = document.append_element(Some(document.root_index()), "section", None::<&str>);
+        let item = document.append_element(Some(host), "li", Some(owner_style));
+        document.append_element(Some(host), "aside", None::<&str>);
+        let probe = document.append_element(Some(host), "span", None::<&str>);
+        document.mark_in_document_flags();
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).unwrap();
+        let owned = crate::counter_snapshots(&document, &cascade).unwrap();
+        let compact = crate::compact_counter_snapshots(&document, &cascade).unwrap();
+        assert_eq!(
+            marker_render_info_with_snapshots(&document, &cascade, item, &owned)
+                .map(|(_, text)| text),
+            expected_marker.map(str::to_owned)
+        );
+        assert_eq!(
+            marker_render_info_with_compact_snapshots(&document, &cascade, item, &compact)
+                .map(|(_, text)| text),
+            expected_marker.map(str::to_owned)
+        );
+        assert_eq!(owned.quote_depth(probe, Before), probe_depth);
+        assert_eq!(compact.quote_depth(probe, Before), probe_depth);
+        let opening = if probe_depth == 2 { "{" } else { "[" };
+        for (node, pseudo, expected) in [(probe, Before, opening), (host, After, closing)] {
+            assert_eq!(
+                crate::generated_content::generated_text(&document, &cascade, node, pseudo, &owned)
+                    .unwrap()
+                    .1,
+                expected
+            );
+            assert_eq!(
+                crate::generated_content::generated_text_compact(
+                    &document, &cascade, node, pseudo, &compact
+                )
+                .unwrap()
+                .1,
+                expected
+            );
+        }
+    }
 }
 
 #[test]

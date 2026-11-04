@@ -63,8 +63,9 @@ pub use compact::{
 /// The counter that list items increment implicitly (CSS Lists 3 §4.6).
 const LIST_ITEM_COUNTER: &str = "list-item";
 
-/// The computed style of the `::before` or `::after` of `element`, when that
-/// pseudo-element generates a box.
+/// The computed style of the `::marker`, `::before` or `::after` of `element`,
+/// when that pseudo-element generates content. Marker display does not apply
+/// to its box.
 fn generated_pseudo(
     cascade: &CascadeResult,
     element: usize,
@@ -75,7 +76,7 @@ fn generated_pseudo(
         .get(&(raikiri_style::StyleNodeId::new(element as u64), pseudo))
         .map(|style| style.as_ref())
         .filter(|style| {
-            style.display != DisplayValue::None
+            (pseudo == PseudoElem::Marker || style.display != DisplayValue::None)
                 && style.content.iter().any(|component| {
                     !matches!(component, raikiri_style::property::ContentComponent::None)
                 })

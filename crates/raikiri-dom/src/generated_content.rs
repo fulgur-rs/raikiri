@@ -1191,6 +1191,7 @@ pub fn inside_marker_in_flow(cascade: &CascadeResult, element: usize) -> bool {
 }
 
 /// Whether a list item generates a marker, independently of its position.
+/// Author `display` declarations on `::marker` do not apply to its box.
 #[doc(hidden)]
 pub fn marker_is_enabled(cascade: &CascadeResult, element: usize) -> bool {
     cascade.computed.get(element).is_some_and(|cv| {
@@ -1199,11 +1200,10 @@ pub fn marker_is_enabled(cascade: &CascadeResult, element: usize) -> bool {
                 .pseudo
                 .get(&(StyleNodeId::new(element as u64), PseudoElem::Marker))
                 .is_none_or(|marker| {
-                    marker.display != DisplayValue::None
-                        && !marker
-                            .content
-                            .iter()
-                            .any(|part| matches!(part, ContentComponent::None))
+                    !marker
+                        .content
+                        .iter()
+                        .any(|part| matches!(part, ContentComponent::None))
                 })
     })
 }

@@ -106,7 +106,7 @@ fn suppressed_inside_markers_leave_block_children_on_the_block_path() {
             "display:list-item;list-style:inside disc",
         ),
         (
-            "div::marker {display:none}",
+            "div::marker {display:none;content:none}",
             "display:list-item;list-style:inside disc",
         ),
         (

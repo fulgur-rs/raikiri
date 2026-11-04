@@ -71,3 +71,34 @@ fn outside_marker_pixels_match_the_chromium_horizontal_bounds() {
         assert_eq!(red_columns(css), Some(bounds), "{css}");
     }
 }
+
+#[test]
+fn marker_display_does_not_suppress_text_or_image_pixels() {
+    let image = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Crect width='10' height='10' fill='red'/%3E%3C/svg%3E";
+    for position in ["inside", "outside"] {
+        let text = format!("li{{list-style-position:{position}}}li::marker{{content:'M'}}");
+        let expected = if position == "inside" {
+            (100, 110)
+        } else {
+            (90, 100)
+        };
+        assert_eq!(red_columns(&text), Some(expected));
+        assert_eq!(
+            red_columns(&format!("{text}li::marker{{display:none}}")),
+            Some(expected)
+        );
+        let css = format!("li{{list-style-position:{position};list-style-image:url(\"{image}\")}}");
+        let bounds = red_columns(&css).expect("the image marker is painted");
+        assert_eq!(bounds.1 - bounds.0, 10);
+        // Image offset compatibility is independent of marker generation.
+        assert_eq!(
+            red_columns(&format!("{css}li::marker{{display:none}}")),
+            Some(bounds)
+        );
+        assert_eq!(
+            red_columns(&format!("{css}li::marker{{display:none;content:none}}")),
+            None
+        );
+        assert_eq!(red_columns(&format!("{css}li{{display:none}}")), None);
+    }
+}
