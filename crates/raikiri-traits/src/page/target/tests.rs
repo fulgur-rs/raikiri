@@ -641,7 +641,7 @@ fn format_counter_longhand_additive_negative_uses_style_specific_prefix() {
     );
     assert_eq!(
         format_counter(-11, &named("korean-hangul-formal")),
-        "\u{b9c8}\u{c774}\u{b108}\u{c2a4}  \u{c77c}\u{c2ed}\u{c77c}" // 마이너스  일십일 (two spaces)
+        "\u{b9c8}\u{c774}\u{b108}\u{c2a4} \u{c77c}\u{c2ed}\u{c77c}" // 마이너스 일십일 (one decoded space)
     );
 }
 
