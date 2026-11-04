@@ -42,6 +42,77 @@ pub(crate) struct IfcPosition {
     pub(crate) shift_y: f32,
 }
 
+/// Text owners on lines that the current page paints, including generated
+/// block boxes that paint beside the lines rather than on them.
+pub(crate) fn page_text_owners(
+    paragraph: Paragraph<'_>,
+    base: IfcPosition,
+    fragmentainer: Option<usize>,
+    page_lines: Option<crate::walk::PageLines>,
+    paint_transform: Affine,
+) -> std::collections::HashSet<usize> {
+    let Paragraph {
+        document,
+        cascade,
+        root_id,
+    } = paragraph;
+    let mut owners = std::collections::HashSet::new();
+    let Some(positioned) = PositionedLines::new(document, cascade, root_id, fragmentainer) else {
+        return owners;
+    };
+    let paragraph_box = kept_whole_box(
+        document,
+        root_id,
+        page_lines,
+        positioned.writing_mode != WritingMode::HorizontalTb,
+        base,
+    );
+    let mut owned_lines = std::collections::HashSet::new();
+    for line in positioned.lines() {
+        let position = IfcPosition {
+            x: base.x + line.offset.0,
+            y: base.y + line.offset.1,
+            shift_y: base.shift_y,
+        };
+        if page_lines.is_none_or(|page| {
+            page.holds_line(
+                paint_transform,
+                paragraph_box.unwrap_or_else(|| line_rect(&line, position)),
+            )
+        }) {
+            owned_lines.insert(line.index);
+            owners.extend(line.line.fragments().filter_map(|fragment| match fragment {
+                shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
+                _ => None,
+            }));
+        }
+    }
+    // The trace preserves its existing visibility rules, including hidden
+    // text in table cells; positioned runs already discard that text.
+    owners.extend(
+        document
+            .ifc_text_lines_by_node(root_id)
+            .into_iter()
+            .filter_map(|(owner, text)| {
+                text.lines
+                    .iter()
+                    .any(|line| owned_lines.contains(&line.line))
+                    .then_some(owner)
+            }),
+    );
+    let off_band = page_lines
+        .zip(paragraph_box)
+        .is_some_and(|(page, rect)| !page.holds_line(paint_transform, rect));
+    if let Some(node) = document.ifc_layout_node(root_id) {
+        owners.extend(
+            block_pieces(node, off_band)
+                .iter()
+                .map(|(piece, _)| piece.node),
+        );
+    }
+    owners
+}
+
 /// One glyph run ready to draw, with its decoration context.
 /// The glyph `glyph` as the scene draws it.
 fn anyrender_glyph(glyph: &raikiri_dom::LineGlyph) -> AnyrenderGlyph {

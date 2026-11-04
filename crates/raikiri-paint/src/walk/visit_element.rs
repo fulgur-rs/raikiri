@@ -51,6 +51,29 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         );
         let origin = ChildOrigin::new(&element, visit, &child_decorations);
         let lines_frame = self.paragraph_lines(&element, &origin, &children, paint_transform);
+        if self.trace.is_some()
+            && let Some(frame) = &lines_frame
+        {
+            let owners = crate::ifc_text::page_text_owners(
+                crate::ifc_text::Paragraph {
+                    document,
+                    cascade,
+                    root_id: node_id,
+                },
+                crate::ifc_text::IfcPosition {
+                    x: frame.x,
+                    y: frame.y,
+                    shift_y: frame.shift_y,
+                },
+                frame.fragmentainer,
+                self.geometry
+                    .page_lines
+                    .filter(|_| !frame.inside_fixed)
+                    .map(|lines| lines.translated(frame.translation_y)),
+                frame.paint_transform,
+            );
+            self.trace_text_owners.insert(node_id, owners);
+        }
         let hold_lines = lines_frame.as_ref().is_some_and(|lines| lines.hold);
         let lines_frame = lines_frame.map(PaintFrame::Lines);
         let plan = self.child_plan(
