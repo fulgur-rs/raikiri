@@ -159,7 +159,7 @@ fn svg_mime_and_svg_path_keep_full_display_identities_and_key_charges() {
         assert_eq!(
             resolver.budget.lock().unwrap().used,
             urls.iter()
-                .map(|u| u.as_str().len() as u64 + TWO_COLOR_SVG.len() as u64)
+                .map(|u| u.as_str().len() as u64 + svg_retained_bytes(TWO_COLOR_SVG))
                 .sum::<u64>()
         );
         assert_eq!(*resolver.network.requests.lock().unwrap(), urls);
@@ -262,6 +262,6 @@ fn exact_svg_and_canonical_raster_keys_have_separate_namespaces() {
     assert_eq!(resolver.state.lock().unwrap().cache.len(), 2);
     assert_eq!(
         resolver.budget.lock().unwrap().used,
-        base.as_str().len() as u64 * 2 + TWO_COLOR_SVG.len() as u64 + 8
+        base.as_str().len() as u64 * 2 + svg_retained_bytes(TWO_COLOR_SVG) + 8
     );
 }

@@ -375,7 +375,7 @@ fn concurrent_svg_sources_cannot_exceed_the_shared_byte_budget() {
     provider.bytes = TWO_COLOR_SVG;
     let a: Url = "https://images.test/a.svg".parse().unwrap();
     let b: Url = "https://images.test/b.svg".parse().unwrap();
-    let one = (a.as_str().len() + TWO_COLOR_SVG.len()) as u64;
+    let one = a.as_str().len() as u64 + svg_retained_bytes(TWO_COLOR_SVG);
     let resolver = ResourceLoader::with_limits(provider, 2 * one - 1, 256);
     let (starts, results) = std::thread::scope(|scope| {
         let _release = ReleaseAll(&gate);
@@ -789,7 +789,7 @@ fn concurrent_svg_fragments_publish_distinct_exact_sources_after_waiting() {
         resolver.budget.lock().unwrap().used,
         urls[..4]
             .iter()
-            .map(|url| url.as_str().len() as u64 + TWO_COLOR_SVG.len() as u64)
+            .map(|url| url.as_str().len() as u64 + svg_retained_bytes(TWO_COLOR_SVG))
             .sum::<u64>()
     );
     let state = resolver.state.lock().unwrap();
