@@ -1624,19 +1624,11 @@ fn compute_ifc_root(
         block_ctx = None;
     }
     let style = block_flow::style_input::physical(tree, idx);
-    // A horizontal paragraph box that is not a multicol container is sized
-    // through its `aspect-ratio` as block flow sizes a block.
-    let ratio_box = tree.nodes[idx].multicol.is_none()
-        && tree.nodes[idx]
-            .ifc
-            .as_ref()
-            .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
     // A column container that wraps its items does not take the width it
     // stretches an item with an `auto` width to as definite while it asks for
     // the item's height, so that height follows from the width the item has
     // by itself, as it does for an item that is not stretched.
-    let inputs = if ratio_box
-        && inputs.sizing_mode == SizingMode::ContentSize
+    let inputs = if inputs.sizing_mode == SizingMode::ContentSize
         && style.aspect_ratio.is_some()
         && inputs.known_dimensions.width.is_some()
         && inputs.known_dimensions.height.is_none()
@@ -1658,17 +1650,24 @@ fn compute_ifc_root(
     };
     let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
     let mut layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
-    // A horizontal paragraph box with an `aspect-ratio` is sized as block
-    // flow sizes a block: a size the ratio gives is raised by the content up
-    // to the maximum the box states. Taffy's leaf takes it as final, so the
-    // leaf is given the width the ratio settles and no ratio, and the height
-    // follows once the content is measured.
-    let ratio = layout_style.aspect_ratio.filter(|_| {
-        (inputs.sizing_mode == SizingMode::InherentSize
-            || flex_item_follows_main_size(tree, idx, &inputs)
-            || flex_item_height_from_ratio(tree, idx, &inputs))
-            && ratio_box
-    });
+    // A paragraph box with an `aspect-ratio` is sized as block flow sizes a
+    // block: a size the ratio gives is raised by the content up to the maximum
+    // the box states. Taffy's leaf takes it as final, so the leaf is given the
+    // width the ratio settles and no ratio, and the height follows once the
+    // content is measured.
+    let vertical_paragraph = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb);
+    // The columns of a multicol container fill the height the ratio gives and
+    // spill sideways into more columns, so its lines raise no height.
+    let multicol = tree.nodes[idx].multicol.is_some();
+    let flex_item_ratio = layout_style.aspect_ratio.is_some()
+        && (flex_item_follows_main_size(tree, idx, &inputs)
+            || (!vertical_paragraph && flex_item_height_from_ratio(tree, idx, &inputs)));
+    let ratio = layout_style
+        .aspect_ratio
+        .filter(|_| inputs.sizing_mode == SizingMode::InherentSize || flex_item_ratio);
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size);
     let ratio_height_follows =
@@ -1691,6 +1690,25 @@ fn compute_ifc_root(
             };
             inputs.known_dimensions.width = Some(width);
             inputs.known_dimensions_are_definite.width = true;
+        }
+        // The lines of a vertical paragraph run along its height, so the
+        // height the ratio gives is where they break, and what raises it is
+        // the longest line that cannot break, not the lines laid out in room
+        // without a limit. A vertical paragraph that states no width takes
+        // its width from the lines, which is not a width to derive from.
+        if ratio_height_follows
+            && stated.width.is_some()
+            && vertical_paragraph
+            && let Some(height) = metrics.preferred.height
+        {
+            let height = if metrics.ratio_height {
+                let minimum = ifc_min_content_height(tree, node_id, inputs.parent_size);
+                height.max(minimum.maybe_clamp(None, metrics.own_max.height))
+            } else {
+                height
+            };
+            inputs.known_dimensions.height = Some(height);
+            inputs.known_dimensions_are_definite.height = true;
         }
         apply_local_sizing(
             &mut layout_style,
@@ -1879,7 +1897,7 @@ fn compute_ifc_root(
         // `output` holds the height of the lines. They raise the height the
         // ratio gives unless the box scrolls or states a `min-height`.
         let height = metrics.preferred.height.unwrap_or(output.size.height);
-        output.size.height = if metrics.ratio_height {
+        output.size.height = if metrics.ratio_height && !multicol {
             height.max(output.size.height.maybe_clamp(None, metrics.own_max.height))
         } else {
             height
@@ -1994,6 +2012,29 @@ fn ifc_min_content_width(
     node_id: NodeId,
     parent_size: Size<Option<f32>>,
 ) -> f32 {
+    ifc_min_content_size(tree, node_id, parent_size, false).width
+}
+
+/// The min-content height of the border box of the vertical paragraph box
+/// `node_id`, without any height the box states itself: the length of its
+/// longest line that cannot break.
+fn ifc_min_content_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    parent_size: Size<Option<f32>>,
+) -> f32 {
+    ifc_min_content_size(tree, node_id, parent_size, true).height
+}
+
+/// The border box of the paragraph box `node_id` measured at the min-content
+/// size of its width, or of its height when `along_height` is set.
+fn ifc_min_content_size(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    parent_size: Size<Option<f32>>,
+    along_height: bool,
+) -> Size<f32> {
+    let (min_content, max_content) = (AvailableSpace::MinContent, AvailableSpace::MaxContent);
     let probe = LayoutInput {
         run_mode: RunMode::ComputeSize,
         sizing_mode: SizingMode::ContentSize,
@@ -2004,13 +2045,20 @@ fn ifc_min_content_width(
             height: false,
         },
         parent_size,
-        available_space: Size {
-            width: AvailableSpace::MinContent,
-            height: AvailableSpace::MaxContent,
+        available_space: if along_height {
+            Size {
+                width: max_content,
+                height: min_content,
+            }
+        } else {
+            Size {
+                width: min_content,
+                height: max_content,
+            }
         },
         vertical_margins_are_collapsible: Line::FALSE,
     };
-    compute_ifc_root(tree, node_id, probe, None).size.width
+    compute_ifc_root(tree, node_id, probe, None).size
 }
 
 /// The node's own `min-width` and `max-width`, as content-box widths.
