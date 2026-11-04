@@ -10,7 +10,7 @@
 //! marker `Z` in a block after the box shows where the box ends), as Chromium
 //! prints it on pages 100px tall and 100px wide. The first table has Ahem
 //! lines of 20px with a line height of 30px, the second of 10px with a line
-//! height of 10px.
+//! height of 10px. The third is boxes with nothing in them but edges.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -75,6 +75,24 @@ fn edges_that_do_not_fit_under_the_content_start_the_next_page_with_30px_lines()
 #[test]
 fn edges_that_do_not_fit_under_the_content_start_the_next_page_with_10px_lines() {
     check(ROWS_10PX_LINES, "10px/10px", 8.0);
+}
+
+#[test]
+fn a_box_with_edges_above_nothing_and_no_height_moves_whole() {
+    check(ROWS_EMPTY_BOXES, "10px/10px", 8.0);
+}
+
+/// Not Chromium's output: Chromium keeps an inline-block whole, but a tall
+/// inline-block with room for content fragments across the pages, which the
+/// css/printing fragmented-inline-block-002-print pair requires, so its
+/// border-top does not take it to the next page.
+#[test]
+fn an_inline_block_with_room_for_content_keeps_fragmenting() {
+    let rows: &[Row] = &[(
+        r#"<div style="height:80px">S</div><div style="display:inline-block;width:20px;height:150px;border-top:5px solid"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 37)],
+    )];
+    check(rows, "10px/10px", 8.0);
 }
 
 const ROWS_30PX_LINES: &[Row] = &[
@@ -805,5 +823,333 @@ const ROWS_10PX_LINES: &[Row] = &[
     (
         r#"<style>body{font:10px/10px Ahem}</style><div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px"><div style="height:10px">T</div><div style="height:10px">U</div></div></div>"#,
         &[(0, 0), (0, 10)],
+    ),
+];
+
+/// Boxes that hold no box of their own, after a spacer of 80px on pages 100px
+/// tall. The edges above nothing are all there is to keep together, so a box
+/// with no height of its own goes to the next page whole when any of it would
+/// cross the page end, bottom edges included; a box with room for content is
+/// cut after the edges above it.
+const ROWS_EMPTY_BOXES: &[Row] = &[
+    // A_pt5_pb30
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // B_pt5_pb10
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:10px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    // C_pt5_pb15
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:15px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    // D_pt5_pb16
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:16px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 21)],
+    ),
+    // E_pt25
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:25px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // F_bt25
+    (
+        r#"<div style="height:80px">S</div><div style="border-top:25px solid"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // G_pb30
+    (
+        r#"<div style="height:80px">S</div><div style="padding-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // H_pt15_pb10
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:15px;padding-bottom:10px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // I_h10_pt5
+    (
+        r#"<div style="height:80px">S</div><div style="height:10px;padding-top:5px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    // J_h30_pt5
+    (
+        r#"<div style="height:80px">S</div><div style="height:30px;padding-top:5px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 15)],
+    ),
+    // K_pt5_h30_pb5
+    (
+        r#"<div style="height:80px">S</div><div style="height:30px;padding-top:5px;padding-bottom:5px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20)],
+    ),
+    // L_mt5_pt5_pb30
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:30px;margin-top:5px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // M_pt150
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:150px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 50)],
+    ),
+    // N_pt5_pb150
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:150px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (3, 50)],
+    ),
+    // O_pt20
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:20px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    // P_pt21
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:21px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 21)],
+    ),
+    // F1_float_pt25
+    (
+        r#"<div style="height:80px">S</div><div style="float:left;width:20px;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // F2_float_pt5_pb30
+    (
+        r#"<div style="height:80px">S</div><div style="float:left;width:20px;padding-top:5px;padding-bottom:30px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // F3_float_pb30
+    (
+        r#"<div style="height:80px">S</div><div style="float:left;width:20px;padding-bottom:30px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // F4_ib_pt25
+    (
+        r#"<div style="height:80px">S</div><div style="display:inline-block;width:20px;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 27)],
+    ),
+    // F5_flow_pt25
+    (
+        r#"<div style="height:80px">S</div><div style="display:flow-root;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // F6_flow_pt5_pb30
+    (
+        r#"<div style="height:80px">S</div><div style="display:flow-root;padding-top:5px;padding-bottom:30px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // F7_relative_pt25
+    (
+        r#"<div style="height:80px">S</div><div style="position:relative;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // F8_overflow_pt25
+    (
+        r#"<div style="height:80px">S</div><div style="overflow:hidden;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // F9_pt25_h0
+    (
+        r#"<div style="height:80px">S</div><div style="height:0;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // F10_pt25_mh
+    (
+        r#"<div style="height:80px">S</div><div style="min-height:5px;padding-top:25px"></div><div style="height:10px;clear:both">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // N1_wrap_child_pt25
+    (
+        r#"<div style="height:80px">S</div><div><div style="padding-top:25px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N2_wrap_pt5_child_pt20
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px"><div style="padding-top:20px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N3_wrap_pt5_child_pb20
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px"><div style="padding-bottom:20px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N4_two_empties
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:5px"></div><div style="padding-top:10px;padding-bottom:10px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20)],
+    ),
+    // N5_bt2_bb30
+    (
+        r#"<div style="height:80px">S</div><div style="border-top:2px solid;border-bottom:30px solid"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 32)],
+    ),
+    // N6_mt15_pt10
+    (
+        r#"<div style="height:80px">S</div><div style="margin-top:15px;padding-top:10px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 10)],
+    ),
+    // N8_sticky
+    (
+        r#"<div style="height:80px">S</div><div style="position:sticky;top:0;padding-top:25px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N9_bb_h30
+    (
+        r#"<div style="height:80px">S</div><div style="box-sizing:border-box;height:30px;padding-top:5px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 10)],
+    ),
+    // N10_minh0
+    (
+        r#"<div style="height:80px">S</div><div style="min-height:0;padding-top:25px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N11_last_in_padded
+    (
+        r#"<div style="height:80px">S</div><div style="padding-bottom:5px"><div style="padding-top:25px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // N12_after_empty_pb
+    (
+        r#"<div style="height:80px">S</div><div style="padding-bottom:5px"></div><div style="padding-top:25px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N13_white
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:25px">  </div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N14_nested_empty_child
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:5px;padding-bottom:20px"><div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N15_avoid
+    (
+        r#"<div style="height:80px">S</div><div style="break-inside:avoid;padding-top:5px;padding-bottom:20px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // N16_mb
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:25px;margin-bottom:30px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 55)],
+    ),
+    // N17_pt25_pb5
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:25px;padding-bottom:5px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // N18_pt19
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:19px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    // N19_pt19_pb1
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:19px;padding-bottom:1px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    // N20_pt19_pb2
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:19px;padding-bottom:2px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 21)],
+    ),
+    // N21_background
+    (
+        r#"<div style="height:80px">S</div><div style="padding-top:25px;background:red"></div><div style="height:10px">W</div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25), (1, 35)],
+    ),
+    // R2_rel_down_empty
+    (
+        r#"<div style="height:80px">S</div><div style="position:relative;top:10px;padding-top:25px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // R3_rel_up_p
+    (
+        r#"<div style="height:80px">S</div><div style="position:relative;top:-10px;padding-top:25px"><p style="margin:0">X</p></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 15), (1, 35)],
+    ),
+    // flex item with bottom padding
+    (
+        r#"<div style="height:80px">S</div><div style="display:flex"><div style="padding-bottom:30px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // flex container padding-top, item bottom padding
+    (
+        r#"<div style="height:80px">S</div><div style="display:flex;padding-top:5px"><div style="padding-bottom:30px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // flex item with padding-top
+    (
+        r#"<div style="height:80px">S</div><div style="display:flex"><div style="padding-top:25px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // flex item with both paddings
+    (
+        r#"<div style="height:80px">S</div><div style="display:flex"><div style="padding-top:5px;padding-bottom:30px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // two flex items, one of them empty
+    (
+        r#"<div style="height:80px">S</div><div style="display:flex"><div style="padding-bottom:30px;width:10px"></div><div style="width:10px">x</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 30)],
+    ),
+    // grid item with padding-top
+    (
+        r#"<div style="height:80px">S</div><div style="display:grid"><div style="padding-top:25px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // grid padding-top, item bottom padding
+    (
+        r#"<div style="height:80px">S</div><div style="display:grid;padding-top:5px"><div style="padding-bottom:30px"></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // list item with padding-top
+    (
+        r#"<div style="height:80px">S</div><ul style="margin:0;padding:0;list-style:none"><li style="padding-top:25px"></li></ul><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // list item with both paddings
+    (
+        r#"<div style="height:80px">S</div><ul style="margin:0;padding:0;list-style:none"><li style="padding-top:5px;padding-bottom:30px"></li></ul><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 35)],
+    ),
+    // empty multicol container with padding-top
+    (
+        r#"<div style="height:80px">S</div><div style="column-count:2;padding-top:25px"></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // block image with padding-top
+    (
+        r#"<div style="height:80px">S</div><img src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2730%27%3E%3Crect width=%2720%27 height=%2730%27/%3E%3C/svg%3E" style="display:block;padding-top:5px;height:60px;width:20px"><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 65)],
+    ),
+    // block button with padding-top
+    (
+        r#"<div style="height:80px">S</div><button style="display:block;padding:25px 0 0 0;border:0;height:25px;width:20px"></button><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // block svg with padding-top
+    (
+        r#"<div style="height:80px">S</div><svg style="display:block;padding-top:25px;width:20px;height:0"></svg><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 25)],
+    ),
+    // block image whose padding-top crosses the page end
+    (
+        r#"<div style="height:80px">S</div><img src="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2720%27 height=%2730%27%3E%3Crect width=%2720%27 height=%2730%27/%3E%3C/svg%3E" style="display:block;padding-top:25px;width:20px;height:5px"><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // block canvas with padding-top
+    (
+        r#"<div style="height:80px">S</div><canvas style="display:block;padding-top:25px;width:20px;height:5px"></canvas><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    // block input with padding-top
+    (
+        r#"<div style="height:80px">S</div><input style="display:block;padding:25px 0 0 0;border:0;height:5px;width:20px"><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
     ),
 ];
