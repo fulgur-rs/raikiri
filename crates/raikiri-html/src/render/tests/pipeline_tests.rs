@@ -1542,6 +1542,11 @@ fn pipeline_cuts_the_pages_of_pushed_edges_at_the_clip_around_them() {
             4,
         ),
         (
+            "<div style='height:300px;overflow:hidden'><div style='overflow:hidden'>\
+             <div style='padding-bottom:210px'><div style='height:80px'></div></div></div></div>",
+            3,
+        ),
+        (
             "<div style='height:300px;overflow:hidden'><div style='padding-bottom:130px'>\
              <div style='padding-bottom:90px'><div style='height:80px'></div></div></div></div>",
             3,

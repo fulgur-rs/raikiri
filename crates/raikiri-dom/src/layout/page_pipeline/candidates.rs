@@ -504,10 +504,10 @@ struct CandidateFrame<'name> {
     /// ancestor does. A text or box starting at or past it is never visible,
     /// so it takes no part in pagination.
     clip_end: f32,
-    /// Whether the clip that sets `clip_end` is on a box whose height is not
-    /// that of its content, so that it stays where it is when what it holds
-    /// grows.
-    clip_is_fixed: bool,
+    /// The same for the clips on boxes whose height is not that of their
+    /// content, which stay where they are when what they hold grows, and
+    /// infinity when no ancestor has one.
+    fixed_clip_end: f32,
     /// What `clip_end` is for an absolutely positioned child: the edge past
     /// which the clips of its containing block and of the ancestors above
     /// that hide it, or infinity when none does. The clips of the boxes
@@ -611,7 +611,7 @@ impl CandidateFrame<'_> {
             inside_float: false,
             inside_out_of_flow: false,
             clip_end: f32::INFINITY,
-            clip_is_fixed: false,
+            fixed_clip_end: f32::INFINITY,
             absolute_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
@@ -1578,37 +1578,37 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // sliver of its content. A fixed box is not clipped here. A
                 // document paginated on transposed axes is not measured at
                 // all: the overflow that clips its flow is not the one on y.
-                let (clip_end, clip_is_fixed) = if document.context.pagination_on_transposed_axes {
-                    (f32::INFINITY, false)
+                let (clip_end, fixed_clip_end) = if document.context.pagination_on_transposed_axes {
+                    (f32::INFINITY, f32::INFINITY)
                 } else {
-                    // Only a clip that comes down the flow unchanged is known to
-                    // be fixed: an absolutely positioned box has its own.
+                    // Only a fixed clip that comes down the flow unchanged is
+                    // known: an absolutely positioned box has its own.
                     let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
                         PositionValue::Absolute if raw_y < frame.absolute_clip_end => {
-                            (frame.absolute_clip_end, false)
+                            (frame.absolute_clip_end, f32::INFINITY)
                         }
                         PositionValue::Absolute if frame.absolute_clip_end.is_finite() => {
                             let layout = &document.nodes[node_id].layout;
                             (
                                 raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
-                                false,
+                                f32::INFINITY,
                             )
                         }
-                        PositionValue::Absolute | PositionValue::Fixed => (f32::INFINITY, false),
-                        _ => (frame.clip_end, frame.clip_is_fixed),
+                        PositionValue::Absolute | PositionValue::Fixed => {
+                            (f32::INFINITY, f32::INFINITY)
+                        }
+                        _ => (frame.clip_end, frame.fixed_clip_end),
                     };
                     if !is_body && super::element_clips_overflow(document, cascade, node_id) {
+                        let own = super::clip_block_end(document, cascade, node_id, raw_y);
                         // A clip on a box whose height follows its content grows
                         // with what is pushed down inside it.
-                        let own_fixed = !height_follows_content(document, node_id);
-                        let own = super::clip_block_end(document, cascade, node_id, raw_y);
-                        if own < inherited {
-                            (own, own_fixed)
-                        } else if own == inherited {
-                            (inherited, inherited_fixed || own_fixed)
+                        let own_fixed = if height_follows_content(document, node_id) {
+                            f32::INFINITY
                         } else {
-                            (inherited, inherited_fixed)
-                        }
+                            own
+                        };
+                        (inherited.min(own), inherited_fixed.min(own_fixed))
                     } else {
                         (inherited, inherited_fixed)
                     }
@@ -1942,7 +1942,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
                             clip_end,
-                            clip_is_fixed,
+                            fixed_clip_end,
                             absolute_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
@@ -1983,8 +1983,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     let bottom = candidate_raw_y + node.layout.size.height;
                     // The box around a fixed clip does not grow as the edges are
                     // pushed down inside it, so it hides more of them.
-                    let (clip_end, clip_room) = if frame.clip_is_fixed {
-                        (frame.clip_end, frame.clip_end - bottom)
+                    let (clip_end, clip_room) = if frame.fixed_clip_end.is_finite() {
+                        (frame.fixed_clip_end, frame.fixed_clip_end - bottom)
                     } else {
                         (f32::INFINITY, f32::INFINITY)
                     };
