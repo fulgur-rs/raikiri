@@ -873,7 +873,9 @@ fn is_plain_ratio_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// aspect ratio of the box, at its min-content size. A box that relates its
 /// border boxes is also no narrower than the width its ratio gives the padding
 /// and border it holds, since it is no shorter than them: the library takes the
-/// width from the height the box states before it raises that height.
+/// width from the height the box states before it raises that height. A box
+/// that states its width keeps it, and a `min-width` larger than the `max-width`
+/// stays what the box asked for.
 pub(super) fn ratio_width_floors(
     tree: &mut LayoutSession<'_>,
     candidates: &[NodeId],
@@ -928,11 +930,19 @@ pub(super) fn ratio_width_floors(
                 );
                 // A box is no shorter than its padding and border, so it is no
                 // narrower than the width the ratio gives that height, whatever
-                // the height it states.
+                // the height it states. A width the box states is not the
+                // ratio's to give, even a percentage the block flow keeps the
+                // ratio for.
                 let edge_height = (metrics.padding + metrics.border).vertical_axis_sum();
+                let states_width = style
+                    .size()
+                    .width
+                    .maybe_resolve(Some(containing_width))
+                    .is_some();
                 let edge_floor = match box_style.aspect_ratio {
                     Some(ratio)
-                        if box_style.box_sizing != BoxSizing::ContentBox
+                        if !states_width
+                            && box_style.box_sizing != BoxSizing::ContentBox
                             && !tree.nodes[idx].ratio_in_content_box =>
                     {
                         edge_height * ratio
@@ -970,13 +980,15 @@ pub(super) fn ratio_width_floors(
                         LengthProperty::MinWidth,
                         (capped(minimum) - adjustment).max(0.0),
                     ));
-                } else if edge_floor > metrics.min.width.unwrap_or(0.0) {
+                } else {
                     // A `min-width` or an overflow that opts out of the content
-                    // floor leaves the box as narrow as it states.
-                    floors.push((
-                        LengthProperty::MinWidth,
-                        (capped(edge_floor) - adjustment).max(0.0),
-                    ));
+                    // floor leaves the box as narrow as it states. The floor the
+                    // edges give never lowers the authored minimum, which wins
+                    // over a smaller `max-width`.
+                    let floor = capped(edge_floor);
+                    if floor > metrics.min.width.unwrap_or(0.0) {
+                        floors.push((LengthProperty::MinWidth, (floor - adjustment).max(0.0)));
+                    }
                 }
                 if automatic_height {
                     floors.push((LengthProperty::MinHeight, 0.0));

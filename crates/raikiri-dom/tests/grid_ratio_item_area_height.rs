@@ -5,7 +5,8 @@
 //! with 25px of border and `max-height: 40px` is 50px tall and 100px wide, not
 //! 80px wide. A size the item states is no size the ratio gives, so the maximum
 //! of the other axis leaves it alone, and an item is no narrower than the width
-//! the ratio gives the padding and border it holds.
+//! the ratio gives the padding and border it holds, unless it states its width
+//! or a `min-width` larger than its `max-width`: those win.
 //!
 //! The expected border boxes were recorded from Chromium for the same markup in
 //! an 800px by 600px viewport, with the body margin of 8px. The items have a
@@ -129,6 +130,15 @@ fn items_that_were_already_sized_as_in_chromium_keep_their_boxes() {
     check_group(unchanged);
 }
 
+fn authored_sizes(name: &str) -> bool {
+    name.starts_with("e_")
+}
+
+#[test]
+fn the_floor_of_the_edges_leaves_an_authored_width_alone() {
+    check_group(authored_sizes);
+}
+
 /// A case that no group selects would never be run.
 #[test]
 fn every_case_is_in_a_group() {
@@ -137,6 +147,7 @@ fn every_case_is_in_a_group() {
         maximum_heights,
         stated_widths,
         unchanged,
+        authored_sizes,
     ];
     for case in CASES {
         assert!(
@@ -419,4 +430,20 @@ const CASES: &[Case] = &[
     ("d_g7_abs_k_maxw30_h80", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;max-width:30px;height:80px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 50.0, 80.0))]),
     ("d_g7_abs_e_h80_maxw30_r", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;height:80px;max-width:30px;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 50.0, 80.0))]),
     ("d_g7_abs_k_h80_maxw30_r", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;height:80px;max-width:30px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 50.0, 80.0))]),
+    ("e_abs_e_w60_h10", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:60px;height:10px;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 60.0, 50.0))]),
+    ("e_abs_k_w60_h10", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:60px;height:10px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 150.0, 50.0))]),
+    ("e_abs_e_w20pct_h10", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:20%;height:10px;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 60.0, 50.0))]),
+    ("e_abs_k_w20pct_h10", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:20%;height:10px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 150.0, 50.0))]),
+    ("e_abs_e_w60_h10pct", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:60px;height:5%;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 60.0, 50.0))]),
+    ("e_abs_k_w60_h10pct", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:60px;height:5%;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 150.0, 50.0))]),
+    ("e_abs_e_w20pct_h10_minw80", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:20%;height:10px;min-width:80px;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_abs_k_w20pct_h10_minw80", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;width:20%;height:10px;min-width:80px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_abs_e_wauto_h10_minw80_maxw60", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;height:10px;min-width:80px;max-width:60px;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_abs_k_wauto_h10_minw80_maxw60", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;height:10px;min-width:80px;max-width:60px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_abs_e_wauto_h10_minw30_maxw60", r#"<div id=c style="position:relative;width:300px;height:200px"><div id=i style="position:absolute;aspect-ratio:2/1;border:25px solid;height:10px;min-width:30px;max-width:60px;"></div></div>"#, &[("c", (8.0, 8.0, 300.0, 200.0)), ("i", (8.0, 8.0, 60.0, 50.0))]),
+    ("e_mc_e_h50p_minw80_maxw60", r#"<div id=c style="display:grid;grid-template-columns:max-content;grid-template-rows:100px"><div id=i style="aspect-ratio:2/1;border:25px solid;height:50%;min-width:80px;max-width:60px;"></div></div>"#, &[("c", (8.0, 8.0, 784.0, 100.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_mc_k_h50p_minw80_maxw60", r#"<div id=c style="display:grid;grid-template-columns:max-content;grid-template-rows:100px"><div id=i style="aspect-ratio:2/1;border:25px solid;height:50%;min-width:80px;max-width:60px;"><div style="width:100px;height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 784.0, 100.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_mc_e_h50p_minw80_maxw60_scroll", r#"<div id=c style="display:grid;grid-template-columns:max-content;grid-template-rows:100px"><div id=i style="aspect-ratio:2/1;border:25px solid;height:50%;min-width:80px;max-width:60px;overflow:hidden;"></div></div>"#, &[("c", (8.0, 8.0, 784.0, 100.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_mc_e_h40_minw80_maxw60", r#"<div id=c style="display:grid;grid-template-columns:max-content;grid-template-rows:100px"><div id=i style="aspect-ratio:2/1;border:25px solid;height:40px;min-width:80px;max-width:60px;"></div></div>"#, &[("c", (8.0, 8.0, 784.0, 100.0)), ("i", (8.0, 8.0, 80.0, 50.0))]),
+    ("e_mc_e_h50p_minw30_maxw60", r#"<div id=c style="display:grid;grid-template-columns:max-content;grid-template-rows:100px"><div id=i style="aspect-ratio:2/1;border:25px solid;height:50%;min-width:30px;max-width:60px;"></div></div>"#, &[("c", (8.0, 8.0, 784.0, 100.0)), ("i", (8.0, 8.0, 60.0, 50.0))]),
 ];
