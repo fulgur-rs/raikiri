@@ -464,7 +464,8 @@ impl ChFontKey {
 }
 
 /// Physical preferred sizes of a `vertical-rl` / `vertical-lr` box whose
-/// `inline-size` or `block-size` was declared; see
+/// `inline-size` or `block-size` was declared, or whose physical `height`
+/// keyword would otherwise be lost to the horizontal fallback; see
 /// [`ComputedValues::vertical_logical_size`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct VerticalLogicalSize {
@@ -1178,8 +1179,9 @@ pub struct ComputedValues {
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
     /// Physical `(width, height)` of the authored `inline-size` /
     /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
-    /// writing mode (CSS Logical Properties 1 §4.1). `None` without a logical
-    /// preferred size or outside those two modes. [`Self::width`] and
+    /// writing mode (CSS Logical Properties 1 §4.1). Also retains a physical
+    /// `height` keyword that the horizontal fallback replaces with `auto`.
+    /// `None` outside those modes or without either kind of size. [`Self::width`] and
     /// [`Self::height`] keep the horizontal mapping for layout that runs
     /// vertical content on horizontal axes.
     pub vertical_logical_size: Option<VerticalLogicalSize>,

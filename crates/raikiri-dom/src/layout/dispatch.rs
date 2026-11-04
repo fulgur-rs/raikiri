@@ -1865,7 +1865,7 @@ fn compute_ifc_root(
             };
             height.min(max).max(min)
         });
-    let leaf_inputs = if inputs.run_mode == RunMode::ComputeSize
+    let mut leaf_inputs = if inputs.run_mode == RunMode::ComputeSize
         && tree.context.baseline_measure_owners.last() == Some(&idx)
     {
         // The leaf algorithm must call the measure closure even when both
@@ -1877,6 +1877,23 @@ fn compute_ifc_root(
     } else {
         inputs
     };
+    // The leaf algorithm resolves numeric dimensions, but intrinsic keywords
+    // must reach the paragraph as an inline-axis measurement request. Keep
+    // the parent height and its definiteness unchanged for percentage children.
+    if vertical_paragraph
+        && leaf_inputs.sizing_mode == SizingMode::InherentSize
+        && leaf_inputs.known_dimensions.height.is_none()
+    {
+        match layout_style.size.height.expand() {
+            ExpandedDimension::MinContent => {
+                leaf_inputs.available_space.height = AvailableSpace::MinContent;
+            }
+            ExpandedDimension::MaxContent => {
+                leaf_inputs.available_space.height = AvailableSpace::MaxContent;
+            }
+            _ => {}
+        }
+    }
     let mut output = compute_leaf_layout(
         leaf_inputs,
         &LeafStyle::new(&layout_style),
