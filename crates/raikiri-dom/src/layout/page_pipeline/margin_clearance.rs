@@ -83,7 +83,7 @@ impl ClearanceFree {
                         ordinary
                             && limit.parent.is_some()
                             && limit.parent == parent
-                            && node.layout.location.y > limit.bottom + 0.001
+                            && document.pagination_local_y(id) > limit.bottom + 0.001
                     })
                 });
                 // A performed block layout can prove the hypothetical top

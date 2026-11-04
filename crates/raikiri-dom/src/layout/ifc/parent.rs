@@ -114,6 +114,7 @@ impl Document {
             return None;
         }
         let mut offset = self.nodes.layout_node(node)?.layout.location;
+        offset.y = self.pagination_local_y(node);
         let Some(coordinate) = self.oof_coordinates.get(&node) else {
             return Some(offset);
         };

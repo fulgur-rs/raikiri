@@ -245,6 +245,8 @@ pub struct Document {
     /// The style facts pagination reads, by layout key, while it runs on
     /// transposed axes (see `LayoutSession::block_axis`); empty otherwise.
     pub(crate) pagination_block_styles: Vec<crate::layout::block_axis_style::BlockAxisStyle>,
+    /// Deferred local offsets retained only during the pagination candidate walk.
+    pub(crate) normal_block_shifts: Option<Box<crate::layout::NormalBlockShifts>>,
     pub(crate) box_style_data: crate::layout::box_style_data::BoxStyleStore,
     pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
@@ -545,6 +547,7 @@ impl Document {
             inline_svg_cache: Default::default(),
             nodes: nodes.into(),
             pagination_block_styles: Vec::new(),
+            normal_block_shifts: None,
             box_style_data: Default::default(),
             layout_cache_context: Default::default(),
             resolved_image_urls: Default::default(),
@@ -2066,6 +2069,7 @@ impl Document {
             flags_dirty: _,
             stylesheets,
             pagination_block_styles: _,
+            normal_block_shifts: _,
             box_style_data: _,
             layout_cache_context: _,
             fragment_tree: _,

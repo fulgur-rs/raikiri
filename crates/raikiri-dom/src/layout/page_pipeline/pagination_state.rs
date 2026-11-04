@@ -623,6 +623,7 @@ impl PaginationState {
             materialize_y(document, item.item, top + delta);
         }
         document.nodes[candidate.node_id].layout.size.height += delta;
+        document.mark_pagination_extent_dirty(candidate.node_id);
         grow_ancestors_for_shift(
             document,
             env.cascade,

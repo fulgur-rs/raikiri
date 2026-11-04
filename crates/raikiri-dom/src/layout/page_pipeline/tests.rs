@@ -14,6 +14,16 @@ thread_local! {
     /// Moves recorded, queries for the pending move of a child, and moves
     /// read to answer them.
     pub(super) static SIBLING_SHIFT_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+    /// Child-index visits, physical sibling writes, and child-extent visits.
+    pub(super) static NORMAL_SIBLING_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+}
+
+pub(super) fn record_normal_sibling_work(kind: usize, amount: usize) {
+    NORMAL_SIBLING_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += amount;
+        work.set(counts);
+    });
 }
 
 pub(super) fn record_sibling_shift_work(kind: usize, amount: usize) {
