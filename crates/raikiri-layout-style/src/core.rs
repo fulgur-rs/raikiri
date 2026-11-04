@@ -187,7 +187,7 @@ impl LayoutStyleView<'_> {
     pub fn aspect_ratio(&self) -> Option<f32> {
         // The measured table supplies its owned size; a ratio transfer must
         // not replace that size before measurement.
-        if self.table_owns_stretch_height()
+        if self.table_owns_measured_height()
             || self.collapsing_table_height
             || self.collapsing_table_width
         {

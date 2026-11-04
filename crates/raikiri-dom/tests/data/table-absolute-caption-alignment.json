@@ -1,0 +1,642 @@
+{
+  "oracle": "Chromium 152.0.7977.82, bundled Ahem 10px/10px, body margin 0",
+  "viewport": [
+    800,
+    457
+  ],
+  "cases": [
+    {
+      "label": "both auto margins",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "center alignment",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;align-self:center\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "end alignment",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;align-self:end\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          50,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          60,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "explicit stretch with numeric height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;align-self:stretch\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          0,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          10,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "only top margin auto",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin-top:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          50,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          60,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "only bottom margin auto",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin-bottom:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          0,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          10,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "fixed margins and center",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin-top:5px;margin-bottom:7px;align-self:center\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          24,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          34,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "negative free space with auto margins",
+      "html": "<div style=\"position:relative;width:200px;height:100px;height:45px;margin-top:20px\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          17.5,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          27.5,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "caption below",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin:auto;caption-side:bottom\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          65,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          25,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "caption margins",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;margin:4px 0\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          39,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "percentage grid height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;height:50%;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          20,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          30,
+          30,
+          50
+        ]
+      ]
+    },
+    {
+      "label": "calculated grid height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;height:calc(50% - 10px);margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "minimum grid height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;min-height:60px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          15,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          25,
+          30,
+          60
+        ]
+      ]
+    },
+    {
+      "label": "maximum grid height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;max-height:30px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          30,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          40,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "ratio with explicit width",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;width:100px;aspect-ratio:1;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          100,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "ratio with auto width",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          40,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "wrapping caption at explicit width",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;width:60px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;height:auto;width:auto\">AA AA AA AA</div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          20,
+          60,
+          20
+        ],
+        [
+          "d",
+          0,
+          40,
+          60,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "wrapping caption constrained by horizontal insets",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;right:140px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;height:auto;width:auto\">AA AA AA AA</div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          20,
+          10,
+          20,
+          40
+        ],
+        [
+          "d",
+          20,
+          50,
+          20,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "fixed table in transformed containing block",
+      "html": "<div style=\"position:relative;width:200px;height:100px;transform:translate(0)\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;position:fixed;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "horizontal table in vertical containing block",
+      "html": "<div style=\"position:relative;width:200px;height:100px;writing-mode:vertical-rl\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;writing-mode:horizontal-tb;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "out of flow caption",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;position:absolute\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          30,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          30,
+          10,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "captionless control",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;margin:auto\"><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "d",
+          0,
+          30,
+          10,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "one auto inset control",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;top:auto;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          50,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          60,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "authored stretch control",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;height:stretch;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          0,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          10,
+          30,
+          90
+        ]
+      ]
+    },
+    {
+      "label": "ratio content box edges",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;box-sizing:content-box;padding:3px;border:2px solid;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          20,
+          30,
+          10
+        ],
+        [
+          "d",
+          5,
+          35,
+          40,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "ratio border box edges",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;box-sizing:border-box;padding:3px;border:2px solid;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          5,
+          40,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "ratio minimum height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;min-height:60px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          15,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          25,
+          60,
+          60
+        ]
+      ]
+    },
+    {
+      "label": "ratio maximum height",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;max-height:30px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          30,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          40,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "label": "ratio minimum width",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;min-width:60px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          60,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "ratio maximum width",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;max-width:35px;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:30px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          30,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          35,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "ratio wrapping caption",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;;margin:auto\"><div id=c style=\"display:table-caption;height:auto;width:auto;\">AA AA AA AA</div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          10,
+          40,
+          40
+        ],
+        [
+          "d",
+          0,
+          50,
+          40,
+          40
+        ]
+      ]
+    },
+    {
+      "label": "ratio caption intrinsic floor",
+      "html": "<div style=\"position:relative;width:200px;height:100px;\"><div id=t style=\"display:table;position:absolute;top:0;bottom:0;left:0;height:40px;aspect-ratio:1;;margin:auto\"><div id=c style=\"display:table-caption;height:10px;width:80px;\"></div><div style=\"display:table-row\"><div id=d style=\"display:table-cell\"><div style=\"width:10px;height:10px\"></div></div></div></div></div>",
+      "expected": [
+        [
+          "c",
+          0,
+          25,
+          80,
+          10
+        ],
+        [
+          "d",
+          0,
+          35,
+          80,
+          40
+        ]
+      ]
+    }
+  ]
+}

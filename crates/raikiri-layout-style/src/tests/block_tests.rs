@@ -207,7 +207,7 @@ fn self_baseline_set_reads_the_own_value_and_falls_back_on_the_container() {
 }
 
 #[test]
-fn measured_table_stretch_height_does_not_stretch_a_second_time() {
+fn measured_table_height_does_not_stretch_a_second_time() {
     for height in [L::Stretch, L::Px(40.0)] {
         for swapped in [false, true] {
             let mut cv = ComputedValues::initial();
@@ -238,12 +238,7 @@ fn measured_table_stretch_height_does_not_stretch_a_second_time() {
             };
             let measured = plain.with_hidden_table_height();
             assert_eq!(plain.oof_align_self(), Some(values::AlignSelf::STRETCH));
-            let expected = if height == L::Stretch {
-                values::AlignSelf::START
-            } else {
-                values::AlignSelf::STRETCH
-            };
-            assert_eq!(measured.oof_align_self(), Some(expected));
+            assert_eq!(measured.oof_align_self(), Some(values::AlignSelf::START));
             assert_eq!(measured.oof_justify_self(), Some(values::AlignSelf::CENTER));
             assert_eq!(measured.bridge_align_self(), plain.bridge_align_self());
             assert_eq!(measured.bridge_justify_self(), plain.bridge_justify_self());
@@ -278,17 +273,19 @@ fn measured_stretch_height_preserves_non_stretch_positioning() {
 }
 
 #[test]
-fn a_measured_stretch_table_cannot_infer_its_height_from_the_width() {
-    let mut cv = ComputedValues::initial();
-    cv.height = L::Stretch;
-    cv.width = L::Px(20.0);
-    cv.aspect_ratio.auto = false;
-    cv.aspect_ratio.ratio = Some((1.0, 1.0));
-    let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
-    let plain = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(plain.aspect_ratio(), Some(1.0));
-    let measured = plain.with_hidden_table_height();
-    assert_eq!(measured.aspect_ratio(), None);
-    assert_eq!(measured.stated_aspect_ratio(), Some(1.0));
-    assert_eq!(measured.size().width, plain.size().width);
+fn a_measured_table_cannot_infer_its_height_from_the_width() {
+    for height in [L::Stretch, L::Px(40.0), L::Percent(0.5)] {
+        let mut cv = ComputedValues::initial();
+        cv.height = height;
+        cv.width = L::Auto;
+        cv.aspect_ratio.auto = false;
+        cv.aspect_ratio.ratio = Some((1.0, 1.0));
+        let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+        let plain = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+        assert_eq!(plain.aspect_ratio(), Some(1.0));
+        let measured = plain.with_hidden_table_height();
+        assert_eq!(measured.aspect_ratio(), None);
+        assert_eq!(measured.stated_aspect_ratio(), Some(1.0));
+        assert_eq!(measured.size().width, plain.size().width);
+    }
 }

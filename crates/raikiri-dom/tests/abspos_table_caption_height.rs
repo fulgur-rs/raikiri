@@ -101,10 +101,16 @@ fn captioned_table(style: &str, caption: &str) -> String {
 }
 
 #[test]
-fn stretch_distributes_the_resolved_height_to_rows_and_cells() {
-    let oracle: serde_json::Value =
-        serde_json::from_str(include_str!("data/table-stretch-height.json"))
-            .expect("Chromium measurements");
+fn opposing_vertical_insets_center_the_caption_and_grid_as_one_wrapper() {
+    check_boxes(&[(
+        "caption included in vertical auto margins",
+        &captioned_table("top:0;bottom:0;left:0;height:40px;margin:auto", ""),
+        &[("c", 0.0, 25.0, 30.0, 10.0), ("d", 0.0, 35.0, 30.0, 40.0)],
+    )]);
+}
+
+fn check_oracle(source: &str) {
+    let oracle: serde_json::Value = serde_json::from_str(source).expect("Chromium measurements");
     let source = oracle["cases"].as_array().expect("cases");
     let expected: Vec<Vec<_>> = source
         .iter()
@@ -139,6 +145,16 @@ fn stretch_distributes_the_resolved_height_to_rows_and_cells() {
         })
         .collect();
     check_boxes(&cases);
+}
+
+#[test]
+fn stretch_distributes_the_resolved_height_to_rows_and_cells() {
+    check_oracle(include_str!("data/table-stretch-height.json"));
+}
+
+#[test]
+fn opposing_insets_align_the_measured_caption_wrapper() {
+    check_oracle(include_str!("data/table-absolute-caption-alignment.json"));
 }
 
 #[test]
