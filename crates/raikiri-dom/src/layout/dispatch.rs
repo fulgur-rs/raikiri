@@ -1549,6 +1549,7 @@ mod tests;
 mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
+pub(super) mod flex_cross_margins;
 pub(crate) mod grid_baseline;
 mod grid_oof;
 mod inline_baseline;
