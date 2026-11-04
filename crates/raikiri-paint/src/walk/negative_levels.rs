@@ -283,14 +283,11 @@ impl<S: PaintScene> PaintWalk<'_, S> {
     }
 
     pub(super) fn end_negative_context(&mut self, id: usize) {
-        if self
+        let mut context = self
             .negative_contexts
-            .last()
-            .is_none_or(|context| context.id != id)
-        {
-            return;
-        }
-        let mut context = self.negative_contexts.pop().unwrap();
+            .pop()
+            .expect("an open negative context");
+        assert_eq!(context.id, id);
         debug_assert_eq!(self.scene.scene.layer_depth(), context.clip_depth);
         let normal = self.scene.scene.end_capture();
         let normal_trace = context

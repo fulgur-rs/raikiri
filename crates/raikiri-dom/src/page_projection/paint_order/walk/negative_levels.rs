@@ -9,20 +9,11 @@ pub(super) struct Context<'a> {
     boxes: Vec<((i32, usize), Vec<PaintEvent<'a>>)>,
 }
 
-pub(super) struct BoxCapture<'a> {
+pub(super) struct BoxCapture {
     owner: usize,
     key: (i32, usize),
     start: usize,
-    prefix: Vec<PaintEvent<'a>>,
-}
-
-fn close(event: PaintEvent<'_>) -> PaintEvent<'_> {
-    match event {
-        PaintEvent::PushClip(..) => PaintEvent::PopClip,
-        PaintEvent::PushTransform(_) => PaintEvent::PopTransform,
-        PaintEvent::PushOpacity(_) => PaintEvent::PopOpacity,
-        _ => unreachable!("only open scopes are kept"),
-    }
+    prefix: Vec<Scope>,
 }
 
 impl<'a> PaintWalk<'a, '_> {
@@ -60,9 +51,9 @@ impl<'a> PaintWalk<'a, '_> {
 
     pub(super) fn end_negative_box(&mut self) {
         let captured = self.negative_boxes.pop().expect("a negative box capture");
-        let mut events = captured.prefix.clone();
+        let mut events: Vec<_> = captured.prefix.iter().map(|scope| scope.open()).collect();
         events.extend(self.events.split_off(captured.start));
-        events.extend(captured.prefix.into_iter().rev().map(close));
+        events.extend(captured.prefix.into_iter().rev().map(Scope::close));
         let context = self
             .negative_contexts
             .last_mut()
@@ -95,14 +86,11 @@ impl<'a> PaintWalk<'a, '_> {
     }
 
     pub(super) fn end_negative_context(&mut self, id: usize) {
-        if self
+        let mut context = self
             .negative_contexts
-            .last()
-            .is_none_or(|context| context.id != id)
-        {
-            return;
-        }
-        let mut context = self.negative_contexts.pop().unwrap();
+            .pop()
+            .expect("an open negative context");
+        assert_eq!(context.id, id);
         let normal = self.events.split_off(context.start);
         context.boxes.sort_by_key(|(key, _)| *key);
         for (_, events) in context.boxes {

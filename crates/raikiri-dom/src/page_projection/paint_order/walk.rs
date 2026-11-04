@@ -40,8 +40,33 @@ pub(super) struct PaintWalk<'a, 'l> {
     spaces: Vec<PaintTransform>,
     negative_levels: paint_rules::NegativeLevels,
     negative_contexts: Vec<negative_levels::Context<'a>>,
-    negative_boxes: Vec<negative_levels::BoxCapture<'a>>,
-    scopes: Vec<PaintEvent<'a>>,
+    negative_boxes: Vec<negative_levels::BoxCapture>,
+    scopes: Vec<Scope>,
+}
+
+#[derive(Clone, Copy)]
+enum Scope {
+    Clip(PaintClip, ClipKind),
+    Transform(PaintTransform),
+    Opacity(f32),
+}
+
+impl Scope {
+    fn open<'a>(self) -> PaintEvent<'a> {
+        match self {
+            Self::Clip(clip, kind) => PaintEvent::PushClip(clip, kind),
+            Self::Transform(transform) => PaintEvent::PushTransform(transform),
+            Self::Opacity(alpha) => PaintEvent::PushOpacity(alpha),
+        }
+    }
+
+    fn close<'a>(self) -> PaintEvent<'a> {
+        match self {
+            Self::Clip(..) => PaintEvent::PopClip,
+            Self::Transform(_) => PaintEvent::PopTransform,
+            Self::Opacity(_) => PaintEvent::PopOpacity,
+        }
+    }
 }
 
 impl<'a, 'l> PaintWalk<'a, 'l> {
@@ -109,7 +134,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             }
             Frame::PushClip(owner) => {
                 if let Some(entry) = self.items.overflow_clips.get(&NodeId::new(owner as u64)) {
-                    self.push_scope(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+                    self.push_scope(Scope::Clip(entry.clip, ClipKind::Overflow));
                 }
             }
             Frame::Content(node_id) => self.content(node_id),
@@ -154,27 +179,27 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// Open `transform` around the events listed until its frame pops.
     fn push_transform(&mut self, transform: PaintTransform) {
         let space = self.space();
-        self.push_scope(PaintEvent::PushTransform(transform));
+        self.push_scope(Scope::Transform(transform));
         self.stack.push(Frame::PopTransform);
         self.spaces.push(space * transform);
     }
 
     /// Open an opacity group around the events listed until its frame pops.
     fn push_opacity(&mut self, alpha: f32) {
-        self.push_scope(PaintEvent::PushOpacity(alpha));
+        self.push_scope(Scope::Opacity(alpha));
         self.stack.push(Frame::PopOpacity);
     }
 
-    fn push_scope(&mut self, event: PaintEvent<'a>) {
+    fn push_scope(&mut self, scope: Scope) {
         if !self.negative_levels.is_empty() {
-            self.scopes.push(event);
+            self.scopes.push(scope);
         }
-        self.events.push(event);
+        self.events.push(scope.open());
     }
 
     fn pop_scope(&mut self, event: PaintEvent<'a>) {
-        self.scopes.pop();
-        self.events.push(event);
+        self.events
+            .push(self.scopes.pop().map_or(event, Scope::close));
     }
 
     /// List the inline content of a paragraph between the frames around it.
@@ -611,7 +636,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             } else {
                 Frame::PopClip
             };
-            self.push_scope(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+            self.push_scope(Scope::Clip(entry.clip, ClipKind::Overflow));
             self.stack.push(close);
         }
         self.enter_subtree(node_id, node, cv, clip.is_some());

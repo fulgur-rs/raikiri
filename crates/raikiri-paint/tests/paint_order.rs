@@ -2231,6 +2231,13 @@ fn negative_items_inside_inline_stacking_contexts_paint_before_their_text() {
     // The native debug trace already lists this text after atomic boxes.
     // Check the public order and the actual ink independently.
     let result = lay_out(body, "");
+    let native = trace(&result.pages().next().unwrap());
+    let item_id = by_id(&result, "item");
+    assert!(
+        native
+            .iter()
+            .any(|event| matches!(event, PaintTraceEvent::Box(id) if *id == item_id))
+    );
     let events = api_steps(&result.pages().next().unwrap());
     let item = events
         .iter()
@@ -2251,6 +2258,56 @@ fn negative_items_inside_inline_stacking_contexts_paint_before_their_text() {
         pixels_of(&render_first_page(&result), [0, 255, 0]),
         expected_green
     );
+}
+
+#[test]
+fn negative_items_do_not_change_a_separate_context_with_only_positioned_negatives() {
+    let body = "<div style='display:flex;height:20px'><div id=item style='z-index:-1;width:30px;height:20px;background:red'></div></div>\
+        <div style='opacity:0.5;position:relative;height:20px'>\
+        <div id=positioned style='position:absolute;z-index:-2;width:30px;height:20px;background:lime'></div>\
+        <div style='width:30px;height:20px;background:gray'></div></div>";
+    same_order(body);
+}
+
+#[test]
+fn negative_items_keep_the_relative_auto_ancestors_coordinate_space() {
+    let body = "<div style='position:relative;left:7px;top:3px;overflow:hidden;width:50px;height:20px'>\
+        <div style='display:flex;height:20px;background:lime'>\
+        <div style='z-index:-1;width:50px;height:20px;background:red'></div></div></div>";
+    let result = same_order(body);
+    let reference = lay_out(
+        &body.replace("background:red", "background:transparent"),
+        "",
+    );
+    assert_eq!(render_first_page(&result), render_first_page(&reference));
+}
+
+#[test]
+fn tracing_a_paragraph_split_across_columns_keeps_fragment_scopes() {
+    let result = lay_out(
+        "<div style='columns:3;column-fill:auto;height:80px;orphans:3;widows:3'>\
+        <div>a<br>b<br>c<br></div><div><div>d<br>e<br>f<br>g<br>h<br>i<br>j<br></div></div></div>",
+        "body { font:16px/1 Ahem }",
+    );
+    let events = trace(&result.pages().next().unwrap());
+    let mut depth = 0;
+    let mut clips = 0;
+    for event in events {
+        match event {
+            PaintTraceEvent::PushFragmentainerClip(_) => {
+                depth += 1;
+                clips += 1;
+            }
+            PaintTraceEvent::PushOverflowClip(..) => depth += 1,
+            PaintTraceEvent::PopClip => {
+                assert!(depth > 0);
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    assert!(clips >= 2);
+    assert_eq!(depth, 0);
 }
 
 #[test]
