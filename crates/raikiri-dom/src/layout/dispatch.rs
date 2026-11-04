@@ -172,7 +172,7 @@ pub(crate) fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
         .aspect_ratio
         .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
         .or_else(|| {
-            if node.is_inline_svg_root()
+            if !node.size_gives_ratio()
                 || !intrinsic.width.is_finite()
                 || !intrinsic.height.is_finite()
                 || intrinsic.width <= 0.0

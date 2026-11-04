@@ -27,7 +27,7 @@ use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleQuirksMode};
 
 use super::html_quirks::{
-    SubstantialBoundsCache, push_img_dimension_hints, push_margin_collapsing_quirk_declarations,
+    SubstantialBoundsCache, push_dimension_hints, push_margin_collapsing_quirk_declarations,
 };
 use super::limits::{CandidateBudget, CascadeLimits, Counter, WalkCounts};
 use super::list_hints::push_list_attribute_hints;
@@ -53,7 +53,7 @@ pub(crate) const INLINE_SPECIFICITY: Specificity = 1 << 30;
 pub(crate) const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 
 /// Specificity of HTML presentational hints (`<img width>` / `<img height>`,
-/// [`push_img_dimension_hints`]). HTML LS §15.2 "The CSS user agent style
+/// [`push_dimension_hints`]). HTML LS §15.2 "The CSS user agent style
 /// sheet and presentational hints"
 /// (<https://html.spec.whatwg.org/multipage/rendering.html#presentational-hints>)
 /// calls these "author-level **zero-specificity** presentational hints".
@@ -61,7 +61,7 @@ pub(crate) const INLINE_SOURCE_ORDER: u32 = u32::MAX;
 /// <https://drafts.csswg.org/css-cascade-5/#preshint> defines origin choices
 /// but does not itself use "specificity"; do not conflate the two sources.
 /// For the origin choice, see the "Cascade origin" section of the
-/// [`push_img_dimension_hints`] docs.
+/// [`push_dimension_hints`] docs.
 pub(crate) const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
 /// Source order of the same hint. `0` can numerically tie with the first
 /// actual stylesheet rule ([`crate::ruletree::RuleTree::add_stylesheet`]
@@ -69,7 +69,7 @@ pub(crate) const PRESENTATIONAL_HINT_SPECIFICITY: Specificity = 0;
 /// Since the dedicated `cascade_rank` tier was added for
 /// [`Origin::AuthorPresentationalHint`], that tie cannot affect the cascade:
 /// origin rank is compared before specificity and source_order. See the
-/// "Cascade origin" section of the [`push_img_dimension_hints`] docs.
+/// "Cascade origin" section of the [`push_dimension_hints`] docs.
 /// The value `0` was chosen for simplicity in the same numeric range as
 /// stylesheet source_order, not as a value guaranteed to be collision-free.
 pub(crate) const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
@@ -351,7 +351,7 @@ pub(crate) struct RankedDecl {
 /// terms "UA-origin", "author-origin", or "author presentational hint origin",
 /// and thus does not explicitly select one of those tiers. Assigning `<img>`
 /// width/height hints to the independent [`Origin::AuthorPresentationalHint`]
-/// tier (see [`push_img_dimension_hints`]) is this crate's interpretation of
+/// tier (see [`push_dimension_hints`]) is this crate's interpretation of
 /// "author-level" and the quoted spec text: a defensible judgment call,
 /// **not a placement directly specified by the standard**.
 ///
@@ -402,7 +402,7 @@ pub(crate) struct RankedDecl {
 /// are collected as non-important; the total rank function maps either flag
 /// to the same animation band.
 ///
-/// [`push_img_dimension_hints`] always pushes `important = false`, so its
+/// [`push_dimension_hints`] always pushes `important = false`, so its
 /// `(AuthorPresentationalHint, true)` arm is currently unreachable. The two
 /// User arms (`(User, false)` / `(User, true)`) originally had no production
 /// caller. Consumer-provided `extra_stylesheets` now route to [`Origin::User`],
@@ -573,7 +573,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         // historical/document-order reasons, but it is no longer a
         // *correctness* requirement: since the hint has its own
         // `cascade_rank` tier (strictly between `UserAgent` and
-        // `Author`, see `push_img_dimension_hints` doc's "Cascade
+        // `Author`, see `push_dimension_hints` doc's "Cascade
         // origin" section), rank alone decides against any real
         // Author-origin declaration regardless of specificity,
         // source_order, or push order — no tie can occur (that was
@@ -587,7 +587,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         // pin), but
         // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
         // continues to check the outcome this comment claims.
-        push_img_dimension_hints(elem, &mut sink)?;
+        push_dimension_hints(elem, &mut sink)?;
         push_list_attribute_hints(elem, &mut sink)?;
         push_table_attribute_hints(
             dom,

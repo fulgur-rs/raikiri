@@ -153,10 +153,12 @@ pub(crate) fn resolve_inline_svg_intrinsic_sizes(document: &mut Document) {
             let mut intrinsic = raikiri_traits::IntrinsicBox::new(default_width, default_height);
             intrinsic.aspect_ratio = ratio;
             Some(intrinsic)
-        } else if element.tag_name.as_str() != "img" {
-            None
-        } else {
+        } else if element.tag_name.as_str() == "img" || sets_natural_size_itself(&element.tag_name)
+        {
+            // The resolver sizes an image, and a later pass the others.
             element.image_intrinsic_size
+        } else {
+            None
         };
         if element.image_intrinsic_size != next_size {
             element.image_intrinsic_size = next_size;
@@ -297,6 +299,95 @@ pub(crate) fn resolve_canvas_intrinsic_sizes(document: &mut Document) {
     if changed {
         document.invalidate_layout_cache();
     }
+}
+
+/// Whether a pass of this module that runs after the inline SVG one gives the
+/// elements named `tag` their natural size, which that pass must leave alone.
+fn sets_natural_size_itself(tag: &str) -> bool {
+    matches!(tag, "canvas" | "iframe" | "video" | "embed")
+}
+
+/// Populate the natural size of embedded content that has no natural
+/// dimensions of its own: an `<iframe>`, a `<video>` and an `<embed>` are
+/// replaced elements that take the 300x150 default object size (CSS 2.1
+/// §10.3.2, CSS Images 3 §4.3). None of them has a natural ratio, so a stated
+/// height does not give them a width.
+///
+/// An `<img>` with no source and no alternative text is a replaced element
+/// with no content: a 0x0 natural size. It is a box of zero width wherever it
+/// goes, where a block-level image without a size would otherwise fill its
+/// parent. With alternative text it shows that text instead, and an image that
+/// names a source, even an empty one, is left to the resolver.
+pub(crate) fn resolve_default_object_sizes(document: &mut Document) {
+    let mut sizes = Vec::new();
+    for (id, node) in document.nodes.iter().enumerate() {
+        if !node.is_in_document() {
+            continue;
+        }
+        let NodeData::Element(element) = &node.data else {
+            continue;
+        };
+        let tag = element.tag_name.as_str();
+        let next = match tag {
+            "iframe" | "video" | "embed" => {
+                let (width, height) = DEFAULT_OBJECT_SIZE;
+                Some(raikiri_traits::IntrinsicBox::new(width, height))
+            }
+            // Without a source the resolver has nothing to size, so this pass
+            // decides, unless a size was stated from outside: nothing to show
+            // is no size, and text to show is left to flow.
+            "img"
+                if !names_a_source(document, node, element)
+                    && element
+                        .image_intrinsic_size
+                        .is_none_or(|size| size == raikiri_traits::IntrinsicBox::new(0.0, 0.0)) =>
+            {
+                (!has_alt_text(element)).then(|| raikiri_traits::IntrinsicBox::new(0.0, 0.0))
+            }
+            _ => continue,
+        };
+        let is_html = element
+            .namespace
+            .as_deref()
+            .is_none_or(|ns| ns == "http://www.w3.org/1999/xhtml");
+        if is_html && element.image_intrinsic_size != next {
+            sizes.push((id, next));
+        }
+    }
+    if sizes.is_empty() {
+        return;
+    }
+    for (id, size) in sizes {
+        if let NodeData::Element(element) = &mut document.nodes[id].data {
+            element.image_intrinsic_size = size;
+        }
+    }
+    document.invalidate_layout_cache();
+}
+
+/// Whether an `<img>` names a source to load: a `src`, even an empty one, a
+/// `srcset` with something in it, or a `<picture>` to take one from, which this
+/// pass does not read.
+fn names_a_source(
+    document: &Document,
+    node: &crate::node::Node,
+    element: &crate::node::ElementData,
+) -> bool {
+    element.attribute("src").is_some()
+        || element
+            .attribute("srcset")
+            .is_some_and(|set| !set.trim().is_empty())
+        || node
+            .parent
+            .and_then(|parent| document.nodes[parent].tag_name())
+            .is_some_and(|tag| tag == "picture")
+}
+
+/// Whether an `<img>` has alternative text, which it shows in place of an image.
+fn has_alt_text(element: &crate::node::ElementData) -> bool {
+    element
+        .attribute("alt")
+        .is_some_and(|alt| !alt.trim().is_empty())
 }
 
 #[cfg(test)]

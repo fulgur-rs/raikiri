@@ -127,7 +127,7 @@ fn img_width_attribute_invalid_or_negative_value_produces_no_hint() {
     // — unlike the real `ElementRef::attr()` (`raikiri-dom::dom_impl`),
     // which returns `Some("")` for a present-but-empty attribute (see
     // `StyleElement::attr`'s trait doc). Against `TestDoc`,
-    // `push_img_dimension_hints` never even calls
+    // `push_dimension_hints` never even calls
     // `parse_html_dimension_value` for `width=""`, so the `Auto` result
     // above is `TestDoc`-only "attribute absent" behavior here, not
     // (only) a parse-failure outcome. Against the real DOM the same
@@ -144,8 +144,32 @@ fn img_width_attribute_invalid_or_negative_value_produces_no_hint() {
 }
 
 #[test]
+fn embedded_content_width_and_height_attributes_promoted_to_computed_style() {
+    // The mapping also covers the other embedded content that HTML sizes by
+    // these attributes: `iframe`, `embed` and `video`.
+    let mut doc = TestDoc::new();
+    let frames: Vec<_> = ["iframe", "embed", "VIDEO"]
+        .into_iter()
+        .map(|tag| doc.push_element_with_attrs(0, tag, None, &[("width", "60"), ("height", "30")]))
+        .collect();
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    for frame in frames {
+        assert_eq!(
+            r.computed[frame].width,
+            ComputedLengthPercentageOrAuto::Px(60.0)
+        );
+        assert_eq!(
+            r.computed[frame].height,
+            ComputedLengthPercentageOrAuto::Px(30.0)
+        );
+    }
+}
+
+#[test]
 fn non_img_element_width_height_attributes_not_promoted() {
-    // Scope the mapping to `img` only; the same attributes do not affect `div`.
+    // Scope the mapping to the embedded content HTML sizes by these
+    // attributes; the same attributes do not affect `div`.
     let mut doc = TestDoc::new();
     let div = doc.push_element_with_attrs(0, "div", None, &[("width", "100"), ("height", "50")]);
     let tree = build_rule_tree(&doc);
@@ -158,7 +182,7 @@ fn non_img_element_width_height_attributes_not_promoted() {
 fn img_width_attribute_overridable_by_inline_author_style() {
     // Cascade-origin check: the hint is `Origin::AuthorPresentationalHint`,
     // while inline style is `Origin::Author` (see the "Cascade origin"
-    // section of `push_img_dimension_hints`). Their different origin ranks
+    // section of `push_dimension_hints`). Their different origin ranks
     // in `cascade_rank` alone make inline style win regardless of its
     // specificity (`INLINE_SPECIFICITY` = `1 << 30`).
     let mut doc = TestDoc::new();
@@ -188,7 +212,7 @@ fn img_width_attribute_overridable_by_inline_author_style() {
 
 #[test]
 fn img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity() {
-    // Origin-rank check (`push_img_dimension_hints`
+    // Origin-rank check (`push_dimension_hints`
     // doc's "Cascade origin" section): the hint is
     // `Origin::AuthorPresentationalHint` (rank below `Origin::Author`
     // per `cascade_rank`), while this `* { width: 30px }` rule is a
@@ -219,7 +243,7 @@ fn img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificit
 
 #[test]
 fn img_tag_name_match_is_ascii_case_insensitive() {
-    // Check `push_img_dimension_hints`'s own
+    // Check `push_dimension_hints`'s own
     // `elem.tag_name().eq_ignore_ascii_case` matching. It independently
     // duplicates the permissive `Component::LocalName` check in
     // `compound_matches` (formerly `match_by_tag`, then split from
@@ -240,7 +264,7 @@ fn img_tag_name_match_is_ascii_case_insensitive() {
 #[test]
 fn foreign_namespace_img_local_name_does_not_get_the_hint() {
     // The mapping is
-    // HTML-namespace-specific (`push_img_dimension_hints` doc's
+    // HTML-namespace-specific (`push_dimension_hints` doc's
     // namespace-gate comment). A foreign-namespace element that merely
     // shares the local name "img" must not pick up the presentational
     // hint, even though `tag_name()` alone would match.
@@ -265,7 +289,7 @@ fn foreign_namespace_img_local_name_does_not_get_the_hint() {
 
 #[test]
 fn test_dom_attr_style_matches_inline_style_source_contract() {
-    // `push_img_dimension_hints` calls `TestElementRef::attr()` through
+    // `push_dimension_hints` calls `TestElementRef::attr()` through
     // `elem.attr("width")` / `attr("height")`. Its override in
     // `crate::test_dom` must preserve the `StyleElement::attr` trait
     // contract: "Default handles `style` by delegating to
@@ -740,7 +764,7 @@ fn margin_collapsing_quirk_does_not_apply_to_elements_outside_default_margin_lis
 
 #[test]
 fn margin_collapsing_quirk_foreign_namespace_element_is_not_gated() {
-    // Same shape as `push_img_dimension_hints`'s own namespace-gate
+    // Same shape as `push_dimension_hints`'s own namespace-gate
     // regression (`foreign_namespace_img_local_name_does_not_get_the_hint`
     // above) — a foreign-namespace element that merely shares the
     // local name "p" must not pick up the quirks zeroing, even though
