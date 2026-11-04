@@ -83,6 +83,89 @@ pub(super) fn with_flex_intrinsic_probe<R>(
     }
 }
 
+/// Run `layout`, which measures the min-content width of the flex container
+/// `node_id`, with the width a replaced item states as a percentage taken as
+/// zero.
+///
+/// A replaced item with a percentage `width` or `max-width` is compressible: it
+/// contributes nothing to the min-content width of its container, whatever
+/// length a `calc()` adds to the percentage, and the percentage then resolves
+/// against the width the container ends up with (CSS Sizing 3 section 5.2.2).
+/// Taffy resolves the percentage against the width of the container, which the
+/// measure has not got, so it reads such a width as `auto` and the item
+/// contributes its natural size. A zero width in its place is the contribution
+/// of the item, in a row container as its main size and in a column container
+/// as its cross size.
+///
+/// Only the measure sees the zero. The layout at the width the measure found
+/// reads the percentage, and the content-based minimum size of the item there
+/// is the natural one capped by the width it states.
+///
+/// spec: <https://www.w3.org/TR/css-sizing-3/#min-percentage-contribution>
+pub(super) fn with_compressible_item_widths<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    tree.sync_layout_cache_mutations();
+    let has_percentage = |size: Dimension| match size.expand() {
+        ExpandedDimension::Percent(_) => true,
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
+        _ => false,
+    };
+    let row = tree
+        .physical_style(usize::from(node_id))
+        .flex_direction_is_row();
+    let items = tree
+        .child_ids(node_id)
+        .filter_map(|child| {
+            let idx = usize::from(child);
+            if tree.nodes[idx].layout_position() == Position::Absolute {
+                return None;
+            }
+            let style = tree.physical_style(idx);
+            // An inline SVG root with a ratio is not flagged as replaced for the
+            // layout of its box, but its percentage widths compress all the same.
+            if style.box_generation_mode() == BoxGenerationMode::None
+                || !(style.is_compressible_replaced() || tree.nodes[idx].is_inline_svg_root())
+            {
+                return None;
+            }
+            let width = has_percentage(style.size().width);
+            let max_width = has_percentage(style.max_size().width.into());
+            // A row container that wraps its items measures them by their flex
+            // base sizes, which an `auto` one takes from the width of the item,
+            // or from its ratio and its height, so it stands for nothing here
+            // too. In a column container the base size is a height.
+            let basis = row && (width || max_width) && style.flex_basis().is_auto();
+            let zeroed = [
+                (P::Width, width),
+                (P::MaxWidth, max_width),
+                (P::FlexBasis, basis),
+            ]
+            .into_iter()
+            .filter(|&(_, zero)| zero)
+            .map(|(property, _)| {
+                O::length(property, L::Px(0.0), true).expect("physical compressible width")
+            })
+            .collect::<Vec<_>>();
+            (!zeroed.is_empty()).then_some((idx, zeroed))
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return layout(tree);
+    }
+    with_saved_probe_caches(tree, items.len(), |tree, saved| {
+        for (idx, entries) in items {
+            let key = tree.nodes.box_key(idx).expect("compressible item box key");
+            let cache = tree.take_layout_cache(idx);
+            saved.push((idx, cache));
+            tree.push_local_overrides(entries.into_iter().map(|entry| (key, entry)).collect());
+        }
+        layout(tree)
+    })
+}
+
 /// Resolve item height percentages and column flex bases against the height the container's ratio
 /// supplies, before its content can raise that height. Keep those values for
 /// the content probe and final layout so growth does not resolve them twice.
