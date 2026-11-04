@@ -180,3 +180,23 @@ fn an_out_of_flow_box_does_not_count_toward_the_column() {
         assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255], "{display}");
     }
 }
+
+#[test]
+fn a_fitting_grid_that_clips_its_overflow_keeps_its_own_shadow() {
+    // Its tall child is cut by the grid's own overflow clip, so the grid ends
+    // in the column and its shadow below the column shows. A table grows to
+    // hold its content, so only the grid stays small.
+    let content = "<div style='height:100px'></div>";
+    let pixels = raster_with_content("grid;overflow:hidden", 40, "", content);
+    assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255]);
+}
+
+#[test]
+fn a_nested_multicol_container_keeps_its_fitting_parents_shadow() {
+    let content = "<div style='columns:2;column-gap:0;column-fill:auto;height:20px'>\
+         <div style='height:30px'></div><div style='height:30px'></div></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 40, "", content);
+        assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255], "{display}");
+    }
+}

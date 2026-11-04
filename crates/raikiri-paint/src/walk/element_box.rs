@@ -567,7 +567,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             let page = page_bounds_in_scene(scene.transform, &self.page_box);
             let fits = clip_height > 0.0
                 && layout.size.height <= clip_height
-                && in_flow_boxes_end(self.document, self.cascade, node) <= clip_height;
+                && in_flow_boxes_end_within(
+                    self.document,
+                    self.cascade,
+                    node,
+                    &self.cascade.computed[node_id],
+                    clip_height,
+                );
             let bottom = if fits {
                 page.y1
             } else {
@@ -880,12 +886,29 @@ fn generated_content_advance(
         .fold(0.0, f32::max)
 }
 
-/// How far below the top of the box of `node` its in-flow descendant boxes
-/// reach: the farthest bottom edge among the boxes that stack in its flow, 0
-/// when it has none. A box that clips its overflow ends the search at its own
-/// border box. Boxes that are out of flow are left out.
-fn in_flow_boxes_end(document: &Document, cascade: &CascadeResult, node: &Node) -> f32 {
-    let mut end = 0.0_f32;
+/// Whether `cv` places its box in the flow of its parent, rather than out of
+/// it as an absolutely or fixed positioned box.
+fn stacks_in_flow(cv: &ComputedValues) -> bool {
+    matches!(
+        cv.position,
+        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+    )
+}
+
+/// Whether the in-flow descendant boxes of `node`, whose computed values are
+/// `cv`, all end within `limit` below its top. A box that clips its overflow
+/// ends the search at its own border box, and so does `node` when it clips.
+/// Boxes that are out of flow are left out.
+fn in_flow_boxes_end_within(
+    document: &Document,
+    cascade: &CascadeResult,
+    node: &Node,
+    cv: &ComputedValues,
+    limit: f32,
+) -> bool {
+    if raikiri_dom::paint_rules::clips_overflow(cv) {
+        return true;
+    }
     let mut pending = vec![(node, 0.0_f32)];
     while let Some((parent, parent_y)) = pending.pop() {
         let boxes = parent
@@ -897,22 +920,18 @@ fn in_flow_boxes_end(document: &Document, cascade: &CascadeResult, node: &Node) 
                     cascade.computed.get(child_id)?,
                 ))
             })
-            .filter(|(child, cv)| {
-                child.kind() == NodeKind::Element
-                    && matches!(
-                        cv.position,
-                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                    )
-            });
+            .filter(|(child, cv)| child.kind() == NodeKind::Element && stacks_in_flow(cv));
         for (child, cv) in boxes {
             let child_y = parent_y + child.layout().location.y;
-            end = end.max(child_y + child.layout().size.height);
+            if child_y + child.layout().size.height > limit {
+                return false;
+            }
             if !raikiri_dom::paint_rules::clips_overflow(cv) {
                 pending.push((child, child_y));
             }
         }
     }
-    end
+    true
 }
 
 /// The farthest bottom edge, among the in-flow children of `node` laid out
@@ -929,10 +948,7 @@ fn in_flow_child_end(
         .filter_map(|child_id| {
             let child = document.get_node(*child_id)?;
             let child_cv = cascade.computed.get(*child_id)?;
-            if !matches!(
-                child_cv.position,
-                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-            ) {
+            if !stacks_in_flow(child_cv) {
                 return None;
             }
             let child_y = abs_y + child.layout().location.y;
