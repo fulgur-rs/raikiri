@@ -201,11 +201,12 @@ fn nested_and_wrapped_items_keep_one_marker_at_each_list_gutter() {
         .filter(|run| run.is_standalone_marker() && !run.text.trim().is_empty())
         .map(|run| (run.text.trim_end().to_owned(), run.origin.0))
         .collect();
-    // The producer formats disc as "• ", with a 20px Ahem advance. This
-    // font-box contract is separate from Chromium's vector-disc artwork.
+    // The producer formats disc as "• ". Chromium starts an outside disc
+    // `ascent * 2 / 3 + 7` before the item (Ahem at 10px: 8 * 2 / 3 + 7 = 12),
+    // not a text advance (20px) before it.
     assert_eq!(
         markers,
-        vec![("1.".into(), 20.0), ("•".into(), 80.0), ("2.".into(), 20.0)]
+        vec![("1.".into(), 20.0), ("•".into(), 88.0), ("2.".into(), 20.0)]
     );
 }
 
