@@ -9,6 +9,12 @@ enum Event {
     Lines(usize, Range<usize>),
 }
 
+struct ContentChange {
+    end_delta: f32,
+    float_delta: f32,
+    position_delta: f32,
+}
+
 pub(super) struct HeightFollowers(HashMap<usize, Vec<usize>>);
 
 impl HeightFollowers {
@@ -297,8 +303,11 @@ fn keep_run(
             env.cascade,
             owner,
             root,
-            growth,
-            float_delta,
+            ContentChange {
+                end_delta: growth,
+                float_delta,
+                position_delta: 0.0,
+            },
             followers,
         );
     }
@@ -353,7 +362,18 @@ fn keep_whole_box(
         reach.include_checked(env.control, target, false)?;
         let shift = env.page_origins.origin(target) - top;
         document.translate_pagination_y(node, shift);
-        grow_inside(document, env.cascade, owner, node, shift, 0.0, followers);
+        grow_inside(
+            document,
+            env.cascade,
+            owner,
+            node,
+            ContentChange {
+                end_delta: shift,
+                float_delta: 0.0,
+                position_delta: shift,
+            },
+            followers,
+        );
     }
     Ok(())
 }
@@ -363,12 +383,13 @@ fn grow_inside(
     cascade: &CascadeResult,
     owner: usize,
     mut child: usize,
-    growth: f32,
-    mut float_delta: f32,
+    change: ContentChange,
     followers: &HeightFollowers,
 ) {
-    let mut flow_delta = growth;
-    let mut size_delta = growth;
+    let mut flow_delta = change.end_delta;
+    let mut size_delta = change.end_delta;
+    let mut float_delta = change.float_delta;
+    let mut position_delta = change.position_delta;
     let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
     while child != owner
         && let Some(parent) = walk.current()
@@ -400,7 +421,7 @@ fn grow_inside(
             document,
             parent,
             child,
-            top,
+            top - position_delta,
             top + child_height - size_delta,
             flow_delta,
             Some(&allowed_oof),
@@ -437,6 +458,8 @@ fn grow_inside(
         };
         size_delta = grown.height - height;
         flow_delta = grown.flow_heights.1 - grown.flow_heights.0;
+        // Only the initial whole box moved; its ancestors grew in place.
+        position_delta = 0.0;
         child = parent;
         if flow_delta.abs() <= 0.001 && size_delta.abs() <= 0.001 && float_delta.abs() <= 0.001 {
             break;

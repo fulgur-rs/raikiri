@@ -354,6 +354,26 @@ fn a_fixed_clip_hides_later_breaks_while_an_auto_clip_grows_with_them() {
 }
 
 #[test]
+fn a_whole_box_move_keeps_a_negative_margin_follower_in_source_order() {
+    let body = positioned(
+        "top:40px",
+        "A<div style='contain:size;height:60px'>B</div><div style='margin-top:-50px'>C</div>D",
+    );
+    for (text, page, top) in [
+        ("A", 0, 45.0),
+        ("B", 1, 5.0),
+        ("C", 1, 15.0),
+        ("D", 1, 45.0),
+    ] {
+        assert_eq!(
+            lines_of(&body, |found| found == text),
+            [(page, top)],
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn a_line_that_does_not_fit_the_page_moves_its_box_to_the_next_page() {
     // The line is 30px tall, so it fits the first page from 70px down. From
     // 75px it crosses the page end, and the box starts the next page, wherever
