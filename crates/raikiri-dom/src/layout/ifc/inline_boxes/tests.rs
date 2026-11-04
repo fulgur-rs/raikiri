@@ -51,6 +51,7 @@ fn pieces_of(lines: &[shodo::Line], width: f32, rtl: bool) -> Vec<InlineBoxPiece
         lines,
         WritingMode::HorizontalTb,
         PhysicalSize { width, height: 0.0 },
+        &super::super::ruby::RubyContainers::default(),
         |_| None,
     )
 }
@@ -151,6 +152,7 @@ fn vertical_inline_pieces_map_physical_edges_to_their_logical_axes() {
                 width: 100.0,
                 height: 40.0,
             },
+            &root.ruby_containers,
             |_| None,
         )[0];
         assert_eq!(
@@ -185,6 +187,7 @@ fn an_rtl_inline_span_does_not_reverse_vertical_block_progression() {
             width: 100.0,
             height: 40.0,
         },
+        &root.ruby_containers,
         |_| None,
     )[0];
     assert_eq!(piece.border_box.x, 93.0);
@@ -527,3 +530,5 @@ fn inline_box_geometry_matches_shodo_when_spaces_hang() {
 }
 
 mod ruby_batching_tests;
+
+mod rtc_tests;

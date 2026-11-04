@@ -4486,6 +4486,7 @@ pub(crate) fn place_out_of_flow(
     let Some(lines) = root.lines.clone() else {
         return;
     };
+    let ruby_containers = root.ruby_containers.clone();
     let style = tree.physical_style(idx);
     let border = style.border().resolve_or_zero(Some(border_box.width));
     let padding = style.padding().resolve_or_zero(Some(border_box.width));
@@ -4546,6 +4547,7 @@ pub(crate) fn place_out_of_flow(
                         &lines.lines,
                         writing_mode,
                         content,
+                        &ruby_containers,
                         |_| None,
                     ))
                 });

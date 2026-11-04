@@ -33,6 +33,7 @@ pub(crate) fn paint_inline_box(
     scene: &mut impl PaintScene,
     cv: &ComputedValues,
     piece: &raikiri_dom::InlineBoxPiece,
+    suppress_edges: bool,
     background_slice: Option<&crate::ifc_text::BackgroundSlice>,
     progression: InlineProgression,
     transformed: bool,
@@ -46,6 +47,7 @@ pub(crate) fn paint_inline_box(
     let inline_box = InlineBox::new(
         cv,
         piece,
+        suppress_edges,
         background_slice,
         progression,
         transformed,
@@ -59,7 +61,7 @@ pub(crate) fn paint_inline_box(
     };
     inline_box.paint_shadows(scene);
     inline_box.paint_background(scene, &env, warnings);
-    if !inline_box.paint_border_image(scene, &env, warnings) {
+    if !suppress_edges && !inline_box.paint_border_image(scene, &env, warnings) {
         inline_box.paint_border(scene);
     }
     inline_box.paint_outline(scene);
@@ -94,6 +96,7 @@ struct InlineBox<'a> {
     high_edge: bool,
     /// The borders of the sides the piece carries.
     border: Sides<raikiri_style::resolve::ComputedBorder>,
+    full_border: Sides<raikiri_style::resolve::ComputedBorder>,
     /// The corner radii of the corners the piece carries.
     radius: ComputedBorderRadius,
     /// The corner radii of the whole element, which a joined box keeps.
@@ -122,6 +125,7 @@ impl<'a> InlineBox<'a> {
     fn new(
         cv: &'a ComputedValues,
         piece: &raikiri_dom::InlineBoxPiece,
+        suppress_edges: bool,
         background_slice: Option<&'a crate::ifc_text::BackgroundSlice>,
         progression: InlineProgression,
         transformed: bool,
@@ -143,8 +147,22 @@ impl<'a> InlineBox<'a> {
             (piece.has_start_edge, piece.has_end_edge)
         };
         let has_background_image = cv.has_background_image();
-        let (border, radius, full_radius) =
-            carried_edges(cv, progression, (low_edge, high_edge), transformed);
+        let full_border = if suppress_edges {
+            Sides {
+                top: cv.border.top.without_line(),
+                right: cv.border.right.without_line(),
+                bottom: cv.border.bottom.without_line(),
+                left: cv.border.left.without_line(),
+            }
+        } else {
+            cv.border
+        };
+        let (border, radius, full_radius) = if suppress_edges {
+            let zero = ComputedBorderRadius::all(raikiri_style::ComputedLength::ZERO);
+            (full_border, zero, zero)
+        } else {
+            carried_edges(cv, progression, (low_edge, high_edge), transformed)
+        };
         let padding = Edges {
             left: (content.x - outer.x - border.left.width().px()).max(0.0),
             right: ((outer.x + outer.width)
@@ -184,6 +202,7 @@ impl<'a> InlineBox<'a> {
             low_edge,
             high_edge,
             border,
+            full_border,
             radius,
             full_radius,
             padding,
@@ -297,17 +316,17 @@ impl InlineBox<'_> {
             background_outer = progression.with_span(outer, progression.span(slice.outer));
             if progression.vertical {
                 background_padding.top =
-                    (slice.content.y - slice.outer.y - cv.border.top.width().px()).max(0.0);
+                    (slice.content.y - slice.outer.y - self.full_border.top.width().px()).max(0.0);
                 background_padding.bottom = ((slice.outer.y + slice.outer.height)
                     - (slice.content.y + slice.content.height)
-                    - cv.border.bottom.width().px())
+                    - self.full_border.bottom.width().px())
                 .max(0.0);
             } else {
                 background_padding.left =
-                    (slice.content.x - slice.outer.x - cv.border.left.width().px()).max(0.0);
+                    (slice.content.x - slice.outer.x - self.full_border.left.width().px()).max(0.0);
                 background_padding.right = ((slice.outer.x + slice.outer.width)
                     - (slice.content.x + slice.content.width)
-                    - cv.border.right.width().px())
+                    - self.full_border.right.width().px())
                 .max(0.0);
             }
             scene.push_clip_layer(Affine::IDENTITY, &piece_rect);
@@ -330,7 +349,7 @@ impl InlineBox<'_> {
                 &self.radius
             },
             if slice.is_some() {
-                &cv.border
+                &self.full_border
             } else {
                 &self.border
             },
