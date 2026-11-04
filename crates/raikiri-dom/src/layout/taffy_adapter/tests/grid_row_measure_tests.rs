@@ -230,3 +230,55 @@ fn a_vertical_baseline_measure_keeps_the_horizontal_owner_and_exports_no_baselin
     assert_eq!(tree.context.baseline_measure_owners, [parent]);
     assert_eq!(tree.nodes[child].layout.size, Size::ZERO);
 }
+
+#[test]
+fn measuring_an_overflowing_auto_margin_flex_baseline_keeps_geometry_private() {
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "div",
+        Some("display:flex;width:100px;height:100px"),
+    );
+    doc.append_element(
+        Some(root),
+        "div",
+        Some("width:20px;height:200px;flex:none;margin:auto 0"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let before: Vec<_> = tree.nodes.iter().map(|node| node.layout).collect();
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        known_dimensions: Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        },
+        parent_size: Size {
+            width: Some(800.0),
+            height: Some(600.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+        ..LayoutInput::HIDDEN
+    };
+    let measured =
+        tree.with_baseline_measure(root, |tree| tree.compute_child_layout(root.into(), inputs));
+    assert_eq!(measured.baselines.first, Some(200.0));
+    assert_eq!(
+        measured.size,
+        Size {
+            width: 100.0,
+            height: 100.0
+        }
+    );
+    assert_eq!(
+        tree.nodes
+            .iter()
+            .map(|node| node.layout)
+            .collect::<Vec<_>>(),
+        before
+    );
+}

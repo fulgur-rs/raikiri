@@ -1,4 +1,4 @@
-//! Retain the size that collapsed rows leave in a stretched table item.
+//! Reconcile stretched table sizes and overflowing flex cross-axis margins.
 //!
 //! Authored dimensions are measured by the table itself. This pass handles
 //! external stretch assignments which still overwrite the returned grid size
@@ -97,10 +97,13 @@ pub(super) fn layout(
     );
     let replay = flex
         && parent.flex_direction_is_row()
-        && parent.flex_lines_are_reversed()
         && super::TaffyChildIter::new_for_session(tree, idx).any(|child| {
-            crate::layout::table::item_owns_height(tree, child)
-                || crate::layout::table::item_owns_width(tree, child)
+            let margin = tree.query_style(child, ReadRole::FlexItem).margin();
+            margin.top.is_auto()
+                || margin.bottom.is_auto()
+                || (parent.flex_lines_are_reversed()
+                    && (crate::layout::table::item_owns_height(tree, child)
+                        || crate::layout::table::item_owns_width(tree, child)))
         });
     tree.context.table_item_captures.push(Capture {
         container: idx,
@@ -113,6 +116,15 @@ pub(super) fn layout(
         .table_item_captures
         .pop()
         .expect("table capture was pushed before layout");
+    if flex {
+        super::flex_cross_margins::normalize(
+            tree,
+            idx,
+            inputs,
+            capture.calls.as_deref(),
+            &mut output,
+        );
+    }
     if !capture.sizes.is_empty() {
         if tree.nodes[idx].formatting_context == FormattingContext::Flex {
             normalize_flex(
@@ -275,19 +287,14 @@ fn normalize_flex(
         ));
     }
     if row && output.baselines.first.is_some() && !shifts.is_empty() {
-        let moved: Vec<_> = shifts.iter().map(|&(child, _)| child).collect();
-        let calls = calls.expect("reversed row table layout records its callbacks");
-        match flex_baseline_source(tree, NodeId::from(idx), inputs, calls, &moved) {
-            Ok(Some(source)) => {
-                let (_, shift) = shifts
-                    .iter()
-                    .find(|&&(child, _)| child == source)
-                    .expect("replay only identifies a moved item");
-                output.baselines.first = output.baselines.first.map(|baseline| baseline + shift.y);
-            }
-            Ok(None) => {}
-            Err(message) => tree.context.table_layout_error = Some(message.to_owned()),
-        }
+        shift_first_baseline(
+            tree,
+            idx,
+            inputs,
+            calls.expect("reversed row table layout records its callbacks"),
+            &shifts,
+            output,
+        );
     }
     for (child, layout) in layouts {
         tree.set_unrounded_layout(NodeId::from(child), &layout);
@@ -295,9 +302,33 @@ fn normalize_flex(
     finish(tree, idx, inputs, &items, &shifts, output);
 }
 
+/// Shift only the baseline contributed by one of the moved flex items.
+/// Placement and read-only baseline probes share the same replay.
+pub(in crate::layout) fn shift_first_baseline(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    inputs: LayoutInput,
+    calls: &[FlexReplayCall],
+    shifts: &[(usize, Point<f32>)],
+    output: &mut LayoutOutput,
+) {
+    let moved: Vec<_> = shifts.iter().map(|&(child, _)| child).collect();
+    match flex_baseline_source(tree, NodeId::from(idx), inputs, calls, &moved) {
+        Ok(Some(source)) => {
+            let (_, shift) = shifts
+                .iter()
+                .find(|&&(child, _)| child == source)
+                .expect("replay only identifies a moved item");
+            output.baselines.first = output.baselines.first.map(|baseline| baseline + shift.y);
+        }
+        Ok(None) => {}
+        Err(message) => tree.context.table_layout_error = Some(message.to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests;
-fn finish(
+pub(super) fn finish(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     inputs: LayoutInput,
@@ -309,7 +340,7 @@ fn finish(
         return;
     }
     // Local out-of-flow layout runs after this pass. Only the candidates
-    // already translated by the grid need to follow their moved item now.
+    // already translated by the container need to follow their moved item now.
     let moved: FxHashMap<usize, Point<f32>> = shifts.iter().copied().collect();
     output.oof_candidates.for_each_mut(|candidate| {
         let node = usize::from(candidate.node);

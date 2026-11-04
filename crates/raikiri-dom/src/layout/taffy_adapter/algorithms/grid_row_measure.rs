@@ -7,13 +7,14 @@
 use super::super::GridInfo;
 use super::super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::context::LayoutSession;
-use crate::layout::dispatch::grid_baseline;
+use crate::layout::dispatch::{flex_cross_margins, grid_baseline, table_items};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
 };
 use crate::layout::style_views::ReadRole;
-use raikiri_layout_geometry::{BoxLayout, Size};
+use raikiri_layout_geometry::{BoxLayout, Point, Size};
 use raikiri_layout_style::TaffyStyle;
+use raikiri_layout_style::values::Position;
 use std::collections::HashMap;
 use taffy::{
     CoreStyle, LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree, TraversePartialTree,
@@ -96,17 +97,57 @@ fn native_layout(
     inputs: LayoutInput,
     grid: bool,
 ) -> LayoutOutput {
-    LayoutOutput::from_taffy(if grid {
+    probe.flex_calls = (!grid).then(Vec::new);
+    let mut output = LayoutOutput::from_taffy(if grid {
         taffy::compute_grid_layout(probe, node.into_taffy(), inputs.into_taffy())
     } else {
         taffy::compute_flexbox_layout(probe, node.into_taffy(), inputs.into_taffy())
-    })
+    });
+    if !grid
+        && output.baselines.first.is_some()
+        && probe
+            .tree
+            .query_style(usize::from(node), ReadRole::FlexContainer)
+            .flex_direction_is_row()
+    {
+        let mut shifts = Vec::new();
+        for (&child, layout) in &mut probe.layouts {
+            let style = probe.tree.query_style(child, ReadRole::FlexItem);
+            if style.position() == Position::Absolute || probe.tree.nodes[child].is_display_none() {
+                continue;
+            }
+            if let Some(corrected) =
+                flex_cross_margins::corrected(*layout, style.margin(), true, false)
+            {
+                let delta = corrected.location.y - layout.location.y;
+                *layout = corrected;
+                if delta != 0.0 {
+                    shifts.push((child, Point { x: 0.0, y: delta }));
+                }
+            }
+        }
+        if !shifts.is_empty() {
+            table_items::shift_first_baseline(
+                probe.tree,
+                usize::from(node),
+                inputs,
+                probe
+                    .flex_calls
+                    .as_deref()
+                    .expect("native flex probes record callbacks"),
+                &shifts,
+                &mut output,
+            );
+        }
+    }
+    output
 }
 
 struct RowMeasure<'a, 'doc> {
     tree: &'a mut LayoutSession<'doc>,
     owner: NodeId,
     child_baselines: bool,
+    flex_calls: Option<Vec<super::FlexReplayCall>>,
     report: Option<GridInfo>,
     layouts: HashMap<usize, BoxLayout>,
     baselines: HashMap<usize, Option<f32>>,
@@ -118,6 +159,7 @@ impl<'a, 'doc> RowMeasure<'a, 'doc> {
             tree,
             owner,
             child_baselines,
+            flex_calls: None,
             report: None,
             layouts: HashMap::new(),
             baselines: HashMap::new(),
@@ -191,6 +233,7 @@ impl LayoutPartialTree for RowMeasure<'_, '_> {
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
         let mut inputs = LayoutInput::from_taffy(inputs);
+        let requested = inputs;
         let node = NodeId::from_taffy(node);
         let baseline = self.baseline_request(usize::from(node), &inputs);
         let placed = inputs.run_mode == RunMode::PerformLayout;
@@ -205,6 +248,13 @@ impl LayoutPartialTree for RowMeasure<'_, '_> {
         if placed {
             self.baselines
                 .insert(usize::from(node), output.baselines.first);
+        }
+        if let Some(calls) = &mut self.flex_calls {
+            calls.push(super::FlexReplayCall {
+                node,
+                inputs: requested,
+                output: output.clone(),
+            });
         }
         output.into_taffy()
     }
