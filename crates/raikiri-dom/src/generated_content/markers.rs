@@ -26,9 +26,11 @@ impl Document {
     }
 
     /// Shape a standalone marker and resolve its horizontal offset from the
-    /// principal box. An outside marker box ends at the principal box's start
-    /// edge, including the widest line's trailing blanks. Inside text starts
-    /// at the supplied padding.
+    /// principal box. An outside text marker box ends at the principal box's
+    /// start edge, including the widest line's trailing blanks. An outside
+    /// `disc`, `circle` or `square` marker starts a font-derived gutter before
+    /// that edge instead (see [`outside_symbol_gutter`]). Inside text starts at
+    /// the supplied padding.
     #[doc(hidden)]
     pub fn shape_list_marker_text(
         &self,
@@ -60,17 +62,64 @@ impl Document {
         }
         let offset = match computed.list_style_position {
             raikiri_style::ListStylePosition::Inside => padding_left,
-            _ => {
-                let advance = shaped
-                    .lines()
-                    .iter()
-                    .map(|line| line.inline_size() + line.hang_end())
-                    .fold(0.0_f32, f32::max);
-                -advance
-            }
+            _ => match outside_symbol_gutter(&shaped, computed) {
+                Some(gutter) => -gutter,
+                None => {
+                    let advance = shaped
+                        .lines()
+                        .iter()
+                        .map(|line| line.inline_size() + line.hang_end())
+                        .fold(0.0_f32, f32::max);
+                    -advance
+                }
+            },
         };
         Some((shaped, offset))
     }
+}
+
+/// The text of a bullet keyword marker, or `None` for any other
+/// `list-style-type`. The bullets cannot be redefined by an author style.
+fn bullet_marker_text(list_style_type: &ListStyleType) -> Option<&'static str> {
+    match list_style_type {
+        ListStyleType::Disc => Some("• "),
+        ListStyleType::Named(name) => [("disc", "• "), ("circle", "◦ "), ("square", "▪ ")]
+            .into_iter()
+            .find(|(bullet, _)| name.eq_ignore_ascii_case(bullet))
+            .map(|(_, marker)| marker),
+        _ => None,
+    }
+}
+
+/// The distance from the principal box's start edge back to where an outside
+/// `disc`, `circle` or `square` marker starts, or `None` for any other marker.
+///
+/// Chromium does not lay these three out as text. It paints a bullet of
+/// `(ascent * 2 / 3 + 1) / 2` px, starting `ascent * 2 / 3 + 7` px before the
+/// principal box, where `ascent` is the marker font's ascent rounded to whole
+/// pixels and the divisions truncate. A marker whose `content` the author set
+/// is text and keeps the advance rule, as does a string `list-style-type`.
+/// The bullet is a glyph here, so only its start is placed: a font whose
+/// bullet is wider than the gutter, such as Ahem's em-wide box, reaches into
+/// the item where Chromium's narrow vector bullet does not.
+fn outside_symbol_gutter(
+    shaped: &crate::StandaloneText,
+    computed: &raikiri_style::ComputedValues,
+) -> Option<f32> {
+    if bullet_marker_text(&computed.list_style_type).is_none() || !computed.content.is_empty() {
+        return None;
+    }
+    // The ascent of the font the marker is shaped with, not of a fallback font
+    // that happens to supply the bullet glyph: the distance from the baseline
+    // to the root font's over edge.
+    let metrics = shaped.lines().first()?.metrics();
+    // Whole and bounded, so a degenerate metric cannot give an infinite offset,
+    // and non-negative, so the floor is the truncating division.
+    let ascent = (metrics.text_over - metrics.baseline)
+        .abs()
+        .round()
+        .clamp(0.0, 1.0e6);
+    Some((ascent * 2.0 / 3.0).floor() + 7.0)
 }
 
 fn list_item_counter_value(counters: &impl CounterSnapshotLookup, ordinal: u32) -> i32 {
@@ -139,10 +188,8 @@ fn list_marker_text_with_ordinal(
         ListStyleType::Named(name) => {
             // The bullets cannot be redefined by an author style, so they
             // need no lookup.
-            for (bullet, marker) in [("disc", "• "), ("circle", "◦ "), ("square", "▪ ")] {
-                if name.eq_ignore_ascii_case(bullet) {
-                    return Some(marker.to_string());
-                }
+            if let Some(marker) = bullet_marker_text(list_style_type) {
+                return Some(marker.to_string());
             }
             // An author `@counter-style` comes first, since it can redefine
             // any other predefined name.
