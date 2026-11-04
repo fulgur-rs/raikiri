@@ -11,6 +11,7 @@ pub(super) struct LeadingInlineLine {
 pub(super) fn assign(
     document: &Document,
     candidates: &mut Vec<PageCandidate>,
+    edges_breaks: &mut [candidates::EdgesBreak],
     control: &PageLayoutControl<'_>,
 ) -> Result<(), LayoutError> {
     let indexes: HashMap<usize, usize> = candidates
@@ -117,7 +118,20 @@ pub(super) fn assign(
             attributes.unplaced_line = None;
         }
     }
-    candidates.retain(|candidate| !removed.contains(&candidate.node_id));
+    if !removed.is_empty() {
+        // The breaks that fall before a candidate follow it to its new place.
+        let mut kept = Vec::with_capacity(candidates.len() + 1);
+        let mut count = 0;
+        for candidate in candidates.iter() {
+            kept.push(count);
+            count += usize::from(!removed.contains(&candidate.node_id));
+        }
+        kept.push(count);
+        for edges_break in edges_breaks.iter_mut() {
+            edges_break.before = kept[edges_break.before];
+        }
+        candidates.retain(|candidate| !removed.contains(&candidate.node_id));
+    }
     Ok(())
 }
 

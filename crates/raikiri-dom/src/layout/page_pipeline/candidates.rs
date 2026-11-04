@@ -10,14 +10,14 @@ use super::{
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
     candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
-    first_owned_text_line_top, has_block_leading_content, has_mandatory_break_inside,
-    height_follows_content, holds_floats, in_inset_out_of_flow_subtree, is_block_level_flow_box,
-    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
-    is_plain_block_box, is_plain_container_box, leading_holder, leading_piece_end,
-    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    content_bottom_edges, first_owned_text_line_top, has_block_leading_content,
+    has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
+    is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
+    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -504,6 +504,10 @@ struct CandidateFrame<'name> {
     /// ancestor does. A text or box starting at or past it is never visible,
     /// so it takes no part in pagination.
     clip_end: f32,
+    /// The same for the clips on boxes whose height is not that of their
+    /// content, which stay where they are when what they hold grows, and
+    /// infinity when no ancestor has one.
+    fixed_clip_end: f32,
     /// What `clip_end` is for an absolutely positioned child: the edge past
     /// which the clips of its containing block and of the ancestors above
     /// that hide it, or infinity when none does. The clips of the boxes
@@ -607,6 +611,7 @@ impl CandidateFrame<'_> {
             inside_float: false,
             inside_out_of_flow: false,
             clip_end: f32::INFINITY,
+            fixed_clip_end: f32::INFINITY,
             absolute_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
@@ -668,6 +673,29 @@ pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usiz
         .find(|&parent| document.nodes[parent].display() != DisplayValue::Contents)
 }
 
+/// The place in the flow where the bottom padding and border of a block begin,
+/// below its content: the page may break there, between the content and the
+/// edges, when they do not fit after it.
+#[derive(Clone, Copy)]
+pub(super) struct EdgesBreak {
+    /// The block whose edges follow.
+    pub(super) node_id: usize,
+    /// How many candidates come before the break in the order they are placed.
+    pub(super) before: usize,
+    /// Where the content of the block ends, in the coordinates of the
+    /// candidates.
+    pub(super) raw_y: f32,
+    /// The block size of the bottom padding and border.
+    pub(super) edges: f32,
+    /// The end of the clip around the block, in the coordinates of the
+    /// candidates, when that clip keeps its place as the edges are pushed
+    /// down, and infinity when none does. It names the clip.
+    pub(super) clip_end: f32,
+    /// How much room the clip leaves below the edges where they are, in the
+    /// coordinates of the candidates; infinity without a clip that holds.
+    pub(super) clip_room: f32,
+}
+
 /// Collects the page candidates of a laid-out subtree. Page membership is
 /// decided from source coordinates before local page offsets, so the
 /// recursion carries each node's inherited state in a [`CandidateFrame`].
@@ -691,6 +719,8 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     /// Whether some box forces a break after itself, so that a box after one
     /// may take it.
     forces_break_after: bool,
+    /// Where the edges of the blocks collected begin below their content.
+    edges_breaks: Vec<EdgesBreak>,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -734,6 +764,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         | raikiri_style::property::BreakBetween::Always
                 )
             }),
+            edges_breaks: Vec::new(),
         }
     }
 
@@ -742,13 +773,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// starts in the page flow.
     pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
         self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))?;
-        super::leading_inline::assign(self.document, self.out, self.control)
+        super::leading_inline::assign(
+            self.document,
+            self.out,
+            &mut self.edges_breaks,
+            self.control,
+        )
     }
 
     /// The edges of the clips that cut the text of the paragraphs collected,
-    /// by paragraph root, in the coordinates of the candidates.
-    pub(super) fn into_clip_edges(self) -> HashMap<usize, f32> {
-        self.clip_edges
+    /// by paragraph root, in the coordinates of the candidates, and where the
+    /// bottom edges of the blocks begin below their content.
+    pub(super) fn into_outputs(self) -> (HashMap<usize, f32>, Vec<EdgesBreak>) {
+        (self.clip_edges, self.edges_breaks)
     }
 
     #[inline(never)]
@@ -1541,24 +1578,39 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // sliver of its content. A fixed box is not clipped here. A
                 // document paginated on transposed axes is not measured at
                 // all: the overflow that clips its flow is not the one on y.
-                let clip_end = if document.context.pagination_on_transposed_axes {
-                    f32::INFINITY
+                let (clip_end, fixed_clip_end) = if document.context.pagination_on_transposed_axes {
+                    (f32::INFINITY, f32::INFINITY)
                 } else {
-                    let inherited = match document.nodes[node_id].position() {
+                    // Only a fixed clip that comes down the flow unchanged is
+                    // known: an absolutely positioned box has its own.
+                    let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
                         PositionValue::Absolute if raw_y < frame.absolute_clip_end => {
-                            frame.absolute_clip_end
+                            (frame.absolute_clip_end, f32::INFINITY)
                         }
                         PositionValue::Absolute if frame.absolute_clip_end.is_finite() => {
                             let layout = &document.nodes[node_id].layout;
-                            raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER
+                            (
+                                raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
+                                f32::INFINITY,
+                            )
                         }
-                        PositionValue::Absolute | PositionValue::Fixed => f32::INFINITY,
-                        _ => frame.clip_end,
+                        PositionValue::Absolute | PositionValue::Fixed => {
+                            (f32::INFINITY, f32::INFINITY)
+                        }
+                        _ => (frame.clip_end, frame.fixed_clip_end),
                     };
                     if !is_body && super::element_clips_overflow(document, cascade, node_id) {
-                        inherited.min(super::clip_block_end(document, cascade, node_id, raw_y))
+                        let own = super::clip_block_end(document, cascade, node_id, raw_y);
+                        // A clip on a box whose height follows its content grows
+                        // with what is pushed down inside it.
+                        let own_fixed = if height_follows_content(document, node_id) {
+                            f32::INFINITY
+                        } else {
+                            own
+                        };
+                        (inherited.min(own), inherited_fixed.min(own_fixed))
                     } else {
-                        inherited
+                        (inherited, inherited_fixed)
                     }
                 };
                 let absolute_clip_end = if clip_end != frame.absolute_clip_end
@@ -1890,6 +1942,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
                             clip_end,
+                            fixed_clip_end,
                             absolute_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
@@ -1910,6 +1963,39 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             },
                         },
                     )?;
+                }
+                // The padding and border at the bottom of a block whose height
+                // is that of its flow content begin where that content ends
+                // (at the top of the block when it holds none), and the page
+                // breaks before them when they do not fit below it on its
+                // page. A monolithic box, such as an image, keeps its edges.
+                // Like the page fit of the boxes, the end is that of the normal
+                // flow: a relative offset only moves the paint. The flow does
+                // not advance for a block beside others (in a grid of columns or
+                // in columns), as it does not for a box that moves.
+                if in_flow_block_level
+                    && !monolithic
+                    && let Some(edges) = content_bottom_edges(document, node_id)
+                    && candidate_raw_y + node.layout.size.height <= frame.clip_end
+                    && !candidate_ancestor_constraints(document, cascade, node_id, body_id, None).0
+                {
+                    let offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                    let bottom = candidate_raw_y + node.layout.size.height;
+                    // The box around a fixed clip does not grow as the edges are
+                    // pushed down inside it, so it hides more of them.
+                    let (clip_end, clip_room) = if frame.fixed_clip_end.is_finite() {
+                        (frame.fixed_clip_end, frame.fixed_clip_end - bottom)
+                    } else {
+                        (f32::INFINITY, f32::INFINITY)
+                    };
+                    self.edges_breaks.push(EdgesBreak {
+                        node_id,
+                        before: self.out.len(),
+                        raw_y: bottom - edges - offset,
+                        edges,
+                        clip_end,
+                        clip_room,
+                    });
                 }
             }
             _ => {} // cov:ignore: non-rendered node kinds are filtered by the document invariant.

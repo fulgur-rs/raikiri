@@ -1475,11 +1475,92 @@ fn pipeline_counts_the_body_after_the_root_margin() {
 
 #[test]
 fn pipeline_counts_the_block_end_padding_of_an_auto_height_body() {
-    for content in ["", "<div style='height:20px'>x</div>"] {
+    // The padding that does not fit under the content starts the next page, as
+    // Chromium prints it: an empty body takes 150px of the second page, one
+    // with a box in it has the padding run over the second page and the third.
+    for (content, pages) in [
+        ("", 2),
+        ("<div style='height:20px'>x</div>", 3),
+        ("<div style='height:90px'>x</div>", 3),
+    ] {
         let doc = parse(&format!(
             "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:150px}}</style>{content}"
         ));
-        assert_eq!(run(&doc).slices.len(), 2, "{content:?}");
+        assert_eq!(run(&doc).slices.len(), pages, "{content:?}");
+    }
+}
+
+#[test]
+fn pipeline_does_not_count_the_edges_that_a_clip_hides_as_pages() {
+    // The padding below the box that a clipped container holds is cut away
+    // with the rest of it: only the one page is printed, where the same box
+    // without the clip has its padding run over the pages after it.
+    for (content, pages) in [
+        (
+            "<div style='height:50px;overflow:hidden'><div style='padding-bottom:30px'>\
+             <div style='height:20px'></div><div style='height:170px'></div></div></div>\
+             <div style='height:10px'>x</div>",
+            1,
+        ),
+        (
+            "<div style='height:50px;overflow:hidden'><div style='padding-bottom:130px'>\
+             <div style='height:20px'></div><div style='height:30px'></div></div></div>\
+             <div style='height:10px'>x</div>",
+            1,
+        ),
+        (
+            "<div style='padding-bottom:30px'>\
+             <div style='height:20px'></div><div style='height:170px'></div></div>\
+             <div style='height:10px'>x</div>",
+            3,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} body{{margin:0}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content:?}");
+    }
+}
+
+#[test]
+fn pipeline_cuts_the_pages_of_pushed_edges_at_the_clip_around_them() {
+    // Edges that fit a clipped container where they are but start the next
+    // page are cut away at the container's end, which does not move with them:
+    // the 300px box takes three pages, not the fourth that 210px of padding
+    // from the top of the second page would run to. The container whose
+    // height is that of its content grows with them instead. Edges inside
+    // edges share the clip, and the outer ones can be left with nothing of it.
+    for (content, pages) in [
+        (
+            "<div style='height:300px;overflow:hidden'><div style='padding-bottom:210px'>\
+             <div style='height:80px'></div></div></div>",
+            3,
+        ),
+        (
+            "<div style='overflow:hidden'><div style='padding-bottom:210px'>\
+             <div style='height:80px'></div></div></div>",
+            4,
+        ),
+        (
+            "<div style='height:300px;overflow:hidden'><div style='overflow:hidden'>\
+             <div style='padding-bottom:210px'><div style='height:80px'></div></div></div></div>",
+            3,
+        ),
+        (
+            "<div style='height:300px;overflow:hidden'><div style='padding-bottom:130px'>\
+             <div style='padding-bottom:90px'><div style='height:80px'></div></div></div></div>",
+            3,
+        ),
+        (
+            "<div style='height:200px;overflow:hidden'><div style='padding-bottom:60px'>\
+             <div style='padding-bottom:60px'><div style='height:80px'></div></div></div></div>",
+            2,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} body{{margin:0}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content:?}");
     }
 }
 

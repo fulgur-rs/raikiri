@@ -60,22 +60,24 @@ fn the_last_box_stays_when_its_parent_has_a_height_of_its_own() {
 fn a_last_box_moves_when_the_next_page_cannot_hold_it_with_the_edges() {
     // 20px of box and 90px of padding make 110px, more than a page. A break
     // before the box is still better than one between it and the padding, so
-    // the box moves and the padding runs on past the page edge.
-    assert_eq!(closed_parent("padding-bottom:90px"), (100.0, 210.0, 210.0));
+    // the box moves. The padding does not fit after it on the next page
+    // either, and starts the page after that: 200 + 90.
+    assert_eq!(closed_parent("padding-bottom:90px"), (100.0, 290.0, 290.0));
 }
 
 #[test]
 fn a_last_box_that_fills_the_rest_of_its_page_moves_with_the_edges() {
     // The box ends at the page end and the padding does not fit after it, so
     // the box moves to the next page whatever the padding is: the padding is
-    // not left alone at the top of it.
+    // not left alone at the top of it. The box ends at 190 there, where the
+    // padding does not fit either, and it starts the page after that.
     for padding in [15, 100, 250] {
         let (ys, height) = tied_boxes(
             &format!("padding-bottom:{padding}px"),
             &[(10, ""), (90, "")],
         );
         assert_eq!(ys, vec![0.0, 100.0], "{padding}px");
-        assert_eq!(height, 100.0 + 90.0 + padding as f32, "{padding}px");
+        assert_eq!(height, 200.0 + padding as f32, "{padding}px");
     }
 }
 
@@ -199,13 +201,14 @@ fn a_block_that_holds_one_box_stays_when_the_box_does_not_fit_the_page() {
 fn a_block_that_holds_one_box_moves_when_the_next_page_cannot_hold_it_with_the_edges() {
     // 30px of box and 80px of padding make 110px, more than a page. The page
     // still breaks before the block rather than between its box and the
-    // padding, which runs on past the page edge.
+    // padding, which starts the page after it when it does not fit there.
     assert_eq!(lone_box_parent("padding-bottom:80px"), (100.0, 100.0));
 }
 
 #[test]
 fn a_block_that_starts_its_page_stays() {
-    // Nothing before it on the page is a box to break from.
+    // Nothing before it on the page is a box to break from, so the box stays
+    // and the padding that does not fit below it starts the next page.
     let (mut parent, mut only) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         parent = block(doc, body, "display:block;padding-bottom:30px");
@@ -213,7 +216,7 @@ fn a_block_that_starts_its_page_stays() {
     });
     assert_eq!(page_flow_y(&doc, parent), 0.0);
     assert_eq!(page_flow_y(&doc, only), 0.0);
-    assert_eq!(doc.nodes[parent].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 130.0);
 }
 
 #[test]
@@ -488,9 +491,10 @@ fn a_forced_break_or_a_page_name_in_a_block_that_holds_one_box_is_left_to_its_ow
 #[test]
 fn a_forced_break_after_the_box_of_a_block_whose_padding_runs_over_a_page_edge_follows_the_padding()
 {
-    // The padding below the box runs from 90 to 120, over the edge at 100. The
-    // break after the box sits after the padding, so the next block opens the
-    // page after the one the padding ends on.
+    // The padding below the box would run from 90 to 120, over the edge at
+    // 100, so the block moves whole to the next page. The break after the box
+    // sits after the padding, so the next block opens the page after the one
+    // the padding ends on.
     assert_eq!(
         pages_around_a_block_that_holds_one_box("break-after:always", 0),
         2
@@ -932,7 +936,11 @@ fn a_run_of_tied_boxes_stays_when_the_page_breaks_better_inside_one_of_them() {
         last = block(doc, parent, "display:block;height:20px");
     });
     assert_eq!(page_flow_y(&doc, last), 70.0);
-    assert_eq!(doc.nodes[parent].layout.size.height, 120.0);
+    // The padding that does not fit under the last box starts the next page.
+    // Chromium breaks between the lines of the paragraph for it and moves the
+    // last box too, which is not done for a paragraph that avoided breaks tie
+    // to the box after it.
+    assert_eq!(doc.nodes[parent].layout.size.height, 130.0);
 }
 
 #[test]
@@ -981,7 +989,11 @@ fn a_run_that_starts_the_block_stays_when_the_page_breaks_better_inside_its_firs
         last = block(doc, parent, "display:block;height:40px");
     });
     assert_eq!(page_flow_y(&doc, last), 40.0);
-    assert_eq!(doc.nodes[parent].layout.size.height, 110.0);
+    // The padding that does not fit under the last box starts the next page.
+    // Chromium breaks between the lines of the paragraph for it and moves the
+    // last box too, which is not done for a paragraph that avoided breaks tie
+    // to the box after it.
+    assert_eq!(doc.nodes[parent].layout.size.height, 130.0);
 }
 
 #[test]
@@ -1508,8 +1520,9 @@ fn the_padding_of_the_paragraph_itself_moves_with_its_last_lines() {
 fn lines_move_when_the_next_page_cannot_hold_them_with_the_edges() {
     // The last two lines and 90px of padding make 110px, more than a page.
     // The lines still go to the next page: a break between lines beats one
-    // between the last line and the padding, which runs on past the page edge.
-    assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 210.0));
+    // between the last line and the padding, which starts the page after them
+    // when it does not fit there either.
+    assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 290.0));
 }
 
 #[test]
@@ -1559,12 +1572,14 @@ fn the_padding_of_the_paragraph_itself_counts_when_it_splits_after_moving_whole(
 
 #[test]
 fn a_paragraph_of_one_line_moves_whole_whatever_the_edges_below_it() {
-    // A single line has no break to take: it keeps its edges, which run past
-    // the end of the page it moved to.
+    // A single line has no break to take: it keeps its edges. The 90px of
+    // padding end at the page end below it, and 5px more of padding on the
+    // paragraph push them to the next page: the paragraph's own 5px still fit
+    // under the line, the 90px of the div do not.
     assert_eq!(closed_paragraph_with(1, 90, ""), (100.0, 200.0));
     assert_eq!(
         closed_paragraph_with(1, 90, "padding-bottom:5px"),
-        (100.0, 205.0)
+        (100.0, 290.0)
     );
 }
 
@@ -2067,8 +2082,10 @@ fn a_card_of_two_lines_stays_when_its_edges_fit() {
 #[test]
 fn a_card_of_two_lines_sends_its_last_line_when_the_next_page_cannot_hold_it_with_the_edges() {
     // Two lines and 95px of padding make more than a page. The last line
-    // still goes to the next page, with the padding running on past its end.
-    for padding in [95, 250] {
+    // still goes to the next page, and the padding starts the page after it
+    // when it does not fit below the line, and the block after the card
+    // follows the padding.
+    for (padding, after_y) in [(95, 295.0), (250, 450.0)] {
         let (mut card, mut after) = (0, 0);
         let (doc, _) = paged_body_with_ifc(|doc, body| {
             block(doc, body, "display:block;height:50px");
@@ -2086,17 +2103,13 @@ fn a_card_of_two_lines_sends_its_last_line_when_the_next_page_cannot_hold_it_wit
             after = block(doc, body, "display:block;height:10px");
         });
         // The first line stays at 50, the second starts the next page at 100
-        // and the padding follows it.
+        // and ends at 110, and the padding starts the page after it at 200.
         assert_eq!(
             doc.nodes[card].layout.size.height,
-            60.0 + padding as f32,
+            150.0 + padding as f32,
             "{padding}px"
         );
-        assert_eq!(
-            page_flow_y(&doc, after),
-            100.0 + 10.0 + padding as f32,
-            "{padding}px"
-        );
+        assert_eq!(page_flow_y(&doc, after), after_y, "{padding}px");
     }
 }
 
@@ -4084,6 +4097,34 @@ fn an_avoiding_paragraph_with_a_height_of_its_own_moves_whole_with_the_edges() {
         3,
     );
     assert_eq!((y, box_height, parent_height), (10.0, 60.0, 100.0));
+}
+
+#[test]
+fn the_edges_of_a_block_in_a_grid_column_leave_the_items_beside_it_where_they_are() {
+    // The items of a grid of two columns start the page together. The padding
+    // below the 80px box of the first one does not fit under it, but the flow
+    // does not advance for it: the second item, with the same top as the first,
+    // is not pushed down by it. A grid of one column stacks its items, so the
+    // block in its one item still pushes the flow after it.
+    for (columns, beside, after) in [("50px 50px", 0.0, 110.0), ("50px", 130.0, 150.0)] {
+        let (mut second, mut last) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let grid = block(
+                doc,
+                body,
+                &format!("display:grid;grid-template-columns:{columns};align-items:start"),
+            );
+            let first = block(doc, grid, "display:block;padding-bottom:30px");
+            block(doc, first, "display:block;height:80px");
+            second = block(doc, grid, "display:block;height:20px");
+            last = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(
+            (page_flow_y(&doc, second), page_flow_y(&doc, last)),
+            (beside, after),
+            "{columns}"
+        );
+    }
 }
 
 #[test]
