@@ -3209,20 +3209,17 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut pending = vec![(0_usize, None::<&str>, false)];
     while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
         let mut after_forced_break = false;
-        // Generated `::before` content is not an arena child; like text, it
-        // takes the parent's page.
-        let before_text = crate::generated_content::is_page_flow_generated_text(
-            cascade,
-            parent,
-            raikiri_style::PseudoElem::Before,
-        );
+        // Generated prefixes are not arena children. Before content and
+        // inside markers take the parent's page before its child boxes.
+        let generated_prefix =
+            crate::generated_content::has_page_flow_generated_prefix(cascade, parent);
         // Whether the box that comes first among the parent's boxes starts
         // right at the float that began the page: the parent took the forced
         // break, so a break before that box, which CSS Fragmentation 3 (3.1)
         // propagates up to the parent's start edge, is the same break. Generated
         // content of the parent comes before that box, so it is a break of its
         // own then.
-        let mut page_start_inherited = at_page_start_float && !before_text;
+        let mut page_start_inherited = at_page_start_float && !generated_prefix;
         let mut float_after_break = false;
         let mut page_start_float = None;
         // Whether the float that started the page took its own break-before
@@ -3233,7 +3230,7 @@ fn clear_floats_at_forced_breaks<'name>(
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
         let mut last_block = None;
-        let mut previous_page_name = before_text.then_some(inherited);
+        let mut previous_page_name = generated_prefix.then_some(inherited);
         for item in child_boxes(document, parent, true) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.

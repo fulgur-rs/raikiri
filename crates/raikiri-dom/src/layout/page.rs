@@ -611,13 +611,9 @@ pub(crate) fn first_page_name_with_transposed_axes(
     {
         return page_name_to_owned(Some(name.0.as_str()));
     }
-    // In-flow generated content before the first box takes the body's page,
-    // like text, and so does not leave the first box to name the first page.
-    if crate::generated_content::is_page_flow_generated_text(
-        cascade,
-        body_id,
-        raikiri_style::PseudoElem::Before,
-    ) {
+    // Generated prefixes keep the body's page instead of allowing the first
+    // child box to select it, including inside markers with empty content.
+    if crate::generated_content::has_page_flow_generated_prefix(cascade, body_id) {
         return None;
     }
     let child_order = if resolved_layout {
@@ -1550,13 +1546,8 @@ fn propagated_start_page_name_with_order<'name>(
             None
         };
         let used_page_name = explicit_page_name.or(inherited_page_name);
-        // Generated content before the children is the first content of the
-        // box, and takes its page value.
-        if crate::generated_content::is_page_flow_generated_text(
-            cascade,
-            node_id,
-            raikiri_style::PseudoElem::Before,
-        ) {
+        // Generated prefixes fix this box's page before its children.
+        if crate::generated_content::has_page_flow_generated_prefix(cascade, node_id) {
             return (true, used_page_name);
         }
         // A monolithic box does not pass a descendant's page value up.

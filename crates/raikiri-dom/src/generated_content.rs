@@ -322,6 +322,19 @@ pub(crate) fn is_page_flow_generated_text(
         && !is_inline_generated_text_of_blanks(cascade, element, pseudo, is_collapsed_white_space)
 }
 
+/// Whether generated boxes before the children fix the box's starting page.
+/// An inside marker counts even when its content or string list style is empty;
+/// ordinary `::before` text retains the blank-text rules of
+/// [`is_page_flow_generated_text`].
+pub(crate) fn has_page_flow_generated_prefix(cascade: &CascadeResult, element: usize) -> bool {
+    is_page_flow_generated_text(cascade, element, PseudoElem::Before)
+        || (inside_marker_in_flow(cascade, element)
+            && (!matches!(
+                &cascade.computed[element].list_style_type,
+                raikiri_style::ListStyleType::None
+            ) || is_in_flow_generated_text(cascade, element, PseudoElem::Marker)))
+}
+
 /// Whether the `pseudo` of `element` is in-flow generated text that can make
 /// a line: in-flow generated text (see [`is_in_flow_generated_text`]) other
 /// than a blank inline box (see [`is_blank_inline_generated_text`]). Only

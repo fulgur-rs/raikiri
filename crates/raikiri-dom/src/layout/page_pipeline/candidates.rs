@@ -1021,6 +1021,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
                 let deferred_named_break_after = self.has_named_pages
+                    && !float_subtree
                     && document.nodes[node_id].display().is_flex_container()
                     && !column_flex
                     && has_nested_named_page_descendant(
