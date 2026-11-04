@@ -98,6 +98,262 @@ fn positioned(style: &str, content: &str) -> String {
 }
 
 #[test]
+fn block_paragraphs_inside_an_absolute_box_move_with_the_following_blocks() {
+    for content in [
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p>",
+        "<div><p style='margin:0'>A</p></div><p style='margin:0'>B</p>",
+    ] {
+        assert_eq!(
+            tops_per_page(&positioned("top:75px", content)),
+            [vec![], vec![5.0, 35.0]],
+            "{content}"
+        );
+    }
+}
+
+#[test]
+fn a_multiline_block_inside_an_absolute_box_keeps_its_widows_and_following_block() {
+    assert_eq!(
+        tops_per_page(&positioned(
+            "top:75px",
+            "<p style='margin:0'>A<br>B<br>C<br>D</p><p style='margin:0'>E</p>"
+        )),
+        [vec![], vec![5.0, 35.0], vec![5.0, 35.0, 65.0]]
+    );
+}
+
+#[test]
+fn a_fixed_height_block_inside_an_absolute_box_keeps_its_following_block_at_its_end() {
+    assert_eq!(
+        tops_per_page(&positioned(
+            "top:75px",
+            "<p style='margin:0;height:60px'>A<br>B</p><p style='margin:0'>C</p>"
+        )),
+        [vec![], vec![5.0, 35.0, 40.0]]
+    );
+}
+
+#[test]
+fn mixed_text_and_blocks_inside_an_absolute_box_keep_their_flow_order() {
+    let body = positioned("top:75px", "A<div>B</div>C");
+    for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 65.0)] {
+        assert_eq!(lines_of(&body, |found| found == text), [(1, top)], "{text}");
+    }
+}
+
+#[test]
+fn an_atomic_inline_inside_an_absolute_box_moves_once_with_its_line() {
+    let body = positioned(
+        "top:75px",
+        "<div style='display:inline-block'>A<br>B</div><p style='margin:0'>C</p>",
+    );
+    for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 65.0)] {
+        assert_eq!(lines_of(&body, |found| found == text), [(1, top)], "{text}");
+    }
+}
+
+#[test]
+fn nested_absolute_block_flow_waits_for_its_containing_lines_to_settle() {
+    let body = positioned(
+        "top:75px",
+        "O<span style='position:absolute;left:40px;top:0'><p style='margin:0'>A</p><p style='margin:0'>B</p></span>",
+    );
+    for (text, top) in [("O", 5.0), ("A", 5.0), ("B", 35.0)] {
+        assert_eq!(lines_of(&body, |found| found == text), [(1, top)], "{text}");
+    }
+}
+
+#[test]
+fn a_fixed_height_ancestor_inside_an_absolute_box_stops_growth_at_its_end() {
+    let body = positioned(
+        "top:75px",
+        "<div style='height:60px'><p style='margin:0'>A</p><p style='margin:0'>B</p></div><p style='margin:0'>C</p>",
+    );
+    for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 40.0)] {
+        assert_eq!(lines_of(&body, |found| found == text), [(1, top)], "{text}");
+    }
+}
+
+#[test]
+fn a_clip_before_the_page_end_keeps_a_partially_visible_line_in_place() {
+    let body = positioned(
+        "top:75px",
+        "<div style='height:15px;overflow:hidden'><p style='margin:0'>A</p></div><p style='margin:0'>B</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "A"), [(0, 80.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(1, 5.0)]);
+}
+
+#[test]
+fn the_flow_outside_an_absolute_box_does_not_follow_its_moved_blocks() {
+    let body = format!(
+        "{}<p style='margin:0'>Z</p>",
+        positioned(
+            "top:75px",
+            "<p style='margin:0'>A</p><p style='margin:0'>B</p>"
+        )
+    );
+    assert_eq!(lines_of(&body, |text| text == "A"), [(1, 5.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(1, 35.0)]);
+    assert_eq!(lines_of(&body, |text| text == "Z"), [(3, 5.0)]);
+}
+
+#[test]
+fn the_block_backgrounds_keep_their_start_when_the_positioned_lines_move() {
+    let body = positioned(
+        "top:75px;width:50px;background:blue",
+        "<p id=a style='margin:0;width:30px;background:red'>A</p><p id=b style='margin:0;width:30px;background:lime'>B</p>",
+    );
+    let boxes = |id: &str| {
+        with_pages(&body, |page_index, page| {
+            page.fragments()
+                .filter(|fragment| page.dom().attr(fragment.node(), "id") == Some(id))
+                .map(|fragment| {
+                    let rect = fragment.rect();
+                    (page_index, rect.y, rect.height)
+                })
+                .collect()
+        })
+    };
+    assert_eq!(boxes("a"), [(0, 75.0, 25.0), (1, 0.0, 30.0)]);
+    assert_eq!(boxes("b"), [(1, 30.0, 30.0)]);
+}
+
+#[test]
+fn positioned_children_of_a_growing_mixed_box_follow_their_insets() {
+    for (inset, top) in [("top:90px", 70.0), ("bottom:0", 35.0), ("top:40%", 14.0)] {
+        let body = positioned(
+            "top:75px",
+            &format!(
+                "<p style='margin:0'>A</p>X<span style='position:absolute;left:40px;{inset}'>T</span>"
+            ),
+        );
+        assert_eq!(lines_of(&body, |text| text == "T"), [(1, top)], "{inset}");
+    }
+}
+
+#[test]
+fn a_bottom_child_follows_the_growth_of_a_block_only_absolute_box() {
+    let body = positioned(
+        "top:75px",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><span style='position:absolute;left:40px;bottom:0'>T</span>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "T"), [(1, 35.0)]);
+}
+
+#[test]
+fn bounds_and_held_floats_absorb_the_growth_inside_an_absolute_box() {
+    for (style, extra, page, top) in [
+        ("min-height:120px", "", 2, 5.0),
+        ("max-height:60px", "", 1, 40.0),
+        (
+            "display:flow-root",
+            "<div style='float:left;width:10px;height:150px'></div>",
+            2,
+            30.0,
+        ),
+    ] {
+        let margin = if extra.is_empty() {
+            "margin:0"
+        } else {
+            "margin:0;margin-left:10px"
+        };
+        let body = positioned(
+            "top:75px",
+            &format!(
+                "<div style='{style}'>{extra}<p style='{margin}'>A</p><p style='{margin}'>B</p></div><p style='margin:0'>C</p>"
+            ),
+        );
+        assert_eq!(lines_of(&body, |text| text == "A"), [(1, 5.0)], "{style}");
+        assert_eq!(lines_of(&body, |text| text == "B"), [(1, 35.0)], "{style}");
+        assert_eq!(
+            lines_of(&body, |text| text == "C"),
+            [(page, top)],
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn height_dependent_descendants_follow_the_growth_of_their_actual_containing_block() {
+    for (inset, top) in [("bottom:0", 65.0), ("top:40%", 26.0)] {
+        let body = positioned(
+            "top:75px",
+            &format!("A<div>B<span style='position:absolute;left:40px;{inset}'>T</span></div>C"),
+        );
+        assert_eq!(lines_of(&body, |text| text == "T"), [(1, top)], "{inset}");
+    }
+}
+
+#[test]
+fn a_size_contained_block_moves_as_a_unit_in_the_positioned_flow() {
+    let body = positioned(
+        "top:75px",
+        "<div style='contain:size;height:60px'><p style='margin:0'>A</p><p style='margin:0'>B</p></div><p style='margin:0'>C</p>",
+    );
+    for (text, top) in [("A", 5.0), ("B", 35.0), ("C", 65.0)] {
+        assert_eq!(lines_of(&body, |found| found == text), [(1, top)], "{text}");
+    }
+}
+
+#[test]
+fn a_float_in_a_following_block_extends_the_positioned_owner_when_it_moves() {
+    let body = "<div style='position:relative;height:300px'><div id=o style='position:absolute;left:0;top:75px;width:80px;background:blue'><div style='width:80px'>A<div style='height:10px'><div style='float:left;width:10px;height:150px'></div></div>C</div><p style='margin:0'>D</p></div></div>";
+    for (text, top) in [("A", 5.0), ("C", 45.0), ("D", 75.0)] {
+        assert_eq!(lines_of(body, |found| found == text), [(1, top)], "{text}");
+    }
+    let boxes = with_pages(body, |page_index, page| {
+        page.fragments()
+            .filter(|fragment| page.dom().attr(fragment.node(), "id") == Some("o"))
+            .map(|fragment| {
+                let rect = fragment.rect();
+                (page_index, rect.y, rect.height)
+            })
+            .collect()
+    });
+    assert_eq!(boxes, [(0, 75.0, 25.0), (1, 0.0, 100.0), (2, 0.0, 80.0)]);
+}
+
+#[test]
+fn a_size_contained_absolute_owner_keeps_its_specified_position() {
+    let body = positioned(
+        "top:75px;contain:size;height:60px",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "A"), [(0, 80.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(1, 10.0)]);
+}
+
+#[test]
+fn a_paragraph_holding_its_float_keeps_the_growth_of_its_moved_lines() {
+    let body = positioned(
+        "top:75px",
+        "<div style='display:flow-root;width:80px'><div style='float:left;width:10px;height:150px'></div>A<br>B</div><p style='margin:0'>C</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "A"), [(1, 5.0)]);
+    assert_eq!(lines_of(&body, |text| text == "B"), [(1, 35.0)]);
+    assert_eq!(lines_of(&body, |text| text == "C"), [(2, 55.0)]);
+}
+
+#[test]
+fn a_fixed_clip_hides_later_breaks_while_an_auto_clip_grows_with_them() {
+    for (style, page, top) in [
+        ("height:120px;overflow:hidden", 1, 65.0),
+        ("overflow:hidden", 2, 5.0),
+    ] {
+        let body = positioned(
+            "top:75px",
+            &format!("<div style='{style}'><p style='margin:0'>A<br>B<br>C<br>D</p></div>"),
+        );
+        assert_eq!(
+            lines_of(&body, |text| text == "C"),
+            [(page, top)],
+            "{style}"
+        );
+    }
+}
+
+#[test]
 fn a_line_that_does_not_fit_the_page_moves_its_box_to_the_next_page() {
     // The line is 30px tall, so it fits the first page from 70px down. From
     // 75px it crosses the page end, and the box starts the next page, wherever
@@ -310,10 +566,9 @@ fn a_last_line_of_an_atomic_inline_breaks_like_a_line_of_text() {
 }
 
 #[test]
-fn a_box_with_blocks_among_its_lines_is_left_to_the_blocks() {
-    // The blocks would stay behind when the lines of the box move, so these
-    // lines are not moved on their own: all three are printed, and none lands
-    // on another.
+fn a_box_with_blocks_among_its_lines_keeps_each_piece_in_flow_order() {
+    // Lines and blocks follow the preceding piece: all three are printed,
+    // and none lands on another.
     for top in [40, 70, 75, 95] {
         let mut tops = tops_per_page(&positioned(&format!("top:{top}px"), "A<div>B</div>C"));
         assert_eq!(tops.iter().map(Vec::len).sum::<usize>(), 3, "top:{top}px");
@@ -340,33 +595,55 @@ fn breaks_that_push_a_line_past_the_page_limit_fail_the_layout() {
         .build()
         .unwrap();
     let resources = RenderResources::new().fonts(fonts);
-    let html = "<!doctype html><style>@page{size:100px 100px;margin:0}\
-                body{margin:0;font:20px/30px Ahem}</style><body>\
+    for (content, needs_three) in [
+        ("Y Y Y Y", true),
+        (
+            "<p style='margin:0'>A</p><p style='margin:0'>B</p><p style='margin:0'>C</p><p style='margin:0'>D</p>",
+            true,
+        ),
+        (
+            "<div style='height:120px;overflow:hidden'><p style='margin:0'>A<br>B<br>C<br>D</p></div>",
+            false,
+        ),
+        (
+            "<div style='overflow:hidden'><p style='margin:0'>A<br>B<br>C<br>D</p></div>",
+            true,
+        ),
+    ] {
+        let html = format!(
+            "<!doctype html><style>@page{{size:100px 100px;margin:0}}\
+                body{{margin:0;font:20px/30px Ahem}}</style><body>\
                 <div style='position:relative;height:100px'>\
-                <div style='position:absolute;left:0;top:75px;width:20px'>Y Y Y Y</div>\
-                </div></body>";
-    let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
-    let layout_with = |pages: u32| {
-        layout(
-            &document,
-            PageDefaults::default(),
-            LayoutConfig::builder()
-                .limits(
-                    RenderLimits::builder()
-                        .max_document_pages(Some(pages))
-                        .build(),
-                )
-                .build(),
-            LayoutOptions::new().resources(&resources),
-        )
-    };
-    assert!(matches!(
-        layout_with(2),
-        Err(RenderError::LimitExceeded {
-            kind: LimitKind::Pages,
-            limit: 2,
-            actual: 3,
-        })
-    ));
-    assert!(matches!(layout_with(3), Ok(LayoutStatus::Completed(_))));
+                <div style='position:absolute;left:0;top:75px;width:20px'>{content}</div>\
+                </div></body>"
+        );
+        let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+        let layout_with = |pages: u32| {
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::builder()
+                    .limits(
+                        RenderLimits::builder()
+                            .max_document_pages(Some(pages))
+                            .build(),
+                    )
+                    .build(),
+                LayoutOptions::new().resources(&resources),
+            )
+        };
+        if needs_three {
+            assert!(matches!(
+                layout_with(2),
+                Err(RenderError::LimitExceeded {
+                    kind: LimitKind::Pages,
+                    limit: 2,
+                    actual: 3,
+                })
+            ));
+        } else {
+            assert!(matches!(layout_with(2), Ok(LayoutStatus::Completed(_))));
+        }
+        assert!(matches!(layout_with(3), Ok(LayoutStatus::Completed(_))));
+    }
 }

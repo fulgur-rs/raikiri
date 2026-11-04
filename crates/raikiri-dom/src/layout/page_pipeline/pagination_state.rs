@@ -74,6 +74,8 @@ impl From<LayoutError> for Halt {
 /// The text of an absolutely positioned box whose lines are kept whole on a
 /// page: see [`PaginationState::keep_positioned_lines`].
 struct PositionedParagraph {
+    /// The nearest absolute box that owns this internal flow.
+    owner: usize,
     /// The first text of the paragraph that was placed.
     text: usize,
     /// Where the first line of that text starts, in the coordinates of the
@@ -94,7 +96,7 @@ impl Halt {
 
 /// Lets placement reach `page_index`, or halts it there when `page_index` is
 /// past the page limit of a control that truncates at it.
-fn reach_page(control: &PageLayoutControl<'_>, page_index: u32) -> Result<(), Halt> {
+pub(super) fn reach_page(control: &PageLayoutControl<'_>, page_index: u32) -> Result<(), Halt> {
     if control.within_page_limit(page_index)? {
         Ok(())
     } else {
@@ -2399,11 +2401,9 @@ impl PaginationState {
         Ok(())
     }
 
-    /// Remembers the paragraph that holds the text `candidate` when it is the
-    /// absolutely positioned box itself, so that [`Self::keep_positioned_lines`]
-    /// can judge its lines once the flow around the box has settled. A box
-    /// that holds blocks of its own is left alone, as are the boxes in a fixed
-    /// box and the boxes of vertical or transposed pagination.
+    /// Remembers the absolute owner of the paragraph holding `candidate` for
+    /// [`Self::keep_positioned_lines`], after the outer flow has settled.
+    /// Fixed ancestors and vertical or transposed pagination are excluded.
     fn note_positioned_paragraph(
         &mut self,
         document: &LayoutSession<'_>,
@@ -2424,14 +2424,23 @@ impl PaginationState {
                 .ifc_layout_node(root)
                 .and_then(|node| node.ifc.as_ref())
                 .is_some_and(|ifc| ifc.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
+            let owner = document
+                .inclusive_ancestors(root)
+                .find(|&id| {
+                    matches!(
+                        document.nodes[id].position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    )
+                })
+                .filter(|&id| is_unfixed_absolute_box(document, id));
             vacant.insert(
-                (horizontal
-                    && !document.context.pagination_on_transposed_axes
-                    && is_unfixed_absolute_box(document, root))
-                .then_some(PositionedParagraph {
-                    text: candidate.node_id,
-                    first_raw_y: candidate.raw_y,
-                }),
+                owner
+                    .filter(|_| horizontal && !document.context.pagination_on_transposed_axes)
+                    .map(|owner| PositionedParagraph {
+                        owner,
+                        text: candidate.node_id,
+                        first_raw_y: candidate.raw_y,
+                    }),
             );
         }
     }
@@ -2458,16 +2467,27 @@ impl PaginationState {
             text_lines,
             ..
         } = *env;
-        let mut paragraphs: Vec<(usize, PositionedParagraph)> =
-            std::mem::take(&mut self.positioned_paragraphs)
-                .into_iter()
-                .filter_map(|(root, paragraph)| Some((root, paragraph?)))
-                .collect();
+        let paragraphs = std::mem::take(&mut self.positioned_paragraphs);
         // A box inside another sits where the lines of the outer one leave it,
         // so the outer boxes come first.
-        paragraphs
-            .sort_by_cached_key(|&(root, _)| (document.inclusive_ancestors(root).count(), root));
-        for (root, paragraph) in paragraphs {
+        let owners: std::collections::HashSet<_> = paragraphs
+            .values()
+            .flatten()
+            .map(|paragraph| paragraph.owner)
+            .collect();
+        let mut owners: Vec<_> = owners.into_iter().collect();
+        owners.sort_by_cached_key(|&owner| (document.inclusive_ancestors(owner).count(), owner));
+        let followers = std::cell::OnceCell::new();
+        for root in owners {
+            if !lines_can_shift_inside(document, cascade, root) {
+                let followers = followers
+                    .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
+                super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;
+                continue;
+            }
+            let Some(Some(paragraph)) = paragraphs.get(&root) else {
+                continue;
+            };
             let text = paragraph.text;
             // Blocks among the lines would stay behind when the lines move.
             let Some(mut line_metrics) = lines_can_shift_inside(document, cascade, root)

@@ -17,6 +17,7 @@ mod margin_clearance;
 pub(super) mod normal_block_shifts;
 mod page_start;
 mod pagination_state;
+mod positioned_flow;
 mod sibling_adjacency;
 mod sibling_shifts;
 mod source_walk;
