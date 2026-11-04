@@ -341,13 +341,35 @@ fn paginate_spanner_over_a_short_tail(
         &cascade,
         page,
         crate::PageLayoutOptions {
-            page_steps: &[400.0],
+            page_steps: &[400.0, 20.0],
             page_widths: &[],
             control: Some(control),
             ..Default::default()
         },
     );
     (result, document, cascade, page)
+}
+
+#[test]
+fn a_single_scheduled_height_keeps_a_spanners_tail_on_tall_pages() {
+    let (mut document, cascade, page) = spanner_over_a_short_tail();
+    let slices = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps: &[400.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        slices
+            .iter()
+            .map(|slice| slice.content_origin_y)
+            .collect::<Vec<_>>(),
+        [0.0, 400.0]
+    );
 }
 
 #[test]

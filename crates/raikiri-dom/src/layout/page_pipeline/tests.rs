@@ -748,13 +748,35 @@ fn page_origins_cover_fixed_and_scheduled_steps_without_a_page_ceiling() {
     assert_eq!(fixed.correct_page_index_for_y(5_001, 500_000.0), 5_000);
 
     let scheduled = PageOrigins::new(&[100.0, 200.0], 50.0);
-    assert_eq!(scheduled.origin(4), 400.0);
+    assert_eq!(scheduled.origin(4), 700.0);
     assert_eq!(scheduled.page_index_for_y(100.0), 1);
     assert_eq!(scheduled.page_index_for_y(300.0), 2);
-    assert_eq!(scheduled.page_index_for_y(350.0), 3);
+    assert_eq!(scheduled.page_index_for_y(350.0), 2);
     assert_eq!(scheduled.page_index_for_end(100.0), 0);
     assert_eq!(scheduled.page_index_for_end(300.0), 1);
     assert_eq!(scheduled.page_index_for_end(350.0), 2);
+}
+
+#[test]
+fn page_origins_repeat_the_last_normalized_step_after_the_known_schedule() {
+    for (steps, expected_origin, expected_step) in [
+        (vec![], 150.0, 50.0),
+        (vec![100.0, 200.0], 500.0, 200.0),
+        (vec![100.0, f32::NAN], 200.0, 50.0),
+        (vec![100.0, 0.0], 200.0, 50.0),
+        (vec![100.0, -1.0], 200.0, 50.0),
+        (vec![100.0, f32::INFINITY], 200.0, 50.0),
+        (vec![100.0, 0.0, 200.0], 350.0, 200.0),
+    ] {
+        let pages = PageOrigins::new(&steps, 50.0);
+        assert_eq!(pages.origin(3), expected_origin);
+        assert_eq!(pages.step_at(3), expected_step);
+        assert_eq!(pages.page_index_for_y(expected_origin), 3);
+        assert_eq!(pages.page_index_for_y(expected_origin - 0.01), 2);
+        assert_eq!(pages.page_index_for_y(expected_origin + 0.01), 3);
+        assert_eq!(pages.page_index_for_end(expected_origin), 2);
+        assert_eq!(pages.page_index_for_end(expected_origin + 0.01), 3);
+    }
 }
 
 #[test]
@@ -1229,7 +1251,7 @@ fn page_origins_use_direct_fixed_and_cumulative_scheduled_offsets() {
     assert_eq!(scheduled.origin(0), 0.0);
     assert_eq!(scheduled.origin(1), 100.0);
     assert_eq!(scheduled.origin(2), 280.0);
-    assert_eq!(scheduled.origin(3), 380.0);
+    assert_eq!(scheduled.origin(3), 460.0);
     assert_eq!(scheduled.page_index_for_y(150.0), 1);
     assert_eq!(scheduled.page_index_for_end(150.0), 1);
     assert_eq!(scheduled.page_index_for_y(280.0), 2);
@@ -16375,7 +16397,7 @@ fn a_first_line_straddling_the_page_end_pushes_its_block_to_a_later_page() {
     let scheduled = PageOrigins::new(&[100.0, 200.0], 50.0);
     assert_eq!(
         scheduled.first_line_push_page(250.0, 100.0, 120.0, 1),
-        Some(3)
+        Some(2)
     );
     assert_eq!(
         scheduled.first_line_push_page(250.0, 60.0, 120.0, 1),
@@ -17175,7 +17197,7 @@ fn page_slices_start_at_each_page_origin_with_the_page_type_it_was_given() {
             // A page nothing named has no page type.
             PageSlice {
                 page_index: 2,
-                content_origin_y: 150.0,
+                content_origin_y: 100.0,
                 page_name: None,
             },
         ]

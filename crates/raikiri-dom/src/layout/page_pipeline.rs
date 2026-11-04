@@ -1514,13 +1514,16 @@ pub struct PageImageOptions<'a> {
 #[doc(hidden)]
 pub struct PageLayoutOptions<'a> {
     /// Per-page content heights for horizontal pagination.
-    /// Empty keeps the fixed page height. Vertical pagination instead uses
+    /// Empty keeps the fixed page height. Beyond a nonempty schedule, repeat
+    /// its last height after normalizing invalid entries to the fixed height.
+    /// Vertical pagination instead uses
     /// [`Self::page_widths`] for its block-axis page advances.
     pub page_steps: &'a [f32],
     /// Per-page content widths; empty keeps the fixed page width.
     /// Horizontal pagination scales percentage widths relative to the first
     /// scheduled width, leaving missing entries unchanged. For a vertical
-    /// root, these widths provide the successive block-axis page advances.
+    /// root, these widths provide the successive block-axis page advances,
+    /// repeating the last normalized width beyond a nonempty schedule.
     pub page_widths: &'a [f32],
     /// Image resolution performed before layout, when supplied.
     pub images: Option<PageImageOptions<'a>>,
@@ -1667,6 +1670,8 @@ impl PageOrigins {
             let origin = scheduled_origins.last().copied().unwrap_or(0.0) + step;
             scheduled_origins.push(origin);
         }
+        // Newly discovered pages continue the last known page area.
+        let fixed_step = scheduled_steps.last().copied().unwrap_or(fixed_step);
         Self {
             fixed_step,
             scheduled_steps,
