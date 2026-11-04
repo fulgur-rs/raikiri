@@ -126,3 +126,77 @@ fn a_zero_height_parallel_flow_keeps_its_existing_column_clip() {
     );
     assert_eq!(pixel(&pixels, 10, 42), &[255, 255, 255, 255]);
 }
+
+#[test]
+fn a_fitting_box_still_cuts_a_nested_flow_box_that_reaches_past_the_column() {
+    // The wrapper keeps the table inside the column, but the box in it does
+    // not end there: it is flow that continues in the next column, so the
+    // column bottom cuts it, wherever in the column it starts.
+    let content = "<div style='height:10px'>\
+         <div style='height:20px'></div>\
+         <div style='height:60px;background:lime'></div></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 20, "", content);
+        assert_eq!(pixel(&pixels, 10, 30), &[0, 255, 0, 255], "{display}");
+        assert_eq!(pixel(&pixels, 10, 48), &[255, 255, 255, 255], "{display}");
+    }
+}
+
+#[test]
+fn flow_boxes_inside_a_display_contents_element_count_toward_the_column() {
+    let content = "<div style='height:10px'><div style='display:contents'>\
+         <div style='height:20px'></div>\
+         <div style='height:60px;background:lime'></div></div></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 20, "", content);
+        assert_eq!(pixel(&pixels, 10, 48), &[255, 255, 255, 255], "{display}");
+    }
+}
+
+#[test]
+fn a_fitting_box_keeps_the_ink_overflow_of_a_nested_box() {
+    let content = "<div style='height:30px'>\
+         <div style='height:20px;box-shadow:0 30px lime'></div></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 40, "", content);
+        assert_eq!(pixel(&pixels, 10, 48), &[0, 255, 0, 255], "{display}");
+    }
+}
+
+#[test]
+fn a_nested_box_that_clips_its_overflow_ends_the_search_at_its_own_box() {
+    let content = "<div style='height:20px;overflow:hidden'><div style='height:100px'></div></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 40, "", content);
+        assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255], "{display}");
+    }
+}
+
+#[test]
+fn an_out_of_flow_box_does_not_count_toward_the_column() {
+    let content = "<div style='position:absolute;left:120px;top:0;width:20px;height:100px;background:lime'></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 40, "", content);
+        assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255], "{display}");
+    }
+}
+
+#[test]
+fn a_fitting_grid_that_clips_its_overflow_keeps_its_own_shadow() {
+    // Its tall child is cut by the grid's own overflow clip, so the grid ends
+    // in the column and its shadow below the column shows. A table grows to
+    // hold its content, so only the grid stays small.
+    let content = "<div style='height:100px'></div>";
+    let pixels = raster_with_content("grid;overflow:hidden", 40, "", content);
+    assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255]);
+}
+
+#[test]
+fn a_nested_multicol_container_keeps_its_fitting_parents_shadow() {
+    let content = "<div style='columns:2;column-gap:0;column-fill:auto;height:20px'>\
+         <div style='height:30px'></div><div style='height:30px'></div></div>";
+    for display in ["grid", "table"] {
+        let pixels = raster_with_content(display, 40, "", content);
+        assert_eq!(pixel(&pixels, 10, 42), &[0, 0, 255, 255], "{display}");
+    }
+}
