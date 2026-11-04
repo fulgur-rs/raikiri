@@ -554,6 +554,21 @@ pub(crate) fn project_deferred_value(
     key: crate::property::PropertyKey,
 ) -> Option<PropertyValue> {
     if let PropertyValue::Deferred(marker) = &value
+        && marker.property.as_str() == "white-space"
+        && marker.css_wide_keyword().is_some()
+        && matches!(key, PropertyKey::WhiteSpaceCollapse | PropertyKey::TextWrap)
+    {
+        let mut marker = marker.clone();
+        marker.key = key;
+        marker.property = if key == PropertyKey::WhiteSpaceCollapse {
+            "white-space-collapse"
+        } else {
+            "text-wrap-mode"
+        }
+        .into();
+        return Some(PropertyValue::Deferred(marker));
+    }
+    if let PropertyValue::Deferred(marker) = &value
         && marker.property.as_str() == "list-style"
         && crate::property::CssWideKeyword::from_css_ident(marker.value.as_str()).is_some()
         && matches!(
@@ -638,6 +653,15 @@ pub(crate) fn project_deferred_value(
         return Some(value);
     }
     Some(match value {
+        PropertyValue::WhiteSpace(keyword) => {
+            let (collapse, wrap) = keyword.collapse_and_wrap()?;
+            match key {
+                PropertyKey::WhiteSpaceCollapse => PropertyValue::WhiteSpaceCollapse(collapse),
+                PropertyKey::TextWrap => PropertyValue::TextWrap(wrap),
+                _ => return None,
+            }
+        }
+
         PropertyValue::BorderRadius(radius) => match key {
             PropertyKey::BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(radius.top_left),
             PropertyKey::BorderRadiusTopRight => {

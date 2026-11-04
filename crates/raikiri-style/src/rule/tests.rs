@@ -382,12 +382,28 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
         );
     }
 
+    let mut expanded = Vec::new();
+    expand_shorthand_into(&deferred(PropertyKey::WhiteSpace, true), |d| {
+        let PropertyValue::Deferred(value) = d.value else {
+            panic!("deferred value");
+        };
+        assert_eq!(value.property.as_str(), "test");
+        expanded.push((d.key, d.important));
+    });
+    assert_eq!(
+        expanded,
+        vec![
+            (PropertyKey::WhiteSpace, true),
+            (PropertyKey::WhiteSpaceCollapse, true),
+            (PropertyKey::TextWrap, true)
+        ]
+    );
+
     // A deferred longhand, and a shorthand the cascade keeps in shorthand
     // form, stay one declaration.
     for (key, class) in [
         (PropertyKey::Width, KeyClass::Longhand),
         (PropertyKey::All, KeyClass::Retained),
-        (PropertyKey::WhiteSpace, KeyClass::Retained),
         (PropertyKey::TextWrap, KeyClass::Retained),
         (PropertyKey::TextSpacing, KeyClass::Retained),
     ] {
@@ -1692,6 +1708,25 @@ fn inset_shorthand_with_too_many_values_declaration_dropped() {
         assert!(
             decls.is_empty(),
             "{source} must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+}
+
+#[test]
+fn white_space_expansion_counts_against_the_declaration_limit() {
+    for value in ["pre", "inherit", "revert", "revert-layer", "var(--ws, pre)"] {
+        let css = format!("white-space: {value}");
+        let mut input = ParserInput::new(&css);
+        assert_eq!(
+            parse_declaration_block_within(&mut Parser::new(&mut input), &[], 2).unwrap_err(),
+            3
+        );
+        let mut input = ParserInput::new(&css);
+        assert_eq!(
+            parse_declaration_block_within(&mut Parser::new(&mut input), &[], 3)
+                .unwrap()
+                .len(),
+            3
         );
     }
 }

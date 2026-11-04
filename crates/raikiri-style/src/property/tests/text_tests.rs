@@ -1181,13 +1181,9 @@ fn white_space_text_wrap_and_text_spacing_keep_css_wide_keyword() {
 }
 
 #[test]
-fn a_rollback_keyword_on_the_white_space_longhands_is_dropped() {
-    // The user agent sets `white-space` as one declaration, which these have
-    // no cascade slot to roll back to.
+fn a_rollback_keyword_on_white_space_longhands_is_deferred() {
     for name in ["white-space-collapse", "text-wrap-mode", "text-wrap"] {
-        for keyword in ["revert", "revert-layer"] {
-            assert_eq!(parse(keyword, name), None, "{name}: {keyword}");
-        }
+        assert_css_wide_keywords_deferred(name);
     }
 }
 

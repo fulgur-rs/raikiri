@@ -10573,3 +10573,222 @@ fn comparison_residue_detector_sees_relative_leaves_but_accepts_absolutized_tree
     ));
     assert_eq!(specified_layer_residue(&lifted), None);
 }
+
+#[test]
+fn white_space_rollback_clears_defaulting_keywords_in_page_and_margin_boxes() {
+    for before in ["initial", "inherit", "unset"] {
+        for rollback in ["revert", "revert-layer"] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(
+                "@page { white-space: pre; @top-left { content: 'x'; white-space: pre } }",
+                Origin::UserAgent,
+            );
+            tree.add_stylesheet(
+                &format!(
+                    "@page {{ white-space: {before}; white-space: {rollback}; \
+                 @top-left {{ content: 'x'; white-space: {before}; white-space: {rollback} }} }}"
+                ),
+                Origin::Author,
+            );
+            let root = ComputedValues::initial();
+            let page = cascade_page(
+                &tree,
+                &PageContextQuery::default(),
+                PageInheritance::FromRoot(&root),
+            );
+            let page_style = &page.page_style.as_ref().unwrap().computed;
+            let margin = page.cascade_margin_box(PageMarginBoxSlot::TopLeft).unwrap();
+            let margin_style = page.margin_box_style(&margin, None);
+            for style in [page_style, &margin_style] {
+                assert_eq!(
+                    (
+                        style.effective_white_space_collapse,
+                        style.effective_text_wrap_mode
+                    ),
+                    (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap),
+                    "{before} then {rollback}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn white_space_layer_rollback_restores_page_and_margin_halves() {
+    for important in ["", " !important"] {
+        let css = format!(
+            "@layer base, top; \
+             @layer base {{ @page {{ white-space: pre-line; \
+               @top-left {{ content: 'x'; white-space: var(--ws, pre) }} }} }} \
+             @layer top {{ @page {{ white-space: initial{important}; white-space: revert-layer{important}; \
+               @top-left {{ white-space: initial{important}; white-space: revert-layer{important}; text-wrap-mode: wrap{important} }} }} }}"
+        );
+        let result = page(&css, &ComputedValues::initial());
+        let page_style = &result.page_style.as_ref().unwrap().computed;
+        assert_eq!(
+            (
+                page_style.effective_white_space_collapse,
+                page_style.effective_text_wrap_mode
+            ),
+            (WhiteSpaceCollapse::PreserveBreaks, TextWrapMode::Wrap)
+        );
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        let margin = result.margin_box_style(&rule, None);
+        assert_eq!(
+            (
+                margin.effective_white_space_collapse,
+                margin.effective_text_wrap_mode
+            ),
+            (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+        );
+    }
+}
+
+#[test]
+fn white_space_longhands_roll_back_independently_in_page_and_margin() {
+    for value in ["pre", "var(--ws, pre)"] {
+        for (longhand, expected) in [
+            (
+                "text-wrap-mode",
+                (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap),
+            ),
+            (
+                "white-space-collapse",
+                (WhiteSpaceCollapse::Collapse, TextWrapMode::Nowrap),
+            ),
+        ] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(
+                "@page { white-space: normal; @top-left { content: 'x'; white-space: normal } }",
+                Origin::UserAgent,
+            );
+            tree.add_stylesheet(&format!("@page {{ white-space: {value}; {longhand}: revert; @top-left {{ white-space: {value}; {longhand}: revert }} }}"), Origin::Author);
+            let root = ComputedValues::initial();
+            let result = cascade_page(
+                &tree,
+                &PageContextQuery::default(),
+                PageInheritance::FromRoot(&root),
+            );
+            let page_style = &result.page_style.as_ref().unwrap().computed;
+            let rule = result
+                .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+                .unwrap();
+            let margin = result.margin_box_style(&rule, None);
+            for style in [page_style, &margin] {
+                assert_eq!(
+                    (
+                        style.effective_white_space_collapse,
+                        style.effective_text_wrap_mode
+                    ),
+                    expected
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn reconstructed_margin_white_space_declarations_expand_before_cascade() {
+    for value in ["pre", "var(--ws, pre)"] {
+        let result = page(
+            &format!("@page {{ @top-left {{ content: 'x'; white-space: {value} }} }}"),
+            &ComputedValues::initial(),
+        );
+        let mut raw = result.margin_boxes().to_vec();
+        for rule in &mut raw {
+            rule.declarations.retain(|d| {
+                !matches!(
+                    d.key,
+                    PropertyKey::WhiteSpaceCollapse | PropertyKey::TextWrap
+                )
+            });
+        }
+        let merged =
+            PageMarginBoxCascadeResult::cascade_matching(&raw, PageMarginBoxSlot::TopLeft).unwrap();
+        let style = result.margin_box_style(&merged, None);
+        assert_eq!(
+            (
+                style.effective_white_space_collapse,
+                style.effective_text_wrap_mode
+            ),
+            (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+        );
+    }
+}
+
+#[test]
+fn white_space_var_fallbacks_and_invalid_halves_in_page_and_margin() {
+    let root = ComputedValues {
+        white_space_collapse: WhiteSpaceCollapse::Discard,
+        effective_white_space_collapse: WhiteSpaceCollapse::Discard,
+        text_wrap: TextWrapMode::Wrap,
+        effective_text_wrap_mode: TextWrapMode::Wrap,
+        ..ComputedValues::initial()
+    };
+    for (css, expected) in [
+        (
+            "white-space: var(--missing, inherit)",
+            (WhiteSpaceCollapse::Discard, TextWrapMode::Wrap),
+        ),
+        (
+            "white-space: var(--missing, unset)",
+            (WhiteSpaceCollapse::Discard, TextWrapMode::Wrap),
+        ),
+        (
+            "white-space: var(--missing, initial)",
+            (WhiteSpaceCollapse::Collapse, TextWrapMode::Wrap),
+        ),
+        (
+            "white-space: initial; white-space: var(--missing, revert)",
+            (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap),
+        ),
+        (
+            "white-space: initial; white-space: var(--missing, revert-layer)",
+            (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap),
+        ),
+        (
+            "white-space: var(--missing); text-wrap-mode: revert",
+            (WhiteSpaceCollapse::Discard, TextWrapMode::Nowrap),
+        ),
+        (
+            "white-space: var(--missing); text-wrap-mode: nowrap",
+            (WhiteSpaceCollapse::Discard, TextWrapMode::Nowrap),
+        ),
+        (
+            "text-wrap-mode: nowrap; white-space: var(--missing)",
+            (WhiteSpaceCollapse::Discard, TextWrapMode::Wrap),
+        ),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { white-space: pre; @top-left { content: 'x'; white-space: pre } }",
+            Origin::UserAgent,
+        );
+        tree.add_stylesheet(
+            &format!("@page {{ {css}; @top-left {{ {css} }} }}"),
+            Origin::Author,
+        );
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root),
+        );
+        let page_style = &result.page_style.as_ref().unwrap().computed;
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        let margin = result.margin_box_style(&rule, None);
+        for style in [page_style, &margin] {
+            assert_eq!(
+                (
+                    style.effective_white_space_collapse,
+                    style.effective_text_wrap_mode
+                ),
+                expected,
+                "{css}"
+            );
+        }
+    }
+}

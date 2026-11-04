@@ -62,8 +62,8 @@ fn computed_position(source: &ComputedValues) -> PositionValue {
 /// The `white-space` keyword that stands for the effective
 /// `white-space-collapse` and `text-wrap-mode` of `source`, or the keyword as
 /// authored when none does: the longhands combine in ways the keywords cannot
-/// name. A literal keyword on `white-space` also sets the longhands, which
-/// settle the halves; one written with `var()` has only this keyword to go by.
+/// name. This preserves the compatibility keyword; the expanded longhands
+/// inherit their effective values independently, including through `var()`.
 fn computed_white_space(source: &ComputedValues) -> WhiteSpace {
     let halves = (
         source.effective_white_space_collapse,
@@ -168,8 +168,8 @@ keyword_defaults! {
     Float, false => PropertyValue::Float(computed_float(source));
     Clear, false => PropertyValue::Clear(dup(&source.clear));
     // The effective halves, not the fields that hold the longhand as authored:
-    // a legacy `white-space` keyword on the source settles them, and a keyword
-    // takes the computed `white-space-collapse` and `text-wrap-mode` of the
+    // expanded `white-space` longhands settle them, and a keyword takes the
+    // computed `white-space-collapse` and `text-wrap-mode` of the
     // source (CSS Text 4 section 3). `text-wrap-mode` shares its key with
     // `text-wrap`, whose keyword expands into it and the style first.
     WhiteSpace, true => PropertyValue::WhiteSpace(computed_white_space(source));

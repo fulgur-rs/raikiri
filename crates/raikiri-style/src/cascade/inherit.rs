@@ -11,8 +11,8 @@ use crate::logical::FlowMapping;
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     Length, LengthOrAuto, LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize,
-    Sides, TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WritingMode,
-    resolve_text_align_internal_center, resolve_text_align_match_parent,
+    Sides, TextWrapMode, WhiteSpaceCollapse, WritingMode, resolve_text_align_internal_center,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
@@ -1498,9 +1498,6 @@ pub(crate) fn apply_winners(
             .map(|value| resolve_defaulting_value(value, inherited))
     });
     pick_winners(candidates, winners, flow);
-    // The drain below takes every slot, so the white-space winners are read
-    // first; their applied values are collected during the drain.
-    let white_space_winners = WhiteSpaceWinners::read(winners);
     let mut white_space_applied = WhiteSpaceApplied::default();
     let radius_winners = BorderRadiusWinners::read(winners);
     let initial_radius = specified.border_radius;
@@ -1733,7 +1730,7 @@ pub(crate) fn apply_winners(
             }
         }
     }
-    let (collapse, wrap) = white_space_winners.settle(&white_space_applied);
+    let WhiteSpaceApplied { collapse, wrap } = white_space_applied;
     specified.border_radius = radius_winners.settle(&radius_applied, initial_radius);
     // A half no declaration on this element decides keeps the value
     // `inherit_from` seeded, which is the parent's effective value.
@@ -2173,25 +2170,10 @@ impl BorderRadiusWinners {
     }
 }
 
-/// The cascade winners of the legacy `white-space` shorthand and of the
-/// longhands it expands to.
-///
-/// The cascade keeps one winner per property and applies them in property
-/// order, so the order in which the shorthand and a longhand were declared is
-/// not visible to `apply_value`. CSS Text 4 §3 makes `white-space` a shorthand
-/// of `white-space-collapse` and `text-wrap-mode`, so each longhand takes the
-/// value of whichever of the two declarations comes later in cascade order.
-struct WhiteSpaceWinners {
-    legacy: Option<RankedDecl>,
-    collapse: Option<RankedDecl>,
-    wrap: Option<RankedDecl>,
-}
-
 /// The values the white-space winners resolved to (after `var()`
 /// substitution), or `None` when a winner was invalid at computed-value time.
 #[derive(Default)]
 struct WhiteSpaceApplied {
-    legacy: Option<WhiteSpace>,
     collapse: Option<WhiteSpaceCollapse>,
     wrap: Option<TextWrapMode>,
 }
@@ -2199,53 +2181,11 @@ struct WhiteSpaceApplied {
 impl WhiteSpaceApplied {
     fn note(&mut self, value: &PropertyValue) {
         match value {
-            PropertyValue::WhiteSpace(keyword) => self.legacy = Some(*keyword),
             PropertyValue::WhiteSpaceCollapse(collapse) => self.collapse = Some(*collapse),
             PropertyValue::TextWrap(wrap) => self.wrap = Some(*wrap),
             PropertyValue::TextWrapShorthand(shorthand) => self.wrap = Some(shorthand.mode),
             _ => {}
         }
-    }
-}
-
-impl WhiteSpaceWinners {
-    fn read(winners: &[Option<RankedDecl>]) -> Self {
-        use crate::property::PropertyKey as K;
-        let at = |key: K| winners.get(key as usize).copied().flatten();
-        Self {
-            legacy: at(K::WhiteSpace),
-            collapse: at(K::WhiteSpaceCollapse),
-            // A `text-wrap` shorthand kept as a `var()` value shares this key.
-            wrap: at(K::TextWrap),
-        }
-    }
-
-    /// The effective `white-space-collapse` and `text-wrap-mode` this
-    /// element declares, each `None` when no declaration decides that half
-    /// (or the deciding one was invalid at computed-value time, which makes
-    /// the half inherit).
-    fn settle(
-        &self,
-        applied: &WhiteSpaceApplied,
-    ) -> (Option<WhiteSpaceCollapse>, Option<TextWrapMode>) {
-        let legacy_pair = applied.legacy.and_then(WhiteSpace::collapse_and_wrap);
-        let collapse = match (self.collapse, self.legacy) {
-            (Some(longhand), Some(legacy)) if !declared_later(longhand, legacy) => {
-                legacy_pair.map(|pair| pair.0)
-            }
-            (Some(_), _) => applied.collapse,
-            (None, Some(_)) => legacy_pair.map(|pair| pair.0),
-            (None, None) => None,
-        };
-        let wrap = match (self.wrap, self.legacy) {
-            (Some(longhand), Some(legacy)) if !declared_later(longhand, legacy) => {
-                legacy_pair.map(|pair| pair.1)
-            }
-            (Some(_), _) => applied.wrap,
-            (None, Some(_)) => legacy_pair.map(|pair| pair.1),
-            (None, None) => None,
-        };
-        (collapse, wrap)
     }
 }
 
@@ -3951,11 +3891,10 @@ impl ResolvedAgainstInherited {
 /// expands before the cascade ([`crate::rule::KeyClass::Shorthand`]) are
 /// only reached when this is called directly; they delegate to the same
 /// per-family expanders in `crate::rule` (e.g. [`crate::rule::expand_border`]).
-/// The shorthand forms the cascade keeps whole
-/// ([`crate::rule::KeyClass::Retained`]) do arrive here and set their fields
-/// directly: `white-space` values, and the
-/// `text-wrap` / `text-spacing` shorthand a `var()` value of one substitutes
-/// into after winner selection.
+/// Retained shorthand slots ([`crate::rule::KeyClass::Retained`]) also arrive
+/// here: `white-space` updates its compatibility field alongside independently
+/// expanded longhands, while `text-wrap` / `text-spacing` may remain shorthand
+/// values after variable substitution and set their fields directly.
 ///
 /// `pub(crate)` permits intra-doc links from other modules.
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {

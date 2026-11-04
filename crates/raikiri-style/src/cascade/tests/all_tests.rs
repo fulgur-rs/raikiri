@@ -1,6 +1,6 @@
 //! The `all` shorthand with CSS-wide keywords (CSS Cascading 4 section 3.1).
 
-use super::keyword_default_tests::{CASES, NO_ROLLBACK, SHORTHAND_CASES, child, same};
+use super::keyword_default_tests::{CASES, SHORTHAND_CASES, child, same};
 use super::*;
 use crate::property::{Direction, TextWrapMode, UnicodeBidi, WhiteSpace, WhiteSpaceCollapse};
 
@@ -29,9 +29,6 @@ fn all_failures(name: &str, values: &[&str]) -> Vec<String> {
     for before in values {
         for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
             let rolls_back = keyword.starts_with("revert");
-            if rolls_back && NO_ROLLBACK.contains(&name) {
-                continue;
-            }
             let sheets: &[(&str, Origin)] = if rolls_back { &user_agent } else { &[] };
             let run = |css: String| child(&parent, sheets, &css);
             // A keyword after the property's own value takes the value away.
