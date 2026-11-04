@@ -1585,6 +1585,24 @@ fn flex_item_follows_main_size(tree: &LayoutSession<'_>, idx: usize, inputs: &La
         )
 }
 
+/// Whether `inputs` ask for the height of the item `idx` of a horizontal flex
+/// container, with the height left to the item: an item with an `aspect-ratio`
+/// takes that height from its width through the ratio, and its content may
+/// raise it (CSS Sizing 4 §4.1).
+///
+/// A row container asks for the height of an item as its hypothetical cross
+/// size, at the width it settled for the item (`known_dimensions.width`). A
+/// column container asks for it as the main size of the item, at the width the
+/// item has by itself or the one the container stretches it to, if any.
+fn flex_item_height_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> bool {
+    inputs.sizing_mode == SizingMode::ContentSize
+        && inputs.known_dimensions.height.is_none()
+        && tree
+            .flex_main_axis_is_width(idx)
+            .is_some_and(|row| inputs.known_dimensions.width.is_some() || !row)
+        && !tree.container_is_vertical(idx)
+}
+
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
 fn compute_ifc_root(
@@ -1606,6 +1624,38 @@ fn compute_ifc_root(
         block_ctx = None;
     }
     let style = block_flow::style_input::physical(tree, idx);
+    // A horizontal paragraph box that is not a multicol container is sized
+    // through its `aspect-ratio` as block flow sizes a block.
+    let ratio_box = tree.nodes[idx].multicol.is_none()
+        && tree.nodes[idx]
+            .ifc
+            .as_ref()
+            .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
+    // A column container that wraps its items does not take the width it
+    // stretches an item with an `auto` width to as definite while it asks for
+    // the item's height, so that height follows from the width the item has
+    // by itself, as it does for an item that is not stretched.
+    let inputs = if ratio_box
+        && inputs.sizing_mode == SizingMode::ContentSize
+        && style.aspect_ratio.is_some()
+        && inputs.known_dimensions.width.is_some()
+        && inputs.known_dimensions.height.is_none()
+        && tree.is_wrapping_stretch_hint(idx, &style, inputs.known_dimensions)
+    {
+        LayoutInput {
+            known_dimensions: Size {
+                width: None,
+                ..inputs.known_dimensions
+            },
+            known_dimensions_are_definite: Size {
+                width: false,
+                ..inputs.known_dimensions_are_definite
+            },
+            ..inputs
+        }
+    } else {
+        inputs
+    };
     let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
     let mut layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
     // A horizontal paragraph box with an `aspect-ratio` is sized as block
@@ -1615,12 +1665,9 @@ fn compute_ifc_root(
     // follows once the content is measured.
     let ratio = layout_style.aspect_ratio.filter(|_| {
         (inputs.sizing_mode == SizingMode::InherentSize
-            || flex_item_follows_main_size(tree, idx, &inputs))
-            && tree.nodes[idx].multicol.is_none()
-            && tree.nodes[idx]
-                .ifc
-                .as_ref()
-                .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb)
+            || flex_item_follows_main_size(tree, idx, &inputs)
+            || flex_item_height_from_ratio(tree, idx, &inputs))
+            && ratio_box
     });
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size);
