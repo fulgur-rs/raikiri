@@ -62,15 +62,99 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
     child_parent_y
 }
 
-/// The lowest block-end edge of the boxes that paint below the paginated
-/// flow: the body's own border box, nested absolutely positioned boxes, and
-/// content overflowing a box that offers no break points (for example a
-/// `contain: size` box). Measured from the body's coordinate space after
+#[derive(Clone, Copy, PartialEq)]
+struct OverflowClipLimit {
+    end: f32,
+    positioned_end: f32,
+    // A nested positioned box cannot open another hidden start page under
+    // the clip that already bounds its positioned ancestor.
+    positioned_started: bool,
+}
+
+impl OverflowClipLimit {
+    const UNBOUNDED: Self = Self {
+        end: f32::INFINITY,
+        positioned_end: f32::INFINITY,
+        positioned_started: false,
+    };
+
+    fn for_positioned(self) -> Self {
+        Self {
+            end: self.positioned_end,
+            ..self
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ColumnContainingBlocks {
+    absolute_outside: bool,
+    fixed_outside: bool,
+}
+
+impl ColumnContainingBlocks {
+    fn descendants(
+        self,
+        document: &Document,
+        id: usize,
+        computed: &raikiri_style::ComputedValues,
+    ) -> Self {
+        Self {
+            absolute_outside: self.absolute_outside
+                && !super::fixed::establishes_absolute_containing_block(document, id, computed),
+            fixed_outside: self.fixed_outside
+                && !super::fixed::establishes_fixed_containing_block_for_layout(
+                    document, id, computed,
+                ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ContentOverflowContext {
+    parent_y: f32,
+    in_columns: Option<ColumnContainingBlocks>,
+    inside_positioned_flow: bool,
+    flow_clip: OverflowClipLimit,
+    absolute_clip: OverflowClipLimit,
+    fixed_clip: OverflowClipLimit,
+}
+
+impl ContentOverflowContext {
+    fn update_containing_blocks(
+        &mut self,
+        document: &Document,
+        id: usize,
+        computed: &raikiri_style::ComputedValues,
+    ) {
+        let clip = self.flow_clip.for_positioned();
+        if clip != self.absolute_clip
+            && super::fixed::establishes_absolute_containing_block(document, id, computed)
+        {
+            self.absolute_clip = clip;
+        }
+        if clip != self.fixed_clip
+            && super::fixed::establishes_fixed_containing_block_for_layout(document, id, computed)
+        {
+            self.fixed_clip = clip;
+        }
+    }
+}
+
+struct ContentOverflow {
+    end: f32,
+    hidden_start_y: Option<f32>,
+}
+
+/// How boxes outside the paginated flow reach pages: their lowest block-end
+/// edge and the latest start of a wholly clipped positioned flow. This
+/// includes the body's own border box, nested positioned boxes, and overflow
+/// of a monolithic box. Coordinates are measured from the body after
 /// pagination moved the flow.
 ///
-/// Fixed boxes repeat on every page and running elements leave the flow, so
-/// their subtrees do not extend the document. A box that clips its
-/// block-axis overflow contributes its own border box but not its content.
+/// Page-fixed boxes repeat and running elements leave the flow, so their
+/// subtrees do not extend the document. Overflow clips bound normal content,
+/// while a positioned box bypasses clips below its containing block.
 /// Inline elements are located by their paragraph's lines, which take part
 /// in pagination directly, so only the boxes inside them are measured.
 ///
@@ -78,24 +162,27 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
 /// so its unfragmented layout position says nothing about the page it paints
 /// on. Where a column layout cut that content into fragments, the fragments
 /// are measured instead: a box that cannot break and is taller than its
-/// column overflows it (CSS Fragmentation 3, 4.4). An absolutely positioned
-/// box in the columns whose containing block is the container or one of its
+/// column overflows it (CSS Fragmentation 3, 4.4). A positioned box in the
+/// columns whose containing block is the container or one of its
 /// ancestors is not projected, though: it paints at its laid-out position
 /// and is measured there.
-fn content_overflow_end(
+fn content_overflow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     root_flow_offset: f32,
     page_area_height: f32,
-) -> f32 {
+) -> ContentOverflow {
     use raikiri_style::property::OverflowValue;
     // The body's overflow, or the root's, clips at the viewport, which
     // stays within the paginated flow.
     if super::viewport_overflow_source(document, cascade)
         .is_some_and(|id| cascade.computed[id].overflow.y != OverflowValue::Visible)
     {
-        return f32::NEG_INFINITY;
+        return ContentOverflow {
+            end: f32::NEG_INFINITY,
+            hidden_start_y: None,
+        };
     }
     // The records below each column fragment, and the container records
     // placed against their own node.
@@ -112,11 +199,23 @@ fn content_overflow_end(
         }
     }
     let mut end = f32::NEG_INFINITY;
-    // `Some(true)` marks the in-flow content of a multicol container where an
-    // absolutely positioned box still takes its containing block from
-    // outside the columns, `Some(false)` content where it does not.
-    let mut stack = vec![(body_id, 0.0_f32, None::<bool>)];
-    while let Some((node_id, parent_y, in_columns)) = stack.pop() {
+    let mut hidden_start_y: Option<f32> = None;
+    // Within columns, track independently whether absolute and fixed boxes
+    // still take their containing blocks from outside the column flow.
+    let mut stack = vec![(
+        body_id,
+        ContentOverflowContext {
+            parent_y: 0.0,
+            in_columns: None,
+            inside_positioned_flow: false,
+            flow_clip: OverflowClipLimit::UNBOUNDED,
+            absolute_clip: OverflowClipLimit::UNBOUNDED,
+            fixed_clip: OverflowClipLimit::UNBOUNDED,
+        },
+    )];
+    while let Some((node_id, mut context)) = stack.pop() {
+        let parent_y = context.parent_y;
+        let in_columns = context.in_columns;
         let node = &document.nodes[node_id];
         if !node.is_in_document()
             || node.is_display_none()
@@ -131,17 +230,13 @@ fn content_overflow_end(
         // in the root's coordinate space.
         let computed = &cascade.computed[node_id];
         if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
-            let in_columns = in_columns.map(|outside| {
-                outside
-                    && !super::fixed::establishes_absolute_containing_block(
-                        document, node_id, computed,
-                    )
-            });
-            stack.extend(
-                node.children
-                    .iter()
-                    .map(|&child| (child, parent_y, in_columns)),
-            );
+            let in_columns =
+                in_columns.map(|outside| outside.descendants(document, node_id, computed));
+            // An inline keeps its paragraph's coordinates, but can still be
+            // the containing block of a positioned descendant.
+            context.update_containing_blocks(document, node_id, computed);
+            context.in_columns = in_columns;
+            stack.extend(node.children.iter().map(|&child| (child, context)));
             continue;
         }
         if super::fixed::is_page_fixed(document, cascade, node_id)
@@ -155,17 +250,27 @@ fn content_overflow_end(
             // overflow must not extend the document's normal-flow pages.
             continue;
         }
-        // Inside columns only an absolutely positioned box placed against a
-        // containing block outside them is measured, with its subtree.
+        // In columns only positioned boxes whose containing blocks are
+        // outside are measured. Still visit a column-flow box's descendants:
+        // a fixed descendant may use a containing block outside the columns.
         // A `display: contents` element generates no positioned box, so its
         // children stay in the column flow.
-        let positioned = matches!(document.nodes[node_id].position(), PositionValue::Absolute)
-            && document.nodes[node_id].display() != DisplayValue::Contents;
+        let positioned = matches!(
+            document.nodes[node_id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) && document.nodes[node_id].display() != DisplayValue::Contents;
         let in_columns = match in_columns {
-            Some(true) if positioned => None,
-            Some(false) if positioned => continue,
+            Some(outside) if positioned => {
+                let escapes = if document.nodes[node_id].position() == &PositionValue::Fixed {
+                    outside.fixed_outside
+                } else {
+                    outside.absolute_outside
+                };
+                if escapes { None } else { Some(outside) }
+            }
             other => other,
         };
+        context.inside_positioned_flow |= positioned;
         // Layout places some boxes without their relative offset, which
         // the painter adds to the box and its subtree.
         let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
@@ -176,6 +281,21 @@ fn content_overflow_end(
         } else {
             parent_y + node.layout.location.y + paint_offset
         };
+        let mut clip = match document.nodes[node_id].position() {
+            PositionValue::Absolute if positioned => context.absolute_clip,
+            PositionValue::Fixed if positioned => context.fixed_clip,
+            _ => context.flow_clip,
+        };
+        if positioned && in_columns.is_none() && clip.end.is_finite() {
+            // Keep a hidden start as a point, including for a zero-height
+            // box. Artificial extent could cross a nearby page boundary.
+            // Keep the actual clip for its descendants;
+            // a fixed descendant may still escape through another CB stream.
+            if y.is_finite() && y >= clip.end && !clip.positioned_started {
+                hidden_start_y = Some(hidden_start_y.map_or(y, |start| start.max(y)));
+            }
+            clip.positioned_started = true;
+        }
         let bottom = if node_id == body_id {
             block_border_box_end(
                 document,
@@ -190,51 +310,71 @@ fn content_overflow_end(
         } else {
             f32::NEG_INFINITY
         };
-        if bottom.is_finite() {
-            end = end.max(bottom);
+        if bottom.is_finite() && y < clip.end {
+            end = end.max(bottom.min(clip.end));
         }
         // A `display: contents` element generates no box and clips nothing,
         // as in painting.
         let clips = node_id != body_id && element_clips_overflow(document, cascade, node_id);
         if clips {
-            continue;
+            let paint_end = clip_block_end(document, cascade, node_id, y);
+            let positioned_end = paint_end.min(y + node.layout.size.height);
+            clip.positioned_end = clip.positioned_end.min(positioned_end);
+            // A clip's outset extends ordinary fragmented flow, but paint
+            // overflow alone does not add pages to a positioned flow.
+            clip.end = clip.end.min(if context.inside_positioned_flow {
+                positioned_end
+            } else {
+                paint_end
+            });
         }
         // Generated block content and overflowing lines have no source box
         // to visit. Measure retained paragraph flow even when an authored
         // height or max-height limits its ordinary containing box.
         if in_columns.is_none()
+            && y < clip.end
             && node.multicol.is_none()
             && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
         {
-            end = end
-                .max(y + node.layout.border.top + node.layout.padding.top + lines.shifted_height());
+            end = end.max(
+                (y + node.layout.border.top + node.layout.padding.top + lines.shifted_height())
+                    .min(clip.end),
+            );
         }
-        if in_columns.is_none() {
+        if in_columns.is_none() && y < clip.end {
             let roots = fragment_roots.get(&node_id).map_or(&[][..], Vec::as_slice);
-            end = end.max(fragment_tree_end(
-                fragments,
-                &fragment_children,
-                roots,
-                y,
-                |node_id| element_clips_overflow(document, cascade, node_id),
-                |node_id| painted_relative_offset_y(document, cascade, body_id, node_id),
-            ));
+            end = end.max(
+                fragment_tree_end(
+                    fragments,
+                    &fragment_children,
+                    roots,
+                    y,
+                    |node_id| element_clips_overflow(document, cascade, node_id),
+                    |node_id| painted_relative_offset_y(document, cascade, body_id, node_id),
+                )
+                .min(clip.end),
+            );
         }
         let in_columns = if let Some(outside) = in_columns {
-            Some(
-                outside
-                    && !super::fixed::establishes_absolute_containing_block(
-                        document, node_id, computed,
-                    ),
-            )
+            Some(outside.descendants(document, node_id, computed))
         } else if node.multicol.is_some() {
-            Some(true)
+            Some(ColumnContainingBlocks {
+                absolute_outside: true,
+                fixed_outside: true,
+            })
         } else {
             None
         };
-        stack.extend(node.children.iter().map(|&child| (child, y, in_columns)));
+        context.parent_y = y;
+        context.in_columns = in_columns;
+        context.flow_clip = clip;
+        context.update_containing_blocks(document, node_id, computed);
+        stack.extend(node.children.iter().map(|&child| (child, context)));
     }
-    end
+    ContentOverflow {
+        end,
+        hidden_start_y,
+    }
 }
 
 /// Whether the element hides block-axis overflow when painted.
@@ -2111,7 +2251,8 @@ fn line_pieces(
 /// where it falls. The lines the page before gives up are laid out again from
 /// the top of the page after it, so the lines that then cross its end start the
 /// page after that. When the widows are more lines than a page holds, Chromium
-/// repairs only the first break of the paragraph, and so does this.
+/// repairs only the break from its first fragment. A whole-block move has
+/// already consumed that fragment when `fit.first_fragment` is false.
 ///
 /// `tail_edges` is the padding and border below the last line. They stay with
 /// the lines at the end of the last page: when they do not fit under it, the
@@ -2123,14 +2264,14 @@ fn paragraph_line_moves(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     current_page: u32,
-    orphans: usize,
-    widows: usize,
-    tail_edges: f32,
+    fit: &ParagraphLineFit,
     page_origins: &PageOrigins,
 ) -> Vec<LineBreakMove> {
     let (Some(&(_, last_bottom)), total) = (line_metrics.last(), line_metrics.len()) else {
         return Vec::new();
     };
+    let (orphans, widows, tail_edges, first_fragment) =
+        (fit.orphans, fit.widows, fit.tail_edges, fit.first_fragment);
     let kept_widows = usable_widows(total, orphans, widows);
     let mut pieces = line_pieces(
         line_metrics,
@@ -2140,10 +2281,10 @@ fn paragraph_line_moves(
         &[],
         0.0,
     );
-    // The widows lines fit a page, so that no break after the first needs
-    // more than the lines that follow it.
+    // Judge the declared widows, not the reduced count a short paragraph can
+    // spare. An impossible count is relaxed only at the opening fragment.
     let widows_fit = pieces.last().is_some_and(|last| {
-        let first_widow = total - kept_widows.clamp(1, total);
+        let first_widow = total - widows.clamp(1, total);
         last_bottom - line_metrics[first_widow].0 <= page_origins.step_at(last.page) + 0.001
     });
     let mut breaks: Vec<(usize, u32)> = pieces
@@ -2155,7 +2296,8 @@ fn paragraph_line_moves(
             let moved = kept_widows
                 .saturating_sub(remaining)
                 .min(before.count.saturating_sub(orphans));
-            (moved > 0 && (index == 0 || widows_fit)).then_some((after.first - moved, after.page))
+            (moved > 0 && ((first_fragment && index == 0) || widows_fit))
+                .then_some((after.first - moved, after.page))
         })
         .into_iter()
         .collect();
@@ -5386,7 +5528,9 @@ impl AvoidedBreaks {
             .row_groups
             .get(&node_id)
             .copied()
-            .filter(|&(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end))
+            .filter(|&(end, _)| {
+                item_tail || row_group_moves(flow_y, end - raw_y, page_start, page_end)
+            })
             .map(|(_, lead)| lead);
         // A trailing flex item may extend into the containing flex box's
         // continuation at the page edge. Earlier items still move intact when
@@ -8719,7 +8863,7 @@ fn container_item_tail(
     cascade: &CascadeResult,
     node_id: usize,
     has_named_pages: bool,
-) -> Option<usize> {
+) -> Option<(usize, Option<usize>)> {
     let node = &document.nodes[node_id];
     // A grid moves whole, so only flex containers and tables are left.
     if !matches!(node.display(), DisplayValue::Flex | DisplayValue::Table)
@@ -8755,7 +8899,7 @@ fn container_item_tail(
                     &before[before.len().saturating_sub(1)..],
                     &[last],
                 ))
-            .then_some(last)
+            .then_some((last, None))
         }
         _ => {
             // A cell that spans rows ties the rows it spans together, and the
@@ -8794,29 +8938,39 @@ fn container_item_tail(
                     _ => return None,
                 }
             }
-            let (&(last, group), before) = rows.split_last()?;
+            let (&(mut last, group), mut before) = rows.split_last()?;
+            let mut fallback = None;
+            if let Some(group) = group
+                .filter(|&group| avoids_page_break_inside(cascade.computed[group].break_inside))
+            {
+                // The group's first row represents the whole avoided group.
+                // Mandatory breaks were excluded for the table above.
+                let first = rows.iter().position(|&(_, held)| held == Some(group))?;
+                if let Some(&(previous, _)) = before.last()
+                    && before.len() > first
+                    && !break_between_is_avoided(document, cascade, &[previous], &[last])
+                {
+                    fallback = Some(last);
+                }
+                last = rows[first].0;
+                before = &rows[..first];
+            }
             // The boxes that start the last row's side of the break and end
             // the other side of it: a group is one of them where the break is
             // the group's own edge.
             let mut next = vec![last];
             let mut previous = Vec::new();
-            if let Some(group) = group {
-                // Browsers move a group that avoids breaks inside it whole
-                // with the edges, which is not done here.
-                if avoids_page_break_inside(cascade.computed[group].break_inside)
-                    && before.iter().any(|&(_, held)| held == Some(group))
-                {
-                    return None;
-                }
-                if before.last().is_none_or(|&(_, held)| held != Some(group)) {
-                    next.push(group);
-                }
+            if let Some(group) = group
+                && before.last().is_none_or(|&(_, held)| held != Some(group))
+            {
+                next.push(group);
             }
             if let Some(&(row, held)) = before.last() {
                 previous.push(row);
                 previous.extend(held.filter(|&held| group != Some(held)));
             }
-            (!break_between_is_avoided(document, cascade, &previous, &next)).then_some(last)
+            (!break_between_is_avoided(document, cascade, &previous, &next))
+                .then_some((last, fallback))
         }
     }
 }
@@ -9672,6 +9826,8 @@ enum LineBreakFix {
 struct ParagraphLineFit {
     /// The number of lines the paragraph's text owns.
     total_lines: usize,
+    /// Whether no whole-block move has consumed the opening fragment yet.
+    first_fragment: bool,
     /// Whether the first line starts on the current page.
     starts_on_page: bool,
     /// The leading lines whose block-end edge is at or before the page end,
@@ -9756,15 +9912,7 @@ impl ParagraphLineFit {
             && (self.lines_before_break < self.total_lines || self.tail_overflows)
             && can_move_lines()
         {
-            paragraph_line_moves(
-                line_metrics,
-                effective_y,
-                current_page,
-                self.orphans,
-                self.widows,
-                self.tail_edges,
-                page_origins,
-            )
+            paragraph_line_moves(line_metrics, effective_y, current_page, self, page_origins)
         } else {
             Vec::new()
         };
@@ -9821,6 +9969,7 @@ impl ParagraphLineFit {
         let tail_overflows = tail_edges > 0.0 && edges_overflow;
         Self {
             total_lines,
+            first_fragment: true,
             starts_on_page,
             lines_before_break,
             orphans,

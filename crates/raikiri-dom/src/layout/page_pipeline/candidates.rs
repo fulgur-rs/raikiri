@@ -560,11 +560,14 @@ struct CandidateFrame<'name> {
 }
 
 /// The last item of a flex container that stacks its items, or the last row of
-/// a table, with the edges that follow it.
+/// a table, with the edges that follow it. An avoided final row group is
+/// represented by its first row, including the rest of the group in the tail.
 #[derive(Clone, Copy)]
 struct ItemTail {
-    /// The item or row.
+    /// The item, final row, or first row of an avoided final group.
     item: usize,
+    /// The final row can split from a group whose closing tail still does not fit.
+    fallback: Option<usize>,
     /// Where the border box of the container ends, in source coordinates.
     container_bottom: f32,
     /// The block size of the bottom padding and border of the blocks that the
@@ -1526,7 +1529,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 },
                                 item_tail_edges: frame
                                     .item_tail
-                                    .filter(|tail| tail.item == node_id)
+                                    .filter(|tail| {
+                                        tail.item == node_id || tail.fallback == Some(node_id)
+                                    })
                                     .map_or(0.0, |tail| {
                                         (tail.container_bottom
                                             - (candidate_raw_y + candidate_height)
@@ -1625,8 +1630,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         );
                         !side_by_side && !bounded
                     })
-                    .map(|item| ItemTail {
+                    .map(|(item, fallback)| ItemTail {
                         item,
+                        fallback,
                         container_bottom: raw_y + node.layout.size.height,
                         inherited: inherited_edges,
                     });
