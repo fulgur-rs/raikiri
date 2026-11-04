@@ -279,6 +279,11 @@ pub(super) fn marker_render_info_impl<'a>(
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     // cov:ignore: signature close has no executable mapping
     let computed = cascade.computed.get(node_id)?;
+    // The owner's display suppresses its marker; the marker's own display
+    // does not apply to its box (CSS Lists 3 section 3.1.1).
+    if computed.display == DisplayValue::None {
+        return None;
+    }
     let marker_computed = cascade
         .pseudo
         .get(&(
@@ -287,9 +292,6 @@ pub(super) fn marker_render_info_impl<'a>(
         ))
         .map(|style| style.as_ref());
     let style = marker_computed.unwrap_or(computed);
-    if style.display == DisplayValue::None {
-        return None;
-    }
     let mut counters = snapshots
         .node_view(node_id)
         .unwrap_or_else(|| CounterSnapshotView::new(&EMPTY_COUNTER_SNAPSHOT, None));

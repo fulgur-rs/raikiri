@@ -1,0 +1,828 @@
+{
+  "oracle": "Chromium152.0.7977.82 headless print PDF, Ahem10px/10px; pdftotext bbox points converted to CSSpx; RAIKIRI-1451",
+  "css": "@page{size:200px 200px;margin:10px}@page a{size:240px 200px}@page b{size:260px 200px}html,body{margin:0}body{font:10px/10px Ahem}ol,ul{margin:0;padding-left:20px}li{list-style-type:lower-alpha}ol{padding-left:50px}",
+  "cases": [
+    {
+      "label": "inside-initial",
+      "extra_css": "li{list-style-position:inside}li::marker{content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-none",
+      "extra_css": "li{list-style-position:inside}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-block",
+      "extra_css": "li{list-style-position:inside}li::marker{display:block;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-contents",
+      "extra_css": "li{list-style-position:inside}li::marker{display:contents;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-inline-flex",
+      "extra_css": "li{list-style-position:inside}li::marker{display:inline-flex;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-none-important",
+      "extra_css": "li{list-style-position:inside}li::marker{display:none!important;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-normal",
+      "extra_css": "li{list-style-position:inside}li::marker{display:none;content:normal}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "a",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ],
+        [
+          0,
+          "X",
+          89.999996,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "inside-content-none",
+      "extra_css": "li{list-style-position:inside}li::marker{display:none;content:none}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-type-none-explicit",
+      "extra_css": "li{list-style-position:inside}li{list-style-type:none}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-type-none-empty",
+      "extra_css": "li{list-style-position:inside}li{list-style-type:none}li::marker{display:none;content:\"\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "inside-owner-none",
+      "extra_css": "li{list-style-position:inside}li{display:none}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "inside-ancestor-none",
+      "extra_css": "li{list-style-position:inside}ol{display:none}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "inside-counter",
+      "extra_css": "li{list-style-position:inside}li::marker{display:none;content:counter(list-item,lower-alpha)}",
+      "body": "<ol><li>X</li><li>Y</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "Z",
+          10.0,
+          29.999998666666666
+        ],
+        [
+          0,
+          "a",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          69.99999733333334,
+          10.0
+        ],
+        [
+          0,
+          "b",
+          59.99999733333333,
+          19.999998666666666
+        ],
+        [
+          0,
+          "Y",
+          69.99999733333334,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "named-inside-initial",
+      "extra_css": "li{list-style-position:inside}li::marker{content:\"M\"}",
+      "body": "<ul><li><div style=\"float:left;width:10px;height:10px\">F</div><div style=\"page:b\">B</div></li></ul><div>Z</div>",
+      "page_names": [
+        null,
+        "b",
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "F",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "M",
+          39.99999866666667,
+          10.0
+        ],
+        [
+          1,
+          "B",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          2,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "named-inside-none",
+      "extra_css": "li{list-style-position:inside}li::marker{display:none;content:\"M\"}",
+      "body": "<ul><li><div style=\"float:left;width:10px;height:10px\">F</div><div style=\"page:b\">B</div></li></ul><div>Z</div>",
+      "page_names": [
+        null,
+        "b",
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "F",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "M",
+          39.99999866666667,
+          10.0
+        ],
+        [
+          1,
+          "B",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          2,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "outside-initial",
+      "extra_css": "li{list-style-position:outside}li::marker{content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-none",
+      "extra_css": "li{list-style-position:outside}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-block",
+      "extra_css": "li{list-style-position:outside}li::marker{display:block;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-contents",
+      "extra_css": "li{list-style-position:outside}li::marker{display:contents;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-inline-flex",
+      "extra_css": "li{list-style-position:outside}li::marker{display:inline-flex;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-none-important",
+      "extra_css": "li{list-style-position:outside}li::marker{display:none!important;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-normal",
+      "extra_css": "li{list-style-position:outside}li::marker{display:none;content:normal}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "a",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "outside-content-none",
+      "extra_css": "li{list-style-position:outside}li::marker{display:none;content:none}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-type-none-explicit",
+      "extra_css": "li{list-style-position:outside}li{list-style-type:none}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-type-none-empty",
+      "extra_css": "li{list-style-position:outside}li{list-style-type:none}li::marker{display:none;content:\"\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "Z",
+          10.0,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "outside-owner-none",
+      "extra_css": "li{list-style-position:outside}li{display:none}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "outside-ancestor-none",
+      "extra_css": "li{list-style-position:outside}ol{display:none}li::marker{display:none;content:\"M\"}",
+      "body": "<ol><li>X</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "outside-counter",
+      "extra_css": "li{list-style-position:outside}li::marker{display:none;content:counter(list-item,lower-alpha)}",
+      "body": "<ol><li>X</li><li>Y</li></ol><div>Z</div>",
+      "page_names": [
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "Z",
+          10.0,
+          29.999998666666666
+        ],
+        [
+          0,
+          "a",
+          49.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "X",
+          59.99999733333333,
+          10.0
+        ],
+        [
+          0,
+          "b",
+          49.99999733333333,
+          19.999998666666666
+        ],
+        [
+          0,
+          "Y",
+          59.99999733333333,
+          19.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "named-outside-initial",
+      "extra_css": "li{list-style-position:outside}li::marker{content:\"M\"}",
+      "body": "<ul><li><div style=\"float:left;width:10px;height:10px\">F</div><div style=\"page:b\">B</div></li></ul><div>Z</div>",
+      "page_names": [
+        "b",
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          19.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "F",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "B",
+          39.99999866666666,
+          10.0
+        ],
+        [
+          1,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    },
+    {
+      "label": "named-outside-none",
+      "extra_css": "li{list-style-position:outside}li::marker{display:none;content:\"M\"}",
+      "body": "<ul><li><div style=\"float:left;width:10px;height:10px\">F</div><div style=\"page:b\">B</div></li></ul><div>Z</div>",
+      "page_names": [
+        "b",
+        null
+      ],
+      "glyphs": [
+        [
+          0,
+          "M",
+          19.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "F",
+          29.999998666666666,
+          10.0
+        ],
+        [
+          0,
+          "B",
+          39.99999866666666,
+          10.0
+        ],
+        [
+          1,
+          "Z",
+          10.0,
+          10.0
+        ]
+      ]
+    }
+  ]
+}

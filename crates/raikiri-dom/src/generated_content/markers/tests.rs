@@ -39,6 +39,52 @@ fn generated_pseudo_content_with_snapshots<'a>(
 }
 
 #[test]
+fn marker_display_is_computed_but_does_not_suppress_the_marker() {
+    for (authored, expected) in [
+        ("none", DisplayValue::None),
+        ("block", DisplayValue::Block),
+        ("contents", DisplayValue::Contents),
+        ("inline-flex", DisplayValue::InlineFlex),
+    ] {
+        let sheet = format!("li::marker {{ display:{authored}; content:'M' }}");
+        let (document, cascade, first, hidden) = list_fixture(
+            "display:list-item;list-style:inside none",
+            "display:none",
+            Some(&sheet),
+        );
+        let marker = &cascade.pseudo[&(
+            raikiri_style::StyleNodeId::new(first as u64),
+            raikiri_style::PseudoElem::Marker,
+        )];
+        assert_eq!(marker.display, expected);
+        assert!(crate::generated_content::inside_marker_in_flow(
+            &cascade, first
+        ));
+        let (style, text) = marker_render_info(&document, &cascade, first).unwrap();
+        assert_eq!(style.display, expected);
+        assert_eq!(text, "M");
+        assert!(!crate::generated_content::marker_is_enabled(
+            &cascade, hidden
+        ));
+        assert!(marker_render_info(&document, &cascade, hidden).is_none());
+    }
+}
+
+#[test]
+fn marker_content_none_still_suppresses_an_ignored_display_declaration() {
+    let (document, cascade, first, _) = list_fixture(
+        "display:list-item;list-style:inside decimal",
+        "display:list-item",
+        Some("li::marker {display:none;content:none}"),
+    );
+    assert!(!crate::generated_content::marker_is_enabled(
+        &cascade, first
+    ));
+    let (_, text) = marker_render_info(&document, &cascade, first).unwrap();
+    assert!(text.is_empty());
+}
+
+#[test]
 fn list_marker_text_formats_ordinals_and_styles() {
     let (mut document, cascade, first, second) =
         list_fixture("display: list-item", "display: list-item", None);

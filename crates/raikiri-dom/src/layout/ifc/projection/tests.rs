@@ -998,7 +998,7 @@ fn suppressed_inside_image_marker_consumes_no_inline_space() {
         }
     }
     let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
-        "div::marker {display:none}",
+        "div::marker {display:none;content:none}",
         "display:list-item;list-style:inside url(https://images.test/marker.png)",
         |doc, root| {
             doc.append_text(root, "a");

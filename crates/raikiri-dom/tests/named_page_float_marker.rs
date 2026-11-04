@@ -71,10 +71,18 @@ fn oracle() -> serde_json::Value {
 
 #[test]
 fn floats_and_markers_keep_their_printed_page_contexts() {
+    check_oracle(oracle());
+}
+
+#[test]
+fn marker_display_keeps_the_printed_content_and_page_contexts() {
+    check_oracle(serde_json::from_str(include_str!("data/marker-display.json")).unwrap());
+}
+
+fn check_oracle(oracle: serde_json::Value) {
     // Chromium's printed page widths identify the page names. PDF glyph bounds
     // are converted from points to CSS pixels; Ahem advances each character by
     // 10px. The same font is supplied directly to the public layout API here.
-    let oracle = oracle();
     let resources = resources();
     let mut mismatches = Vec::new();
     for case in oracle["cases"].as_array().unwrap() {

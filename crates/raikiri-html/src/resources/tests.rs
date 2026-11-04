@@ -495,7 +495,7 @@ fn suppressed_marker_images_preserve_the_shared_background_request_budget() {
     let mut html = String::from(
         r#"<!doctype html><style>
         li { list-style-position:inside }
-        .hidden::marker { display:none }
+        .hidden { display:none }
         .none::marker { content:none }
         .text::marker { content:'custom' }
         .empty::marker { content:'' }
@@ -621,12 +621,50 @@ fn margin_box_background_preload_takes_the_cascaded_winner() {
 }
 
 #[test]
+fn marker_display_does_not_suppress_or_duplicate_image_requests() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let html = br#"<!doctype html><style>
+        li { list-style:inside url(https://images.test/marker.svg) }
+        li::marker { display:none }
+        .outside { list-style-position:outside }
+        .none { list-style-image:url(https://images.test/suppressed.svg) }
+        .none::marker { content:none }
+        .owner { display:none;list-style-image:url(https://images.test/hidden.svg) }
+        </style><li>X</li><li class="outside">Y</li>
+        <li class="none">Z</li><li class="owner">H</li>"#;
+    let doc = crate::parse_html_with_resources(html.as_slice(), &resources).unwrap();
+    let crate::render::PipelineRun::Completed(_) = crate::render::run_pipeline(
+        &doc,
+        raikiri_traits::PageDefaults::default(),
+        &raikiri_traits::LayoutConfig::default(),
+        crate::render::PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+            resume: None,
+        },
+    )
+    .unwrap() else {
+        panic!("complete pipeline");
+    };
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        [(
+            Url::parse("https://images.test/marker.svg").unwrap(),
+            ResourceKind::Image
+        )]
+    );
+}
+
+#[test]
 fn render_preloads_only_effective_marker_images() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);
     let html = br#"<!doctype html><style>
         li { list-style:inside url(https://images.test/unused.svg) }
-        .hidden::marker { display:none }
+        .hidden { display:none }
         .none::marker { content:none }
         .text::marker { content:'custom' }
         .empty::marker { content:'' }
