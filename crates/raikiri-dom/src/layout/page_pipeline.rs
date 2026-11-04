@@ -7940,15 +7940,21 @@ fn leading_piece_end(
 /// end to count as running past it.
 const CUT_ANYWHERE_PIECE: f32 = 0.01;
 
+/// How much room for content a box needs, past its padding and border, to
+/// count as having a height of its own.
+const HEIGHT_EPSILON: f32 = 0.001;
+
 /// How far below the border-box top of the wrapper `node_id` the first
 /// piece of its content ends, when padding or border sit above that content,
 /// on `node_id` or on a box it begins, and the first boxes inside it, down to
 /// the one that decides, hold no line to keep with those edges. A box that
-/// avoids breaks inside it or that no break goes through ends where it does,
-/// and an empty box can be cut anywhere, so it only counts when it begins past
-/// the page end (see [`first_piece_end`]). Lines are left to the rules for
-/// lines, and a box with no edges above it to the rules for boxes that avoid
-/// a break. An eligible atomic inline keeps its entire box with that piece.
+/// avoids breaks inside it or that no break goes through ends where it does.
+/// A box that holds no box of its own is one piece with its edges when it has
+/// no height of its own, and is cut anywhere after the edges above it when it
+/// has; one with no edges at all only counts when it begins past the page end
+/// (see [`first_piece_end`]). Lines are left to the rules for lines, and a box
+/// with no edges above it to the rules for boxes that avoid a break. An
+/// eligible atomic inline keeps its entire box with that piece.
 fn lineless_leading_piece_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -7987,7 +7993,9 @@ fn has_block_leading_content(document: &Document, node_id: usize) -> bool {
 
 /// The end of the first piece of the block-like root `node_id` that holds no line,
 /// from its border-box top, and whether padding or border sit above the
-/// content that decides it (see [`lineless_leading_piece_end`]).
+/// content that decides it (see [`lineless_leading_piece_end`]). The root has
+/// no piece when it holds no box and has no edges at all, and a box deeper
+/// down that holds no box is cut anywhere unless it has edges or a height.
 fn lineless_piece_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -8040,16 +8048,36 @@ fn lineless_piece_end(
             break;
         }
     }
+    let layout = &node.layout;
+    let edges_above = layout.border.top + layout.padding.top;
     let Some(child) = first else {
-        // Nothing to keep together inside the box.
-        return (depth > 0).then_some((CUT_ANYWHERE_PIECE, false));
+        // The box holds no box of its own, so the edges above its content are
+        // the whole of what comes first. A box with nothing but edges (no
+        // height of its own) goes as one piece, bottom edges included, as
+        // browsers do; a box with room for content can be cut anywhere after
+        // the edges above it, and a box with no edges at all is cut anywhere.
+        let edges_below = layout.border.bottom + layout.padding.bottom;
+        if depth == 0 && edges_above + edges_below == 0.0 {
+            return None;
+        }
+        let has_room = layout.size.height - edges_above - edges_below > HEIGHT_EPSILON;
+        // An inline-block that has room for content fragments across pages
+        // (css/printing/fragmented-inline-block-002-print), so its edges do
+        // not take the whole box to the next page.
+        if depth == 0 && has_room && node.display() == DisplayValue::InlineBlock {
+            return None;
+        }
+        let end = if has_room {
+            edges_above + CUT_ANYWHERE_PIECE
+        } else {
+            layout.size.height.max(CUT_ANYWHERE_PIECE)
+        };
+        return Some((end, edges_above > 0.0));
     };
     // The page breaks before the relative offset moves the box.
     let top = normal_flow_y(document, cascade, body_id, child);
     let (end, child_has_edges) = lineless_piece_end(document, cascade, body_id, child, depth + 1)?;
-    let layout = &node.layout;
-    let has_edges = child_has_edges || layout.border.top + layout.padding.top > 0.0;
-    Some((top + end, has_edges))
+    Some((top + end, child_has_edges || edges_above > 0.0))
 }
 
 /// Whether a box with padding or border above its content moves to the next
