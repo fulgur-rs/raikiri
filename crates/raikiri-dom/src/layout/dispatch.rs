@@ -4491,10 +4491,11 @@ fn ratio_dimensions_are_settled(
 }
 
 /// Give a flex or grid container with a preferred aspect ratio, an `auto` width
-/// and a height it states the width the ratio gives for that height, raised by
-/// its content up to the `max-width` it states: the automatic minimum size of
-/// CSS Sizing 4 §5.1, which is the min-content width unless the container
-/// scrolls or states a `min-width`.
+/// and a height it states, or one a column container settled for it, the width
+/// the ratio gives for that height, raised by its content up to the `max-width`
+/// it states: the automatic minimum size of CSS Sizing 4 §5.1, which is the
+/// min-content width unless the container scrolls or states a `min-width`. A
+/// container that opts out of that minimum still takes the width the ratio gives.
 ///
 /// Taffy takes the width the ratio gives as final, so a container whose items
 /// need more room is narrower than they are. `sized` measures the content: it
@@ -4536,14 +4537,31 @@ fn with_ratio_width(
             .height
             .maybe_resolve(inputs.parent_size.height)
             .is_some();
+    // The height a column container settled for an item with an `auto` width,
+    // by its flex basis, growth or shrinkage, gives that width through the
+    // ratio even when the item opts out of the content minimum. The container
+    // measuring its own width has settled no height for its items yet, so the
+    // item contributes the width of its content then.
+    let flexed_height = inputs.sizing_mode == SizingMode::ContentSize
+        && inputs.known_dimensions.height.is_some()
+        && style.size.width.is_auto()
+        && !matches!(
+            inputs.available_space.width,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
+        && tree.flex_main_axis_is_width(idx) == Some(false);
     let Some(width) = metrics.preferred.width.filter(|_| {
-        metrics.ratio_width || stated_height || flex_item_follows_main_size(tree, idx, &inputs)
+        metrics.ratio_width
+            || stated_height
+            || flexed_height
+            || flex_item_follows_main_size(tree, idx, &inputs)
     }) else {
         return inputs;
     };
     if !metrics.ratio_width {
         // An explicit minimum or scrolling opts out of the content minimum,
-        // but the width still settles before the authored height is laid out.
+        // but the width still settles from the authored or flexed height
+        // before the container is laid out.
         inputs.known_dimensions.width = Some(width);
         inputs.known_dimensions_are_definite.width = true;
         return inputs;
