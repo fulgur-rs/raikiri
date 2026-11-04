@@ -504,6 +504,10 @@ struct CandidateFrame<'name> {
     /// ancestor does. A text or box starting at or past it is never visible,
     /// so it takes no part in pagination.
     clip_end: f32,
+    /// Whether the clip that sets `clip_end` is on a box whose height is not
+    /// that of its content, so that it stays where it is when what it holds
+    /// grows.
+    clip_is_fixed: bool,
     /// What `clip_end` is for an absolutely positioned child: the edge past
     /// which the clips of its containing block and of the ancestors above
     /// that hide it, or infinity when none does. The clips of the boxes
@@ -607,6 +611,7 @@ impl CandidateFrame<'_> {
             inside_float: false,
             inside_out_of_flow: false,
             clip_end: f32::INFINITY,
+            clip_is_fixed: false,
             absolute_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
@@ -682,6 +687,13 @@ pub(super) struct EdgesBreak {
     pub(super) raw_y: f32,
     /// The block size of the bottom padding and border.
     pub(super) edges: f32,
+    /// The end of the clip around the block, in the coordinates of the
+    /// candidates, when that clip keeps its place as the edges are pushed
+    /// down, and infinity when none does. It names the clip.
+    pub(super) clip_end: f32,
+    /// How much room the clip leaves below the edges where they are, in the
+    /// coordinates of the candidates; infinity without a clip that holds.
+    pub(super) clip_room: f32,
 }
 
 /// Collects the page candidates of a laid-out subtree. Page membership is
@@ -1566,24 +1578,39 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // sliver of its content. A fixed box is not clipped here. A
                 // document paginated on transposed axes is not measured at
                 // all: the overflow that clips its flow is not the one on y.
-                let clip_end = if document.context.pagination_on_transposed_axes {
-                    f32::INFINITY
+                let (clip_end, clip_is_fixed) = if document.context.pagination_on_transposed_axes {
+                    (f32::INFINITY, false)
                 } else {
-                    let inherited = match document.nodes[node_id].position() {
+                    // Only a clip that comes down the flow unchanged is known to
+                    // be fixed: an absolutely positioned box has its own.
+                    let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
                         PositionValue::Absolute if raw_y < frame.absolute_clip_end => {
-                            frame.absolute_clip_end
+                            (frame.absolute_clip_end, false)
                         }
                         PositionValue::Absolute if frame.absolute_clip_end.is_finite() => {
                             let layout = &document.nodes[node_id].layout;
-                            raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER
+                            (
+                                raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
+                                false,
+                            )
                         }
-                        PositionValue::Absolute | PositionValue::Fixed => f32::INFINITY,
-                        _ => frame.clip_end,
+                        PositionValue::Absolute | PositionValue::Fixed => (f32::INFINITY, false),
+                        _ => (frame.clip_end, frame.clip_is_fixed),
                     };
                     if !is_body && super::element_clips_overflow(document, cascade, node_id) {
-                        inherited.min(super::clip_block_end(document, cascade, node_id, raw_y))
+                        // A clip on a box whose height follows its content grows
+                        // with what is pushed down inside it.
+                        let own_fixed = !height_follows_content(document, node_id);
+                        let own = super::clip_block_end(document, cascade, node_id, raw_y);
+                        if own < inherited {
+                            (own, own_fixed)
+                        } else if own == inherited {
+                            (inherited, inherited_fixed || own_fixed)
+                        } else {
+                            (inherited, inherited_fixed)
+                        }
                     } else {
-                        inherited
+                        (inherited, inherited_fixed)
                     }
                 };
                 let absolute_clip_end = if clip_end != frame.absolute_clip_end
@@ -1915,6 +1942,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
                             clip_end,
+                            clip_is_fixed,
                             absolute_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
@@ -1952,11 +1980,21 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !candidate_ancestor_constraints(document, cascade, node_id, body_id, None).0
                 {
                     let offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+                    let bottom = candidate_raw_y + node.layout.size.height;
+                    // The box around a fixed clip does not grow as the edges are
+                    // pushed down inside it, so it hides more of them.
+                    let (clip_end, clip_room) = if frame.clip_is_fixed {
+                        (frame.clip_end, frame.clip_end - bottom)
+                    } else {
+                        (f32::INFINITY, f32::INFINITY)
+                    };
                     self.edges_breaks.push(EdgesBreak {
                         node_id,
                         before: self.out.len(),
-                        raw_y: candidate_raw_y + node.layout.size.height - edges - offset,
+                        raw_y: bottom - edges - offset,
                         edges,
+                        clip_end,
+                        clip_room,
                     });
                 }
             }

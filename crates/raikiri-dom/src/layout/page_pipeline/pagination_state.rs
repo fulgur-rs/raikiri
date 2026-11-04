@@ -294,6 +294,10 @@ pub(super) struct PaginationState {
     next_candidate_rank: usize,
     pub(super) float_shifts: FloatShifts,
     pub(super) reach: PageReach,
+    /// How far the edges pushed down under each fixed clip have moved the
+    /// flow inside it, by the end of the clip (as bits) in the coordinates of
+    /// the candidates: the clip stays where it is while they move.
+    edge_pushes: HashMap<u32, f32>,
     pub(super) page_names: PageNames,
     pub(super) pending_break: PendingBreak,
     pub(super) sibling_margins: SiblingMargins,
@@ -339,6 +343,7 @@ impl PaginationState {
             next_candidate_rank: 0,
             float_shifts: FloatShifts::default(),
             reach: PageReach::default(),
+            edge_pushes: HashMap::new(),
             page_names,
             pending_break: PendingBreak::default(),
             sibling_margins: SiblingMargins::default(),
@@ -925,7 +930,10 @@ impl PaginationState {
             return Ok(());
         }
         let next_page = page.saturating_add(1);
-        reach_page(control, next_page)?;
+        let visible = self.visible_edges(edges_break, gap);
+        if visible > 0.001 {
+            reach_page(control, next_page)?;
+        }
         document.nodes[edges_break.node_id].layout.size.height += gap;
         document.mark_pagination_extent_dirty(edges_break.node_id);
         grow_ancestors_for_shift(
@@ -940,12 +948,30 @@ impl PaginationState {
         );
         self.flow_shift += gap;
         self.current_page = self.current_page.max(next_page);
-        self.record_pages(
-            control,
-            page_origins.end_page(page_end, edges_break.edges),
-            true,
-        )?;
+        if visible > 0.001 {
+            self.record_pages(control, page_origins.end_page(page_end, visible), true)?;
+        }
         Ok(())
+    }
+
+    /// The block size of the edges that a clip leaves visible once they begin
+    /// `gap` lower, and the pages they run over are those below it. A clip on
+    /// a box of its own height stays where it is as the edges are pushed
+    /// down, so it hides `gap` more of them, and the more for what the
+    /// pushes of the blocks inside it before took.
+    fn visible_edges(&mut self, edges_break: &EdgesBreak, gap: f32) -> f32 {
+        if !edges_break.clip_end.is_finite() {
+            return edges_break.edges;
+        }
+        let pushed = self
+            .edge_pushes
+            .entry(edges_break.clip_end.to_bits())
+            .or_insert(0.0);
+        let visible = edges_break
+            .edges
+            .min(edges_break.edges + edges_break.clip_room - *pushed - gap);
+        *pushed += gap;
+        visible
     }
 
     /// Places the footnote box `candidate`. `float: footnote` is a page-local
