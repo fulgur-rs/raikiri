@@ -68,6 +68,7 @@ pub(crate) mod headers;
 pub(crate) mod row_moves;
 mod rowspan;
 mod spanned_rows;
+mod vertical_columns;
 mod vertical_rows;
 use cell_index::CellIndex;
 use vertical_rows::{RowTrackView, VerticalRows, natural_widths as vertical_row_widths};
@@ -842,10 +843,11 @@ fn compute_table_layout_checked(
         // with `border-box` they apply to the outer box. The engine clamps and
         // distributes in outer sizes below, so content-box values are lifted by
         // the padding+border extents. Lifting both the natural size and the max
-        // by the same insets keeps the max-never-shrinks gate (`mx >= v`,
-        // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
-        // max-height/max-width keep leaving sub-intrinsic tables at natural
-        // size. min still wins over max on direct conflict.
+        // by the same insets keeps the outer-box clamp's content floor
+        // (`mx >= v`, csswg-drafts#5336 / Mozilla bug 1651530) in the same
+        // domain. Inline track sizing applies its maximum separately; a
+        // vertical table fits its physical height below. Min still wins over
+        // max on direct conflict.
         let (authored_min, authored_max, box_sizing) = {
             let st = doc.table_style(table_idx);
             (st.min_size(), st.max_size(), st.box_sizing())
@@ -1580,11 +1582,10 @@ fn compute_table_layout_checked(
         // Content extents net of collapsed-line overlaps, plus the separated
         // spacing (one of the two is always zero).
         let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w + spacing.width;
-        // min grows the box; max NEVER shrinks a table below its intrinsic
-        // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
-        // min-max-size-table-content-box and max-height-table check that
-        // max-height/max-width leave sub-intrinsic tables at natural size —
-        // only min-* grow). min still wins over max on direct conflict.
+        // Keep measured content as the floor of this outer-box clamp
+        // (csswg-drafts#5336 / Mozilla bug 1651530). Inline track algorithms
+        // apply their maximum separately: horizontal column sizing above and
+        // vertical height fitting below. Min still wins over max on conflict.
         let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
             let mut x = v;
             if let Some(mn) = mn {
@@ -1801,24 +1802,45 @@ fn compute_table_layout_checked(
         let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
         // Vertical tables stack the columns along the physical height, so the
         // vertical spacing applies between and around those inline tracks.
-        // Each column is as high as the cells that
-        // start in it ask, the columns of a cell that spans several sharing its
-        // height. The table is at least as high as its authored height or
-        // `min-height` and its caption ask, which the columns share in
-        // proportion to their heights.
+        // Preferred heights grow proportionally, or shrink toward their true
+        // inline minima when a definite height or maximum requires it.
+        // A minimum height and the caption only floor the available room.
         let vertical_tracks = if vertical_writing {
             let columns = usize::from(grid.n_cols);
-            let mut tracks = vertical_column_tracks(&grid, border_spacing.1);
+            let rows = vertical_row_layout
+                .as_ref()
+                .expect("vertical rows measured")
+                .natural();
+            let mut tracks = vertical_column_tracks(&grid, border_spacing.1, |cell| {
+                vertical_columns::preferred_height(doc, cell, rows.cell_width(cell))
+            });
             let spacing_total = border_spacing.1 * (columns + 1) as f32;
             // The room the rows were given has the spacing of every visible
             // row taken out of it; the columns stack along that height with
             // spacing of their own, so all of it comes back.
-            let floor = target_room
+            let floor = min_target
                 .map_or(0.0, |room| room + spacing.height)
                 .max(caption_inline_minimum - padding_border_size.height);
             let natural = tracks.iter().sum::<f32>() + spacing_total;
-            if floor > natural {
-                grow_tracks(&mut tracks, floor - natural);
+            // The row-height pass excludes vertical flex/grid items, but
+            // their assigned inline extent still sizes the column tracks.
+            let inline_target = if parent_is_flex_or_grid {
+                assigned_grid_height
+                    .or(effective_known.height)
+                    .map(|height| height - sharing_insets_height)
+            } else {
+                known_target
+            };
+            let requested = inline_target.map_or(natural, |room| room + spacing.height);
+            let capped = max_h_outer.map_or(requested, |maximum| {
+                requested.min((maximum - padding_border_size.height).max(0.0))
+            });
+            let target = capped.max(floor);
+            if target < natural {
+                let minimum = vertical_columns::minimum_tracks(doc, &grid, rows, border_spacing.1);
+                vertical_columns::fit(&mut tracks, &minimum, (target - spacing_total).max(0.0));
+            } else if target > natural {
+                grow_tracks(&mut tracks, target - natural);
             }
             tracks
         } else {
@@ -4993,7 +5015,11 @@ fn place_cells(
 /// spans no other column. A cell that spans several columns shares the height
 /// it lacks among them, once the narrower spans have settled, and the columns
 /// keep the `spacing` between them out of its height.
-fn vertical_column_tracks(grid: &TableGrid, spacing: f32) -> Vec<f32> {
+fn vertical_column_tracks(
+    grid: &TableGrid,
+    spacing: f32,
+    mut height: impl FnMut(&CellPlacement) -> f32,
+) -> Vec<f32> {
     let columns = usize::from(grid.n_cols);
     let mut tracks = vec![0.0f32; columns];
     let mut spanning = Vec::new();
@@ -5002,10 +5028,11 @@ fn vertical_column_tracks(grid: &TableGrid, spacing: f32) -> Vec<f32> {
         let end = start
             .saturating_add(usize::from(cell.col_span))
             .min(columns);
+        let height = height(cell);
         if end - start > 1 {
-            spanning.push((start..end, cell.measured_height));
+            spanning.push((start..end, height));
         } else if end > start {
-            tracks[start] = f32_max_compat(tracks[start], cell.measured_height);
+            tracks[start] = f32_max_compat(tracks[start], height);
         }
     }
     spanning.sort_by_key(|(span, _)| (span.len(), span.start));

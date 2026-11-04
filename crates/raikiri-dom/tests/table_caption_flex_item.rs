@@ -818,8 +818,9 @@ fn a_vertical_table_is_not_made_taller_than_its_container_by_the_height_it_gets(
             grid("height:100px", &table(vertical, &cells(count))),
         ] {
             let [_, _, _, height] = border_box(&container, "r");
+            // Use the same layout-unit tolerance as the other geometry checks.
             assert!(
-                height <= 100.0,
+                height <= 100.0 + TOLERANCE,
                 "{count} cells make a row {height}px high in {container}"
             );
         }
