@@ -693,10 +693,6 @@ impl LayoutSession<'_> {
             .is_some_and(|parent| self.physical_style(parent).flex_direction_is_row())
     }
 
-    /// Whether `known` is only the cross size that a flex container stretches
-    /// its item `node`, with the box style `style`, to while the item's main
-    /// size is measured.
-    ///
     /// Whether the main axis of the flex container that `node` is an item of
     /// is the horizontal one, or `None` if `node` is no flex item.
     pub(crate) fn flex_main_axis_is_width(&self, node: usize) -> Option<bool> {
@@ -1011,6 +1007,15 @@ impl LayoutSession<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
         self.sync_layout_cache_mutations();
+        // The height the flex algorithm measures an item of a column at, while
+        // it measures the width of the container, is not what that width is
+        // measured from. The box keeps the height it was asked about.
+        let flexed_height = inputs.known_dimensions.height;
+        let (inputs, measured_at_stated_height) =
+            match with_stated_height_contribution(self, usize::from(node_id), inputs) {
+                Some(stated) => (stated, true),
+                None => (inputs, false),
+            };
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let inputs = orthogonal_flow::with_grid_item_room(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
@@ -1463,6 +1468,11 @@ impl LayoutSession<'_> {
                 compute_cached_layout(tree, node_id, inputs, compute)
             })
         };
+        // Only the width of this measure is read, by the flex algorithm that is
+        // sizing its container, so the height is the one it asked about.
+        if measured_at_stated_height && let Some(height) = flexed_height {
+            output.size.height = height;
+        }
         // The baselines of a box laid out on vertical axes are offsets along
         // its block axis from its block-start border edge, which is not what
         // the lookups below read.
@@ -4593,6 +4603,72 @@ fn ratio_dimensions_are_settled(
                 .height
                 .maybe_resolve(inputs.parent_size.height)
                 .is_some())
+}
+
+/// While a column flex container measures its own width, an item with a
+/// preferred aspect ratio and an `auto` width contributes the width its ratio
+/// takes from the height it states, or the width of its content when it states
+/// none (CSS Sizing 4 §5.1): the height the container flexes the item to, or
+/// its flex basis, is not a height the item states, and the width of the
+/// container does not follow it.
+///
+/// Taffy measures the item for that width at the height it flexed it to, with
+/// a min-content or max-content width on offer. Once the width of the
+/// container is settled the item is offered a definite width, and the height
+/// it flexed to gives it the width through the ratio as before.
+///
+/// `None` when the item is not measured so, else the inputs that give the
+/// width its container reads, with the height the item states.
+fn with_stated_height_contribution(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: LayoutInput,
+) -> Option<LayoutInput> {
+    if inputs.run_mode != RunMode::ComputeSize
+        || inputs.sizing_mode != SizingMode::ContentSize
+        || inputs.known_dimensions.width.is_some()
+        || inputs.known_dimensions.height.is_none()
+        || matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+        || tree.flex_main_axis_is_width(idx) != Some(false)
+        // A replaced item takes its width from its height in its own path.
+        || leaf_intrinsic_size(&tree.nodes[idx]).is_some()
+        || tree.has_vertical_writing_mode(idx)
+        || tree.container_is_vertical(idx)
+    {
+        return None;
+    }
+    let style = block_flow::style_input::physical(tree, idx);
+    if style.aspect_ratio.is_none() || !style.size.width.is_auto() {
+        return None;
+    }
+    // A height of `stretch` is the definite height of the container less the
+    // margins of the item, whatever height the container flexes the item to.
+    let stretched = matches!(style.size.height.expand(), ExpandedDimension::Stretch)
+        .then(|| content_limits::stretch_fit_height(tree, idx, &inputs))
+        .flatten();
+    let stated = block_flow::Metrics::resolve(
+        &style,
+        false,
+        tree.nodes[idx].ratio_in_content_box,
+        LayoutInput {
+            sizing_mode: SizingMode::InherentSize,
+            known_dimensions: Size {
+                width: None,
+                height: stretched,
+            },
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            ..inputs
+        },
+    )
+    .preferred
+    .height;
+    let mut inputs = inputs;
+    inputs.known_dimensions.height = stated;
+    inputs.known_dimensions_are_definite.height = stated.is_some();
+    Some(inputs)
 }
 
 /// Give a flex or grid container with a preferred aspect ratio, an `auto` width
