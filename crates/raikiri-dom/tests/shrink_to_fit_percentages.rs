@@ -814,7 +814,7 @@ fn replaced_element(kind: &str, style: &str) -> String {
     element.replace("id=a", "id=c")
 }
 
-/// A row of [`MIN_CONTENT_FLEX_ROWS`]: the container, the kind of replaced
+/// A row of `MIN_CONTENT_FLEX_ROWS`: the container, the kind of replaced
 /// element, its `style`, and the border boxes by id.
 type FlexRow = (
     &'static str,
@@ -823,7 +823,7 @@ type FlexRow = (
     &'static [(&'static str, Rect)],
 );
 
-/// Border boxes of Chromium for [`MIN_CONTENT_FLEX`] with a replaced element
+/// Border boxes of Chromium for `MIN_CONTENT_FLEX` with a replaced element
 /// (container, element, the `style` of the element, the boxes by id). A
 /// percentage `width` or `max-width` of the element is nothing to the width of
 /// the container, whether the container is a row, a column or wraps its items,
