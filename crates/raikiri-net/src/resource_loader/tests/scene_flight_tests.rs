@@ -33,9 +33,8 @@ impl Drop for Release<'_> {
     }
 }
 
-fn build(bytes: &[u8], size: ImageRasterSize) -> Option<VectorImage> {
-    SvgDocument::parse(bytes)
-        .ok()?
+fn build(document: &SvgDocument, size: ImageRasterSize) -> Option<VectorImage> {
+    document
         .scene(
             SvgViewport {
                 width: size.width,
@@ -84,9 +83,9 @@ fn eight_joined_requests_build_once_share_identity_and_charge_once() {
         let scenes = std::thread::scope(|scope| {
             let _release = Release(&gate);
             let owner = scope.spawn(|| {
-                source.scene_with(size, |bytes, size| {
+                source.scene_with(size, |document, size| {
                     gate.wait();
-                    build(bytes, size)
+                    build(document, size)
                 })
             });
             spin_until(|| gate.builds.load(Ordering::SeqCst) == 1);
@@ -141,22 +140,22 @@ fn different_sizes_and_sources_build_while_the_first_owner_is_blocked() {
     std::thread::scope(|scope| {
         let _release = Release(&gate);
         let first = scope.spawn(|| {
-            a.scene_with(box_of(4.0), |bytes, size| {
+            a.scene_with(box_of(4.0), |document, size| {
                 gate.wait();
-                build(bytes, size)
+                build(document, size)
             })
         });
         spin_until(|| gate.builds.load(Ordering::SeqCst) == 1);
         let second = scope.spawn(|| {
-            a.scene_with(box_of(8.0), |bytes, size| {
+            a.scene_with(box_of(8.0), |document, size| {
                 started.send(1).unwrap();
-                build(bytes, size)
+                build(document, size)
             })
         });
         let third = scope.spawn(|| {
-            b.scene_with(box_of(4.0), |bytes, size| {
+            b.scene_with(box_of(4.0), |document, size| {
                 started.send(2).unwrap();
-                build(bytes, size)
+                build(document, size)
             })
         });
         let one = receiver.recv_timeout(DEADLINE);
@@ -189,7 +188,7 @@ fn none_panic_and_poison_release_joined_waiters_and_clean_pending() {
         std::thread::scope(|scope| {
             let _release = Release(&gate);
             let owner = scope.spawn(|| {
-                source.scene_with(box_of(4.0), |bytes, size| {
+                source.scene_with(box_of(4.0), |document, size| {
                     gate.wait();
                     match outcome {
                         0 => None,
@@ -199,14 +198,14 @@ fn none_panic_and_poison_release_joined_waiters_and_clean_pending() {
                                 let _budget = budget.lock().unwrap();
                                 panic!("poison budget");
                             }));
-                            build(bytes, size)
+                            build(document, size)
                         }
                         _ => {
                             let _ = catch_unwind(AssertUnwindSafe(|| {
                                 let _cache = source.scene_cache.lock().unwrap();
                                 panic!("poison cache");
                             }));
-                            build(bytes, size)
+                            build(document, size)
                         }
                     }
                 })
@@ -305,9 +304,9 @@ fn poisoned_flight_releases_waiters_without_poisoning_the_cache() {
     std::thread::scope(|scope| {
         let _release = Release(&gate);
         let owner = scope.spawn(|| {
-            source.scene_with(box_of(4.0), |bytes, size| {
+            source.scene_with(box_of(4.0), |document, size| {
                 gate.wait();
-                build(bytes, size)
+                build(document, size)
             })
         });
         spin_until(|| gate.builds.load(Ordering::SeqCst) == 1);

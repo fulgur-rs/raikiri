@@ -140,6 +140,12 @@ impl Drop for PendingSource<'_> {
     }
 }
 
+fn parse_svg_source(bytes: &[u8]) -> Result<SvgDocument, raikiri_svg::SvgError> {
+    #[cfg(test)]
+    tests::svg_parse_tests::record_parse();
+    SvgDocument::parse(bytes)
+}
+
 /// Loads and caches decoded image resources.
 ///
 /// `ResourceLoader` owns provider dispatch, `data:` URL decoding, request
@@ -244,7 +250,7 @@ impl Drop for PendingScene<'_> {
 
 enum ImageSourceKind {
     Raster(Arc<DecodedImage>),
-    Svg(Arc<[u8]>),
+    Svg(Arc<SvgDocument>),
 }
 
 impl ImageSource {
@@ -265,12 +271,12 @@ impl ImageSource {
         }
     }
 
-    fn svg(document: SvgDocument, bytes: Arc<[u8]>, budget: Arc<Mutex<CacheBudget>>) -> Self {
+    fn svg(document: SvgDocument, budget: Arc<Mutex<CacheBudget>>) -> Self {
         let intrinsic = document.intrinsic_size();
         Self {
-            // Retain only charged source bytes. SVG use references can expand a
-            // small input into a much larger parsed tree.
-            kind: ImageSourceKind::Svg(bytes),
+            // Keep validated source and metadata, never the expanded backend
+            // tree. Publication charges this compact allocation to the cache.
+            kind: ImageSourceKind::Svg(Arc::new(document).into_source_only()),
             intrinsic: ImageIntrinsicSize::new(
                 intrinsic.width,
                 intrinsic.height,
@@ -292,8 +298,7 @@ impl ImageSource {
     /// pixels next. The document is built with the default style and without
     /// fonts, as its raster is.
     pub(crate) fn scene(&self, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
-        self.scene_with(size, |bytes, size| {
-            let document = SvgDocument::parse(bytes).ok()?;
+        self.scene_with(size, |document, size| {
             match document.scene(
                 SvgViewport {
                     width: size.width,
@@ -315,9 +320,9 @@ impl ImageSource {
     fn scene_with(
         &self,
         size: ImageRasterSize,
-        build: impl FnOnce(&[u8], ImageRasterSize) -> Option<VectorImage>,
+        build: impl FnOnce(&SvgDocument, ImageRasterSize) -> Option<VectorImage>,
     ) -> Option<Arc<VectorImage>> {
-        let ImageSourceKind::Svg(bytes) = &self.kind else {
+        let ImageSourceKind::Svg(document) = &self.kind else {
             return None;
         };
         let (flight, owner) = {
@@ -347,8 +352,8 @@ impl ImageSource {
             flight,
             active: true,
         };
-        // No cache, slot, or budget mutex is held while parsing or building.
-        let scene = Arc::new(build(bytes, size)?);
+        // No cache, slot, or budget mutex is held while preparing or building.
+        let scene = Arc::new(build(document, size)?);
         self.retain_scene(size, &scene)?;
         pending.complete(Some(scene.clone()));
         Some(scene)
@@ -396,7 +401,7 @@ impl ImageSource {
                     Some(image.clone())
                 }
             }
-            ImageSourceKind::Svg(bytes) => {
+            ImageSourceKind::Svg(document) => {
                 let mut cached = self.raster_cache.lock().ok()?;
                 if let Some(index) = cached.iter().position(|(cached, _)| *cached == size) {
                     let entry = cached.remove(index);
@@ -418,7 +423,6 @@ impl ImageSource {
                 let mut budget = self.budget.lock().ok()?;
                 let available = budget.remaining().checked_add(cached_bytes)?;
                 let limit = max_output_bytes.map_or(available, |limit| limit.min(available));
-                let document = SvgDocument::parse(bytes).ok()?;
                 let image = document
                     .rasterize(
                         SvgViewport {
@@ -444,6 +448,13 @@ impl ImageSource {
                 cached.push((size, image.clone()));
                 Some(image)
             }
+        }
+    }
+
+    fn retained_byte_len(&self) -> Option<u64> {
+        match &self.kind {
+            ImageSourceKind::Raster(image) => u64::try_from(image.rgba.len()).ok(),
+            ImageSourceKind::Svg(document) => document.source_only_retained_bytes(),
         }
     }
 
@@ -597,11 +608,13 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         // Keep the permit until decode and publication finish, bounding the
         // number of fetched buffers waiting for the serialized decoder.
         let (bytes, is_data_url, is_svg, final_url_shareable) = self.fetch_bytes(url)?;
-        let source_bytes = if is_svg { bytes.len() as u64 } else { 0 };
+        let encoded_svg_bytes = if is_svg { bytes.len() as u64 } else { 0 };
         let mut budget = self.budget.lock().map_err(|_| cache_limit_error())?;
+        // Preserve early rejection before expensive SVG validation. Publication
+        // charges the compact allocation rather than this conservative input.
         let available = budget
             .remaining()
-            .checked_sub(source_bytes)
+            .checked_sub(encoded_svg_bytes)
             .ok_or_else(cache_limit_error)?;
         // The builder only constructs an uncommitted source. Catch its unwind
         // inside this guard's lifetime so the shared budget is not poisoned.
@@ -615,9 +628,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                 resume_unwind(panic);
             }
         };
-        let charge = source_bytes
-            .checked_add(source.decoded_byte_len().unwrap_or(0))
-            .ok_or_else(cache_limit_error)?;
+        let charge = source.retained_byte_len().ok_or_else(cache_limit_error)?;
         let shared = final_url_shareable
             && raster_source_key(url).is_some()
             && matches!(source.kind, ImageSourceKind::Raster(_));
@@ -692,9 +703,9 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         available: u64,
     ) -> Result<Arc<ImageSource>, ResolverError> {
         let source = if is_svg {
-            let document = SvgDocument::parse(&bytes)
+            let document = parse_svg_source(&bytes)
                 .map_err(|error| ResolverError::Decode(format!("SVG parse failed: {error}")))?;
-            ImageSource::svg(document, bytes.into(), self.budget.clone())
+            ImageSource::svg(document, self.budget.clone())
         } else {
             let decoded = self.decoder.decode(&bytes, available).map_err(|error| {
                 if is_data_url {

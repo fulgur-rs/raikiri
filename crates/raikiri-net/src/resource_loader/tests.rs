@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod admission_tests;
 mod fragment_tests;
 mod scene_flight_tests;
+pub(super) mod svg_parse_tests;
 
 struct RejectingProvider;
 
@@ -181,7 +182,7 @@ const TWO_COLOR_SVG: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\
 #[test]
 fn svg_source_rasterize_caches_second_call() {
     let document = SvgDocument::parse(TWO_COLOR_SVG).expect("parse svg");
-    let source = ImageSource::svg(document, TWO_COLOR_SVG.into(), test_budget(MAX_CACHE_BYTES));
+    let source = ImageSource::svg(document, test_budget(MAX_CACHE_BYTES));
     assert_eq!(source.decoded_byte_len(), None);
     let size = ImageRasterSize {
         width: 4.0,
@@ -198,7 +199,7 @@ fn svg_source_rasterize_caches_second_call() {
 fn svg_source_keeps_rasters_of_sizes_painted_in_turn() {
     let document = SvgDocument::parse(TWO_COLOR_SVG).expect("parse svg");
     let budget = test_budget(MAX_CACHE_BYTES);
-    let source = ImageSource::svg(document, TWO_COLOR_SVG.into(), budget.clone());
+    let source = ImageSource::svg(document, budget.clone());
     let size = |width: f32| ImageRasterSize { width, height: 2.0 };
     let small = source.rasterize(size(2.0), None).unwrap();
     let large = source.rasterize(size(4.0), None).unwrap();
@@ -227,13 +228,20 @@ fn svg_source_keeps_rasters_of_sizes_painted_in_turn() {
     ));
 }
 
+fn svg_retained_bytes(bytes: &[u8]) -> u64 {
+    Arc::new(SvgDocument::parse(bytes).unwrap())
+        .into_source_only()
+        .source_only_retained_bytes()
+        .unwrap()
+}
+
 fn test_budget(limit: u64) -> Arc<Mutex<CacheBudget>> {
     Arc::new(Mutex::new(CacheBudget { used: 0, limit }))
 }
 
 fn svg_source(budget: &Arc<Mutex<CacheBudget>>) -> ImageSource {
     let document = SvgDocument::parse(TWO_COLOR_SVG).expect("parse svg");
-    ImageSource::svg(document, TWO_COLOR_SVG.into(), budget.clone())
+    ImageSource::svg(document, budget.clone())
 }
 
 fn box_of(width: f32) -> ImageRasterSize {
@@ -310,7 +318,6 @@ fn svg_source_scene_keeps_the_root_opacity_of_the_document() {
     let dimmed: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"2\" opacity=\"0.5\"><rect width=\"4\" height=\"2\" fill=\"red\"/></svg>";
     let source = ImageSource::svg(
         SvgDocument::parse(dimmed).unwrap(),
-        dimmed.into(),
         test_budget(MAX_CACHE_BYTES),
     );
     let scene = source.scene(box_of(4.0)).expect("a scene");
@@ -331,11 +338,7 @@ fn svg_source_remembers_a_document_that_needs_the_raster_path() {
     // A mask is outside the vector subset.
     let masked: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"2\"><mask id=\"m\"><rect width=\"2\" height=\"2\" fill=\"white\"/></mask><rect width=\"4\" height=\"2\" fill=\"red\" mask=\"url(#m)\"/></svg>";
     let budget = test_budget(MAX_CACHE_BYTES);
-    let source = ImageSource::svg(
-        SvgDocument::parse(masked).unwrap(),
-        masked.into(),
-        budget.clone(),
-    );
+    let source = ImageSource::svg(SvgDocument::parse(masked).unwrap(), budget.clone());
     assert!(source.scene(box_of(4.0)).is_none());
     assert!(source.raster_only.load(Ordering::Relaxed));
     assert!(source.scene(box_of(4.0)).is_none());
@@ -423,7 +426,7 @@ fn data_urls_share_the_byte_budget_and_failed_decode_does_not_charge_it() {
 #[test]
 fn svg_source_and_late_rasterization_share_the_aggregate_budget() {
     let url = Url::parse("https://images.test/a.svg").unwrap();
-    let source_bytes = (url.as_str().len() + TWO_COLOR_SVG.len()) as u64;
+    let source_bytes = url.as_str().len() as u64 + svg_retained_bytes(TWO_COLOR_SVG);
     let resolver = ResourceLoader::with_limits(
         RecordingProvider {
             fetch_count: AtomicUsize::new(0),
@@ -523,7 +526,7 @@ fn svg_use_expansion_preserves_pixels_after_source_only_admission() {
     svg.push_str("</defs><use href=\"#g8\"/></svg>");
     let encoded = svg.bytes().map(|b| format!("%{b:02X}")).collect::<String>();
     let url = Url::parse(&format!("data:image/svg+xml,{encoded}")).unwrap();
-    let source_bytes = (url.as_str().len() + svg.len()) as u64;
+    let source_bytes = url.as_str().len() as u64 + svg_retained_bytes(svg.as_bytes());
     let resolver = ResourceLoader::with_limits(RejectingProvider, source_bytes + 32, 256);
     let source = resolver.load_source(&url).unwrap();
     assert_eq!(source.intrinsic.width, Some(4.0));
