@@ -1598,13 +1598,11 @@ const LONGHAND_ADDITIVE_STYLES: &[(&str, AdditiveSymbols, &str)] = &[
 /// `@counter-style` blocks.
 const JAPANESE_NEGATIVE: &str = "\u{30de}\u{30a4}\u{30ca}\u{30b9}";
 
-/// `negative: "\B9C8\C774\B108\C2A4  "` (마이너스, followed by **two**
-/// literal U+0020 spaces inside the quoted string — confirmed against the
-/// raw stylesheet text; the informative comment beside it says "followed
-/// by a space" (singular), but the normative descriptor value itself has
-/// two) — identical string shared verbatim by all three Korean
-/// `@counter-style` blocks.
-const KOREAN_NEGATIVE: &str = "\u{b9c8}\u{c774}\u{b108}\u{c2a4}  ";
+/// The Korean negative descriptor decodes to `마이너스 ` with one U+0020.
+/// In the CSS source `negative: "\B9C8\C774\B108\C2A4  "`, the first
+/// space terminates the final hexadecimal escape; only the second remains
+/// in the string (CSS Syntax 3, section 4.3.7).
+const KOREAN_NEGATIVE: &str = "\u{b9c8}\u{c774}\u{b108}\u{c2a4} ";
 
 const JAPANESE_INFORMAL_ADDITIVE: [(i32, &str); 37] = [
     (9000, "\u{4e5d}\u{5343}"),

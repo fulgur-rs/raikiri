@@ -548,10 +548,6 @@ pub(super) fn same(left: &ComputedValues, right: &ComputedValues) -> bool {
 /// property, so a case that sets only this one cannot tell the keywords apart.
 pub(super) const SEPARATE_TESTS: &[&str] = &["outline-width", "white-space"];
 
-/// Properties that drop `revert` and `revert-layer`: the user agent sets
-/// `white-space` whole, so these have no cascade slot to roll back to.
-pub(super) const NO_ROLLBACK: &[&str] = &["white-space-collapse", "text-wrap-mode", "text-wrap"];
-
 #[test]
 fn every_table_row_has_a_case() {
     for key in KEYS {
@@ -607,10 +603,8 @@ fn keyword_failures(name: &str, inherited: bool, values: &[&str]) -> Vec<String>
             ("initial", run(&[], "initial"), &initial),
             ("unset", run(&[], "unset"), unset),
         ];
-        if !NO_ROLLBACK.contains(&name) {
-            checks.push(("revert", run(&user_agent, "revert"), &ua));
-            checks.push(("revert-layer", run(&user_agent, "revert-layer"), &ua));
-        }
+        checks.push(("revert", run(&user_agent, "revert"), &ua));
+        checks.push(("revert-layer", run(&user_agent, "revert-layer"), &ua));
         for (keyword, actual, expected) in checks {
             if !same(&actual, expected) {
                 failures.push(format!("{name}: {keyword} after `{before}`"));
@@ -1443,8 +1437,7 @@ fn a_white_space_keyword_competes_with_the_longhands_in_cascade_order() {
 fn a_white_space_rollback_returns_to_the_user_agent_keyword() {
     use TextWrapMode::Nowrap;
     use WhiteSpaceCollapse::Preserve;
-    // The user agent sets `white-space` whole, so the rollback keeps the
-    // shorthand in its own cascade slot instead of expanding it.
+    // The user agent's shorthand supplies both rollback longhands.
     let user_agent = [("p { white-space: pre }", Origin::UserAgent)];
     for keyword in ["revert", "revert-layer"] {
         assert_eq!(
@@ -1498,12 +1491,11 @@ fn text_spacing_keywords_take_the_trim_and_the_autospace_of_the_parent() {
 }
 
 #[test]
-fn a_keyword_substituted_from_var_resolves_white_space_through_its_legacy_keyword() {
+fn a_keyword_substituted_from_var_resolves_both_white_space_longhands() {
     use TextWrapMode::{Nowrap, Wrap};
     use WhiteSpaceCollapse::{Collapse, Preserve};
-    // A `white-space` value written with `var()` stays one declaration, so a
-    // keyword it substitutes is the legacy keyword that stands for the
-    // effective halves of the source.
+    // Both longhands resolve the CSS-wide keyword against the source's
+    // effective halves, independently of the compatibility keyword.
     let pair = |keyword: &str| {
         white_space_pair(
             "white-space: pre",
@@ -1578,4 +1570,171 @@ fn only_the_border_side_longhands_have_a_keyword_variant() {
         border_side_css_wide(PropertyKey::Width, CssWideKeyword::Inherit),
         None
     );
+}
+
+#[test]
+fn white_space_rollback_clears_expanded_defaulting_keywords() {
+    let ua = [("p { white-space: pre }", Origin::UserAgent)];
+    for before in ["initial", "inherit", "unset"] {
+        for rollback in ["revert", "revert-layer"] {
+            assert_eq!(
+                white_space_pair(
+                    "white-space: normal",
+                    &ua,
+                    &format!("white-space: {before}; white-space: {rollback}")
+                ),
+                (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap),
+                "{before} then {rollback}"
+            );
+        }
+    }
+}
+
+#[test]
+fn white_space_rollback_preserves_layer_origin_and_longhand_precedence() {
+    let ua = [("p { white-space: pre }", Origin::UserAgent)];
+    let expected = (WhiteSpaceCollapse::PreserveBreaks, TextWrapMode::Wrap);
+    for css in [
+        "@layer base, top; @layer base { #target { white-space: pre-line } } @layer top { #target { white-space: initial; white-space: revert-layer } }",
+        "@layer base, top; @layer base { #target { white-space: pre-line } } @layer top { #target { white-space: initial !important; white-space: revert-layer !important } }",
+    ] {
+        let style = child("", &ua, css);
+        assert_eq!(
+            (
+                style.effective_white_space_collapse,
+                style.effective_text_wrap_mode
+            ),
+            expected,
+            "{css}"
+        );
+    }
+    let origins = [
+        ("p { white-space: pre }", Origin::UserAgent),
+        ("p { white-space: pre-line }", Origin::User),
+    ];
+    assert_eq!(
+        white_space_pair("", &origins, "white-space: initial; white-space: revert"),
+        expected
+    );
+    assert_eq!(
+        white_space_pair(
+            "",
+            &ua,
+            "white-space: initial; white-space: revert; text-wrap-mode: wrap"
+        ),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+    assert_eq!(
+        white_space_pair(
+            "",
+            &ua,
+            "text-wrap-mode: wrap; white-space: initial; white-space: revert"
+        ),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+}
+
+#[test]
+fn white_space_rollback_can_return_to_a_deferred_shorthand() {
+    let expected = (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap);
+    let ua = [("p { white-space: var(--ws, pre) }", Origin::UserAgent)];
+    assert_eq!(
+        white_space_pair("", &ua, "white-space: initial; white-space: revert"),
+        expected
+    );
+    let style = child(
+        "",
+        &[],
+        "@layer base, top; @layer base { #target { white-space: var(--ws, pre) } } @layer top { #target { white-space: initial; white-space: revert-layer } }",
+    );
+    assert_eq!(
+        (
+            style.effective_white_space_collapse,
+            style.effective_text_wrap_mode
+        ),
+        expected
+    );
+}
+
+#[test]
+fn white_space_var_longhands_roll_back_independently() {
+    let ua = [("p { white-space: normal }", Origin::UserAgent)];
+    for value in ["pre", "var(--ws, pre)"] {
+        assert_eq!(
+            white_space_pair(
+                "",
+                &ua,
+                &format!("white-space: {value}; text-wrap-mode: revert")
+            ),
+            (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+        );
+        assert_eq!(
+            white_space_pair(
+                "",
+                &ua,
+                &format!("white-space: {value}; white-space-collapse: revert")
+            ),
+            (WhiteSpaceCollapse::Collapse, TextWrapMode::Nowrap)
+        );
+    }
+}
+
+#[test]
+fn white_space_var_css_wide_fallbacks_project_into_each_half() {
+    let parent = "white-space-collapse: discard; text-wrap-mode: nowrap";
+    for keyword in ["inherit", "unset"] {
+        assert_eq!(
+            white_space_pair(
+                parent,
+                &[],
+                &format!("white-space: var(--missing, {keyword})")
+            ),
+            (WhiteSpaceCollapse::Discard, TextWrapMode::Nowrap)
+        );
+    }
+    assert_eq!(
+        white_space_pair(parent, &[], "white-space: var(--missing, initial)"),
+        (WhiteSpaceCollapse::Collapse, TextWrapMode::Wrap)
+    );
+    let ua = [("p { white-space: pre }", Origin::UserAgent)];
+    for keyword in ["revert", "revert-layer"] {
+        assert_eq!(
+            white_space_pair(
+                "",
+                &ua,
+                &format!("white-space: initial; white-space: var(--missing, {keyword})")
+            ),
+            (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+        );
+    }
+    assert_eq!(
+        white_space_pair(
+            parent,
+            &ua,
+            "white-space: var(--missing); text-wrap-mode: revert"
+        ),
+        (WhiteSpaceCollapse::Discard, TextWrapMode::Nowrap)
+    );
+    assert_eq!(
+        white_space_pair(
+            parent,
+            &[],
+            "text-wrap-mode: wrap; white-space: var(--missing)"
+        ),
+        (WhiteSpaceCollapse::Discard, TextWrapMode::Nowrap)
+    );
+    assert_eq!(
+        white_space_pair(
+            parent,
+            &[],
+            "white-space: var(--missing); text-wrap-mode: wrap"
+        ),
+        (WhiteSpaceCollapse::Discard, TextWrapMode::Wrap)
+    );
+    let values = child(
+        "",
+        &[],
+        "#target { text-wrap-style: balance; white-space: var(--missing, pre) }",
+    );
+    assert_eq!(values.text_wrap_style, TextWrapStyle::Balance);
 }

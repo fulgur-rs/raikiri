@@ -53,7 +53,7 @@ pub(super) fn discard(
         },
     );
     for node in boxes {
-        document.nodes[node].layout.location.y -= removed;
+        document.translate_pagination_y(node, -(removed));
     }
     if let Some(lines) = document
         .table_layout_node_mut(root)

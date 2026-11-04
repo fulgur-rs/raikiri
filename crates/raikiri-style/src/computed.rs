@@ -1640,12 +1640,12 @@ pub struct ComputedValues {
     /// computed value is the specified keyword; this field does not affect
     /// line wrapping or text layout.
     pub text_wrap_style: TextWrapStyle,
-    /// `white-space-collapse` after the legacy `white-space` keyword and the
-    /// longhand are settled by cascade order. Inherited. The CSSOM does not
+    /// `white-space-collapse` after shorthand expansion and per-longhand
+    /// cascade selection. Inherited. The CSSOM does not
     /// read it; it serializes the declared fields above.
     pub effective_white_space_collapse: WhiteSpaceCollapse,
-    /// `text-wrap-mode` after the legacy `white-space` keyword and the
-    /// longhands are settled by cascade order. Inherited. The CSSOM does not
+    /// `text-wrap-mode` after shorthand expansion and per-longhand cascade
+    /// selection. Inherited. The CSSOM does not
     /// read it.
     pub effective_text_wrap_mode: TextWrapMode,
     /// `hyphens`. **inherited**, initial: [`Hyphens::Manual`] (CSS Text

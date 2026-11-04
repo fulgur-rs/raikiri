@@ -197,7 +197,7 @@ pub(super) fn move_line(
         page,
     );
     for node in boxes {
-        document.nodes[node].layout.location.y += shift;
+        document.translate_pagination_y(node, shift);
     }
     growth
 }

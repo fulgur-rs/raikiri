@@ -46,6 +46,27 @@ fn paginated_blocks(count: usize, floated: &[usize]) -> Vec<f32> {
 }
 
 #[test]
+fn normal_block_sibling_updates_do_not_grow_quadratically() {
+    let mut samples = Vec::new();
+    for count in [16, 32, 64] {
+        NORMAL_SIBLING_WORK.with(|work| work.set([0; 3]));
+        let ys = paginated_blocks(count, &[]);
+        let work = NORMAL_SIBLING_WORK.with(|work| work.get());
+        assert_eq!(ys, (0..count).map(|i| i as f32 * 100.0).collect::<Vec<_>>());
+        eprintln!("normal_sibling_work count={count} work={work:?}");
+        samples.push((count, work));
+    }
+    for pair in samples.windows(2) {
+        for kind in 0..3 {
+            assert!(
+                pair[1].1[kind] < pair[0].1[kind] * 3,
+                "work kind {kind}: {pair:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn blocks_without_floats_never_start_the_float_walk_when_one_after_another_moves() {
     for count in [16, 32, 64] {
         reset();
@@ -55,12 +76,8 @@ fn blocks_without_floats_never_start_the_float_walk_when_one_after_another_moves
         let expected: Vec<f32> = (0..count).map(|index| index as f32 * 100.0).collect();
         assert_eq!(ys, expected, "{count}");
         assert_eq!(walks, 0, "{count}: {visits} prefilter visits");
-        // The prefilter only reads the boxes: the moves of the blocks read
-        // each block, and the section, once per move.
-        assert!(
-            visits > 0 && visits <= 8 * count * count,
-            "{count}: {visits}"
-        );
+        // The ordinary-parent summary avoids starting even a prefilter walk.
+        assert_eq!(visits, 0, "{count}");
     }
 }
 
@@ -242,7 +259,7 @@ fn the_boxes_inside_a_block_that_holds_its_floats_are_not_read_as_blocks_move() 
     ] {
         let bare = prefilter_reads_with(css, 12, 0);
         let full = prefilter_reads_with(css, 12, 40);
-        assert!(bare > 0, "{css}");
+        assert_eq!(bare, 0, "{css}");
         assert_eq!(bare, full, "{css}");
     }
 }
@@ -385,4 +402,66 @@ fn blocks_around_a_contents_wrapper_each_start_their_own_page() {
         &[],
     );
     assert_eq!(ys, [0.0, 100.0, 200.0, 300.0, 400.0]);
+}
+
+#[test]
+fn a_first_middle_or_last_float_keeps_normal_sibling_work_below_quadratic() {
+    for position in 0..3 {
+        let mut samples = Vec::new();
+        for count in [16, 32, 64] {
+            let float = match position {
+                0 => 0,
+                1 => count / 2,
+                _ => count - 1,
+            };
+            reset();
+            NORMAL_SIBLING_WORK.with(|work| work.set([0; 3]));
+            let ys = paginated_blocks(count, &[float]);
+            assert_eq!(
+                ys,
+                (0..count)
+                    .map(|index| index as f32 * 100.0)
+                    .collect::<Vec<_>>()
+            );
+            let normal = NORMAL_SIBLING_WORK.with(std::cell::Cell::get);
+            let (walks, visits) = counts();
+            let work = [normal[0], normal[1], normal[2], walks, visits];
+            eprintln!("normal_sibling_float_work count={count} position={position} work={work:?}");
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            for (kind, (&before, &after)) in pair[0].iter().zip(&pair[1]).enumerate() {
+                assert!(
+                    after <= before * 3,
+                    "position={position} kind={kind} samples={samples:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ordinary_documents_up_to_the_default_page_limit_keep_deferred_updates() {
+    for count in [1024, 4096, 10_000] {
+        super::super::normal_block_shifts::FALLBACKS.with(|count| count.set(0));
+        NORMAL_SIBLING_WORK.with(|work| work.set([0; 3]));
+        let ys = paginated_blocks(count, &[]);
+        assert_eq!(
+            ys,
+            (0..count)
+                .map(|index| index as f32 * 100.0)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            super::super::normal_block_shifts::FALLBACKS.with(std::cell::Cell::get),
+            0,
+            "count={count}"
+        );
+        let work = NORMAL_SIBLING_WORK.with(std::cell::Cell::get);
+        assert!(
+            work[0] <= count + 2 && work[1] <= count && work[2] <= count * 5,
+            "count={count} work={work:?}"
+        );
+        eprintln!("normal_long_document count={count} work={work:?} fallback=0");
+    }
 }

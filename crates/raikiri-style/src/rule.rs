@@ -216,7 +216,7 @@ pub(crate) enum KeyClass {
     /// order, so it never becomes a cascade slot itself.
     Shorthand { longhands: &'static [PropertyKey] },
     /// A key that is its own cascade slot although it names a shorthand. A
-    /// `white-space` value stays whole; a
+    /// `white-space` keeps a compatibility slot alongside its longhands; a
     /// `text-wrap` or `text-spacing` value stays whole only as a `var()` value,
     /// expanded after substitution (a literal one expands into its longhands,
     /// and `text-wrap`'s slot is also the `text-wrap-mode` longhand's); `all`
@@ -965,7 +965,6 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::BreakInside(_)
         | PropertyValue::Float(_)
         | PropertyValue::Clear(_)
-        | PropertyValue::WhiteSpace(_)
         | PropertyValue::WhiteSpaceCollapse(_)
         | PropertyValue::TextWrap(_)
         | PropertyValue::TextWrapStyle(_)
@@ -1104,6 +1103,15 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
             push_longhand(PropertyValue::ColumnRuleStyle(rule.style));
             push_longhand(PropertyValue::ColumnRuleColor(rule.color));
         }
+        PropertyValue::WhiteSpace(keyword) => {
+            // Keep the legacy slot for computed values and deferred shorthands,
+            // but give every origin/layer real longhands to roll back to.
+            push_longhand(PropertyValue::WhiteSpace(keyword));
+            if let Some((collapse, wrap)) = keyword.collapse_and_wrap() {
+                push_longhand(PropertyValue::WhiteSpaceCollapse(collapse));
+                push_longhand(PropertyValue::TextWrap(wrap));
+            }
+        }
         PropertyValue::Columns(shorthand) => {
             push_longhand(PropertyValue::ColumnWidth(shorthand.width));
             push_longhand(PropertyValue::ColumnCount(shorthand.count));
@@ -1155,9 +1163,8 @@ fn expand_none(d: &ParsedDeclaration, mut push: impl FnMut(Declaration)) {
 /// The longhands, with their property names, that a CSS-wide keyword on a
 /// [`KeyClass::Retained`] shorthand stands for, or `None` for a value that
 /// stays whole: a `var()` value, `all`, `text-wrap-mode`, which has the key
-/// of `text-wrap`, and a rollback keyword on `white-space`. The user agent
-/// sets `white-space` as one declaration, so only the slot of `white-space`
-/// itself finds the declaration that a rollback returns to.
+/// of `text-wrap`. All CSS-wide keywords on `white-space` use the same
+/// three slots as its literal values, including origin and layer rollback.
 pub(crate) fn retained_keyword_longhands(
     deferred: &DeferredValue,
 ) -> Option<&'static [(PropertyKey, &'static str)]> {
@@ -1167,14 +1174,9 @@ pub(crate) fn retained_keyword_longhands(
     ) {
         return None;
     }
-    let keyword = deferred.css_wide_keyword()?;
+    deferred.css_wide_keyword()?;
     Some(match (deferred.key, deferred.property.as_str()) {
-        (PropertyKey::WhiteSpace, _)
-            if !matches!(
-                keyword,
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) =>
-        {
+        (PropertyKey::WhiteSpace, _) => {
             // The legacy slot comes first so that the longhands, which settle
             // each half, are the later declarations; it keeps the computed
             // `white-space` in step.
@@ -1201,7 +1203,8 @@ pub(crate) fn retained_keyword_longhands(
 /// winning longhand has been selected, preserving shorthand/longhand order.
 /// A deferred longhand, and a `var()` value of a shorthand the cascade keeps
 /// in shorthand form ([`KeyClass::Retained`]), stays one declaration; a
-/// CSS-wide keyword on such a shorthand expands like any other.
+/// CSS-wide keyword on such a shorthand expands like any other. Deferred
+/// `white-space` also expands, preserving the source property for substitution.
 #[inline(never)]
 fn expand_deferred(
     d: &ParsedDeclaration,
@@ -1214,6 +1217,24 @@ fn expand_deferred(
             let mut value = deferred.clone();
             value.key = key;
             value.property = property.into();
+            push(Declaration::with_side(
+                PropertyValue::Deferred(value),
+                important,
+                None,
+            ));
+        }
+        return;
+    }
+    if deferred.key == PropertyKey::WhiteSpace {
+        // Preserve the source property until substitution, then project each
+        // winning longhand independently, including invalid and CSS-wide values.
+        for key in [
+            PropertyKey::WhiteSpace,
+            PropertyKey::WhiteSpaceCollapse,
+            PropertyKey::TextWrap,
+        ] {
+            let mut value = deferred.clone();
+            value.key = key;
             push(Declaration::with_side(
                 PropertyValue::Deferred(value),
                 important,

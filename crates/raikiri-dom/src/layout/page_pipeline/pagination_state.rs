@@ -623,6 +623,7 @@ impl PaginationState {
             materialize_y(document, item.item, top + delta);
         }
         document.nodes[candidate.node_id].layout.size.height += delta;
+        document.mark_pagination_extent_dirty(candidate.node_id);
         grow_ancestors_for_shift(
             document,
             env.cascade,
@@ -926,6 +927,7 @@ impl PaginationState {
         let next_page = page.saturating_add(1);
         reach_page(control, next_page)?;
         document.nodes[edges_break.node_id].layout.size.height += gap;
+        document.mark_pagination_extent_dirty(edges_break.node_id);
         grow_ancestors_for_shift(
             document,
             cascade,

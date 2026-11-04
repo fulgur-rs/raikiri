@@ -11,6 +11,26 @@
 //! within the registry and returned through its API) are not constructed
 //! directly by consumers, so Default / new are not required
 //! (`#[non_exhaustive]` still applies to all public structs).
+//!
+//! ## Predefined counter compatibility
+//!
+//! Counter representations follow the normative definitions in
+//! [CSS Counter Styles 3, 2021 CR](https://www.w3.org/TR/2021/CR-css-counter-styles-3-20210727/).
+//! In particular, `square` uses U+25AA, Hebrew zero falls back to decimal,
+//! and the three Armenian names use the defined range 1 through 9999.
+//! The Korean and Chinese longhand styles retain the limited range
+//! -9999 through 9999: positive 10000 falls back to `cjk-decimal`, while
+//! negative 10000 falls through to decimal. We do not adopt the optional
+//! [extended East Asian ranges](https://drafts.csswg.org/css-counter-styles/#extended-range).
+//! These choices can differ from Chromium's output; browser equality alone
+//! is not the contract for these cases.
+//!
+//! Korean negative values have one U+0020 after `마이너스`. The extra space
+//! in the specification's CSS source terminates a hexadecimal escape and
+//! is consumed by [CSS Syntax](https://www.w3.org/TR/css-syntax-3/#consume-escaped-code-point).
+//! Counter representations exclude marker prefix/suffix descriptors; marker
+//! construction applies them separately, even when the representation uses
+//! a fallback style.
 
 mod context;
 mod target;
