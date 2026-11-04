@@ -1,0 +1,1353 @@
+{
+  "source": "Chromium152.0.7977.82, viewport800x600 confirmed;bodymargin0,font10px/10px Ahem;root translated200,150;rects relative to origin. 2026-11-05.",
+  "cases": [
+    {
+      "name": "grid_item_vertical-rl_flex_100_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_flex_100_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_flex_300_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        300
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_flex_300_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_grid_100_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_grid_100_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_grid_300_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        300
+      ]
+    },
+    {
+      "name": "grid_item_vertical-rl_grid_300_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_row_flex_100",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_row_flex_300",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_row_grid_100",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_row_grid_300",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_column_flex_100",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_column_flex_300",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_column_grid_100",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_column_grid_300",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_block_flex_100",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_block_flex_300",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_block_grid_100",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-rl_block_grid_300",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_[60, 70]",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_[60, 70, 80]",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div><div style=\"width:30px;height:80px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        80
+      ]
+    },
+    {
+      "name": "no_ratio_grid_item_vertical-rl_flex",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "no_ratio_grid_item_vertical-rl_grid",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "single_item_vertical-rl_nowrap",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:nowrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "single_item_vertical-rl_wrap",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_flex_100_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_flex_100_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_flex_300_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        300
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_flex_300_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_grid_100_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_grid_100_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_grid_300_uncapped",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        300
+      ]
+    },
+    {
+      "name": "grid_item_vertical-lr_grid_300_max-height:70px;",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;max-height:70px;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_row_flex_100",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_row_flex_300",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_row_grid_100",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_row_grid_300",
+      "body": "<div style=\"display:flex;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_column_flex_100",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_column_flex_300",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_column_grid_100",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_column_grid_300",
+      "body": "<div style=\"display:flex;flex-direction:column;align-items:flex-start;width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_block_flex_100",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_block_flex_300",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_block_grid_100",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_vertical-lr_block_grid_300",
+      "body": "<div style=\"width:400px;\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_[60, 70]",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_[60, 70, 80]",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div><div style=\"width:30px;height:80px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        80
+      ]
+    },
+    {
+      "name": "no_ratio_grid_item_vertical-lr_flex",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "no_ratio_grid_item_vertical-lr_grid",
+      "body": "<div style=\"display:grid;width:400px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "single_item_vertical-lr_nowrap",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:nowrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "single_item_vertical-lr_wrap",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-rl_flex_normal",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:normal\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-rl_flex_start",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-rl_flex_stretch",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:stretch\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        200
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-rl_grid_normal",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:normal\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-rl_grid_start",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-rl_grid_stretch",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:stretch\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        200
+      ]
+    },
+    {
+      "name": "grid_item_auto_margin_vertical-rl",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;width:100px;aspect-ratio:2/1;margin-top:auto;margin-bottom:auto\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        50,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-rl_intrinsic_parent_40",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;height:40px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        80,
+        40
+      ],
+      "parent_rect": [
+        0,
+        0,
+        200,
+        40
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-rl_intrinsic_parent_300",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;height:300px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        600,
+        300
+      ],
+      "parent_rect": [
+        0,
+        0,
+        200,
+        300
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-rl_width:400px;_40",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;width:400px;height:40px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        80,
+        40
+      ],
+      "parent_rect": [
+        0,
+        0,
+        400,
+        40
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-rl_width:400px;_300",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;width:400px;height:300px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        600,
+        300
+      ],
+      "parent_rect": [
+        0,
+        0,
+        400,
+        300
+      ]
+    },
+    {
+      "name": "auto_width_minimum_opt_out_vertical-rl",
+      "body": "<div style=\"display:flex;width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;height:100px;aspect-ratio:2/1;min-width:0\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_basis_vs_size",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:30px;flex:0 0 100px\"></div><div style=\"width:30px;height:40px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        50
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_child_min",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:30px;min-height:90px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_child_max",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:90px;max-height:40px\"></div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        60
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_margin_px",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;margin:10px 0\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        80
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_margin_percent",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;margin:10% 0\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_abs_hidden",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div><div style=\"position:absolute;height:500px\"></div><div style=\"display:none;height:500px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_own_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1;padding:10px;border:5px solid;\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        130,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_child_percent_padding",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:60px;padding-top:10%;padding-bottom:10%\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_scroll_opt_out",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1;overflow:auto;\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        50
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_reverse",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1;flex-direction:row-reverse;flex-wrap:wrap-reverse;\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_100",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_40",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        70
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-lr_flex_normal",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:normal\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-lr_flex_start",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-lr_flex_stretch",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:stretch\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        200
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-lr_grid_normal",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:normal\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-lr_grid_start",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "grid_item_alignment_vertical-lr_grid_stretch",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start;align-items:stretch\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        200
+      ]
+    },
+    {
+      "name": "grid_item_auto_margin_vertical-lr",
+      "body": "<div style=\"display:grid;width:400px;grid-template-rows:200px;justify-items:start\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;width:100px;aspect-ratio:2/1;margin-top:auto;margin-bottom:auto\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        50,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-lr_intrinsic_parent_40",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;height:40px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        80,
+        40
+      ],
+      "parent_rect": [
+        0,
+        0,
+        200,
+        40
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-lr_intrinsic_parent_300",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;height:300px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        600,
+        300
+      ],
+      "parent_rect": [
+        0,
+        0,
+        200,
+        300
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-lr_width:400px;_40",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;width:400px;height:40px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        80,
+        40
+      ],
+      "parent_rect": [
+        0,
+        0,
+        400,
+        40
+      ]
+    },
+    {
+      "name": "auto_width_flexed_vertical-lr_width:400px;_300",
+      "body": "<div id=\"p\" style=\"display:inline-flex;flex-direction:column;align-items:flex-start;width:400px;height:300px\"><div id=\"i\" style=\"display:grid;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;flex:1 1 auto;min-height:0\"><div style=\"width:30px;height:100px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        600,
+        300
+      ],
+      "parent_rect": [
+        0,
+        0,
+        400,
+        300
+      ]
+    },
+    {
+      "name": "auto_width_minimum_opt_out_vertical-lr",
+      "body": "<div style=\"display:flex;width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;height:100px;aspect-ratio:2/1;min-width:0\"><div style=\"width:30px;height:300px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        200,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_basis_vs_size",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:30px;flex:0 0 100px\"></div><div style=\"width:30px;height:40px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        50
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_child_min",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:30px;min-height:90px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_child_max",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:90px;max-height:40px\"></div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        60
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_margin_px",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;margin:10px 0\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        80
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_margin_percent",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;margin:10% 0\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_abs_hidden",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div><div style=\"position:absolute;height:500px\"></div><div style=\"display:none;height:500px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_own_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1;padding:10px;border:5px solid;\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        130,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_child_percent_padding",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1;\"><div style=\"width:30px;height:60px;padding-top:10%;padding-bottom:10%\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_scroll_opt_out",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1;overflow:auto;\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        50
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_reverse",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1;flex-direction:row-reverse;flex-wrap:wrap-reverse;\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_100",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_40",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_auto_text",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px\">AAAAAAAAA BB</div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_ratio_child",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;aspect-ratio:1/4\"></div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_intrinsic_image",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><img style=\"width:30px\" src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2230%22%20height%3D%22120%22%3E%3C%2Fsvg%3E\"><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_ratio_auto_basis",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:30px;aspect-ratio:1/2;\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_ratio_flex-basis:100px;",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:30px;aspect-ratio:1/2;flex-basis:100px;\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_auto_text",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px\">AAAAAAAAA BB</div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_ratio_child",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;aspect-ratio:1/4\"></div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_intrinsic_image",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><img style=\"width:30px\" src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2230%22%20height%3D%22120%22%3E%3C%2Fsvg%3E\"><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_ratio_auto_basis",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:30px;aspect-ratio:1/2;\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_ratio_flex-basis:100px;",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:30px;aspect-ratio:1/2;flex-basis:100px;\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_dependent_100%",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:100%;aspect-ratio:1/4\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        160
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_dependent_stretch",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:stretch;aspect-ratio:1/4\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        160
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_dependent_calc(50% + 10px)",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:calc(50% + 10px);aspect-ratio:1/4\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_dependent_100%",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:100%;aspect-ratio:1/4\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        160
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_dependent_stretch",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:stretch;aspect-ratio:1/4\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        160
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_dependent_calc(50% + 10px)",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div style=\"width:calc(50% + 10px);aspect-ratio:1/4\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_row_natural_width_text",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:row;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div>AAAAAAAAA BB</div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_row_natural_width_image",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:row;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><img src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2230%22%20height%3D%22120%22%3E%3C%2Fsvg%3E\"><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_natural_width_text",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div>AAAAAAAAA BB</div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_column_natural_width_image",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><img src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2230%22%20height%3D%22120%22%3E%3C%2Fsvg%3E\"><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_row_natural_width_text",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:row;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div>AAAAAAAAA BB</div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_row_natural_width_image",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:row;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><img src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2230%22%20height%3D%22120%22%3E%3C%2Fsvg%3E\"><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_natural_width_text",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><div>AAAAAAAAA BB</div><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_column_natural_width_image",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-direction:column;flex-wrap:wrap;width:40px;aspect-ratio:2/1\"><img src=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2230%22%20height%3D%22120%22%3E%3C%2Fsvg%3E\"><div style=\"width:30px;height:60px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        40,
+        120
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_child_content-box_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;padding:10px;border:5px solid;box-sizing:content-box\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_child_border-box_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;padding:10px;border:5px solid;box-sizing:border-box\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-rl_own_border_box_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-rl;flex-wrap:wrap;width:100px;aspect-ratio:2/1;padding:10px;border:5px solid;box-sizing:border-box\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_child_content-box_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;padding:10px;border:5px solid;box-sizing:content-box\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        90
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_child_border-box_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1\"><div style=\"width:30px;height:60px;padding:10px;border:5px solid;box-sizing:border-box\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        70
+      ]
+    },
+    {
+      "name": "wrapped_items_vertical-lr_own_border_box_insets",
+      "body": "<div style=\"width:400px\"><div id=\"i\" style=\"display:flex;writing-mode:vertical-lr;flex-wrap:wrap;width:100px;aspect-ratio:2/1;padding:10px;border:5px solid;box-sizing:border-box\"><div style=\"width:30px;height:60px\"></div><div style=\"width:30px;height:70px\"></div></div></div>",
+      "rect": [
+        0,
+        0,
+        100,
+        100
+      ]
+    }
+  ]
+}

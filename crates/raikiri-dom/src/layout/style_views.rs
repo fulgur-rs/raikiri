@@ -540,8 +540,15 @@ impl LayoutSession<'_> {
             AlignItemsKeyword, AlignSelf, ExpandedLengthPercentageAuto,
         };
         let item = self.physical_style(idx);
+        let vertical_container = matches!(
+            self.nodes[idx].formatting_context,
+            FormattingContext::Flex | FormattingContext::Grid
+        ) && crate::layout::dispatch::block_right_to_left(self, idx)
+            .is_some()
+            && states_a_size(item.size().width)
+            && item.size().height.is_auto();
         if self.container_is_vertical(idx)
-            || self.nodes[idx].used_writing_mode.is_vertical()
+            || (self.nodes[idx].used_writing_mode.is_vertical() && !vertical_container)
             || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
             || item.stated_aspect_ratio().is_none()
         {
@@ -563,18 +570,19 @@ impl LayoutSession<'_> {
                 GridItemRatio::Declared
             };
         }
-        if !item.size().width.is_auto()
-            || !item.size().height.is_auto()
-            || !matches!(
-                self.nodes[idx].formatting_context,
-                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
-            )
-            || !matches!(
-                item.min_size().width.expand(),
-                ExpandedLengthPercentageAuto::Length(_)
-                    | ExpandedLengthPercentageAuto::Percent(_)
-                    | ExpandedLengthPercentageAuto::Calc(_)
-            )
+        if !vertical_container
+            && (!item.size().width.is_auto()
+                || !item.size().height.is_auto()
+                || !matches!(
+                    self.nodes[idx].formatting_context,
+                    FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
+                )
+                || !matches!(
+                    item.min_size().width.expand(),
+                    ExpandedLengthPercentageAuto::Length(_)
+                        | ExpandedLengthPercentageAuto::Percent(_)
+                        | ExpandedLengthPercentageAuto::Calc(_)
+                ))
         {
             return GridItemRatio::Declared;
         }

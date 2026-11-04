@@ -4561,9 +4561,8 @@ fn with_vertical_ratio_height(
     let Some((metrics, width, ratio_height)) = vertical_ratio_sizes(tree, node_id, &inputs) else {
         return (inputs, false);
     };
-    // Taffy reads the min-content size of a container that wraps several items
-    // as the sum of their sizes, not as the largest, which is no height for the
-    // ratio to be raised to.
+    // A wrapping box's intrinsic inline height uses item contributions before
+    // flexing, rather than flex bases or the sum of its final line heights.
     let wraps_items = tree.nodes[usize::from(node_id)].layout_display() == Display::Flex
         && tree.physical_style(usize::from(node_id)).flex_wraps()
         && tree
@@ -4575,27 +4574,35 @@ fn with_vertical_ratio_height(
             })
             .nth(1)
             .is_some();
-    let height = if metrics.ratio_height && !wraps_items {
-        let probe = LayoutInput {
-            run_mode: RunMode::ComputeSize,
-            axis: RequestedAxis::Vertical,
-            known_dimensions: Size {
-                width: Some(width),
-                height: None,
-            },
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: false,
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(width),
-                height: AvailableSpace::MinContent,
-            },
-            ..inputs
+    let height = if metrics.ratio_height {
+        let content = if wraps_items {
+            let room = (inputs.known_dimensions.width.is_none()
+                || inputs.known_dimensions_are_definite.width)
+                .then_some((width - metrics.inset.horizontal_axis_sum()).max(0.0));
+            intrinsic_scopes::wrapping_min_content_height(tree, node_id, room)
+                + metrics.inset.vertical_axis_sum()
+        } else {
+            let probe = LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: RequestedAxis::Vertical,
+                known_dimensions: Size {
+                    width: Some(width),
+                    height: None,
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: false,
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(width),
+                    height: AvailableSpace::MinContent,
+                },
+                ..inputs
+            };
+            without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
+                .size
+                .height
         };
-        let content = without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
-            .size
-            .height;
         ratio_height.max(content.maybe_clamp(None, metrics.own_max.height))
     } else {
         ratio_height
@@ -4652,14 +4659,25 @@ fn with_stated_height_contribution(
         || tree.flex_main_axis_is_width(idx) != Some(false)
         // A replaced item takes its width from its height in its own path.
         || leaf_intrinsic_size(&tree.nodes[idx]).is_some()
-        || tree.has_vertical_writing_mode(idx)
+        || (tree.has_vertical_writing_mode(idx)
+            && !(matches!(
+                tree.nodes[idx].formatting_context,
+                FormattingContext::Flex | FormattingContext::Grid
+            ) && block_right_to_left(tree, idx).is_some()))
         || tree.container_is_vertical(idx)
     {
         return None;
     }
-    let style = block_flow::style_input::physical(tree, idx);
+    let mut style = block_flow::style_input::physical(tree, idx);
     if style.aspect_ratio.is_none() || !style.size.width.is_auto() {
         return None;
+    }
+    if block_right_to_left(tree, idx).is_some() {
+        let basis = vertical_block::containing_inline_size(tree, idx, &inputs);
+        style.padding = style
+            .padding
+            .resolve_or_zero(basis)
+            .map(LengthPercentage::length);
     }
     // A height of `stretch` is the definite height of the container less the
     // margins of the item, whatever height the container flexes the item to.
@@ -4716,7 +4734,33 @@ fn with_ratio_width(
     // is the width its ratio gives, as browsers lay it out, so such a width
     // takes the same minimum as an `auto` one.
     let vertical = block_right_to_left(tree, idx).is_some();
-    if style.aspect_ratio.is_none() || (vertical && inputs.sizing_mode != SizingMode::InherentSize)
+    let column_item =
+        tree.flex_main_axis_is_width(idx) == Some(false) && !tree.container_is_vertical(idx);
+    let intrinsic_contribution = vertical
+        && column_item
+        && inputs.run_mode == RunMode::ComputeSize
+        && inputs.sizing_mode == SizingMode::ContentSize
+        && matches!(
+            inputs.available_space.width,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
+        && style.size.width.is_auto()
+        && style
+            .size
+            .height
+            .maybe_resolve(inputs.parent_size.height)
+            .is_some();
+    let flex_cross_measure = vertical
+        && column_item
+        && inputs.sizing_mode == SizingMode::ContentSize
+        && inputs.axis != RequestedAxis::Vertical
+        && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+        && style.size.width.is_auto();
+    let vertical_content_size = (intrinsic_contribution || flex_cross_measure)
+        && inputs.known_dimensions.height.is_some()
+        && inputs.known_dimensions_are_definite.height;
+    if style.aspect_ratio.is_none()
+        || (vertical && inputs.sizing_mode != SizingMode::InherentSize && !vertical_content_size)
     {
         return inputs;
     }
@@ -4756,10 +4800,13 @@ fn with_ratio_width(
             || stated_height
             || flexed_height
             || flex_item_follows_main_size(tree, idx, &inputs)
+            || intrinsic_contribution
     }) else {
         return inputs;
     };
-    if !metrics.ratio_width {
+    if vertical_content_size || !metrics.ratio_width {
+        // These vertical cross-size queries use the ratio on the block axis;
+        // its content does not add an automatic inline-size minimum there.
         // An explicit minimum or scrolling opts out of the content minimum,
         // but the width still settles from the authored or flexed height
         // before the container is laid out.

@@ -2646,7 +2646,14 @@ fn width_bounds(
                 };
                 let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
                 use LengthProperty::*;
-                let properties: &[LengthProperty] = if flex_grid_container {
+                let vertical_ratio = flex_grid_container
+                    && super::block_right_to_left(tree, idx).is_some()
+                    && tree.physical_style(idx).stated_aspect_ratio().is_some();
+                // The physical height is the inline size of a vertical box.
+                // Keep its effective value while measuring its block size.
+                let properties: &[LengthProperty] = if vertical_ratio {
+                    &[Width, MinWidth, MinHeight, MaxWidth, MaxHeight]
+                } else if flex_grid_container {
                     &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
                 } else {
                     &[Width, MinWidth, MaxWidth]
