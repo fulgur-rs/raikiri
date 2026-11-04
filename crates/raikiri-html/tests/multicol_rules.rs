@@ -67,15 +67,13 @@ fn public_wide_rule_is_below_the_owners_outside_text_marker() {
             .position(|event| matches!(event, PaintEvent::TextLine(line) if *line == marker.line))
             .unwrap();
         assert!(rule_index < marker_index);
-        // RAIKIRI-1452 tracks hidden marker clipping. Require an unclipped
-        // marker only for visible overflow while both event stacks balance.
         let mut clips = 0;
         for event in &events {
             match event {
                 PaintEvent::PushClip(_, _) => clips += 1,
                 PaintEvent::PopClip => clips -= 1,
-                PaintEvent::TextLine(line) if *line == marker.line && overflow.is_empty() => {
-                    assert_eq!(clips, 0);
+                PaintEvent::TextLine(line) if *line == marker.line => {
+                    assert_eq!(clips, usize::from(!overflow.is_empty()));
                 }
                 _ => {}
             }

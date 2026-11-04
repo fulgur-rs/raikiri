@@ -120,14 +120,13 @@ fn wide_rule_is_below_the_owners_outside_text_marker() {
         let reference = raster(body, &css);
         let blue = blue_pixels(&actual);
         assert_eq!(blue, blue_pixels(&reference));
-        // Visible marker placement follows the Chromium Ahem reference. The
-        // hidden variant has an independent clipping difference; compare rule
-        // layering without pinning its existing visibility as the right result.
         if overflow.is_empty() {
             let expected = (0..20)
                 .flat_map(|y| (20..40).map(move |x| (x, y)))
                 .collect::<Vec<_>>();
             assert_eq!(blue, expected);
+        } else {
+            assert!(blue.is_empty());
         }
     }
 }

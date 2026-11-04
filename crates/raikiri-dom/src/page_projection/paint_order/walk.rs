@@ -792,24 +792,31 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             .is_some();
         let inline_marker = crate::generated_content::inside_marker_in_flow(self.cascade, node_id)
             && node.is_ifc_root();
-        if image_marker && !inline_marker {
+        let image_marker = image_marker && !inline_marker;
+        let marker =
+            crate::generated_content::generated_node_id(node_id, raikiri_style::PseudoElem::Marker);
+        let lines = self
+            .lines
+            .and_then(|lines| lines.paragraphs.get(&NodeId::new(marker as u64)))
+            .filter(|lines| !lines.is_empty());
+        if !image_marker && lines.is_none() {
+            return;
+        }
+        let clip = self.items.overflow_clips.get(&NodeId::new(node_id as u64));
+        if let Some(entry) = clip {
+            self.events
+                .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+        }
+        if image_marker {
             self.events
                 .push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
         }
-        if let Some(lines) = self.lines {
-            let marker = crate::generated_content::generated_node_id(
-                node_id,
-                raikiri_style::PseudoElem::Marker,
-            );
-            self.events.extend(
-                lines
-                    .paragraphs
-                    .get(&NodeId::new(marker as u64))
-                    .into_iter()
-                    .flatten()
-                    .copied()
-                    .map(PaintEvent::TextLine),
-            );
+        if let Some(lines) = lines {
+            self.events
+                .extend(lines.iter().copied().map(PaintEvent::TextLine));
+        }
+        if clip.is_some() {
+            self.events.push(PaintEvent::PopClip);
         }
     }
 

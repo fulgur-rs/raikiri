@@ -186,7 +186,7 @@ fn inside_png_marker_uses_its_atomic_rectangle_after_the_owner_clip() {
 }
 
 #[test]
-fn outside_image_precedes_the_owner_clip_and_empty_items_keep_it() {
+fn outside_image_uses_the_owner_clip_and_empty_items_keep_its_payload() {
     let pixels = Pixels::new();
     let document = lay_out("<ul><li></li></ul>", "li{overflow:hidden}", &pixels);
     let page = document.page(0).unwrap();
@@ -204,7 +204,11 @@ fn outside_image_precedes_the_owner_clip_and_empty_items_keep_it() {
             )
         })
         .unwrap();
-    assert!(marker < clip);
+    let clip_pop = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::PopClip))
+        .unwrap();
+    assert!(clip < marker && marker < clip_pop);
     let PaintEvent::MarkerImage(owner) = events[marker] else {
         unreachable!()
     };

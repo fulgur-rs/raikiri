@@ -210,7 +210,7 @@ fn nested_and_wrapped_items_keep_one_marker_at_each_list_gutter() {
 }
 
 #[test]
-fn standalone_marker_precedes_own_clip_and_stays_in_opacity_group() {
+fn standalone_marker_uses_own_clip_and_stays_in_opacity_group() {
     let document = lay_out("<ol><li>A</li></ol>", "li{overflow:hidden;opacity:.5}");
     let page = document.page(0).unwrap();
     let runs = page.text_runs();
@@ -232,7 +232,11 @@ fn standalone_marker_precedes_own_clip_and_stays_in_opacity_group() {
         .iter()
         .position(|event| matches!(event, PaintEvent::PopOpacity))
         .unwrap();
-    assert!(opacity < marker_index && marker_index < clip && clip < pop);
+    let clip_pop = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::PopClip))
+        .unwrap();
+    assert!(opacity < clip && clip < marker_index && marker_index < clip_pop && clip_pop < pop);
 }
 
 #[test]

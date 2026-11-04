@@ -782,8 +782,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         } = self.geometry;
         let scene = &mut *self.scene;
         if has_column_rules && !raikiri_dom::paint_rules::hides_own_box(cv) {
-            // Rules obey the owner's overflow, while an outside marker
-            // remains outside that clip and paints above the rule.
+            // Rules and markers obey the owner's overflow independently,
+            // preserving their order before the owner's inline content.
             let rule_clip = raikiri_dom::paint_rules::overflow_clip(
                 document,
                 cascade,
@@ -828,6 +828,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_in_viewport,
             paint_x,
             paint_y,
+            paint_height,
             paints_as_absolute_continuation,
             ..
         } = *element;
@@ -857,6 +858,11 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // Prepared outside images follow the page of their first line;
         // other markers belong to the first principal fragment, regardless
         // of inherited ancestor fragment state.
+        if raikiri_dom::generated_content::inside_marker_in_flow(cascade, node_id)
+            && node.is_ifc_root()
+        {
+            return;
+        }
         if !paints_as_absolute_continuation
             && cv.display == DisplayValue::ListItem
             && (document
@@ -888,6 +894,23 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             } else {
                 layout.size.height
             };
+            // Clip to the actual owner, including a zero-height empty item.
+            // The marker's minimum drawing extent must not enlarge this clip.
+            let marker_clip = raikiri_dom::paint_rules::overflow_clip(
+                document,
+                cascade,
+                node_id,
+                PaintRect::new(paint_x, paint_y, layout.size.width, paint_height),
+                PaintInsets::new(
+                    layout.border.top,
+                    layout.border.right,
+                    layout.border.bottom,
+                    layout.border.left,
+                ),
+            );
+            if let Some(clip) = marker_clip {
+                push_overflow_clip(scene, clip, &self.page_box);
+            }
             paint_list_marker_with_snapshots(
                 image_cache,
                 scene,
@@ -907,6 +930,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 counter_snapshots,
                 pixel_source,
             );
+            if marker_clip.is_some() {
+                scene.pop_layer();
+            }
         }
     }
 
