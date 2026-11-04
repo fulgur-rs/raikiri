@@ -243,3 +243,74 @@ fn unequal_relative_coordinate_scales_keep_the_same_line_shift() {
     assert_eq!(f64::from(tree.nodes[first].layout.location.y), 999_949.875);
     assert!((tree.nodes[second].layout.location.y + 70.1).abs() < 0.0001);
 }
+
+#[test]
+fn fractional_wrap_baseline_matches_the_chromium_sibling_oracle() {
+    for line in include_str!("data/flex_wrap_reverse_baselines.tsv")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let fields: Vec<_> = line.split('\t').collect();
+        let expected: f32 = fields[2].parse().unwrap();
+        let margin = if fields[1] == "auto" {
+            "margin:auto 0"
+        } else {
+            ""
+        };
+        for mode in [RunMode::PerformLayout, RunMode::ComputeSize] {
+            let mut doc = Document::new();
+            let root = doc.append_element(
+                Some(0),
+                "div",
+                Some("display:flex;flex-wrap:wrap-reverse;width:100px;height:100px"),
+            );
+            let child = doc.append_element(
+                Some(root),
+                "div",
+                Some(&format!(
+                    "width:100px;height:{}px;position:relative;top:10000000px;{margin}",
+                    fields[0]
+                )),
+            );
+            doc.mark_in_document_flags();
+            let cascade = cascaded(&doc);
+            let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+            let before: Vec<_> = tree.nodes.iter().map(|node| node.layout).collect();
+            let inputs = LayoutInput {
+                run_mode: mode,
+                known_dimensions: Size {
+                    width: Some(100.0),
+                    height: Some(100.0),
+                },
+                parent_size: Size {
+                    width: Some(800.0),
+                    height: Some(600.0),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(100.0),
+                    height: AvailableSpace::Definite(100.0),
+                },
+                ..LayoutInput::HIDDEN
+            };
+            let output = if mode == RunMode::ComputeSize {
+                tree.with_baseline_measure(root, |tree| {
+                    tree.compute_child_layout(root.into(), inputs)
+                })
+            } else {
+                tree.compute_child_layout(root.into(), inputs)
+            };
+            assert_eq!(output.baselines.first, Some(expected));
+            if mode == RunMode::ComputeSize {
+                assert_eq!(
+                    tree.nodes
+                        .iter()
+                        .map(|node| node.layout)
+                        .collect::<Vec<_>>(),
+                    before
+                );
+            } else {
+                assert_eq!(tree.nodes[child].layout.location.y, 10_000_000.0);
+            }
+        }
+    }
+}

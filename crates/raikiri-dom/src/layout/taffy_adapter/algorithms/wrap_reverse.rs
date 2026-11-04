@@ -58,7 +58,6 @@ pub(crate) fn candidate(
         -1.0
     };
     let mut updates = Vec::new();
-    let mut shifted = false;
     let mut common_shift = (f64::NEG_INFINITY, f64::INFINITY);
     for child in TraversePartialTree::child_ids(tree, node.into_taffy()) {
         let child = usize::from(NodeId::from_taffy(child));
@@ -99,7 +98,6 @@ pub(crate) fn candidate(
             if !a.is_finite() || !b.is_finite() || main_a != main_b || delta * outward < 0.0 {
                 return None;
             }
-            shifted |= delta != 0.0;
             // Intersect each child's rounding interval. A large relative
             // inset may quantize its shift more coarsely than its siblings;
             // it must not loosen comparisons between the smaller siblings.
@@ -115,14 +113,24 @@ pub(crate) fn candidate(
         }
         updates.push((child, new));
     }
-    if !shifted || common_shift.0 > common_shift.1 {
+    if common_shift.0 > common_shift.1 {
         return None;
     }
     // Both positional alignments size the lines identically. Only negative
     // free space can put flex-start outward of logical start. Stretch's
     // different arithmetic alone can otherwise produce a one-ULP false hit.
-    let (_, control) = replay(tree, node, inputs, calls, AlignContentKeyword::Start)?;
-    let mut overflow = false;
+    let (control_output, control) = replay(tree, node, inputs, calls, AlignContentKeyword::Start)?;
+    // A row baseline excludes relative insets. It can retain a line shift
+    // that rounded away when a large inset was added to item locations.
+    let mut overflow = row
+        && output
+            .baselines
+            .first
+            .zip(control_output.baselines.first)
+            .is_some_and(|(end, start)| {
+                let delta = f64::from(end) - f64::from(start);
+                delta.is_finite() && delta < 0.0
+            });
     for &(child, new) in &updates {
         let start = *control.get(&child)?;
         if tree.nodes[child].is_display_none() {

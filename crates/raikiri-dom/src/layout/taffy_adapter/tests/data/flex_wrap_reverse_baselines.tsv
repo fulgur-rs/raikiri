@@ -1,0 +1,10 @@
+# Chromium 152.0.7977.82, 800x600, empty border-box divs.
+# A baseline-aligned grid at (200,200) has columns 100px/20px. The first item
+# is a 100x100 row wrap-reverse flex with one 100px-wide child, relative top
+# 10000000px. The second item is an empty 20x10 box. Its y minus 200 plus 10
+# gives the flex first baseline; the large relative inset is excluded.
+# child height	cross margins	first baseline
+100.25	none	100
+100.25	auto	100
+99.75	none	100
+99.75	auto	99.875

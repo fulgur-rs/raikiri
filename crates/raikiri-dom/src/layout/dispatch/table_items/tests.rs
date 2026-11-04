@@ -453,3 +453,52 @@ fn positive_cross_room_retains_stretch_and_used_auto_margins() {
         }
     }
 }
+
+#[test]
+fn fractional_wrap_baseline_can_change_after_position_rounding() {
+    for height in [100.25, 99.75] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Some("display:flex;flex-wrap:wrap-reverse;width:100px;height:100px"),
+        );
+        let child = doc.append_element(
+            Some(root),
+            "div",
+            Some(&format!(
+                "width:100px;height:{height}px;position:relative;top:10000000px"
+            )),
+        );
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+        let (capture, output) = capture(&mut tree, root);
+        let before: Vec<_> = tree.nodes.iter().map(|node| node.layout).collect();
+        assert_eq!(before[child].location.y, 10_000_000.0);
+        let corrected = wrap_reverse::candidate(
+            &tree,
+            root.into(),
+            inputs(),
+            capture.calls.as_deref().unwrap(),
+            &output,
+            |child| Some(before[child]),
+        );
+        if height > 100.0 {
+            assert_eq!(output.baselines.first, Some(100.25));
+            let corrected = corrected.expect("the baseline retains the fractional overflow shift");
+            assert_eq!(corrected.output.baselines.first, Some(100.0));
+            assert_eq!(corrected.layouts, vec![(child, before[child])]);
+        } else {
+            assert_eq!(output.baselines.first, Some(100.0));
+            assert!(corrected.is_none());
+        }
+        assert_eq!(
+            tree.nodes
+                .iter()
+                .map(|node| node.layout)
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+}
