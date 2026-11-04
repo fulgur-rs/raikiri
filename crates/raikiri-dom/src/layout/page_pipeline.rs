@@ -9362,10 +9362,11 @@ impl CheckedParagraphs {
 ///
 /// The block is `paragraph_root`, the inline layout root of the text's
 /// paragraph, or else the text's parent. A block nested in plain block flow
-/// is moved the same way as a direct child; its ancestors then grow to hold
-/// it. There is no such block for text placed by positioned insets, for a
-/// block whose checks have all run, or for a nested block that is not in
-/// plain block flow or that lies inside a float or an out-of-flow box.
+/// uses the same checks as a direct child; line moves propagate only the
+/// growth its height constraints allow. There is no such block for text
+/// placed by positioned insets, for a block whose checks have all run, or
+/// for a nested block outside plain block flow or inside a float or an
+/// out-of-flow box.
 fn line_block_parent(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -11175,10 +11176,10 @@ fn shrink_ancestors_after_content_change(
 
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
-/// order, none is floated or absolutely positioned, and its own height and
-/// every ancestor's height follow their content (see
-/// [`height_follows_content`]), so moving `block` down moves the boxes after
-/// it and grows its ancestors to hold it.
+/// order, none is floated or absolutely positioned, and every ancestor's
+/// height follows its content (see [`height_follows_content`]). The paragraph's
+/// own height may be constrained: moving its lines grows its box only as far
+/// as those constraints allow. Size containment remains outside this path.
 fn is_block_flow_paragraph(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -11191,10 +11192,7 @@ fn is_block_flow_paragraph(
     ) {
         return false;
     }
-    // A box whose height does not follow its lines fragments at the break
-    // itself, as the same box does as a flex or grid item, rather than moving
-    // as a unit with its lines.
-    height_follows_content(document, block)
+    !document.nodes[block].size_containment.height
         && placed_in_block_flow(document, cascade, block, body_id)
 }
 
