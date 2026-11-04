@@ -635,7 +635,10 @@ impl LayoutSession<'_> {
     /// library derives it from the main size the item states, which the item
     /// does not keep when it grows or shrinks, or when its flex basis is not
     /// `auto`, so the library is told no ratio and the item derives the cross
-    /// size itself when it is laid out at the flexed main size.
+    /// size itself when it is laid out at the flexed main size. A paragraph item
+    /// of a column that states no height, and no `max-height` to cap it, takes
+    /// its main size from its lines and its ratio until the flex algorithm
+    /// settles another one, and its width follows that one in the same way.
     ///
     /// An item with a flex basis of `content` that states its cross size gets
     /// its flex base size from that size through the ratio, even when it states
@@ -659,19 +662,25 @@ impl LayoutSession<'_> {
         // The `100%` width of an `<svg>` that fills the room its parent offers
         // stands in for an `auto` one, so the svg states no width of its own.
         let width_stands_in = self.nodes[idx].svg_width_follows_available;
-        let main_is_stated = states_a_size(main) && (!is_row || !width_stands_in);
+        // The main size of a paragraph item of a column is what its lines and
+        // its ratio give, until the flex algorithm settles another one: it
+        // flexes, or a `max-height` caps it. The cross size follows the main
+        // size it settled for, except when the cap is what settled it: there
+        // the library derives the cross size through the ratio, the same cap
+        // carried over to the width included.
+        let paragraph_main_flexes = self.flex_main_axis_is_width(idx) == Some(false)
+            && self.nodes[idx].formatting_context == FormattingContext::Inline
+            && crate::layout::dispatch::block_right_to_left(self, idx).is_none()
+            && item.max_size().height.is_auto();
+        let main_is_stated =
+            (states_a_size(main) && (!is_row || !width_stands_in)) || paragraph_main_flexes;
         // Hiding the ratio leaves the cross size to the box itself, which
         // only blocks, flex and grid containers, paragraphs and replaced boxes
-        // derive from the main size they are measured at. A paragraph or a
-        // flex container on vertical writing axes keeps the ratio, as it
-        // leaves its height to the flex algorithm, and so does a paragraph
-        // that is a multicol container, which is measured by its own path.
+        // derive from the main size they are measured at. A flex container on
+        // vertical writing axes keeps the ratio, as it leaves its height to the
+        // flex algorithm.
         let derives_cross_from_ratio = match self.nodes[idx].formatting_context {
-            FormattingContext::Block | FormattingContext::Grid => true,
-            FormattingContext::Inline => {
-                self.nodes[idx].multicol.is_none()
-                    && crate::layout::dispatch::block_right_to_left(self, idx).is_none()
-            }
+            FormattingContext::Block | FormattingContext::Grid | FormattingContext::Inline => true,
             FormattingContext::Flex => {
                 crate::layout::dispatch::block_right_to_left(self, idx).is_none()
             }
