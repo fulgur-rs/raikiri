@@ -204,12 +204,43 @@ impl PageMarginBoxCascadeResult {
         inherited: &MarginBoxInheritance,
     ) -> Option<Self> {
         let mut merged = rules.iter().rev().find(|rule| rule.slot == slot)?.clone();
-        let declared: Vec<_> = rules
+        // Public margin declarations can be reconstructed by consumers, so
+        // normalize a retained white-space shorthand before winner selection.
+        let normalized: Vec<_> = rules
             .iter()
             .enumerate()
             .filter(|(_, rule)| rule.slot == slot)
-            .flat_map(|(rule_index, rule)| {
-                rule.declarations
+            .map(|(rule_index, rule)| {
+                let declarations = if rule
+                    .declarations
+                    .iter()
+                    .any(|d| d.key == PropertyKey::WhiteSpace)
+                {
+                    let mut expanded = Vec::new();
+                    for decl in &rule.declarations {
+                        if decl.key == PropertyKey::WhiteSpace {
+                            let parsed = ParsedDeclaration {
+                                value: decl.value.clone(),
+                                important: decl.important,
+                                logical: decl.logical,
+                            };
+                            expand_shorthand_into(&parsed, |d| expanded.push(d));
+                        } else {
+                            expanded.push(decl.clone());
+                        }
+                    }
+                    std::borrow::Cow::Owned(expanded)
+                } else {
+                    std::borrow::Cow::Borrowed(rule.declarations.as_slice())
+                };
+                (rule_index, rule, declarations)
+            })
+            .collect();
+        let declared: Vec<_> = normalized
+            .iter()
+            .flat_map(|(rule_index, rule, declarations)| {
+                let (rule_index, rule) = (*rule_index, *rule);
+                declarations
                     .iter()
                     .enumerate()
                     .flat_map(move |(decl_index, decl)| {
@@ -1639,8 +1670,9 @@ pub(crate) fn cascade_page_with_normal_line_height(
                     continue;
                 }
                 // Expand again before pushing candidates. The page parser
-                // already expanded every declaration, so this is the identity
-                // for them; `PageRule::declarations` is a `pub` field, and
+                // already expanded every declaration; repeated white-space
+                // longhands carry the same values. `PageRule::declarations` is
+                // a `pub` field, and
                 // re-running the expansion keeps the page cascade independent
                 // of how a consumer reassembled the list.
                 // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
@@ -2233,7 +2265,6 @@ enum ComputedOverValue {
 /// The `white-space-collapse` and `text-wrap-mode` halves that `value` sets.
 fn white_space_halves(value: &PropertyValue) -> (Option<WhiteSpaceCollapse>, Option<TextWrapMode>) {
     match value {
-        PropertyValue::WhiteSpace(keyword) => keyword.collapse_and_wrap().unzip(),
         PropertyValue::WhiteSpaceCollapse(collapse) => (Some(*collapse), None),
         PropertyValue::TextWrap(wrap) => (None, Some(*wrap)),
         PropertyValue::TextWrapShorthand(shorthand) => (None, Some(shorthand.mode)),
@@ -2251,7 +2282,6 @@ fn reset_white_space_halves(
     key: PropertyKey,
 ) {
     let (collapse, wrap) = match key {
-        PropertyKey::WhiteSpace => (true, true),
         PropertyKey::WhiteSpaceCollapse => (true, false),
         PropertyKey::TextWrap => (false, true),
         _ => return,

@@ -3366,3 +3366,14 @@ fn sizing_var_rejects_parentheses_outside_a_math_function() {
     };
     assert_eq!(expression.resolve(1000.0), 50.0);
 }
+
+#[test]
+fn white_space_projection_rejects_an_unrelated_target() {
+    assert_eq!(
+        project_deferred_value(
+            PropertyValue::WhiteSpace(crate::property::WhiteSpace::Pre),
+            PropertyKey::Color
+        ),
+        None
+    );
+}
