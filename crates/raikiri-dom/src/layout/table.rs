@@ -873,8 +873,8 @@ fn compute_table_layout_checked(
         // Height is measured by the table, so an auto width's ratio transfer
         // belongs here too. It sizes the columns as well as the outer box,
         // using the preferred grid height before intrinsic content floors.
-        // A min-content probe still measures the tracks and caption alone;
-        // otherwise a ratio width would incorrectly raise their width floor.
+        // Keep numeric-height ratio transfer out of min-content probes;
+        // otherwise it would incorrectly raise the tracks' and caption's floor.
         let owned_height_ratio_width = if absolute_table && table_size.width.is_auto() {
             stretch_room
                 .or_else(|| {
