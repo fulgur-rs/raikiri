@@ -7,9 +7,9 @@ use super::host::HostError;
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node_gc::NodeObject;
 use super::webidl::{
-    dom_string, guard_node_budget, host_failure, host_failure_with_message, this_document,
-    this_element, this_node, throw_dom_exception, unreachable_mutation_error, with_state,
-    with_state_after_sync,
+    dom_string, guard_node_budget, guard_node_budget_for, host_failure, host_failure_with_message,
+    this_document, this_element, this_node, throw_dom_exception, unreachable_mutation_error,
+    with_state, with_state_after_sync,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes,
@@ -750,7 +750,9 @@ fn body(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
 fn create_element(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     this_document(this, context)?;
     let name = dom_string(args, 0, context)?.to_ascii_lowercase();
-    guard_node_budget(context)?;
+    // A `<template>` also allocates its contents fragment root, so it takes
+    // two nodes out of the budget, the same count `cloneNode` charges.
+    guard_node_budget_for(context, if name == "template" { 2 } else { 1 })?;
     let result = with_state(context, |s| {
         s.host.document_mut().create_detached_element(&name)
     })?;

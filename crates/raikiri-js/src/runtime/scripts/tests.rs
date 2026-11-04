@@ -970,6 +970,121 @@ fn node_budget_limit_covers_append_with_no_arguments() {
     assert_node_budget_aborts("for (;;) { document.body.append(); }");
 }
 
+/// Run `call` on a page whose node budget leaves `room` nodes past its start.
+/// The page holds `<p>`, `<i>` and `<b>` children of the body for the call to
+/// work on. Returns what the run aborted on and how many nodes it created.
+fn node_budget_with_room(room: usize, call: &str) -> (Option<Abort>, usize) {
+    let (mut host, _, _, body) = StubHost::page();
+    for tag in ["p", "i", "b"] {
+        let element = host.document.create_detached_element(tag).unwrap();
+        host.document.append_child(body, element).unwrap();
+    }
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        &format!(
+            "var p = document.querySelector('p'), i = document.querySelector('i'), \
+             b = document.querySelector('b'); {call}"
+        ),
+    );
+    let before = host.document.node_count();
+    let mut rt = runtime_with(
+        Limits {
+            max_nodes: before + room,
+            ..Default::default()
+        },
+        host,
+    );
+    let report = rt.run_document();
+    let after = with_state(rt.context_mut(), |s| s.host.document().node_count()).unwrap();
+    (report.aborted, after - before)
+}
+
+#[test]
+fn node_budget_limit_counts_every_node_a_variadic_call_creates() {
+    // Two strings make two Text nodes and the fragment that holds them: three
+    // nodes, charged before the first is created, by every method that takes
+    // nodes or strings.
+    for call in [
+        "p.append('a', 'b');",
+        "p.prepend('a', 'b');",
+        "p.replaceChildren('a', 'b');",
+        "i.before('a', 'b');",
+        "i.after('a', 'b');",
+        "i.replaceWith('a', 'b');",
+    ] {
+        assert_eq!(
+            node_budget_with_room(2, call),
+            (Some(Abort::Nodes), 0),
+            "{call}"
+        );
+        assert_eq!(node_budget_with_room(3, call), (None, 3), "{call}");
+    }
+}
+
+#[test]
+fn node_budget_limit_counts_the_fragment_and_text_of_mixed_and_node_only_calls() {
+    // An existing node alone needs no new node; no argument at all makes an
+    // empty fragment; nodes only are wrapped in a fragment; a node and a
+    // string make a Text node and the fragment.
+    for (call, needed) in [
+        ("p.append(i);", 0),
+        ("p.replaceChildren(i);", 0),
+        ("b.before(i);", 0),
+        ("i.replaceWith(b);", 0),
+        ("p.append();", 1),
+        ("p.append(i, b);", 1),
+        ("p.append(i, 'a');", 2),
+        ("p.append('a');", 1),
+    ] {
+        if needed > 0 {
+            assert_eq!(
+                node_budget_with_room(needed - 1, call),
+                (Some(Abort::Nodes), 0),
+                "{call}"
+            );
+        }
+        assert_eq!(
+            node_budget_with_room(needed, call),
+            (None, needed),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn node_budget_limit_counts_the_contents_fragment_of_a_created_template() {
+    // An HTML `<template>` also allocates its contents fragment root: two
+    // nodes, the count `cloneNode` charges for one. Any other element named
+    // `template` has no such fragment and takes one.
+    const XHTML: &str = "http://www.w3.org/1999/xhtml";
+    for call in [
+        "document.createElement('template');".to_owned(),
+        "document.createElement('TEMPLATE');".to_owned(),
+        format!("document.createElementNS('{XHTML}', 'template');"),
+    ] {
+        assert_eq!(
+            node_budget_with_room(1, &call),
+            (Some(Abort::Nodes), 0),
+            "{call}"
+        );
+        assert_eq!(node_budget_with_room(2, &call), (None, 2), "{call}");
+    }
+    for call in [
+        "document.createElement('div');",
+        "document.createElementNS('http://www.w3.org/2000/svg', 'template');",
+        "document.createElementNS(null, 'template');",
+    ] {
+        assert_eq!(
+            node_budget_with_room(0, call).0,
+            Some(Abort::Nodes),
+            "{call}"
+        );
+        assert_eq!(node_budget_with_room(1, call), (None, 1), "{call}");
+    }
+}
+
 #[test]
 fn dom_content_loaded_listener_abort_is_recorded() {
     let (mut host, _, _, body) = StubHost::page();
