@@ -231,9 +231,12 @@ fn final_group_splits_the_last_row_when_the_next_page_cannot_hold_its_tail() {
         &group(&(row("c", "") + &row("d", "")), "break-inside:avoid"),
         "",
     );
+    // The 30px of padding after `d` fill the page they start, and `z` rides up
+    // over them: the pages after the first are shorter than it, and the passes
+    // that settle the page sizes (three of them) find only one more page each.
     let p = places_with(
         &normal,
-        "",
+        "margin-bottom:-30px",
         true,
         "@page{size:200px 30px}@page:first{size:200px 200px}",
     );
