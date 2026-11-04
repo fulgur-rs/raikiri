@@ -6,9 +6,8 @@ use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
     OpenBlockEdges, box_intersects_page, element_transform, fixed_position_px,
-    generated_flow_height, outline_outset, page_bounds_in_scene, paintable_border_radius,
-    snap_column_clip_outward, transform_translation, translation_only, used_padding_for_paint,
-    vertical_align_shift_px,
+    generated_flow_height, page_bounds_in_scene, paintable_border_radius, snap_column_clip_outward,
+    transform_translation, translation_only, used_padding_for_paint, vertical_align_shift_px,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
@@ -555,31 +554,19 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_height = paint_height.min(clip_height);
             paint_background_height = paint_background_height.min(clip_height);
             let clip_origin_y = paint_y.floor();
-            // Layout does not break the box across the columns, so they cut it
-            // off at the bottom, where the container ends. They clip nothing
-            // else: what of the box, its descendants, its outline and its
-            // shadows overflows it at the top and at the sides shows, as the
-            // overflow of any box in a column does (CSS Multi-column 1,
-            // section 8). The clip is as open there as the clip of a box whose
-            // overflow is visible on that axis.
-            //
-            // A box they cut off at the bottom has no bottom edge for the
-            // outline to follow, and a box with no area paints no outline.
-            let cv = &self.cascade.computed[node_id];
-            let outset = f64::from(outline_outset(
-                layout.size.width,
-                layout.size.height,
-                &cv.outline,
-                cv.outline_offset,
-            ));
-            let bottom_outset = if layout.size.height <= clip_height {
-                outset
-            } else {
-                0.0
-            };
+            // These boxes are not split across columns. A box that exceeds
+            // the column is cut at its bottom, but one that fits keeps all
+            // its ink overflow, including shadows painted by descendants.
+            // Bound open axes by the page in the current scene coordinates.
+            // A zero-height clip protects an overflowing parallel flow at a
+            // column break and must stay closed even for a zero-height box.
             let page = page_bounds_in_scene(scene.transform, &self.page_box);
-            // A box that ends above the page has nothing to show on it.
-            let bottom = ((clip_origin_y + clip_height) as f64 + bottom_outset).max(page.y0);
+            let bottom = if clip_height > 0.0 && layout.size.height <= clip_height {
+                page.y1
+            } else {
+                // A box that ends above the page has nothing to show on it.
+                f64::from(clip_origin_y + clip_height).max(page.y0)
+            };
             let clip = Rect::new(page.x0, page.y0, page.x1, bottom);
             let clip = snap_column_clip_outward(
                 clip,
