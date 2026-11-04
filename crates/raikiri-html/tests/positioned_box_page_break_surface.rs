@@ -638,6 +638,17 @@ fn a_paragraph_holding_its_float_keeps_the_growth_of_its_moved_lines() {
 }
 
 #[test]
+fn a_fixed_height_clipped_paragraph_keeps_its_own_lines_in_place() {
+    let body = positioned(
+        "top:40px",
+        "<p id=clipped style='margin:0;height:30px;overflow:hidden'>A<br>B<br>C</p><p style='margin:0'>D</p>",
+    );
+    assert_eq!(lines_of(&body, |text| text == "A"), [(0, 45.0)]);
+    assert_eq!(lines_of(&body, |text| text == "D"), [(0, 75.0)]);
+    assert_eq!(boxes_named(&body, "clipped"), [(0, 40.0, 30.0)]);
+}
+
+#[test]
 fn a_fixed_clip_hides_later_breaks_while_an_auto_clip_grows_with_them() {
     for (style, page, top) in [
         ("height:120px;overflow:hidden", 1, 65.0),
