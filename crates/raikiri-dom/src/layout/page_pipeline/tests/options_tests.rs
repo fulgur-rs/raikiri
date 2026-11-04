@@ -511,3 +511,63 @@ fn options_page_limit_stops_the_flow_inside_edges_that_cross_pages() {
     );
     assert!(matches!(result, Err(LayoutError::PageLimitExceeded { .. })));
 }
+
+/// `body > div(1200px, overflow) > div(padding-bottom:360px) > div(padding-bottom:360px) > div(480px)`
+/// on pages 600px tall: the inner padding starts the second page and the outer
+/// padding is left with nothing above the end of the box around them.
+fn nested_padded_cards_document(clip: &str) -> (Document, raikiri_style::CascadeResult) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let outer = document.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;height:1200px;{clip}").as_str()),
+    );
+    let card = document.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;padding-bottom:360px"),
+    );
+    let inner = document.append_element(
+        Some(card),
+        "div",
+        Some("display:block;padding-bottom:360px"),
+    );
+    document.append_element(Some(inner), "div", Some("display:block;height:480px"));
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    (document, cascade)
+}
+
+#[test]
+fn options_page_limit_ignores_pushed_edges_that_a_clip_hides() {
+    // The padding pushed to the second page's end lies past the box that clips
+    // it, so it does not reach a third page; unclipped it does.
+    let (mut document, cascade) = nested_padded_cards_document("overflow:hidden");
+    let control = PageLayoutControl::new(Some(2));
+    let pages = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        PageLayoutOptions {
+            control: Some(&control),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(pages.len(), 2);
+
+    let (mut document, cascade) = nested_padded_cards_document("");
+    let control = PageLayoutControl::new(Some(2));
+    let result = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        PageLayoutOptions {
+            control: Some(&control),
+            ..Default::default()
+        },
+    );
+    assert!(matches!(result, Err(LayoutError::PageLimitExceeded { .. })));
+}
