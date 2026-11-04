@@ -6449,7 +6449,8 @@ fn generated_box_separates(
 /// border box.
 ///
 /// Only the collapsed margin is truncated, not clearance or other space in
-/// the gap.
+/// the gap. Both positive and negative adjoining margins contribute to its
+/// width, even when an empty sibling places its border above that margin.
 fn collapsed_margin_start(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6458,22 +6459,13 @@ fn collapsed_margin_start(
     previous_bottom: f32,
     border_box_top: f32,
 ) -> f32 {
-    let collapsed = adjoining_margin(document, cascade, previous, false)
-        .max(adjoining_margin(document, cascade, node_id, true));
+    let (previous_positive, previous_negative) =
+        adjoining_margin_extremes(document, cascade, previous, false, None);
+    let (current_positive, current_negative) =
+        adjoining_margin_extremes(document, cascade, node_id, true, None);
+    let collapsed =
+        previous_positive.max(current_positive) + previous_negative.min(current_negative);
     previous_bottom.max(border_box_top - collapsed)
-}
-
-/// The largest positive margin among the block-start (`start`) or block-end
-/// margin of `id` and the margins of its first or last in-flow children that
-/// adjoin it (see [`adjoining_margin_extremes`]), which all collapse into one
-/// (CSS 2 §8.3.1).
-fn adjoining_margin(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    id: usize,
-    start: bool,
-) -> f32 {
-    adjoining_margin_extremes(document, cascade, id, start, None).0
 }
 
 /// The largest positive margin and the most negative one (zero when there is

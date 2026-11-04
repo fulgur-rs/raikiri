@@ -48,6 +48,7 @@ mod candidate_context_tests;
 mod candidate_text_tests;
 mod clear_start_margin_tests;
 mod closing_edge_tests;
+mod collapsed_margin_tests;
 mod column_projection_tests;
 mod float_gap_tests;
 mod fragment_sources_tests;
