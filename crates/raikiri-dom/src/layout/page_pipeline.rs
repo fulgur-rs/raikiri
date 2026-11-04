@@ -4292,7 +4292,7 @@ fn paginate_flow(
     let candidate_result = (|| -> Result<(), LayoutError> {
         let mut candidates = candidates.into_iter();
         let mut edges_breaks = edges_breaks.into_iter().peekable();
-        let mut candidates_placed = 0;
+        let mut done = 0;
         let mut halted = false;
         // Each candidate is placed while the page limit lets pagination reach the
         // page the flow is on. The page breaks before the edges of a block that
@@ -4300,17 +4300,11 @@ fn paginate_flow(
         while let Some(candidate) = candidates.next()
             && control.within_page_limit(state.current_page)?
         {
-            if break_before_edges(
-                &mut state,
-                document,
-                &env,
-                &mut edges_breaks,
-                candidates_placed,
-            )? {
+            if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
                 halted = true;
                 break;
             }
-            candidates_placed += 1;
+            done += 1;
             let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
                 continue;
             };
@@ -4326,13 +4320,7 @@ fn paginate_flow(
             }
         }
         if !halted {
-            break_before_edges(
-                &mut state,
-                document,
-                &env,
-                &mut edges_breaks,
-                candidates_placed,
-            )?;
+            break_before_edges(&mut state, document, &env, &mut edges_breaks, done)?;
         }
         Ok(())
     })();
