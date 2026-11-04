@@ -366,8 +366,10 @@ pub(crate) fn guard_node_budget(context: &mut Context) -> JsResult<()> {
 }
 
 /// [`guard_node_budget`] for a binding that creates `additional` nodes at
-/// once (`cloneNode`, `importNode`): refuse when they would take the
-/// document past [`event_loop::Limits::max_nodes`].
+/// once (`cloneNode`, `importNode`, `createElement("template")`, and the
+/// variadic `append`/`prepend`/`replaceChildren`/`before`/`after`/
+/// `replaceWith`): refuse when they would take the document past
+/// [`event_loop::Limits::max_nodes`].
 pub(crate) fn guard_node_budget_for(context: &mut Context, additional: usize) -> JsResult<()> {
     let over_budget = with_state(context, |s| {
         s.host.document().node_count().saturating_add(additional) > s.event_loop.limits.max_nodes

@@ -95,16 +95,19 @@ fn given_node_indices(items: &[NodeOrText]) -> Vec<usize> {
 /// and handing it to `pre_insert` elsewhere reproduces "insert each of
 /// nodes" without a second, bespoke insertion loop.
 ///
-/// Guarded once, up front, whenever this could create a node (a string
+/// Guarded once, up front, for every node it is about to create (a string
 /// argument becomes a Text node; any count other than exactly one item is
-/// wrapped in a fresh fragment -- including zero items, which still
-/// allocates an *empty* fragment) -- not once per node it goes on to create,
-/// so a call already at the node budget's very edge can still create up to
-/// (roughly) `items.len()` more nodes than the budget strictly allows before
-/// the *next* call refuses.
+/// wrapped in a fresh fragment -- including zero items, which still allocates
+/// an *empty* fragment), so a call that does not fit the node budget creates
+/// none of them.
 fn nodes_into_a_node(context: &mut Context, items: Vec<NodeOrText>) -> JsResult<usize> {
-    if items.len() != 1 || items.iter().any(|i| matches!(i, NodeOrText::Text(_))) {
-        guard_node_budget(context)?;
+    let texts = items
+        .iter()
+        .filter(|item| matches!(item, NodeOrText::Text(_)))
+        .count();
+    let additional = texts + usize::from(items.len() != 1);
+    if additional > 0 {
+        guard_node_budget_for(context, additional)?;
     }
     let result = with_state(context, |s| -> Result<usize, DomMutationError> {
         let doc = s.host.document_mut();

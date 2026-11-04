@@ -12,8 +12,8 @@ use super::node::{
     js_str, mark_dirty,
 };
 use super::webidl::{
-    dom_string, guard_node_budget, this_document, throw_dom_exception, unreachable_mutation_error,
-    with_state,
+    dom_string, guard_node_budget, guard_node_budget_for, this_document, throw_dom_exception,
+    unreachable_mutation_error, with_state,
 };
 
 // ---- createElementNS ("validate and extract", DOM §4.5) ------------------
@@ -101,7 +101,11 @@ pub(crate) fn create_element_ns(
     let qualified_name = dom_string(args, 1, context)?;
     let (namespace, prefix, local_name) =
         validate_and_extract(context, namespace, &qualified_name, NameContext::Element)?;
-    guard_node_budget(context)?;
+    let is_html = namespace.as_deref() == Some(HTML_NS);
+    // An HTML `<template>` also allocates its contents fragment root, so it
+    // takes two nodes out of the budget, the same count `cloneNode` charges.
+    let creates_template = is_html && local_name == "template";
+    guard_node_budget_for(context, if creates_template { 2 } else { 1 })?;
     let result = with_state(context, |s| {
         s.host.document_mut().create_detached_element(&local_name)
     })?;
@@ -117,7 +121,6 @@ pub(crate) fn create_element_ns(
             ));
         }
     };
-    let is_html = namespace.as_deref() == Some(HTML_NS);
     with_state(context, |s| {
         // `None` here is `raikiri_dom`'s own "HTML default" optimization,
         // not a marker for a genuinely null namespace -- an explicit empty
@@ -134,7 +137,7 @@ pub(crate) fn create_element_ns(
             prefix.map(Into::into),
         );
     })?;
-    if is_html && local_name == "template" {
+    if creates_template {
         with_state(context, |s| {
             s.host.document_mut().allocate_template_fragment_root(index);
         })?;
