@@ -275,8 +275,8 @@ fn caption_in_flow(doc: &Document, table: usize) -> bool {
 /// gives that height back as the known one, which the layout of the table
 /// then splits into the caption's share and the grid's.
 ///
-/// Numeric heights with both vertical insets stated retain the existing
-/// grid-height positioning contract. A stretch height is always measured:
+/// A numeric grid height with an in-flow caption is always measured, including
+/// when both vertical insets are stated. A stretch height is always measured:
 /// its wrapper room and intrinsic floor are resolved by the table itself,
 /// even without a caption or with both insets specified.
 pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
@@ -289,7 +289,6 @@ pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool
     // The table's own view answers on the physical axes of its horizontal
     // writing mode, wherever its containing block runs.
     let style = doc.table_style(table);
-    let inset = style.inset();
     // The table resolves stretch against the containing block and its own
     // intrinsic floor. Measure that result before the parent fixes its size,
     // including captionless tables and tables with both insets specified.
@@ -300,8 +299,7 @@ pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool
             ExpandedDimension::Length(_)
                 | ExpandedDimension::Percent(_)
                 | ExpandedDimension::Calc(_)
-        ) && (inset.top.is_auto() || inset.bottom.is_auto())
-            && caption_in_flow(doc, table))
+        ) && caption_in_flow(doc, table))
 }
 
 /// The height left for the grid box of a horizontal table when a flex or grid
@@ -874,9 +872,17 @@ fn compute_table_layout_checked(
         let max_h_outer = max_h.map(|m| m + lift_h);
         // Height is measured by the table, so an auto width's ratio transfer
         // belongs here too. It sizes the columns as well as the outer box,
-        // using the preferred stretch height before intrinsic content floors.
-        let stretch_ratio_width = if absolute_table && table_size.width.is_auto() {
+        // using the preferred grid height before intrinsic content floors.
+        // Keep numeric-height ratio transfer out of min-content probes;
+        // otherwise it would incorrectly raise the tracks' and caption's floor.
+        let owned_height_ratio_width = if absolute_table && table_size.width.is_auto() {
             stretch_room
+                .or_else(|| {
+                    (wrapper_measured_by_library
+                        && !matches!(inputs.available_space.width, AvailableSpace::MinContent))
+                    .then(|| specified_height.map(|height| height + lift_h))
+                    .flatten()
+                })
                 .zip(doc.table_style(table_idx).aspect_ratio())
                 .map(|(room, ratio)| {
                     let capped = max_h_outer.map_or(room, |maximum| room.min(maximum));
@@ -913,7 +919,7 @@ fn compute_table_layout_checked(
                 } else {
                     stated_table_width(table_size.width, &inputs)
                 };
-                stated.or(stretch_ratio_width).map(|width| {
+                stated.or(owned_height_ratio_width).map(|width| {
                     // Vertical tables resolve physical width separately from
                     // inline tracks, retaining their existing width basis.
                     if vertical_writing && !resolves_item_width {
@@ -989,7 +995,8 @@ fn compute_table_layout_checked(
             // Empty tables shrink-wrap like the main path below: a specified
             // width wins; otherwise the container width is only a cap over the
             // padding/border extents (never stretch-to-fill).
-            let specified_w = stated_table_width(table_size.width, &inputs).or(stretch_ratio_width);
+            let specified_w =
+                stated_table_width(table_size.width, &inputs).or(owned_height_ratio_width);
             // The outer width the table states: the width the caller resolved
             // or, without one, the stated length plus the padding and border
             // that a content-box table keeps outside it (a `stretch` room is
@@ -998,7 +1005,7 @@ fn compute_table_layout_checked(
             let stated_w = specified_w.map(|stated| {
                 let is_length = resolve_dimension(table_size.width, inputs.parent_size.width)
                     .is_some()
-                    || stretch_ratio_width.is_some();
+                    || owned_height_ratio_width.is_some();
                 let outer = if is_length { stated + lift_w } else { stated };
                 f32_max_compat(
                     inputs.known_dimensions.width.unwrap_or(outer),
@@ -1385,7 +1392,7 @@ fn compute_table_layout_checked(
         let inputs_for_columns = LayoutInput {
             known_dimensions: Size {
                 width: match (
-                    specified_width.or(stretch_ratio_width),
+                    specified_width.or(owned_height_ratio_width),
                     assigned_wrapper_width,
                 ) {
                     (Some(_), _) | (_, true) => effective_known.width.map(|width| {
@@ -1408,7 +1415,7 @@ fn compute_table_layout_checked(
         // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
         // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
         // width keeps the fill basis.
-        let table_width_basis = if assigned_wrapper_width || stretch_ratio_width.is_some() {
+        let table_width_basis = if assigned_wrapper_width || owned_height_ratio_width.is_some() {
             // A parent can supply a measured wrapper width even when the
             // table's width is auto. Allocate it with the used padding instead
             // of shrink-wrapping again with the intrinsic edge basis.
@@ -1430,7 +1437,7 @@ fn compute_table_layout_checked(
         let column_basis_width = if table_layout == TableLayoutValue::Fixed && !vertical_writing {
             specified_width.map(|stated| table_width_basis.unwrap_or(stated))
         } else {
-            specified_width.or(stretch_ratio_width)
+            specified_width.or(owned_height_ratio_width)
         };
         let pass = ColumnPass {
             vertical_writing,

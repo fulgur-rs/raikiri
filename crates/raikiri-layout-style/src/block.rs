@@ -81,7 +81,7 @@ impl LayoutStyleView<'_> {
             .map(|mut alignment| {
                 // The projected auto height asks for measurement, not a second
                 // stretch-fit floor. Start keeps stretch's placement and safety.
-                if self.table_owns_stretch_height()
+                if self.table_owns_measured_height()
                     && alignment.keyword == values::AlignItemsKeyword::Stretch
                 {
                     alignment.keyword = values::AlignItemsKeyword::Start;
