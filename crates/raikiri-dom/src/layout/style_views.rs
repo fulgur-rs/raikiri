@@ -412,6 +412,41 @@ impl LayoutSession<'_> {
         self.query_style(idx, ReadRole::Physical)
     }
 
+    /// The inline size of a vertical paragraph, including a physical height
+    /// keyword retained separately from the horizontal layout fallback.
+    pub(crate) fn vertical_ifc_height(&self, idx: usize) -> Dimension {
+        let height = self.physical_style(idx).size().height;
+        if !height.is_auto()
+            || !self.nodes[idx]
+                .ifc
+                .as_ref()
+                .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
+        {
+            return height;
+        }
+        let key = self.nodes.box_key(idx).expect("paragraph has a box key");
+        let record = self.box_style_data.get(key).expect("paragraph style");
+        // A probe may intentionally replace the keyword with auto. Other
+        // property overrides leave the paragraph's preferred height intact.
+        if record
+            .pass
+            .iter()
+            .chain(self.scoped_overrides.entries(key))
+            .any(|entry| entry.overrides_length(raikiri_layout_style::LengthProperty::Height))
+        {
+            return height;
+        }
+        let LayoutBase::Source(source) = record.base else {
+            return height;
+        };
+        match self.style_views.cascade().computed[source].height_keyword {
+            Some(raikiri_style::ContentSizeKeyword::MinContent) => Dimension::min_content(),
+            Some(raikiri_style::ContentSizeKeyword::MaxContent) => Dimension::max_content(),
+            Some(raikiri_style::ContentSizeKeyword::FitContent) => Dimension::fit_content(),
+            _ => height,
+        }
+    }
+
     /// `reduce` applied to the box's physical style.
     ///
     /// Layout asks for the same reduction of a box on every pass over it. While

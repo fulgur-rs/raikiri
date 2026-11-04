@@ -697,3 +697,65 @@ fn scoped_used_padding_restores_percentage_edges_after_nested_unwind() {
     assert_eq!(tree.physical_style(child).padding(), original);
     assert_eq!(tree.override_checkpoint(), 0);
 }
+
+fn vertical_keyword_paragraph() -> (Document, raikiri_style::CascadeResult, usize) {
+    use crate::layout::{layout_single_page, test_support};
+
+    let (mut doc, _, child, _) = fixture_with_styles(
+        "display:block",
+        "writing-mode:vertical-lr;height:min-content;font:10px/10px Ahem",
+    );
+    doc.append_text(child, "aa bbbb");
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    layout_single_page(
+        test_support::with_ahem(&mut doc),
+        &cascade,
+        test_support::page_box_800x600(),
+    )
+    .unwrap();
+    (doc, cascade, child)
+}
+
+fn check_vertical_keyword_height_override(pass: bool) {
+    let (mut doc, cascade, child) = vertical_keyword_paragraph();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    assert_eq!(tree.vertical_ifc_height(child), Dimension::min_content());
+    tree.with_overrides(vec![entry(key, 19.0)], |tree| {
+        assert_eq!(tree.vertical_ifc_height(child), Dimension::min_content());
+    });
+    tree.record_pass_override(child, entry(key, 19.0).1);
+    assert_eq!(tree.vertical_ifc_height(child), Dimension::min_content());
+    let height = OwnedPropertyOverride::length(LengthProperty::Height, L::Auto, false).unwrap();
+    if pass {
+        tree.record_pass_override(child, height);
+        assert_eq!(tree.vertical_ifc_height(child), Dimension::auto());
+    } else {
+        tree.with_overrides(vec![(key, height)], |tree| {
+            assert_eq!(tree.vertical_ifc_height(child), Dimension::auto());
+        });
+        assert_eq!(tree.vertical_ifc_height(child), Dimension::min_content());
+    }
+}
+
+#[test]
+fn a_vertical_keyword_does_not_override_a_scoped_auto_height() {
+    check_vertical_keyword_height_override(false);
+}
+
+#[test]
+fn a_vertical_keyword_does_not_override_a_pass_auto_height() {
+    check_vertical_keyword_height_override(true);
+}
+
+#[test]
+fn a_synthetic_paragraph_does_not_restore_a_source_height_keyword() {
+    let (mut doc, cascade, child) = vertical_keyword_paragraph();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    assert_eq!(tree.vertical_ifc_height(child), Dimension::min_content());
+    tree.box_style_data.get_mut(key).unwrap().base =
+        super::super::LayoutBase::Synthetic(Arc::new(cascade.computed[child].clone()));
+    assert_eq!(tree.vertical_ifc_height(child), Dimension::auto());
+}
