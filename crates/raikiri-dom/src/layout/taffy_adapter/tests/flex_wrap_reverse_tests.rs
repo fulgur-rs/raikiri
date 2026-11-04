@@ -112,11 +112,11 @@ fn wrapped_overflow_keeps_baselines_absolute_children_and_writing_modes() {
     };
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("data/flex_wrap_reverse_edges.json")).unwrap();
-    assert_eq!(cases.as_array().unwrap().len(), 72);
+    assert_eq!(cases.as_array().unwrap().len(), 76);
     let mut failures = Vec::new();
     for case in cases.as_array().unwrap() {
         let markup = format!(
-            "<!doctype html><style>body{{margin:0}}div{{box-sizing:border-box}}</style>{}",
+            "<!doctype html><style>@page{{size:800px 600px;margin:0}}body{{margin:0}}div{{box-sizing:border-box}}</style>{}",
             case["markup"].as_str().unwrap()
         );
         let resources = RenderResources::new();
