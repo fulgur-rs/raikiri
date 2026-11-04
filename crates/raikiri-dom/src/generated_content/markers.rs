@@ -26,7 +26,9 @@ impl Document {
     }
 
     /// Shape a standalone marker and resolve its horizontal offset from the
-    /// principal box, sharing the built-in painter's trailing-space handling.
+    /// principal box. An outside marker box ends at the principal box's start
+    /// edge, including the widest line's trailing blanks. Inside text starts
+    /// at the supplied padding.
     #[doc(hidden)]
     pub fn shape_list_marker_text(
         &self,
@@ -58,7 +60,14 @@ impl Document {
         }
         let offset = match computed.list_style_position {
             raikiri_style::ListStylePosition::Inside => padding_left,
-            _ => padding_left - width - 4.0,
+            _ => {
+                let advance = shaped
+                    .lines()
+                    .iter()
+                    .map(|line| line.inline_size() + line.hang_end())
+                    .fold(0.0_f32, f32::max);
+                -advance
+            }
         };
         Some((shaped, offset))
     }

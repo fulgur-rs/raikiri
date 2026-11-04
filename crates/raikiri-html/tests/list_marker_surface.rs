@@ -54,9 +54,9 @@ fn outside_decimal_markers_have_document_fonts_positions_and_paint_events() {
         .find(|run| matches!(run.source, RunSource::Text(_)))
         .unwrap();
     assert_eq!(markers[0].font.id, body.font.id);
-    // Ahem gives each non-space glyph a 10px advance: "1." is 20px wide.
-    assert_eq!(markers[0].origin.0, 26.0);
-    assert_eq!(markers[1].origin.0, 26.0);
+    // Ahem's "1. " marker advances 30px, including the suffix space.
+    assert_eq!(markers[0].origin.0, 20.0);
+    assert_eq!(markers[1].origin.0, 20.0);
     assert_ne!(markers[0].line, body.line);
     assert!(markers.iter().all(|run| run.is_standalone_marker()));
     let events = page.paint_order_for_text_runs(&runs);
@@ -116,7 +116,7 @@ fn empty_list_items_still_expose_their_number() {
         .collect();
     assert_eq!(markers.len(), 1);
     assert_eq!(markers[0].text.trim_end(), "1.");
-    assert_eq!(markers[0].origin.0, 26.0);
+    assert_eq!(markers[0].origin.0, 20.0);
     assert!(
         page.paint_order_for_text_runs(&runs)
             .iter()
@@ -201,9 +201,11 @@ fn nested_and_wrapped_items_keep_one_marker_at_each_list_gutter() {
         .filter(|run| run.is_standalone_marker() && !run.text.trim().is_empty())
         .map(|run| (run.text.trim_end().to_owned(), run.origin.0))
         .collect();
+    // The producer formats disc as "• ", with a 20px Ahem advance. This
+    // font-box contract is separate from Chromium's vector-disc artwork.
     assert_eq!(
         markers,
-        vec![("1.".into(), 26.0), ("•".into(), 86.0), ("2.".into(), 26.0)]
+        vec![("1.".into(), 20.0), ("•".into(), 80.0), ("2.".into(), 20.0)]
     );
 }
 
@@ -410,7 +412,7 @@ fn authored_marker_text_uses_its_pseudo_color_size_and_source() {
     let marker = runs.iter().find(|run| run.is_standalone_marker()).unwrap();
     assert_eq!(marker.text, "XY");
     assert_eq!(marker.font_size, 12.0);
-    assert_eq!(marker.origin.0, 22.0);
+    assert_eq!(marker.origin.0, 26.0);
     assert_eq!(
         (marker.color.r, marker.color.g, marker.color.b),
         (255, 0, 0)

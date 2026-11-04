@@ -6084,15 +6084,15 @@ fn explicit_marker_content_suppresses_legacy_image_paint() {
 
 #[test]
 fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
-    // The marker text is "1. " (three glyphs, the last one a space). Its width
-    // is 20 (the trailing space is left out of the width), so an outside
-    // marker starts at 0 + 0 - 20 - 4 = -24: glyphs at -24, -14 and -4.
+    // The marker text is "1. " (three glyphs, the last one a space). Its ink
+    // width is 20, but the outside marker includes the full 30px advance.
+    // Chromium's Ahem reference places it 30px before the principal box.
     let (document, cascade, first) = list_fixture_with_engine();
     let mut scene = Scene::new();
     paint_list_marker(
         &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
     );
-    assert_eq!(glyph_xs(&scene), [-24.0, -14.0, -4.0]);
+    assert_eq!(glyph_xs(&scene), [-30.0, -20.0, -10.0]);
     // The marker is measured and drawn from one engine result.
     assert_eq!(document.standalone_text_calls(), 1);
 }

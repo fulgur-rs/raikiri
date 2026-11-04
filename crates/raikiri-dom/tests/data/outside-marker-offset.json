@@ -1,0 +1,1132 @@
+{
+  "oracle": "Chromium152.0.7977.82 headless printPDF, bundled Ahem, pdftotext-bbox points converted to CSSpx",
+  "cases": [
+    {
+      "label": "explicit-string",
+      "extra_css": "li::marker{content:\"M\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "MX",
+              "x": 89.999996,
+              "y": 19.999998666666666,
+              "width": 20.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          89.999996
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "explicit-trailing-space",
+      "extra_css": "li::marker{content:\"M \"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "explicit-two-trailing-spaces",
+      "extra_css": "li::marker{content:\"M  \"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 69.99999733333333,
+              "y": 19.999998666666666,
+              "width": 10.0
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          69.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "string-list-type",
+      "extra_css": "li{list-style-type:\"M\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "MX",
+              "x": 89.999996,
+              "y": 19.999998666666666,
+              "width": 20.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          89.999996
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "string-list-type-space",
+      "extra_css": "li{list-style-type:\"M \"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "decimal-default",
+      "extra_css": "",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "1.",
+              "x": 69.99999733333333,
+              "y": 19.999998666666666,
+              "width": 19.999984000000012
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          69.99999733333333
+        ],
+        [
+          ".",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "lower-alpha-default",
+      "extra_css": "li{list-style-type:lower-alpha}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "a.",
+              "x": 69.99999733333333,
+              "y": 19.999998666666666,
+              "width": 19.999984000000012
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "a",
+          69.99999733333333
+        ],
+        [
+          ".",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "explicit-counter-space",
+      "extra_css": "li::marker{content:counter(list-item) \" \"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "1",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "explicit-counter-period",
+      "extra_css": "li::marker{content:counter(list-item) \".\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "1.X",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 29.99999866666666
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          79.99999733333333
+        ],
+        [
+          ".",
+          89.99999733333333
+        ],
+        [
+          "X",
+          99.99999733333333
+        ]
+      ]
+    },
+    {
+      "label": "larger-font",
+      "extra_css": "body{font:20px/20px Ahem}li::marker{content:\"M\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 20,
+      "marker_font": 20,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "MX",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 39.99999733333333
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.99999733333333
+        ]
+      ]
+    },
+    {
+      "label": "larger-marker-font",
+      "extra_css": "li::marker{content:\"M\";font-size:20px}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 20,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 15.0,
+              "width": 19.99999866666666
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 22.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "inside-string-control",
+      "extra_css": "li{list-style-position:inside}li::marker{content:\"M\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "MX",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 19.99999866666667
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          99.999996
+        ],
+        [
+          "X",
+          109.999996
+        ]
+      ]
+    },
+    {
+      "label": "inside-decimal-control",
+      "extra_css": "li{list-style-position:inside}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "1.",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 19.999984
+            },
+            {
+              "text": "X",
+              "x": 129.99999466666665,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          99.999996
+        ],
+        [
+          ".",
+          109.999996
+        ],
+        [
+          "X",
+          129.99999466666665
+        ]
+      ]
+    },
+    {
+      "label": "empty-marker-control",
+      "extra_css": "li::marker{content:\"\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "block-child",
+      "extra_css": "li::marker{content:\"M\"}",
+      "body": "<ol><li><div>X</div></li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "MX",
+              "x": 89.999996,
+              "y": 19.999998666666666,
+              "width": 20.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          89.999996
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "padding-border",
+      "extra_css": "li{padding-left:7px;border-left:3px solid}li::marker{content:\"M\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 89.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            },
+            {
+              "text": "X",
+              "x": 109.999996,
+              "y": 19.999998666666666,
+              "width": 9.99999866666667
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          89.999996
+        ],
+        [
+          "X",
+          109.999996
+        ]
+      ]
+    },
+    {
+      "label": "explicit-nbsp",
+      "extra_css": "li::marker{content:\"M\u00a0\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "multiple-lines",
+      "extra_css": "li::marker{content:\"M\\a NN\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            },
+            {
+              "text": "NN",
+              "x": 79.99999733333333,
+              "y": 29.999998666666666,
+              "width": 19.999982666666664
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ],
+        [
+          "N",
+          79.99999733333333
+        ],
+        [
+          "N",
+          89.99999733333333
+        ]
+      ]
+    },
+    {
+      "label": "last-line-trailing-space",
+      "extra_css": "li::marker{content:\"M\\a NN \"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 69.99999733333333,
+              "y": 19.999998666666666,
+              "width": 10.0
+            },
+            {
+              "text": "NN",
+              "x": 69.99999733333333,
+              "y": 29.999998666666666,
+              "width": 19.999984000000012
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          69.99999733333333
+        ],
+        [
+          "N",
+          69.99999733333333
+        ],
+        [
+          "N",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "first-line-longer",
+      "extra_css": "li::marker{content:\"NN\\a M\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "NN",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 19.999982666666664
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            },
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 29.999998666666666,
+              "width": 9.999998666666661
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "N",
+          79.99999733333333
+        ],
+        [
+          "N",
+          89.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ],
+        [
+          "M",
+          79.99999733333333
+        ]
+      ]
+    },
+    {
+      "label": "trailing-empty-line",
+      "extra_css": "li::marker{content:\"M\\a\"}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "MX",
+              "x": 89.999996,
+              "y": 19.999998666666666,
+              "width": 20.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          89.999996
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "author-counter-suffix",
+      "extra_css": "@counter-style z{system:cyclic;symbols:\"M\";suffix:\" \"}li{list-style-type:z}",
+      "body": "<ol><li>X</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "pages": [
+        {
+          "width": 400.0,
+          "height": 400.0,
+          "words": [
+            {
+              "text": "M",
+              "x": 79.99999733333333,
+              "y": 19.999998666666666,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "X",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "M",
+          79.99999733333333
+        ],
+        [
+          "X",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "multicol-owner-marker",
+      "extra_css": "@page{size:180px 160px;margin:0}body{font:20px/20px Ahem}p{margin:0}.mc{width:100px;column-count:2;column-gap:20px;orphans:1;widows:1;display:list-item;list-style-position:outside;margin-left:40px;height:40px;column-rule:200px solid red;}.mc::marker{content:\"X\";color:blue}",
+      "body": "<div class=mc><p>A<br>B<br>C<br>D</p></div>",
+      "body_font": 20,
+      "marker_font": 20,
+      "pages": [
+        {
+          "width": 180.15999333333332,
+          "height": 160.0,
+          "words": [
+            {
+              "text": "XA",
+              "x": 19.999998666666666,
+              "y": 0.0,
+              "width": 39.99999866666666
+            },
+            {
+              "text": "B",
+              "x": 39.99999866666666,
+              "y": 19.999998666666666,
+              "width": 19.999998666666666
+            },
+            {
+              "text": "C",
+              "x": 99.999996,
+              "y": 0.0,
+              "width": 19.99999866666667
+            },
+            {
+              "text": "D",
+              "x": 99.999996,
+              "y": 19.999998666666666,
+              "width": 19.99999866666667
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "X",
+          19.999998666666666
+        ],
+        [
+          "A",
+          39.99999866666667
+        ],
+        [
+          "B",
+          39.99999866666666
+        ],
+        [
+          "C",
+          99.999996
+        ],
+        [
+          "D",
+          99.999996
+        ]
+      ]
+    },
+    {
+      "label": "surface-decimal-empty",
+      "extra_css": "@page{size:200px 100px;margin:0}body{font:10px/20px Ahem}ol,ul{margin:0;padding:0 0 0 50px}li{margin:0;padding:0}",
+      "body": "<ol><li></li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "body_chars": "AB",
+      "pages": [
+        {
+          "width": 200.0,
+          "height": 100.15999333333333,
+          "words": [
+            {
+              "text": "1.",
+              "x": 19.999998666666666,
+              "y": 5.0,
+              "width": 19.999984
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          19.999998666666666
+        ],
+        [
+          ".",
+          29.999998666666666
+        ]
+      ]
+    },
+    {
+      "label": "surface-decimal-pair",
+      "extra_css": "@page{size:200px 100px;margin:0}body{font:10px/20px Ahem}ol,ul{margin:0;padding:0 0 0 50px}li{margin:0;padding:0}",
+      "body": "<ol><li>A</li><li>B</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "body_chars": "AB",
+      "pages": [
+        {
+          "width": 200.0,
+          "height": 100.15999333333333,
+          "words": [
+            {
+              "text": "1.",
+              "x": 19.999998666666666,
+              "y": 5.0,
+              "width": 19.999984
+            },
+            {
+              "text": "A",
+              "x": 49.99999733333333,
+              "y": 5.0,
+              "width": 10.0
+            },
+            {
+              "text": "2.",
+              "x": 19.999998666666666,
+              "y": 24.999998666666666,
+              "width": 19.999984
+            },
+            {
+              "text": "B",
+              "x": 49.99999733333333,
+              "y": 24.999998666666666,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          19.999998666666666
+        ],
+        [
+          ".",
+          29.999998666666666
+        ],
+        [
+          "A",
+          49.99999733333333
+        ],
+        [
+          "2",
+          19.999998666666666
+        ],
+        [
+          ".",
+          29.999998666666666
+        ],
+        [
+          "B",
+          49.99999733333333
+        ]
+      ]
+    },
+    {
+      "label": "surface-authored-font12",
+      "extra_css": "@page{size:200px 100px;margin:0}body{font:10px/20px Ahem}ol,ul{margin:0;padding:0 0 0 50px}li{margin:0;padding:0}li::marker{content:\"XY\";font-size:12px;color:red}",
+      "body": "<ul><li>A</li></ul>",
+      "body_font": 10,
+      "marker_font": 12,
+      "body_chars": "A",
+      "pages": [
+        {
+          "width": 200.0,
+          "height": 100.15999333333333,
+          "words": [
+            {
+              "text": "XY",
+              "x": 25.984373333333334,
+              "y": 4.3999999999999995,
+              "width": 24.00009066666667
+            },
+            {
+              "text": "A",
+              "x": 49.99999733333333,
+              "y": 6.0,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "X",
+          25.984373333333334
+        ],
+        [
+          "Y",
+          37.98437333333334
+        ],
+        [
+          "A",
+          49.99999733333333
+        ]
+      ]
+    },
+    {
+      "label": "surface-nested-string-gutters",
+      "extra_css": "@page{size:200px 100px;margin:0}body{font:10px/20px Ahem}ol,ul{margin:0;padding:0 0 0 50px}li{margin:0;padding:0}li{width:20px;word-break:break-all}ul{list-style-type:\"\u2022 \"}",
+      "body": "<ol><li>ABCD<ul><li>E</li></ul></li><li>F</li></ol>",
+      "body_font": 10,
+      "marker_font": 10,
+      "body_chars": "ABCDEF",
+      "pages": [
+        {
+          "width": 200.0,
+          "height": 100.15999333333333,
+          "words": [
+            {
+              "text": "1.",
+              "x": 19.999998666666666,
+              "y": 5.0,
+              "width": 19.999984
+            },
+            {
+              "text": "AB",
+              "x": 49.99999733333333,
+              "y": 5.0,
+              "width": 19.999984
+            },
+            {
+              "text": "CD",
+              "x": 49.99999733333333,
+              "y": 24.999998666666666,
+              "width": 19.999984
+            },
+            {
+              "text": "\u2022",
+              "x": 79.99999733333333,
+              "y": 44.99999866666667,
+              "width": 9.999998666666661
+            },
+            {
+              "text": "2.",
+              "x": 19.999998666666666,
+              "y": 64.99999733333333,
+              "width": 19.999984
+            },
+            {
+              "text": "F",
+              "x": 49.99999733333333,
+              "y": 64.99999733333333,
+              "width": 10.0
+            },
+            {
+              "text": "E",
+              "x": 99.999996,
+              "y": 44.99999866666667,
+              "width": 10.0
+            }
+          ]
+        }
+      ],
+      "glyph_x": [
+        [
+          "1",
+          19.999998666666666
+        ],
+        [
+          ".",
+          29.999998666666666
+        ],
+        [
+          "A",
+          49.99999733333333
+        ],
+        [
+          "B",
+          59.99999733333333
+        ],
+        [
+          "C",
+          49.99999733333333
+        ],
+        [
+          "D",
+          59.99999733333333
+        ],
+        [
+          "\u2022",
+          79.99999733333333
+        ],
+        [
+          "2",
+          19.999998666666666
+        ],
+        [
+          ".",
+          29.999998666666666
+        ],
+        [
+          "F",
+          49.99999733333333
+        ],
+        [
+          "E",
+          99.999996
+        ]
+      ]
+    }
+  ],
+  "oracle_css": "@font-face{font-family:Ahem;src:url(Ahem.ttf)}@page{size:400px 400px;margin:20px}html,body{margin:0}body{font:10px/10px Ahem}ol{margin:0;padding-left:80px}",
+  "css_fixture": "outside-marker-offset.css"
+}
