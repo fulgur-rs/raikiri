@@ -216,7 +216,7 @@ fn run_groups_share_one_letter_table_per_paragraph() {
     let cache = document.page_projection.letter_groups.0.borrow();
     assert_eq!(cache.0, cascade.element_generation());
     assert_eq!(cache.1.len(), 1);
-    let table = Arc::clone(&cache.1[&root]);
+    let table = Arc::clone(&cache.1[&(root, false)]);
     drop(cache);
     assert!(Arc::ptr_eq(
         &table,

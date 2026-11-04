@@ -80,6 +80,11 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             self.stack.push(PaintFrame::PopClip);
             self.clip_scopes.push(ClipScope::Eager);
         }
+        // Fragment clips opened before the capture stay outside it. The
+        // element's overflow clip below belongs inside the capture instead.
+        if self.negative_levels.holds(node_id) {
+            self.stack.push(PaintFrame::EndNegativeContext(node_id));
+        }
         // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
         // the padding box. Min edges are floored outward so a fractional
         // padding-box origin does not antialias-cut pixel-snapped descendant
@@ -106,10 +111,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             self.stack.push(PaintFrame::PopClip);
             overflow_clip_pushed = Some((resolved, transform));
             if let Some(t) = self.trace.as_deref_mut() {
-                t.push(crate::PaintTraceEvent::PushOverflowClip(
+                let event = crate::PaintTraceEvent::PushOverflowClip(
                     node_id,
                     [clip.x0, clip.y0, clip.x1, clip.y1],
-                ));
+                );
+                t.push(event.clone());
+                self.trace_clips.push(event);
             }
         }
         overflow_clip_pushed
@@ -229,13 +236,19 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if !defers && generates_box {
             let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
                 && !node.is_multicol_container();
-            let close = merge.unwrap_or(
-                if raikiri_dom::paint_rules::hoists_positioned_content(document, cascade, node_id) {
-                    LayerClose::Hoist
-                } else {
-                    LayerClose::Paint
-                },
-            );
+            let close = if self.negative_levels.holds(node_id) {
+                LayerClose::Paint
+            } else {
+                merge.unwrap_or(
+                    if raikiri_dom::paint_rules::hoists_positioned_content(
+                        document, cascade, node_id,
+                    ) {
+                        LayerClose::Hoist
+                    } else {
+                        LayerClose::Paint
+                    },
+                )
+            };
             let mut layer = DeferralLayer::new(allowed, close);
             layer.after = after_pushed;
             deferral_scopes.push(layer);

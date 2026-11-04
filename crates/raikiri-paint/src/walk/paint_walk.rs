@@ -109,6 +109,12 @@ pub(super) struct PaintWalk<'w, S> {
     pub(super) deferral_scopes: Vec<DeferralLayer<'w>>,
     pub(super) stack: Vec<PaintFrame<'w>>,
     pub(super) clip_scopes: Vec<ClipScope>,
+    pub(super) negative_levels: paint_rules::NegativeLevels,
+    pub(super) negative_contexts: Vec<super::negative_levels::Context>,
+    pub(super) negative_boxes: Vec<super::negative_levels::BoxCapture>,
+    pub(super) inline_boxes: Vec<super::negative_levels::InlineBoxScope>,
+    pub(super) inline_traces: HashMap<usize, super::negative_levels::InlineTrace>,
+    pub(super) trace_clips: Vec<crate::PaintTraceEvent>,
 }
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
@@ -116,6 +122,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// the walk goes on with.
     pub(super) fn step(&mut self, frame: PaintFrame<'w>) -> Option<VisitFrame> {
         match frame {
+            PaintFrame::EndNegative => self.end_negative_box(),
+            PaintFrame::EndNegativeContext(id) => self.end_negative_context(id),
             PaintFrame::Visit(visit) => return Some(visit),
             PaintFrame::AnonymousParagraph(paragraph) => self.anonymous_paragraph(paragraph),
             PaintFrame::Lines(lines) => self.lines(lines),
@@ -287,10 +295,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let rect = push_overflow_clip(self.scene, clip, &self.page_box);
         self.scene.transform = saved_transform;
         if let Some(t) = self.trace.as_deref_mut() {
-            t.push(crate::PaintTraceEvent::PushOverflowClip(
+            let event = crate::PaintTraceEvent::PushOverflowClip(
                 node_id,
                 [rect.x0, rect.y0, rect.x1, rect.y1],
-            ));
+            );
+            t.push(event.clone());
+            self.trace_clips.push(event);
         }
     }
 
@@ -322,6 +332,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // The trace records the box inside the opacities of the
         // inline elements around it, as it does for boxes beside
         // lines that are not held.
+        let trace_start = self.trace.as_deref().map_or(0, Vec::len);
         if let Some(t) = self.trace.as_deref_mut() {
             t.extend(
                 crate::ifc_text::enclosing_inline_opacities(
@@ -342,6 +353,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 .last()
                 .is_some_and(|lines| lines.root_id() == root)
         {
+            self.start_inline_box(root, node_id, trace_start);
             self.scene.scene.begin_capture();
         }
     }
@@ -362,12 +374,14 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if early {
             self.early_boxes
                 .push((root, node_id, self.scene.scene.end_capture()));
+            self.inline_boxes.pop();
         } else if let Some(lines) = self
             .held_lines
             .last_mut()
             .filter(|lines| lines.root_id() == root)
         {
             lines.place_box(node_id, self.scene.scene.end_capture());
+            self.inline_boxes.pop();
         }
     }
 
@@ -381,7 +395,11 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 self.cascade,
                 root,
                 |negative| negative,
-                |_| true,
+                |owner| {
+                    !self
+                        .negative_levels
+                        .text_leaves(self.document, self.cascade, root, owner)
+                },
             ) {
                 t.push(crate::PaintTraceEvent::Text(root));
             }
@@ -390,6 +408,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
 
     /// Composite the held lines of `root` and the boxes placed in them.
     fn finish_lines(&mut self, root: usize) {
+        self.finish_inline_negative_trace(root);
         if self
             .held_lines
             .last()
@@ -398,8 +417,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         {
             let saved_transform = self.scene.transform;
             self.scene.transform = lines.paint_transform();
-            if leaves_groups(&self.deferral_scopes) {
-                let left = finish_lines_leaving_groups(self.scene, lines);
+            if leaves_groups(&self.deferral_scopes) || !self.negative_levels.is_empty() {
+                let left = finish_lines_leaving_groups(
+                    self.scene,
+                    lines,
+                    leaves_groups(&self.deferral_scopes),
+                    &self.negative_levels,
+                );
                 leave_groups(
                     &mut self.order,
                     &mut self.deferral_scopes,
@@ -418,6 +442,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Paint the group of positioned inline element `node_id`, which its
     /// paragraph's lines left to the end of the layer.
     fn inline_group(&mut self, root: usize, node_id: usize) {
+        self.begin_negative_box(node_id);
         let (document, cascade) = (self.document, self.cascade);
         // The text of one paragraph painted at once is one step, even
         // when it spans several groups.
@@ -428,7 +453,19 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cascade,
                 root,
                 |_| true,
-                |owner| in_left_group(document, cascade, root, owner, Some(node_id)),
+                |owner| {
+                    in_left_group(document, cascade, root, owner, Some(node_id))
+                        || (self
+                            .negative_levels
+                            .leaves_inline_group(document, cascade, root, node_id)
+                            && (owner == node_id
+                                || document
+                                    .inclusive_ancestors(
+                                        raikiri_dom::generated_content::generated_origin(owner)
+                                            .map_or(owner, |(element, _)| element),
+                                    )
+                                    .any(|id| id == node_id)))
+                },
             )
         {
             t.push(crate::PaintTraceEvent::Text(root));
@@ -454,6 +491,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn pop_clip(&mut self) {
         if let Some(t) = self.trace.as_deref_mut() {
             t.push(crate::PaintTraceEvent::PopClip);
+            self.trace_clips.pop();
         }
         self.scene.pop_layer();
         if let ClipScope::Captured { trace_start } = self

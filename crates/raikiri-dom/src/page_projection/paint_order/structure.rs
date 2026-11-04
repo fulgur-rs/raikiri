@@ -29,9 +29,10 @@ fn collect_content(
     root: usize,
     group: Option<usize>,
     beside_lines: &HashSet<usize>,
-    first: usize,
     children: &[usize],
+    separate_first_line: bool,
 ) -> InlineContent {
+    let first = group.unwrap_or(root);
     let mut elements = Vec::new();
     if group.is_some() {
         elements.push((first, None));
@@ -62,11 +63,17 @@ fn collect_content(
         }
         match node.kind() {
             NodeKind::Element if !node.is_display_none() && !node.is_hidden_by_text_overflow() => {
-                if cascade
-                    .computed
-                    .get(node_id)
-                    .is_some_and(|cv| is_inline_group(document, cascade, root, node_id, node, cv))
-                {
+                if cascade.computed.get(node_id).is_some_and(|cv| {
+                    is_inline_group(
+                        document,
+                        cascade,
+                        root,
+                        node_id,
+                        node,
+                        cv,
+                        separate_first_line,
+                    )
+                }) {
                     nested.push(node_id);
                     continue;
                 }
@@ -91,6 +98,7 @@ fn collect_content(
 /// Immutable paragraph slots and source order, shared by every page.
 #[derive(Debug, Default)]
 pub(super) struct ParagraphStructure {
+    separate_first_line: bool,
     pub(super) contents: HashMap<Option<usize>, InlineContent>,
     pub(super) members: HashMap<Option<usize>, HashSet<usize>>,
     pub(super) slots: HashMap<usize, (Option<usize>, Vec<usize>)>,
@@ -106,10 +114,10 @@ pub(super) struct ParagraphStructure {
     pub(super) line_boxes: Arc<LineBoxes>,
 }
 
+type ParagraphStructures = HashMap<(usize, bool), Arc<ParagraphStructure>>;
+
 #[derive(Debug, Default, Clone)]
-pub(crate) struct ParagraphStructureCache(
-    std::cell::RefCell<(u64, HashMap<usize, Arc<ParagraphStructure>>)>,
-);
+pub(crate) struct ParagraphStructureCache(std::cell::RefCell<(u64, ParagraphStructures)>);
 
 impl ParagraphStructureCache {
     pub(crate) fn clear(&mut self) {
@@ -123,107 +131,139 @@ impl Document {
         cascade: &CascadeResult,
         root: usize,
     ) -> Arc<ParagraphStructure> {
+        self.paragraph_structure_mode(cascade, root, false)
+    }
+
+    pub(super) fn paragraph_structure_for_part(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        part: LinePart,
+    ) -> Arc<ParagraphStructure> {
+        self.paragraph_structure_mode(cascade, root, part != LinePart::All)
+    }
+
+    fn paragraph_structure_mode(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        separate_first_line: bool,
+    ) -> Arc<ParagraphStructure> {
+        let separate_first_line =
+            separate_first_line && paint_rules::first_line_opacity_layer(self, root).is_some();
         let generation = cascade.element_generation();
         let mut cache = self.page_projection.paragraph_structure.0.borrow_mut();
         if cache.0 != generation {
             *cache = (generation, HashMap::new());
         }
-        Arc::clone(cache.1.entry(root).or_insert_with(|| {
-            let mut structure = ParagraphStructure {
-                positions: self.preorder_positions(root),
-                ..Default::default()
-            };
-            if let Some(root_node) = self.ifc_layout_node(root) {
-                let mut boxes = LineBoxes::default();
-                for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
-                    #[cfg(test)]
-                    crate::page_projection::work_tests::paragraph_node();
-                    if piece.line == 0 {
-                        boxes.first.insert(piece.node);
-                    } else {
-                        boxes.later.insert(piece.node);
-                    }
-                }
-                structure.line_boxes = Arc::new(boxes);
-                let beside_lines: HashSet<_> = root_node.ifc_boxes().into_iter().collect();
-                let mut pending = vec![None];
-                while let Some(group) = pending.pop() {
-                    let first = group.unwrap_or(root);
-                    let node = group.and_then(|id| self.get_node(id)).unwrap_or(root_node);
-                    let content = collect_content(
-                        self,
-                        cascade,
-                        root,
-                        group,
-                        &beside_lines,
-                        first,
-                        &node.children,
-                    );
-                    for (rank, &child) in content.nested.iter().enumerate() {
-                        structure.parents.insert(child, group);
-                        structure.group_rank.insert(child, rank);
-                    }
-                    pending.extend(content.nested.iter().copied().map(Some));
-                    let mut members = HashSet::new();
-                    for (position, &(id, kind)) in content.elements.iter().enumerate() {
-                        structure
-                            .slots
-                            .entry(id)
-                            .or_insert_with(|| (group, Vec::new()))
-                            .1
-                            .push(position);
-                        if kind.is_none() && id != first {
-                            members.insert(id);
+        Arc::clone(
+            cache
+                .1
+                .entry((root, separate_first_line))
+                .or_insert_with(|| {
+                    let mut structure = ParagraphStructure {
+                        separate_first_line,
+                        positions: self.preorder_positions(root),
+                        ..Default::default()
+                    };
+                    if let Some(root_node) = self.ifc_layout_node(root) {
+                        let mut boxes = LineBoxes::default();
+                        for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
+                            #[cfg(test)]
+                            crate::page_projection::work_tests::paragraph_node();
+                            if piece.line == 0 {
+                                boxes.first.insert(piece.node);
+                            } else {
+                                boxes.later.insert(piece.node);
+                            }
+                        }
+                        structure.line_boxes = Arc::new(boxes);
+                        let beside_lines: HashSet<_> = root_node.ifc_boxes().into_iter().collect();
+                        let mut pending = vec![None];
+                        while let Some(group) = pending.pop() {
+                            let first = group.unwrap_or(root);
+                            let node = group.and_then(|id| self.get_node(id)).unwrap_or(root_node);
+                            let content = collect_content(
+                                self,
+                                cascade,
+                                root,
+                                group,
+                                &beside_lines,
+                                &node.children,
+                                separate_first_line,
+                            );
+                            for (rank, &child) in content.nested.iter().enumerate() {
+                                structure.parents.insert(child, group);
+                                structure.group_rank.insert(child, rank);
+                            }
+                            pending.extend(content.nested.iter().copied().map(Some));
+                            let mut members = HashSet::new();
+                            for (position, &(id, kind)) in content.elements.iter().enumerate() {
+                                structure
+                                    .slots
+                                    .entry(id)
+                                    .or_insert_with(|| (group, Vec::new()))
+                                    .1
+                                    .push(position);
+                                if kind.is_none() && id != first {
+                                    members.insert(id);
+                                }
+                            }
+                            for (position, &text) in content.texts.iter().enumerate() {
+                                structure.text_slots.insert(text, (group, position));
+                            }
+                            structure.members.insert(group, members);
+                            structure.contents.insert(group, content);
                         }
                     }
-                    for (position, &text) in content.texts.iter().enumerate() {
-                        structure.text_slots.insert(text, (group, position));
+                    structure.holds_negative =
+                        paint_rules::holds_negative_stack_level(self, cascade, root);
+                    structure.blocks = self.uncached_paragraph_blocks(cascade, root);
+                    let blocks: HashSet<_> = structure.blocks.iter().copied().collect();
+                    for id in self
+                        .ifc_layout_node(root)
+                        .map(|node| node.ifc_boxes())
+                        .unwrap_or_default()
+                    {
+                        #[cfg(test)]
+                        crate::page_projection::work_tests::paragraph_node();
+                        if blocks.contains(&id) {
+                            continue;
+                        }
+                        let group = self.parent_of(id).and_then(|parent| {
+                            self.inline_opacity_group_mode(
+                                cascade,
+                                root,
+                                parent,
+                                separate_first_line,
+                            )
+                        });
+                        structure.box_groups.insert(id, group);
+                        structure
+                            .boxes
+                            .entry((group, LinePart::All))
+                            .or_default()
+                            .push(id);
+                        let first = paint_rules::atomic_on_first_line(self, root, id);
+                        structure
+                            .boxes
+                            .entry((
+                                group,
+                                if first {
+                                    LinePart::First
+                                } else {
+                                    LinePart::Rest
+                                },
+                            ))
+                            .or_default()
+                            .push(id);
+                        if !first && let Some(group) = group {
+                            structure.rest_groups.insert(group);
+                        }
                     }
-                    structure.members.insert(group, members);
-                    structure.contents.insert(group, content);
-                }
-            }
-            structure.holds_negative = paint_rules::holds_negative_stack_level(self, cascade, root);
-            structure.blocks = self.uncached_paragraph_blocks(cascade, root);
-            let blocks: HashSet<_> = structure.blocks.iter().copied().collect();
-            for id in self
-                .ifc_layout_node(root)
-                .map(|node| node.ifc_boxes())
-                .unwrap_or_default()
-            {
-                #[cfg(test)]
-                crate::page_projection::work_tests::paragraph_node();
-                if blocks.contains(&id) {
-                    continue;
-                }
-                let group = self
-                    .parent_of(id)
-                    .and_then(|parent| self.inline_opacity_group(cascade, root, parent));
-                structure.box_groups.insert(id, group);
-                structure
-                    .boxes
-                    .entry((group, LinePart::All))
-                    .or_default()
-                    .push(id);
-                let first = paint_rules::atomic_on_first_line(self, root, id);
-                structure
-                    .boxes
-                    .entry((
-                        group,
-                        if first {
-                            LinePart::First
-                        } else {
-                            LinePart::Rest
-                        },
-                    ))
-                    .or_default()
-                    .push(id);
-                if !first && let Some(group) = group {
-                    structure.rest_groups.insert(group);
-                }
-            }
-            Arc::new(structure)
-        }))
+                    Arc::new(structure)
+                }),
+        )
     }
 }
 
@@ -296,65 +336,70 @@ impl PageItems<'_> {
         structure: &ParagraphStructure,
     ) -> Arc<PageParagraphSlots> {
         let mut cache = self.paragraph_slots.borrow_mut();
-        Arc::clone(cache.entry(root).or_insert_with(|| {
-            let mut selected = PageParagraphSlots::default();
-            let mut active = HashSet::new();
-            for node in self.active_paragraph_nodes(root).iter() {
-                #[cfg(test)]
-                crate::page_projection::work_tests::paragraph_node();
-                if let Some((group, positions)) = structure.slots.get(node) {
-                    active.extend(group);
-                    selected
-                        .elements
-                        .entry(*group)
-                        .or_default()
-                        .extend(positions);
-                }
-                if let Some(&(group, position)) = structure.text_slots.get(node) {
-                    active.extend(group);
-                    selected.texts.entry(group).or_default().push(position);
-                }
-                if let Some(group) = structure.box_groups.get(node) {
-                    active.extend(group);
-                }
-            }
-            // Letter groups may be the only page source left inside a DOM
-            // group; activate their holders before filtering nested groups.
-            let mut held = Vec::new();
-            for letter in super::paragraph::first_letter_pieces(self.document, self, root) {
-                held.extend(letter.held);
-            }
-            if let Some(lines) = &self.source_lines {
-                held.extend(
-                    lines
-                        .letters
-                        .iter()
-                        .filter(|((letter_root, _), _)| *letter_root == root)
-                        .filter_map(|(_, &held)| held),
-                );
-            }
-            for group in held {
-                if structure.parents.contains_key(&group) {
-                    active.insert(group);
-                } else if let Some((owner, _)) = crate::generated_content::generated_origin(group)
-                    && let Some((group, positions)) = structure.slots.get(&owner)
-                {
-                    active.extend(group);
-                    selected
-                        .elements
-                        .entry(*group)
-                        .or_default()
-                        .extend(positions);
-                }
-            }
-            selected.first_nested = nested_groups(structure, active.iter().copied());
-            active.extend(&structure.rest_groups);
-            selected.rest_nested = nested_groups(structure, active.into_iter());
-            for positions in selected.texts.values_mut() {
-                positions.sort_unstable();
-            }
-            Arc::new(selected)
-        }))
+        Arc::clone(
+            cache
+                .entry((root, structure.separate_first_line))
+                .or_insert_with(|| {
+                    let mut selected = PageParagraphSlots::default();
+                    let mut active = HashSet::new();
+                    for node in self.active_paragraph_nodes(root).iter() {
+                        #[cfg(test)]
+                        crate::page_projection::work_tests::paragraph_node();
+                        if let Some((group, positions)) = structure.slots.get(node) {
+                            active.extend(group);
+                            selected
+                                .elements
+                                .entry(*group)
+                                .or_default()
+                                .extend(positions);
+                        }
+                        if let Some(&(group, position)) = structure.text_slots.get(node) {
+                            active.extend(group);
+                            selected.texts.entry(group).or_default().push(position);
+                        }
+                        if let Some(group) = structure.box_groups.get(node) {
+                            active.extend(group);
+                        }
+                    }
+                    // Letter groups may be the only page source left inside a DOM
+                    // group; activate their holders before filtering nested groups.
+                    let mut held = Vec::new();
+                    for letter in super::paragraph::first_letter_pieces(self.document, self, root) {
+                        held.extend(letter.held);
+                    }
+                    if let Some(lines) = &self.source_lines {
+                        held.extend(
+                            lines
+                                .letters
+                                .iter()
+                                .filter(|((letter_root, _), _)| *letter_root == root)
+                                .filter_map(|(_, &held)| held),
+                        );
+                    }
+                    for group in held {
+                        if structure.parents.contains_key(&group) {
+                            active.insert(group);
+                        } else if let Some((owner, _)) =
+                            crate::generated_content::generated_origin(group)
+                            && let Some((group, positions)) = structure.slots.get(&owner)
+                        {
+                            active.extend(group);
+                            selected
+                                .elements
+                                .entry(*group)
+                                .or_default()
+                                .extend(positions);
+                        }
+                    }
+                    selected.first_nested = nested_groups(structure, active.iter().copied());
+                    active.extend(&structure.rest_groups);
+                    selected.rest_nested = nested_groups(structure, active.into_iter());
+                    for positions in selected.texts.values_mut() {
+                        positions.sort_unstable();
+                    }
+                    Arc::new(selected)
+                }),
+        )
     }
 
     pub(super) fn paragraph_slots(

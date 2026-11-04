@@ -12,6 +12,8 @@ use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::collections::HashSet;
 
+mod negative_levels;
+
 /// The state of the walk of one page.
 pub(super) struct PaintWalk<'a, 'l> {
     document: &'a Document,
@@ -36,6 +38,10 @@ pub(super) struct PaintWalk<'a, 'l> {
     motion: MotionCache,
     /// The transforms open around the current event, composed.
     spaces: Vec<PaintTransform>,
+    negative_levels: paint_rules::NegativeLevels,
+    negative_contexts: Vec<negative_levels::Context<'a>>,
+    negative_boxes: Vec<negative_levels::BoxCapture<'a>>,
+    scopes: Vec<PaintEvent<'a>>,
 }
 
 impl<'a, 'l> PaintWalk<'a, 'l> {
@@ -65,6 +71,15 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             paragraphs: paint_rules::LeavingParagraphs::default(),
             motion: MotionCache::default(),
             spaces: vec![PaintTransform::IDENTITY],
+            negative_levels: paint_rules::NegativeLevels::new(
+                document,
+                cascade,
+                root,
+                lines.is_some(),
+            ),
+            negative_contexts: Vec::new(),
+            negative_boxes: Vec::new(),
+            scopes: Vec::new(),
         }
     }
 
@@ -84,6 +99,8 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             return;
         }
         match frame {
+            Frame::EndNegative => self.end_negative_box(),
+            Frame::EndNegativeContext(id) => self.end_negative_context(id),
             Frame::EndDeferral => self.end_deferral(),
             Frame::DeferredParagraph(key) => {
                 if let Some(layer) = self.layers.last_mut() {
@@ -92,8 +109,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             }
             Frame::PushClip(owner) => {
                 if let Some(entry) = self.items.overflow_clips.get(&NodeId::new(owner as u64)) {
-                    self.events
-                        .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+                    self.push_scope(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
                 }
             }
             Frame::Content(node_id) => self.content(node_id),
@@ -101,8 +117,9 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             Frame::FirstLine(root) => self.first_line(root),
             Frame::InlineGroup(root, group, part) => self.inline_group(root, group, part),
             Frame::HeldContent(index) => self.events.append(&mut self.held[index]),
-            Frame::PopClip => self.events.push(PaintEvent::PopClip),
+            Frame::PopClip => self.pop_scope(PaintEvent::PopClip),
             Frame::PopClipIfPainted(start) => {
+                self.scopes.pop();
                 let paints = self.events[start..].iter().copied().any(|event| {
                     !matches!(
                         event,
@@ -120,9 +137,9 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                     self.events.truncate(start);
                 }
             }
-            Frame::PopOpacity => self.events.push(PaintEvent::PopOpacity),
+            Frame::PopOpacity => self.pop_scope(PaintEvent::PopOpacity),
             Frame::PopTransform => {
-                self.events.push(PaintEvent::PopTransform);
+                self.pop_scope(PaintEvent::PopTransform);
                 self.spaces.pop();
             }
             Frame::Visit(node_id) => self.visit(node_id),
@@ -137,15 +154,27 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// Open `transform` around the events listed until its frame pops.
     fn push_transform(&mut self, transform: PaintTransform) {
         let space = self.space();
-        self.events.push(PaintEvent::PushTransform(transform));
+        self.push_scope(PaintEvent::PushTransform(transform));
         self.stack.push(Frame::PopTransform);
         self.spaces.push(space * transform);
     }
 
     /// Open an opacity group around the events listed until its frame pops.
     fn push_opacity(&mut self, alpha: f32) {
-        self.events.push(PaintEvent::PushOpacity(alpha));
+        self.push_scope(PaintEvent::PushOpacity(alpha));
         self.stack.push(Frame::PopOpacity);
+    }
+
+    fn push_scope(&mut self, event: PaintEvent<'a>) {
+        if !self.negative_levels.is_empty() {
+            self.scopes.push(event);
+        }
+        self.events.push(event);
+    }
+
+    fn pop_scope(&mut self, event: PaintEvent<'a>) {
+        self.scopes.pop();
+        self.events.push(event);
     }
 
     /// List the inline content of a paragraph between the frames around it.
@@ -419,6 +448,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             return;
         }
         self.push_opacity(alpha);
+        self.begin_first_line_negative_context(root);
         let frames = document.paragraph_frames(cascade, root, boxes, nested, part, false);
         self.list_content(content, 0, frames);
     }
@@ -428,6 +458,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// contexts: its inline boxes and text, then its atomic inlines and
     /// floats, then the groups nested in it.
     fn inline_group(&mut self, root: usize, group: usize, part: LinePart) {
+        self.begin_negative_group(group, matches!(part, LinePart::First));
         let (document, cascade, items) = (self.document, self.cascade, self.items);
         let alpha = self.group_opacity(root, group);
         // A `::before` or `::after` with a transform turns its group about
@@ -442,6 +473,8 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                 || paint_rules::inline_stacking_group(document, cascade, root, group)
                 || paint_rules::negative_pseudo_group(document, cascade, root, group)
                 || paint_rules::pseudo_stacking_group(document, cascade, root, group))
+            && !(part != LinePart::All
+                && paint_rules::first_line_stacking_group(document, cascade, root, group))
         {
             return; // cov:ignore: groups are found by their opacity or transform
         }
@@ -463,7 +496,14 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         // The group's own boxes are its background, below the stacking
         // contexts nested in it.
         let own = own_box_events(group, &content);
-        self.list_content(content, own, frames);
+        if self.negative_levels.holds(group) {
+            let rest = content.split_off(own);
+            self.events.extend(content);
+            self.begin_negative_context(group);
+            self.list_content(rest, 0, frames);
+        } else {
+            self.list_content(content, own, frames);
+        }
     }
 
     /// The opacity of inline group `group` of paragraph `root`, if it is
@@ -529,6 +569,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         let Some(cv) = cascade.computed.get(node_id) else {
             return; // cov:ignore: the cascade has a value for every arena node
         };
+        self.begin_negative_box(node_id);
         if !self.open_motion(node_id, cv) {
             return;
         }
@@ -551,6 +592,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         }
         self.list_column_rules(node_id);
         self.list_marker(node_id, node);
+        self.begin_negative_context(node_id);
         // The clip is the padding box of the element's whole box resolved from
         // shared source geometry. It opens after the element's own box and
         // closes after its subtree.
@@ -569,8 +611,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             } else {
                 Frame::PopClip
             };
-            self.events
-                .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+            self.push_scope(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
             self.stack.push(close);
         }
         self.enter_subtree(node_id, node, cv, clip.is_some());
@@ -755,13 +796,17 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         // end of the layer (CSS 2.1 Appendix E), after the backgrounds of the
         // blocks that follow it.
         let deferring = self.layers.last().is_some_and(|layer| layer.allowed);
-        let defers =
-            deferring && !clipped && paint_rules::defers_inline_content(document, cascade, node_id);
+        let defers = deferring
+            && !clipped
+            && !self.negative_levels.holds(node_id)
+            && paint_rules::defers_inline_content(document, cascade, node_id);
         // A plain block that clips collects its inline content, and a flex or
         // grid container that clips the items with a stack level, in a layer
         // of its own, which it hands to the enclosing layer inside its clip.
-        let merges =
-            deferring && clipped && paint_rules::merges_clipped_layer(document, cascade, node_id);
+        let merges = deferring
+            && clipped
+            && !self.negative_levels.holds(node_id)
+            && paint_rules::merges_clipped_layer(document, cascade, node_id);
         // In-flow blocks inside a paragraph's inline content paint their
         // backgrounds before its lines. With content positioned below them,
         // the paragraph's content lists them after that content.
@@ -825,7 +870,9 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// the layer around it.
     fn open_layer(&mut self, node_id: usize, node: &Node, deferring: bool, merges: bool) {
         let columns = node.is_multicol_container();
-        let close = if merges {
+        let close = if self.negative_levels.holds(node_id) {
+            LayerClose::Paint
+        } else if merges {
             LayerClose::Merge(node_id)
         } else if paint_rules::hoists_positioned_content(self.document, self.cascade, node_id) {
             LayerClose::Hoist

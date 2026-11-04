@@ -1846,6 +1846,10 @@ fn stacking_contexts_across_boxes_keep_native_and_public_order() {
 /// The pixels of the first page of `result`, 300×200 like [`PAGE`].
 fn render_first_page(result: &DocumentLayout) -> Vec<u8> {
     let page = result.pages().next().expect("a page");
+    render_page(&page)
+}
+
+fn render_page(page: &Page<'_>) -> Vec<u8> {
     let (document, cascade, page_box, origin) = page.paint_inputs();
     let mut scene = anyrender::Scene::new();
     raikiri_paint::paint_single_page_with_origin(&mut scene, document, cascade, page_box, origin)
@@ -1866,6 +1870,497 @@ fn pixels_of(pixels: &[u8], rgb: [u8; 3]) -> usize {
         .chunks_exact(4)
         .filter(|pixel| pixel[..3] == rgb)
         .count()
+}
+
+#[test]
+fn negative_flex_items_paint_below_following_block_backgrounds() {
+    negative_items_paint_below_block_backgrounds("flex");
+}
+
+#[test]
+fn negative_grid_items_paint_below_following_block_backgrounds() {
+    negative_items_paint_below_block_backgrounds("grid");
+}
+
+fn negative_items_paint_below_block_backgrounds(display: &str) {
+    let result = same_order(&format!(
+        "<div style='display:{display};height:20px'>\
+         <div id=item style='width:50px;height:20px;margin-left:20px;background:red;z-index:-1'></div>\
+         </div><div id=flow style='background:gray;height:20px;width:50px;margin-top:-20px'></div>"
+    ));
+    let [item, flow] = ["item", "flow"].map(|id| by_id(&result, id));
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [128, 128, 128]), 1000);
+    assert_eq!(pixels_of(&pixels, [255, 0, 0]), 400);
+    assert!(step_at(&result, Step::Box(item)) < step_at(&result, Step::Box(flow)));
+}
+
+#[test]
+fn negative_items_paint_below_their_non_stacking_container_background() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div id=container style='display:{display};width:100px;height:20px;background:blue'>\
+             <div id=item style='width:50px;height:20px;margin-left:20px;background:red;z-index:-1'></div></div>"
+        ));
+        let pixels = render_first_page(&result);
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{display}");
+        assert_eq!(pixels_of(&pixels, [0, 0, 255]), 2000, "{display}");
+        assert!(
+            step_at(&result, Step::Box(by_id(&result, "item")))
+                < step_at(&result, Step::Box(by_id(&result, "container")))
+        );
+    }
+}
+
+#[test]
+fn negative_items_of_different_containers_interleave_with_positioned_negatives() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div id=positioned style='position:relative;z-index:-2;width:50px;height:20px;background:blue'></div>\
+             <div style='display:{display};height:20px;margin-top:-20px'>\
+             <div id=high style='z-index:-1;width:50px;height:20px;background:red'></div></div>\
+             <div style='display:{display};height:20px;margin-top:-20px'>\
+             <div id=low style='z-index:-3;width:50px;height:20px;background:lime'></div></div>"
+        ));
+        let [low, positioned, high] = ["low", "positioned", "high"].map(|id| by_id(&result, id));
+        assert!(step_at(&result, Step::Box(low)) < step_at(&result, Step::Box(positioned)));
+        assert!(step_at(&result, Step::Box(positioned)) < step_at(&result, Step::Box(high)));
+        let pixels = render_first_page(&result);
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 1000, "{display}");
+    }
+}
+
+#[test]
+fn negative_items_keep_overflow_clips_when_moved_below_their_container() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style='overflow:hidden;width:30px;height:20px'>\
+             <div style='display:{display};width:100px;height:20px'>\
+             <div style='width:50px;height:20px;margin-left:20px;background:red;z-index:-1'></div></div></div>"
+        ));
+        assert_eq!(
+            pixels_of(&render_first_page(&result), [255, 0, 0]),
+            200,
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn negative_items_stay_inside_their_ancestor_stacking_context() {
+    for context in [
+        "opacity:0.5",
+        "transform:translateX(1px)",
+        "position:relative;z-index:0",
+    ] {
+        let result = same_order(&format!(
+            "<div id=context style='{context};height:20px;background:blue'>\
+             <div style='display:flex;height:20px'><div id=item style='z-index:-1;width:50px;height:20px;background:red'></div></div>\
+             </div><div id=flow style='height:20px;margin-top:-20px;background:lime'></div>"
+        ));
+        let [context, flow, item] = ["context", "flow", "item"].map(|id| by_id(&result, id));
+        assert!(step_at(&result, Step::Box(flow)) < step_at(&result, Step::Box(context)));
+        assert!(step_at(&result, Step::Box(context)) < step_at(&result, Step::Box(item)));
+    }
+}
+
+#[test]
+fn negative_items_keep_their_positive_descendants() {
+    let result = same_order(
+        "<div style='display:flex;height:20px'><div style='z-index:-1;width:50px;height:20px;margin-left:20px;background:red'>\
+         <div style='position:relative;z-index:10;width:30px;height:20px;background:lime'></div></div></div>\
+         <div style='background:gray;height:20px;width:50px;margin-top:-20px'></div>",
+    );
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [128, 128, 128]), 1000);
+    assert_eq!(pixels_of(&pixels, [0, 255, 0]), 0);
+    assert_eq!(pixels_of(&pixels, [255, 0, 0]), 400);
+}
+
+#[test]
+fn negative_inline_elements_blockified_as_items_paint_below_block_backgrounds() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style='display:{display};width:100px;height:20px;background:blue'>\
+             <span style='width:50px;height:20px;margin-left:20px;background:red;z-index:-1'></span></div>"
+        ));
+        assert_eq!(
+            pixels_of(&render_first_page(&result), [255, 0, 0]),
+            0,
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn negative_items_in_positioned_auto_boxes_join_the_root_before_its_normal_content() {
+    let result = same_order(
+        "<div style='position:relative'><div style='display:flex;height:20px'>\
+         <div id=item style='z-index:-1;width:50px;height:20px;margin-left:20px;background:red'></div></div></div>\
+         <div id=flow style='height:20px;width:50px;margin-top:-20px;background:gray'></div>",
+    );
+    assert!(
+        step_at(&result, Step::Box(by_id(&result, "item")))
+            < step_at(&result, Step::Box(by_id(&result, "flow")))
+    );
+    assert_eq!(
+        pixels_of(&render_first_page(&result), [128, 128, 128]),
+        1000
+    );
+}
+
+#[test]
+fn negative_items_at_one_level_keep_tree_order_across_positioned_auto_ancestors() {
+    let result = same_order(
+        "<div style='position:relative'><div style='display:flex;height:20px'>\
+         <div id=early style='z-index:-1;width:50px;height:20px;background:red'></div></div></div>\
+         <div style='display:flex;height:20px;margin-top:-20px'>\
+         <div id=late style='z-index:-1;width:50px;height:20px;background:blue'></div></div>",
+    );
+    assert!(
+        step_at(&result, Step::Box(by_id(&result, "early")))
+            < step_at(&result, Step::Box(by_id(&result, "late")))
+    );
+    assert_eq!(pixels_of(&render_first_page(&result), [0, 0, 255]), 1000);
+}
+
+#[test]
+fn negative_items_at_one_level_keep_their_container_order() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style='display:{display};height:20px'>\
+             <div id=late style='z-index:-1;order:2;width:50px;height:20px;background:red'></div>\
+             <div id=early style='z-index:-1;order:1;width:50px;height:20px;background:blue'></div></div>"
+        ));
+        assert!(
+            step_at(&result, Step::Box(by_id(&result, "early")))
+                < step_at(&result, Step::Box(by_id(&result, "late")))
+        );
+    }
+}
+
+#[test]
+fn negative_items_inside_inline_opacity_groups_paint_below_container_backgrounds() {
+    let body = "<div><span style='opacity:0.5'><span style='display:inline-flex;width:100px;height:20px;background:blue'>\
+         <span style='width:50px;height:20px;background:red;z-index:-1'></span></span></span></div>";
+    let result = same_order(body);
+    let reference = lay_out(
+        &body.replace("background:red", "background:transparent"),
+        "",
+    );
+    assert_eq!(render_first_page(&result), render_first_page(&reference));
+}
+
+#[test]
+fn negative_items_on_translucent_first_lines_stay_inside_the_first_line_group() {
+    let body = "<div id=paragraph>X<span id=container style='display:inline-flex;width:100px;height:20px;background:blue'>\
+        <span id=item style='z-index:-1;width:50px;height:20px;background:red'></span></span></div>";
+    let css = "#paragraph::first-line { opacity:0.5 }";
+    let result = lay_out(body, css);
+    let paragraph = by_id(&result, "paragraph");
+    let page = result.pages().next().unwrap();
+    assert_eq!(
+        raikiri_dom::paint_rules::first_line_opacity_layer(page.paint_inputs().0, paragraph),
+        Some(0.5)
+    );
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let at = |id| {
+        events.iter().position(|event| matches!(event, PaintEvent::Box(fragment) if node_index(fragment.node()) == by_id(&result, id))).unwrap()
+    };
+    assert!(at("item") < at("container"));
+    let reference = lay_out(
+        &body
+            .replace("background:red", "background:transparent")
+            .replace("z-index:-1", "z-index:auto"),
+        css,
+    );
+    assert!(render_first_page(&result) == render_first_page(&reference));
+}
+
+#[test]
+fn negative_inline_groups_and_items_share_their_enclosing_inline_level_order() {
+    let content = "<span id=low style='position:relative;z-index:-2;color:lime;background:lime'>XXX</span>\
+        <span style='display:inline-flex;width:30px;height:10px;margin-left:-30px'>\
+        <span id=item style='z-index:-1;width:30px;height:10px;background:red'></span></span>";
+    for (first_line, positioned_root) in [(false, false), (true, false), (true, true)] {
+        let (body, css) = if first_line {
+            (
+                format!(
+                    "<div id=paragraph style='{}'>{content}</div>",
+                    if positioned_root {
+                        "position:relative;z-index:0"
+                    } else {
+                        ""
+                    }
+                ),
+                "#paragraph::first-line { opacity:0.5 }",
+            )
+        } else {
+            (
+                format!("<div><span style='opacity:0.5'>{content}</span></div>"),
+                "",
+            )
+        };
+        let result = lay_out(&body, css);
+        let page = result.pages().next().unwrap();
+        let source_before = api_steps(&page);
+        let runs = page.text_runs();
+        let events = if first_line {
+            page.paint_order_for_text_runs(&runs)
+        } else {
+            page.paint_order()
+        };
+        let at = |id| {
+            events
+                .iter()
+                .position(|event| match event {
+                    PaintEvent::Box(fragment) => node_index(fragment.node()) == by_id(&result, id),
+                    PaintEvent::LineBox(piece) => {
+                        node_index(piece.fragment.node()) == by_id(&result, id)
+                    }
+                    _ => false,
+                })
+                .unwrap()
+        };
+        assert!(at("low") < at("item"), "first_line={first_line}");
+        assert_eq!(source_before, api_steps(&page));
+    }
+}
+
+#[test]
+fn first_line_pseudo_groups_sort_with_negative_items() {
+    for pseudo in ["before", "after"] {
+        let body = "<div id=paragraph><span style='display:inline-flex;width:30px;height:10px'>\
+            <span id=item style='z-index:-1;width:30px;height:10px;background:red'></span></span></div>";
+        let css = format!(
+            "#paragraph::first-line {{ opacity:0.5 }} #paragraph::{pseudo} {{ content:'XXX';position:relative;z-index:-2;background:lime }}"
+        );
+        let result = lay_out(body, &css);
+        let page = result.pages().next().unwrap();
+        let runs = page.text_runs();
+        let events = page.paint_order_for_text_runs(&runs);
+        let low = events.iter().position(|event| matches!(event, PaintEvent::GeneratedBox(piece) if piece.kind == if pseudo == "before" { raikiri_html::GeneratedKind::Before } else { raikiri_html::GeneratedKind::After })).unwrap();
+        let item = events.iter().position(|event| matches!(event, PaintEvent::Box(fragment) if node_index(fragment.node()) == by_id(&result, "item"))).unwrap();
+        assert!(low < item, "{pseudo}");
+    }
+}
+
+#[test]
+fn first_letters_keep_their_first_line_inline_stacking_owner() {
+    let result = lay_out(
+        "<div id=paragraph><span id=low style='position:relative;z-index:-2'>XXX</span>\
+         <span style='display:inline-flex;width:30px;height:10px'><span style='z-index:-1;width:30px;height:10px;background:red'></span></span></div>",
+        "#paragraph::first-line { opacity:0.5 } #paragraph::first-letter { font-size:20px }",
+    );
+    let page = result.pages().next().unwrap();
+    let runs = page.text_runs();
+    let letter = runs
+        .iter()
+        .find(|run| (run.font_size - 20.0).abs() < 0.01)
+        .expect("a first-letter run");
+    assert_eq!(
+        page.text_run_opacity_group(letter).map(node_index),
+        Some(by_id(&result, "low"))
+    );
+}
+
+#[test]
+fn split_negative_inline_groups_keep_first_line_and_rest_owners_after_cache_reuse() {
+    let body = "<div id=paragraph><span id=low style='position:relative;z-index:-2;background:lime'>XXX\
+        <span style='display:inline-flex;width:30px;height:10px'><span id=first style='z-index:-1;width:30px;height:10px;background:red'></span></span>\
+        <br>XXX<span style='display:inline-flex;width:30px;height:10px'><span id=rest style='z-index:-1;width:30px;height:10px;background:red'></span></span></span></div>";
+    let css = "#paragraph::first-line { opacity:0.5 } #paragraph::first-letter { font-size:20px } #low::before { content:'X' }";
+    for source_first in [false, true] {
+        let result = lay_out(body, css);
+        let page = result.pages().next().unwrap();
+        let source = source_first.then(|| api_steps(&page));
+        let runs = page.text_runs();
+        let events = page.paint_order_for_text_runs(&runs);
+        let prepared = format!("{events:?}");
+        let mut opacities = Vec::new();
+        let mut pieces = Vec::new();
+        for event in &events {
+            match event {
+                PaintEvent::PushOpacity(alpha) => opacities.push(*alpha),
+                PaintEvent::PopOpacity => {
+                    opacities.pop().unwrap();
+                }
+                PaintEvent::LineBox(piece)
+                    if node_index(piece.fragment.node()) == by_id(&result, "low") =>
+                {
+                    pieces.push(opacities.contains(&0.5));
+                }
+                _ => {}
+            }
+        }
+        assert!(pieces.contains(&true));
+        assert!(pieces.contains(&false));
+        let source_after = api_steps(&page);
+        if let Some(source) = source {
+            assert_eq!(source, source_after);
+        }
+        assert_eq!(
+            prepared,
+            format!("{:?}", page.paint_order_for_text_runs(&runs))
+        );
+    }
+}
+
+#[test]
+fn negative_items_in_separate_atomic_boxes_sort_inside_one_inline_group() {
+    let body = "<div><span style='opacity:0.5'>\
+        <span style='display:inline-flex;width:100px;height:20px'>\
+        <span id=high style='z-index:-1;width:50px;height:20px;background:red'></span></span>\
+        <span style='display:inline-flex;width:100px;height:20px;margin-left:-100px'>\
+        <span id=low style='z-index:-2;width:50px;height:20px;background:lime'></span></span>\
+        </span></div>";
+    let result = same_order(body);
+    let reference = lay_out(
+        &body.replace("background:lime", "background:transparent"),
+        "",
+    );
+    assert_eq!(render_first_page(&result), render_first_page(&reference));
+}
+
+#[test]
+fn negative_items_inside_inline_stacking_contexts_paint_before_their_text() {
+    let body = "<div id=paragraph><span style='position:relative;z-index:0;color:lime'>XXX\
+         <span style='display:inline-flex;width:50px;height:10px;margin-left:-30px'>\
+         <span id=item style='z-index:-1;width:30px;height:10px;background:red'></span></span></span></div>";
+    // The native debug trace already lists this text after atomic boxes.
+    // Check the public order and the actual ink independently.
+    let result = lay_out(body, "");
+    let events = api_steps(&result.pages().next().unwrap());
+    let item = events
+        .iter()
+        .position(|step| *step == Step::Box(by_id(&result, "item")))
+        .unwrap();
+    let text = events
+        .iter()
+        .position(|step| *step == Step::Text(by_id(&result, "paragraph")))
+        .unwrap();
+    assert!(item < text);
+    let reference = lay_out(
+        &body.replace("background:red", "background:transparent"),
+        "",
+    );
+    let expected_green = pixels_of(&render_first_page(&reference), [0, 255, 0]);
+    assert!(expected_green > 0);
+    assert_eq!(
+        pixels_of(&render_first_page(&result), [0, 255, 0]),
+        expected_green
+    );
+}
+
+#[test]
+fn empty_clips_before_negative_items_keep_scope_tracking_balanced() {
+    let result = same_order(
+        "<div style='height:0;overflow:hidden'><div style='display:flex'>\
+         <div style='z-index:-1;width:50px;height:20px;background:red'></div></div></div>\
+         <div style='display:flex'><div style='z-index:-1;width:50px;height:20px;background:blue'></div></div>",
+    );
+    assert_eq!(pixels_of(&render_first_page(&result), [0, 0, 255]), 1000);
+}
+
+#[test]
+fn off_page_empty_clips_do_not_invalidate_negative_scope_tracking() {
+    let result = assert_same_order(
+        "<div style='height:0;overflow:hidden;margin-top:-500px'><div style='display:flex'>\
+         <div style='z-index:-1;width:50px;height:20px;background:red'></div></div></div>\
+         <div style='display:flex;margin-top:500px'><div style='z-index:-1;width:50px;height:20px;background:blue'></div></div>",
+        "body { padding-top:1px }",
+    );
+    assert_eq!(pixels_of(&render_first_page(&result), [0, 0, 255]), 1000);
+}
+
+#[test]
+fn negative_inline_text_groups_sort_below_negative_items_of_higher_levels() {
+    let body = "<div style='height:20px'><span style='position:relative;z-index:-2;font:20px/20px Ahem;color:lime;background:lime'>XXX</span></div>\
+        <div style='display:flex;height:20px;margin-top:-20px'><div style='z-index:-1;width:60px;height:20px;background:red'></div></div>";
+    let result = same_order(body);
+    let reference = lay_out(
+        &body.replace("color:lime;background:lime", "visibility:hidden"),
+        "",
+    );
+    assert!(render_first_page(&result) == render_first_page(&reference));
+}
+
+#[test]
+fn negative_pseudo_text_groups_sort_below_negative_items_of_higher_levels() {
+    let body = "<div class=source style='height:20px'></div>\
+        <div style='display:flex;height:20px;margin-top:-20px'><div style='z-index:-1;width:60px;height:20px;background:red'></div></div>";
+    for pseudo in ["before", "after"] {
+        let css = format!(
+            ".source::{pseudo} {{ content:'XXX';position:relative;z-index:-2;font:20px/20px Ahem;color:lime;background:lime }}"
+        );
+        let result = assert_same_order(body, &css);
+        let reference = lay_out(
+            body,
+            &css.replace("color:lime;background:lime", "visibility:hidden"),
+        );
+        assert!(
+            render_first_page(&result) == render_first_page(&reference),
+            "{pseudo}"
+        );
+    }
+}
+
+#[test]
+fn negative_items_keep_clips_in_transformed_stacking_contexts() {
+    let result = same_order(
+        "<div style='transform:translateX(3px);overflow:hidden;width:30px;height:20px'>\
+         <div style='display:flex;width:100px;height:20px'>\
+         <div style='z-index:-1;margin-left:20px;width:50px;height:20px;background:red'></div></div></div>",
+    );
+    assert_eq!(pixels_of(&render_first_page(&result), [255, 0, 0]), 200);
+}
+
+#[test]
+fn fragmented_stacking_contexts_keep_negative_items_inside_their_layers() {
+    let body = "<div style='columns:2;column-gap:20px;width:120px;height:60px'>\
+        <div id=context style='display:grid;opacity:0.5;width:50px;height:40px'>\
+        <div style='z-index:-1;grid-area:1/1;width:50px;height:40px;background:red'></div>\
+        <div style='grid-area:1/1;width:50px;height:40px;background:blue'>a</div>\
+        </div><p>b</p><p>c</p><p>d</p><p>e</p><p>f</p><p>g</p><p>h</p></div>";
+    let result = lay_out(body, "");
+    let context = by_id(&result, "context");
+    assert!(trace(&result.pages().next().unwrap()).iter().any(|event| {
+        matches!(event, PaintTraceEvent::PushFragmentainerClip(id) if *id == context)
+    }));
+    let reference = lay_out(
+        &body
+            .replace("background:red", "background:transparent")
+            .replace("z-index:-1", "z-index:auto"),
+        "",
+    );
+    assert!(render_first_page(&result) == render_first_page(&reference));
+}
+
+#[test]
+fn negative_items_stay_below_container_backgrounds_on_every_page() {
+    let result = same_order(
+        "<div style='display:flex;width:100px;height:300px;background:blue'>\
+         <div style='z-index:-1;width:50px;height:300px;background:red'></div></div>",
+    );
+    assert_multi_page(&result);
+    for page in result.pages() {
+        let pixels = render_page(&page);
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "page {}", page.index());
+        assert!(pixels_of(&pixels, [0, 0, 255]) > 0);
+    }
+}
+
+#[test]
+fn static_non_items_with_negative_z_index_stay_in_the_normal_layer() {
+    let result = same_order(
+        "<div style='z-index:-99;width:50px;height:20px;background:blue'></div>\
+         <div style='display:flex;height:20px;margin-top:-20px'>\
+         <div style='z-index:-1;width:50px;height:20px;background:red'></div></div>",
+    );
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [0, 0, 255]), 1000);
+    assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0);
 }
 
 /// Page margins that leave a content box at most half as wide as the page,

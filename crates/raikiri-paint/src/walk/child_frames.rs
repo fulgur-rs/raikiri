@@ -433,6 +433,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             && !visit.is_fragment_visit
             && !element.fixed_in_viewport;
         let defers = defers_here
+            && !self.negative_levels.holds(node_id)
             && overflow_clip_pushed.is_none()
             && raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id);
         // A plain block that clips collects its inline content, and a
@@ -442,6 +443,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let merge = overflow_clip_pushed
             .filter(|_| {
                 defers_here
+                    && !self.negative_levels.holds(node_id)
                     && self
                         .deferral_scopes
                         .last()

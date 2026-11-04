@@ -131,6 +131,15 @@ pub(crate) struct HeldLines<'a> {
     /// The preorder positions of the paragraph's nodes, once a positioned
     /// box needs its tree order among the groups.
     positions: Option<HashMap<usize, usize>>,
+    negative_boxes: Vec<NegativeBox>,
+}
+
+struct NegativeBox {
+    owner: Option<usize>,
+    atomic: usize,
+    id: usize,
+    key: (i32, usize),
+    content: Scene,
 }
 
 impl HeldLines<'_> {
@@ -196,6 +205,69 @@ impl HeldLines<'_> {
         paint.add_box(group, positioned, local);
     }
 
+    /// Place a negative descendant directly in its inline stacking context.
+    pub(crate) fn place_negative_box(
+        &mut self,
+        owner: Option<usize>,
+        atomic: usize,
+        id: usize,
+        key: (i32, usize),
+        content: Scene,
+    ) {
+        self.negative_boxes.push(NegativeBox {
+            owner,
+            atomic,
+            id,
+            key,
+            content,
+        });
+    }
+
+    fn flush_negative_boxes(&mut self) {
+        let mut boxes = std::mem::take(&mut self.negative_boxes);
+        boxes.sort_by_key(|item| item.key);
+        for item in boxes {
+            self.place_negative_box_now(item);
+        }
+    }
+
+    fn place_negative_box_now(&mut self, item: NegativeBox) {
+        let NegativeBox {
+            owner,
+            atomic,
+            id,
+            key: (level, _),
+            content,
+        } = item;
+        let paragraph = self.paragraph;
+        let on_first_line = raikiri_dom::paint_rules::atomic_on_first_line(
+            paragraph.document,
+            paragraph.root_id,
+            atomic,
+        );
+        let paint = match self.first_line.as_mut() {
+            Some((first, _)) if on_first_line => first,
+            _ => &mut self.rest,
+        };
+        let group = owner.and_then(|owner| paint.element_group(paragraph, owner));
+        let positions = self
+            .positions
+            .get_or_insert_with(|| paragraph.document.preorder_positions(paragraph.root_id));
+        let at = positions.get(&id).map_or((usize::MAX, 0), |&at| (at, 0));
+        let before = paint.groups_before(|group| {
+            paragraph
+                .document
+                .group_tree_position(positions, group)
+                .is_some_and(|position| position < at)
+        });
+        let inverse = self.paint_transform.inverse();
+        if inverse.as_coeffs().iter().all(|value| value.is_finite()) {
+            let mut local = Scene::new();
+            local.append_scene(content, inverse);
+            paint.add_box(group, Some((level, before)), local);
+        }
+    }
+
     /// Place the paint of an in-flow block inside the paragraph's inline
     /// content, painted in page space, above the content positioned below
     /// the paragraph's blocks and below the rest of the lines.
@@ -216,7 +288,8 @@ impl HeldLines<'_> {
     }
 
     /// Composite the paragraph's groups into `scene`.
-    pub(crate) fn finish(self, scene: &mut impl PaintScene) {
+    pub(crate) fn finish(mut self, scene: &mut impl PaintScene) {
+        self.flush_negative_boxes();
         self.rest
             .finish(scene, self.clip, self.paint_transform, self.first_line);
     }
@@ -230,9 +303,11 @@ impl HeldLines<'_> {
     /// too, and returned by element, in page space, for the caller to paint
     /// among the positioned boxes of that stacking context.
     pub(crate) fn finish_leaving_groups(
-        self,
+        mut self,
         leaving: bool,
+        negative: &raikiri_dom::paint_rules::NegativeLevels,
     ) -> (Scene, Vec<Scene>, Scene, Vec<(usize, Scene)>) {
+        self.flush_negative_boxes();
         let paragraph = self.paragraph;
         let leaving = leaving
             && raikiri_dom::paint_rules::content_can_leave_paragraph(
@@ -241,21 +316,24 @@ impl HeldLines<'_> {
                 paragraph.root_id,
             );
         let leaves = |owner: usize| {
-            raikiri_dom::paint_rules::leaves_paragraph_content(
+            negative.leaves_inline_group(
                 paragraph.document,
                 paragraph.cascade,
                 paragraph.root_id,
                 owner,
-                true,
-            )
+            ) || (leaving
+                && raikiri_dom::paint_rules::leaves_paragraph_content(
+                    paragraph.document,
+                    paragraph.cascade,
+                    paragraph.root_id,
+                    owner,
+                    true,
+                ))
         };
         let paint_transform = self.paint_transform;
-        let (below, blocks, above, left) = self.rest.finish_leaving(
-            self.clip,
-            paint_transform,
-            self.first_line,
-            leaving.then_some(&leaves as &dyn Fn(usize) -> bool),
-        );
+        let (below, blocks, above, left) =
+            self.rest
+                .finish_leaving(self.clip, paint_transform, self.first_line, Some(&leaves));
         let left = left
             .into_iter()
             .map(|(owner, content)| {
@@ -356,6 +434,7 @@ pub(crate) fn hold_ifc_lines<'a>(
         ),
         paint_transform,
         positions: None,
+        negative_boxes: Vec::new(),
     })
 }
 

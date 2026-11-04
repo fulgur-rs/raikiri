@@ -581,7 +581,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             scene.push_clip_layer(Affine::IDENTITY, &clip);
             multicol_clip_pushed = true;
             if let Some(t) = trace.as_deref_mut() {
-                t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
+                let event = crate::PaintTraceEvent::PushFragmentainerClip(node_id);
+                t.push(event.clone());
+                self.trace_clips.push(event);
             }
         }
         if let Some(clip) = fragment_clip {
@@ -598,7 +600,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             scene.push_clip_layer(Affine::IDENTITY, &clip);
             fragmentainer_clip_pushed = true;
             if let Some(t) = trace.as_deref_mut() {
-                t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
+                let event = crate::PaintTraceEvent::PushFragmentainerClip(node_id);
+                t.push(event.clone());
+                self.trace_clips.push(event);
             }
         }
         FragmentCut {

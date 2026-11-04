@@ -59,6 +59,7 @@ mod inline_box;
 mod inline_svg;
 mod lines_frames;
 mod margin_box;
+mod negative_levels;
 mod page_geometry;
 mod paint_walk;
 mod visit;
@@ -2086,7 +2087,12 @@ pub(crate) fn paint_document_impl(
         fixed_page_width,
         root_transform,
     );
+    let negative_levels =
+        raikiri_dom::paint_rules::NegativeLevels::new(document, cascade, root_id, true);
     let mut capture_scene = crate::capture::CaptureScene::new(scene);
+    if !negative_levels.is_empty() {
+        capture_scene.track_clips();
+    }
     let mut transformed_scene = crate::transform::TransformScene {
         scene: &mut capture_scene,
         transform: Affine::IDENTITY,
@@ -2128,6 +2134,12 @@ pub(crate) fn paint_document_impl(
         deferral_scopes: vec![DeferralLayer::new(true, LayerClose::Paint)],
         stack,
         clip_scopes: Vec::new(),
+        negative_levels,
+        negative_contexts: Vec::new(),
+        negative_boxes: Vec::new(),
+        inline_boxes: Vec::new(),
+        inline_traces: std::collections::HashMap::new(),
+        trace_clips: Vec::new(),
     };
     walk.run();
 }
@@ -2140,7 +2152,7 @@ pub(crate) fn paint_document_impl(
 /// [`raikiri_dom::paint_rules::negative_pseudo_group`]). The box of a
 /// block-level `::before` or `::after` positioned there, painted with the
 /// lines, counts as such text even without content. Only text whose owner
-/// (the text node, or the element generating it) `keeps` counts.
+/// (the text node or generated node ID) `keeps` counts.
 fn traced_text(
     document: &Document,
     cascade: &CascadeResult,
@@ -2175,7 +2187,7 @@ fn traced_text(
             && admits(below(owner))
     }) || generated().any(|owner| {
         raikiri_dom::generated_content::generated_origin(owner).is_some_and(|(element, _)| {
-            keeps(element)
+            keeps(owner)
                 && admits(
                     raikiri_dom::paint_rules::negative_pseudo_group(document, cascade, root, owner)
                         || below(element),
@@ -2184,7 +2196,10 @@ fn traced_text(
     }) || (admits(true)
         && document.get_node(root).is_some_and(|node| {
             node.ifc_generated_block_pieces().iter().any(|piece| {
-                raikiri_dom::paint_rules::negative_pseudo_group(document, cascade, root, piece.node)
+                keeps(piece.node)
+                    && raikiri_dom::paint_rules::negative_pseudo_group(
+                        document, cascade, root, piece.node,
+                    )
             })
         }))
 }
@@ -2200,6 +2215,8 @@ fn in_left_group(
     start: usize,
     group: Option<usize>,
 ) -> bool {
+    let start = raikiri_dom::generated_content::generated_origin(start)
+        .map_or(start, |(element, _)| element);
     document
         .inclusive_ancestors(start)
         .take_while(|&id| id != root)

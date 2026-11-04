@@ -3,7 +3,7 @@
 //! once the rest of its content is known.
 
 use anyrender::{Glyph, NormalizedCoord, PaintRef, PaintScene, RenderContext, Scene};
-use kurbo::{Affine, Rect, Shape, Stroke, Vec2};
+use kurbo::{Affine, BezPath, Rect, Shape, Stroke, Vec2};
 use peniko::{BlendMode, Color, Fill, FontData, StyleRef};
 use std::{any::Any, sync::Arc};
 
@@ -12,6 +12,7 @@ pub(crate) struct CaptureScene<'a, S> {
     /// Open captures, innermost last. Paint goes to the innermost one, or
     /// to `scene` when none is open.
     captures: Vec<Scene>,
+    layers: Option<Vec<Option<(Affine, BezPath)>>>,
 }
 
 impl<'a, S> CaptureScene<'a, S> {
@@ -19,6 +20,7 @@ impl<'a, S> CaptureScene<'a, S> {
         Self {
             scene,
             captures: Vec::new(),
+            layers: None,
         }
     }
 
@@ -30,6 +32,27 @@ impl<'a, S> CaptureScene<'a, S> {
     /// The paint recorded since the matching [`Self::begin_capture`].
     pub(crate) fn end_capture(&mut self) -> Scene {
         self.captures.pop().unwrap_or_default()
+    }
+
+    pub(crate) fn layer_depth(&self) -> usize {
+        self.layers.as_ref().map_or(0, Vec::len)
+    }
+
+    pub(crate) fn track_clips(&mut self) {
+        self.layers = Some(Vec::new());
+    }
+
+    /// Copy only clips opened inside a stacking context, without repeating opacity.
+    pub(crate) fn clip_prefix(&self, start: usize) -> (Scene, usize) {
+        let mut prefix = Scene::new();
+        let mut count = 0;
+        if let Some(layers) = &self.layers {
+            for (transform, path) in layers[start..].iter().flatten() {
+                prefix.push_clip_layer(*transform, path);
+                count += 1;
+            }
+        }
+        (prefix, count)
     }
 }
 
@@ -61,6 +84,9 @@ impl<S: RenderContext> RenderContext for CaptureScene<'_, S> {
 impl<S: PaintScene> PaintScene for CaptureScene<'_, S> {
     fn reset(&mut self) {
         self.captures.clear();
+        if let Some(layers) = &mut self.layers {
+            layers.clear();
+        }
         self.scene.reset();
     }
     fn push_layer(
@@ -72,12 +98,21 @@ impl<S: PaintScene> PaintScene for CaptureScene<'_, S> {
         filter: Option<Arc<anyrender::Filter>>,
         backdrop_filter: Option<Arc<anyrender::Filter>>,
     ) {
+        if let Some(layers) = &mut self.layers {
+            layers.push(None);
+        }
         forward!(self.push_layer(blend, alpha, transform, clip, filter, backdrop_filter));
     }
     fn push_clip_layer(&mut self, transform: Affine, clip: &impl Shape) {
+        if let Some(layers) = &mut self.layers {
+            layers.push(Some((transform, clip.to_path(0.1))));
+        }
         forward!(self.push_clip_layer(transform, clip));
     }
     fn pop_layer(&mut self) {
+        if let Some(layers) = &mut self.layers {
+            layers.pop();
+        }
         forward!(self.pop_layer());
     }
     fn stroke<'a>(
