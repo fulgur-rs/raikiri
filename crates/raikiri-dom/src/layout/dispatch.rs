@@ -1332,7 +1332,11 @@ impl LayoutSession<'_> {
             }
             if is_leaf {
                 let mut style = block_flow::style_input::physical(tree, idx);
-                zero_cyclic_calc_sizes(&mut style, &inputs, item_is_replaced);
+                zero_cyclic_calc_sizes(
+                    &mut style,
+                    &inputs,
+                    item_is_replaced || tree.nodes[idx].is_inline_svg_root(),
+                );
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
                 let limits = tree.nodes[idx].content_limits;
                 // Natural ratios resolve intrinsic limits; without them,
@@ -1551,8 +1555,8 @@ mod inline_baseline;
 mod intrinsic_scopes;
 pub(super) mod table_items;
 use intrinsic_scopes::{
-    with_column_item_content_height, with_flex_intrinsic_probe, with_flex_item_basis_bounds,
-    wrapping_min_content_width,
+    with_column_item_content_height, with_compressible_item_widths, with_flex_intrinsic_probe,
+    with_flex_item_basis_bounds, wrapping_min_content_width,
 };
 mod oof;
 mod orthogonal_flow;
@@ -3646,7 +3650,9 @@ fn wrapping_row_min_content_width(
         inputs,
     );
     let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
-    let width = wrapping_min_content_width(tree, node_id, room) + inset.width;
+    let width = with_compressible_item_widths(tree, node_id, |tree| {
+        wrapping_min_content_width(tree, node_id, room)
+    }) + inset.width;
     Some(width.clamp(min, max))
 }
 
@@ -3735,12 +3741,24 @@ fn flex_layout_sized(
                 || measures_intrinsic_width(&inputs)
             {
                 let cross_room = item_cross_room(basis.height, &inputs);
+                let min_content = inputs.run_mode == RunMode::ComputeSize
+                    && inputs.available_space.width == AvailableSpace::MinContent
+                    && inputs.known_dimensions.width.is_none();
                 with_flex_item_basis_bounds(
                     tree,
                     node_id,
                     cross_room,
                     inputs.available_space.width,
-                    |tree| table_items::layout(tree, node_id, inputs, compute_flexbox_layout),
+                    |tree| {
+                        let layout = |tree: &mut LayoutSession<'_>| {
+                            table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                        };
+                        if min_content {
+                            with_compressible_item_widths(tree, node_id, layout)
+                        } else {
+                            layout(tree)
+                        }
+                    },
                 )
             } else if inputs.known_dimensions.height.is_none() {
                 with_column_item_content_height(tree, node_id, basis.width, |tree| {
