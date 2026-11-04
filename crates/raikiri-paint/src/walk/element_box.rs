@@ -176,7 +176,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         {
             return None;
         }
-        let cut = self.cut_by_fragmentainers(&inputs, layout, paint_x, paint_y);
+        let cut = self.cut_by_fragmentainers(&inputs, node, layout, paint_x, paint_y);
         // A collapsed-border table cell paints the borders that won
         // conflict resolution with its rows, neighbours and table.
         let painted_border = self
@@ -519,6 +519,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn cut_by_fragmentainers(
         &mut self,
         inputs: &BoxInputs,
+        node: &Node,
         layout: BoxLayout,
         paint_x: f32,
         paint_y: f32,
@@ -555,13 +556,19 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_background_height = paint_background_height.min(clip_height);
             let clip_origin_y = paint_y.floor();
             // These boxes are not split across columns. A box that exceeds
-            // the column is cut at its bottom, but one that fits keeps all
-            // its ink overflow, including shadows painted by descendants.
+            // the column is cut at its bottom, and so is one whose in-flow
+            // boxes reach past it: they are flow that continues in the next
+            // column, not ink overflow. A box whose boxes all end in the
+            // column keeps all its ink overflow, including shadows painted by
+            // descendants.
             // Bound open axes by the page in the current scene coordinates.
             // A zero-height clip protects an overflowing parallel flow at a
             // column break and must stay closed even for a zero-height box.
             let page = page_bounds_in_scene(scene.transform, &self.page_box);
-            let bottom = if clip_height > 0.0 && layout.size.height <= clip_height {
+            let fits = clip_height > 0.0
+                && layout.size.height <= clip_height
+                && in_flow_boxes_end(self.document, self.cascade, node) <= clip_height;
+            let bottom = if fits {
                 page.y1
             } else {
                 // A box that ends above the page has nothing to show on it.
@@ -871,6 +878,41 @@ fn generated_content_advance(
                 .max(0.0)
         })
         .fold(0.0, f32::max)
+}
+
+/// How far below the top of the box of `node` its in-flow descendant boxes
+/// reach: the farthest bottom edge among the boxes that stack in its flow, 0
+/// when it has none. A box that clips its overflow ends the search at its own
+/// border box. Boxes that are out of flow are left out.
+fn in_flow_boxes_end(document: &Document, cascade: &CascadeResult, node: &Node) -> f32 {
+    let mut end = 0.0_f32;
+    let mut pending = vec![(node, 0.0_f32)];
+    while let Some((parent, parent_y)) = pending.pop() {
+        let boxes = parent
+            .children
+            .iter()
+            .filter_map(|&child_id| {
+                Some((
+                    document.get_node(child_id)?,
+                    cascade.computed.get(child_id)?,
+                ))
+            })
+            .filter(|(child, cv)| {
+                child.kind() == NodeKind::Element
+                    && matches!(
+                        cv.position,
+                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                    )
+            });
+        for (child, cv) in boxes {
+            let child_y = parent_y + child.layout().location.y;
+            end = end.max(child_y + child.layout().size.height);
+            if !raikiri_dom::paint_rules::clips_overflow(cv) {
+                pending.push((child, child_y));
+            }
+        }
+    }
+    end
 }
 
 /// The farthest bottom edge, among the in-flow children of `node` laid out

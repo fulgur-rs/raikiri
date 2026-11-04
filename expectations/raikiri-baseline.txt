@@ -2367,7 +2367,6 @@ css/css-flexbox/flex-basis-008.html
 css/css-flexbox/flex-basis-012.html
 css/css-flexbox/flex-box-wrap.html
 css/css-flexbox/flex-direction-row-reverse.html
-css/css-flexbox/flex-direction-with-element-insert.html
 css/css-flexbox/flex-flow-002.html
 css/css-flexbox/flex-flow-005.html
 css/css-flexbox/flex-flow-007.html
