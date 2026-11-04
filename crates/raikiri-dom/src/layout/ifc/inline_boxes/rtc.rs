@@ -67,7 +67,7 @@ pub(super) fn base_boxes(
         };
         let parent = piece.parent.and_then(|index| match fragments.get(index) {
             Some(Fragment::InlineBox(parent)) => Some(parent.node.0 as usize),
-            _ => None,
+            _ => None, // cov:ignore: Shodo guarantees parent indexes name inline box fragments; defensive fallback for invalid upstream data.
         });
         let rect = physical(
             placed(piece.content_rect, offset, placement),
