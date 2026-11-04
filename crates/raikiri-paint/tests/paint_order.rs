@@ -2512,3 +2512,35 @@ fn hidden_table_overflow_scopes_keep_only_painting_content() {
         );
     }
 }
+
+#[test]
+fn fitting_column_boxes_keep_public_order_and_balanced_native_clips() {
+    for display in ["grid", "table"] {
+        for overflow in ["", "overflow:hidden"] {
+            let body = format!(
+                "<article style='column-count:2;column-gap:10px;column-fill:auto;width:170px;height:40px;{overflow}'>\
+                 <div style='display:{display};height:40px;box-shadow:0 6px blue'>\
+                 <div style='height:50px;background:lime'></div></div></article>"
+            );
+            let result = assert_same_order(&body, "body{margin:0}");
+            for page in result.pages() {
+                // Legacy column-height clips are native-only approximations.
+                assert!(!page.paint_order().iter().any(|event| matches!(
+                    event,
+                    PaintEvent::PushClip(_, ClipKind::Fragmentainer)
+                )));
+                let mut depth = 0i32;
+                for event in trace(&page) {
+                    match event {
+                        PaintTraceEvent::PushOverflowClip(..)
+                        | PaintTraceEvent::PushFragmentainerClip(_) => depth += 1,
+                        PaintTraceEvent::PopClip => depth -= 1,
+                        _ => {}
+                    }
+                    assert!(depth >= 0);
+                }
+                assert_eq!(depth, 0);
+            }
+        }
+    }
+}
