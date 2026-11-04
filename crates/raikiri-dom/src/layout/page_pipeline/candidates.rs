@@ -1398,7 +1398,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inline_level
                     && is_block_flow_box
                     && avoids_break
-                    && can_move_nested;
+                    && !side_by_side_ancestor
+                    && (!bounded_clipping_ancestor || unbreakable_box);
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
