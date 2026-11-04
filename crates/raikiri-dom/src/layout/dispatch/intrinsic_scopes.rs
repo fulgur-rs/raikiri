@@ -913,11 +913,12 @@ pub(super) fn wrapping_min_content_height(
         let margins = margins_sum(margin.top, margin.bottom, None);
         let padding = style.padding();
         let border = style.border();
+        let insets: f32 = [padding.left, padding.right, border.left, border.right]
+            .into_iter()
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0))
+            .sum();
         let edges = if style.box_sizing() == BoxSizing::ContentBox {
-            [padding.left, padding.right, border.left, border.right]
-                .into_iter()
-                .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0))
-                .sum()
+            insets
         } else {
             0.0
         };
@@ -958,6 +959,18 @@ pub(super) fn wrapping_min_content_height(
                     })
                     .flatten()
             });
+        // A replaced item's inherent-size probe trusts a known width, so
+        // apply its numeric bounds before it derives the height from ratio.
+        let width = width.map(|width| {
+            let bound = |length| {
+                crate::layout::resolve_length_percentage_auto(length, parent_width)
+                    .map(|bound| bound + edges)
+            };
+            width
+                .min(bound(style.max_size().width).unwrap_or(f32::INFINITY))
+                .max(bound(style.min_size().width).unwrap_or(0.0))
+                .max(insets)
+        });
         let probe = LayoutInput {
             run_mode: RunMode::ComputeSize,
             sizing_mode: SizingMode::InherentSize,

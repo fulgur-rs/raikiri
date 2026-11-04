@@ -1,6 +1,6 @@
 # Vertical container ratio measurements
 
-`chromium.json` records 130 cases and 138 border boxes from Chromium
+`chromium.json` records 158 cases and 166 border boxes from Chromium
 152.0.7977.82 on 2026-11-05. Each `body` is an independent document body.
 The default box sizing is content-box; individual cases override it.
 
@@ -14,7 +14,9 @@ body > div { position: absolute; left: 200px; top: 150px; }
 
 Use an 800×600 viewport, confirming both `innerWidth/innerHeight` and
 `document.documentElement.clientWidth/clientHeight`. On the recording machine,
-headless `--window-size=800,743 --hide-scrollbars` supplied that viewport.
+headless `--window-size=800,743 --hide-scrollbars` supplied the initial
+viewport; the later width-bound recordings used `800,687`. Confirm the
+reported viewport rather than relying on the outer window size.
 Wait for window load and `document.fonts.ready` before reading
 `getBoundingClientRect()` for `#i` and, where present, `#p`. Subtract `(200,150)`
 from their coordinates. Images embed a 30×120 SVG; the native test resolver
