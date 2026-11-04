@@ -5,8 +5,8 @@
 //! from `@page`).
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
-    parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent,
+    RenderResources, layout, parse_html_with_resources,
 };
 use raikiri_traits::{
     IntrinsicBox, LayoutConfig, PageDefaults, ReplacedResolver, ResolveDisposition,
@@ -37,6 +37,22 @@ fn image_extents(body: &str) -> Vec<Option<(i32, i32)>> {
 /// The vertical extent `(top, bottom)` of the first fragment of the element
 /// with the id `id` on each page, `None` for a page without any.
 fn extents_of(id: &str, body: &str) -> Vec<Option<(i32, i32)>> {
+    laid_out(body)
+        .pages()
+        .map(|page| {
+            let dom = page.dom();
+            page.fragments()
+                .filter(|fragment| dom.attr(fragment.node(), "id") == Some(id))
+                .map(|fragment| {
+                    let rect = fragment.rect();
+                    (rect.y.round() as i32, (rect.y + rect.height).round() as i32)
+                })
+                .next()
+        })
+        .collect()
+}
+
+fn laid_out(body: &str) -> DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -63,16 +79,42 @@ fn extents_of(id: &str, body: &str) -> Vec<Option<(i32, i32)>> {
         panic!("layout must complete")
     };
     result
+}
+
+fn painted_image_extents(id: &str, body: &str) -> Vec<Option<(i32, i32)>> {
+    laid_out(body)
         .pages()
         .map(|page| {
-            let dom = page.dom();
-            page.fragments()
-                .filter(|fragment| dom.attr(fragment.node(), "id") == Some(id))
-                .map(|fragment| {
-                    let rect = fragment.rect();
-                    (rect.y.round() as i32, (rect.y + rect.height).round() as i32)
-                })
-                .next()
+            let mut clips = Vec::new();
+            let mut extent = None;
+            for event in page.paint_order() {
+                match event {
+                    PaintEvent::PushClip(clip, _) => clips.push(clip),
+                    PaintEvent::PopClip => {
+                        clips.pop().unwrap();
+                    }
+                    PaintEvent::Replaced(fragment)
+                        if page.dom().attr(fragment.node(), "id") == Some(id) =>
+                    {
+                        let rect = fragment.rect();
+                        let mut top = rect.y;
+                        let mut bottom = rect.y + rect.height;
+                        for clip in &clips {
+                            if clip.clip_y {
+                                top = top.max(clip.rect.y);
+                                bottom = bottom.min(clip.rect.y + clip.rect.height);
+                            }
+                        }
+                        if bottom > top {
+                            assert!(extent.is_none());
+                            extent = Some((top.round() as i32, bottom.round() as i32));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            assert!(clips.is_empty());
+            extent
         })
         .collect()
 }
@@ -700,6 +742,107 @@ fn clipping_wrappers_nested_around_an_image_move_with_it() {
         );
         assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
     }
+}
+
+#[test]
+fn an_image_after_content_in_a_fixed_clipping_wrapper_moves_without_growing_the_wrapper() {
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:300px;height:500px;overflow:hidden;background:blue'>\
+         <div style='height:10px'></div>{}</div>\
+         <div id=t style='height:50px'></div>",
+        block_image(400)
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [Some((308, 600)), Some((0, 208))]);
+    assert_eq!(extents_of("t", &body), [None, Some((208, 258))]);
+    assert_eq!(painted_image_extents("i", &body), [None, Some((0, 208))]);
+}
+
+#[test]
+fn the_second_image_in_a_fixed_clip_moves_to_the_following_page() {
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:300px;height:900px;overflow:hidden'>{}{}</div>\
+         <div id=t style='height:50px'></div>",
+        block_image(400),
+        block_image(400).replace("id=i", "id=j")
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400)), None]);
+    assert_eq!(extents_of("j", &body), [None, None, Some((0, 400))]);
+    assert_eq!(
+        extents_of("o", &body),
+        [None, Some((0, 600)), Some((0, 300))]
+    );
+    assert_eq!(extents_of("t", &body), [None, None, Some((300, 350))]);
+    assert_eq!(
+        painted_image_extents("j", &body),
+        [None, None, Some((0, 300))]
+    );
+}
+
+#[test]
+fn nested_fixed_clips_keep_their_extents_when_only_the_inner_holder_moves() {
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:300px;height:500px;overflow:hidden'>\
+         <div style='height:10px'></div>\
+         <div id=n style='height:450px;overflow:hidden'>{}</div></div>\
+         <div id=t style='height:50px'></div>",
+        block_image(400)
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [Some((308, 600)), Some((0, 208))]);
+    assert_eq!(extents_of("n", &body), [None, Some((0, 450))]);
+    assert_eq!(extents_of("t", &body), [None, Some((208, 258))]);
+    assert_eq!(painted_image_extents("i", &body), [None, Some((0, 208))]);
+}
+
+#[test]
+fn a_clipped_images_visible_end_must_cross_the_page_boundary_to_move() {
+    for height in [200, 292] {
+        let body = format!(
+            "<div style='height:300px'></div>\
+             <div id=o style='width:300px;height:{height}px;overflow:hidden'>\
+             <div style='height:10px'></div>{}</div>",
+            block_image(400)
+        );
+        assert_eq!(
+            painted_image_extents("i", &body),
+            [Some((318, 308 + height))]
+        );
+        assert_eq!(extents_of("o", &body), [Some((308, 308 + height))]);
+    }
+}
+
+#[test]
+fn an_image_after_the_moved_image_can_be_fully_hidden_without_adding_a_page() {
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:300px;height:500px;overflow:hidden'>\
+         <div style='height:10px'></div>{}{}</div>\
+         <div id=t style='height:50px'></div>",
+        block_image(400),
+        block_image(400).replace("id=i", "id=j")
+    );
+    assert_eq!(painted_image_extents("i", &body), [None, Some((0, 208))]);
+    assert_eq!(painted_image_extents("j", &body), [None, None]);
+    assert_eq!(extents_of("t", &body), [None, Some((208, 258))]);
+}
+
+#[test]
+fn a_reached_max_height_clip_does_not_grow_when_its_image_moves() {
+    let body = format!(
+        "<div style='height:300px'></div>\
+         <div id=o style='width:300px;max-height:500px;overflow:hidden'>\
+         <div style='height:10px'></div>{}<div style='height:300px'></div></div>\
+         <div id=t style='height:50px'></div>",
+        block_image(400)
+    );
+    assert_eq!(image_extents(&body), [None, Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [Some((308, 600)), Some((0, 208))]);
+    assert_eq!(extents_of("t", &body), [None, Some((208, 258))]);
+    assert_eq!(painted_image_extents("i", &body), [None, Some((0, 208))]);
 }
 
 #[test]
