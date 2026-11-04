@@ -1,8 +1,8 @@
 //! Named-page flow follows in-flow content, including inside marker boxes.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
-    parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, GeneratedKind, LayoutOptions, LayoutStatus,
+    RenderResources, RunSource, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
@@ -27,7 +27,7 @@ fn sort_glyphs(glyphs: &mut [Glyph]) {
     });
 }
 
-fn pages(css: &str, body: &str, resources: &RenderResources<'_>) -> Pages {
+fn layout_document(css: &str, body: &str, resources: &RenderResources<'_>) -> DocumentLayout {
     let html = format!("<!doctype html><style>{css}</style>{body}");
     let parsed = parse_html_with_resources(html.as_bytes(), resources).unwrap();
     let LayoutStatus::Completed(result) = layout(
@@ -39,6 +39,11 @@ fn pages(css: &str, body: &str, resources: &RenderResources<'_>) -> Pages {
     .unwrap() else {
         panic!("incomplete layout")
     };
+    result
+}
+
+fn pages(css: &str, body: &str, resources: &RenderResources<'_>) -> Pages {
+    let result = layout_document(css, body, resources);
     let names = result
         .pages()
         .map(|page| page.name().map(str::to_owned))
@@ -77,6 +82,51 @@ fn floats_and_markers_keep_their_printed_page_contexts() {
 #[test]
 fn marker_display_keeps_the_printed_content_and_page_contexts() {
     check_oracle(serde_json::from_str(include_str!("data/marker-display.json")).unwrap());
+}
+
+#[test]
+fn marker_display_keeps_nested_quote_strings_and_following_quotes() {
+    let resources = resources();
+    let body = "<section><ol><li>X</li></ol><div class=probe>Y</div></section>";
+    for position in ["inside", "outside"] {
+        for display in ["", "display:none"] {
+            let css = format!(
+                "@page{{size:200px 200px;margin:10px}} \
+                 body{{margin:0;font:10px/10px Ahem}}ol{{margin:0;padding-left:50px}} \
+                 section{{quotes:'<' '>' '[' ']' '{{' '}}'}} \
+                 section::before{{content:open-quote}} \
+                 section::after{{content:close-quote close-quote close-quote}} \
+                 li{{list-style-position:{position}}} \
+                 li::marker{{content:open-quote;{display}}} \
+                 .probe::before{{content:open-quote}}"
+            );
+            let document = layout_document(&css, body, &resources);
+            let mut generated: Vec<_> = document
+                .pages()
+                .flat_map(|page| page.text_runs())
+                .filter_map(|run| {
+                    let kind = match run.source {
+                        RunSource::Generated(_, GeneratedKind::Marker) => "marker",
+                        RunSource::Generated(_, GeneratedKind::Before) => "before",
+                        RunSource::Generated(_, GeneratedKind::After) => "after",
+                        _ => return None,
+                    };
+                    Some((kind.to_owned(), run.text.to_owned()))
+                })
+                .collect();
+            generated.sort();
+            assert_eq!(
+                generated,
+                [
+                    ("after".to_owned(), "}]>".to_owned()),
+                    ("before".to_owned(), "<".to_owned()),
+                    ("before".to_owned(), "{".to_owned()),
+                    ("marker".to_owned(), "[".to_owned()),
+                ],
+                "{position} / {display}"
+            );
+        }
+    }
 }
 
 fn check_oracle(oracle: serde_json::Value) {
