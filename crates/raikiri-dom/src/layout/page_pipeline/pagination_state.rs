@@ -2483,12 +2483,25 @@ impl PaginationState {
                 let followers = followers
                     .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
                 super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;
+                followers.flush(document, control)?;
                 continue;
             }
             let Some(Some(paragraph)) = paragraphs.get(&root) else {
                 continue; // cov:ignore: a text-only owner reaches this legacy branch through its own indexed paragraph; descendant block flows take the other branch.
             };
             let text = paragraph.text;
+            let reflowed = followers
+                .get()
+                .is_some_and(|followers| followers.was_reflowed(document, root));
+            let mut current_lines = TextLineIndex::default();
+            let text_lines = if reflowed {
+                current_lines
+                    .prepare_for(document, text, || control.check_aborted())
+                    .map_err(Halt::Failed)?;
+                &current_lines
+            } else {
+                text_lines
+            };
             // Blocks among the lines would stay behind when the lines move.
             let Some(mut line_metrics) = lines_can_shift_inside(document, cascade, root)
                 .then(|| paragraph_line_bounds(document, text, text_lines))
@@ -2497,8 +2510,15 @@ impl PaginationState {
                 continue;
             };
             // A clip hides the lines past its edge, and they do not count.
-            if let Some(&edge) = clip_edges.get(&root) {
-                let visible = edge - paragraph.first_raw_y;
+            let fresh_edge =
+                reflowed.then(|| super::positioned_flow::visible_end(document, cascade, root));
+            if let Some(edge) = fresh_edge.or_else(|| clip_edges.get(&root).copied()) {
+                let start = if reflowed {
+                    positioned_text_start_y(document, text_lines, text, Some(root))
+                } else {
+                    paragraph.first_raw_y
+                };
+                let visible = edge - start;
                 line_metrics
                     .truncate(line_metrics.partition_point(|&(top, _)| top < visible - 0.001));
             }
@@ -2513,7 +2533,7 @@ impl PaginationState {
                     let y = current_abs_y(document, root) + shift;
                     materialize_y(document, root, y);
                 } else {
-                    shift_paragraph_lines(
+                    let growth = shift_paragraph_lines(
                         document,
                         cascade,
                         &LineMove {
@@ -2523,7 +2543,15 @@ impl PaginationState {
                             shift,
                         },
                     );
+                    if growth.abs() > 0.001 {
+                        followers
+                            .get_or_init(|| super::positioned_flow::HeightFollowers::new(document))
+                            .queue_resize(document, root);
+                    }
                 }
+            }
+            if let Some(followers) = followers.get() {
+                followers.flush(document, control)?;
             }
         }
         Ok(())

@@ -77,6 +77,18 @@ fn boxes_20px_wide(body: &str) -> Vec<(u32, f32, f32)> {
     })
 }
 
+fn boxes_named(body: &str, id: &str) -> Vec<(u32, f32, f32)> {
+    with_pages(body, |page_index, page| {
+        page.fragments()
+            .filter(|fragment| page.dom().attr(fragment.node(), "id") == Some(id))
+            .map(|fragment| {
+                let rect = fragment.rect();
+                (page_index, rect.y, rect.height)
+            })
+            .collect()
+    })
+}
+
 /// The tops of the lines of all the text in `body` on each page from the
 /// first to the last with a line.
 fn tops_per_page(body: &str) -> Vec<Vec<f32>> {
@@ -208,6 +220,119 @@ fn relative_offsets_preserve_the_painted_clip_and_whole_box_positions() {
         assert_eq!(lines_of(&body, |text| text == "A"), [(0, 80.0)]);
         assert_eq!(lines_of(&body, |text| text == "B"), [(1, 5.0)]);
     }
+}
+
+#[test]
+fn height_dependent_absolute_boxes_follow_the_final_containing_block() {
+    for (style, expected) in [
+        (
+            "bottom:0;height:10px;max-height:100%",
+            vec![(1, 50.0, 10.0)],
+        ),
+        ("bottom:0;height:50%", vec![(1, 17.5, 42.5)]),
+        (
+            "bottom:0;height:100px;max-height:50%",
+            vec![(1, 17.5, 42.5)],
+        ),
+        (
+            "bottom:0;height:10px;min-height:100%",
+            vec![(0, 75.0, 25.0), (1, 0.0, 60.0)],
+        ),
+        ("top:0;bottom:0", vec![(0, 75.0, 25.0), (1, 0.0, 60.0)]),
+        ("top:40%;height:50%", vec![(1, 9.0, 42.5)]),
+        ("bottom:20%;height:50%", vec![(1, 0.5, 42.5)]),
+        (
+            "bottom:0;height:50%;box-sizing:border-box;border:2px solid red;padding:3px",
+            vec![(1, 17.5, 42.5)],
+        ),
+    ] {
+        let body = positioned(
+            "top:75px;width:80px",
+            &format!(
+                "<p style='margin:0'>A</p><p style='margin:0'>B</p><div id=c style='position:absolute;left:60px;width:10px;background:red;{style}'></div>"
+            ),
+        );
+        let boxes = with_pages(&body, |page_index, page| {
+            page.fragments()
+                .filter(|fragment| page.dom().attr(fragment.node(), "id") == Some("c"))
+                .map(|fragment| {
+                    let rect = fragment.rect();
+                    (page_index, rect.y, rect.height)
+                })
+                .collect()
+        });
+        assert_eq!(boxes, expected, "{style}");
+    }
+}
+
+#[test]
+fn reflowed_absolute_subtrees_resolve_descendant_percentages_and_clips() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><div id=c style='position:absolute;left:60px;bottom:0;height:50%;width:10px;overflow:hidden'><div id=g style='height:50%;background:lime'></div></div>",
+    );
+    assert_eq!(boxes_named(&body, "c"), [(1, 17.5, 42.5)]);
+    assert_eq!(boxes_named(&body, "g"), [(1, 17.5, 21.25)]);
+    let clips = with_pages(&body, |page_index, page| {
+        page.overflow_clips()
+            .filter(|clip| page.dom().attr(clip.node, "id") == Some("c"))
+            .map(|clip| (page_index, clip.clip.rect.y, clip.clip.rect.height))
+            .collect()
+    });
+    // Overflow clips round each edge to a CSS pixel.
+    assert_eq!(clips, [(1, 18.0, 42.0)]);
+}
+
+#[test]
+fn reflowing_one_absolute_child_keeps_other_containing_block_records() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><div id=c style='position:absolute;left:60px;bottom:0;height:50%;width:10px'></div><div><div id=s style='position:absolute;left:70px;bottom:0;height:10px;width:5px;background:red'></div></div><div id=t style='position:absolute;left:70px;top:0;height:10px;width:5px;background:blue'></div>",
+    );
+    assert_eq!(boxes_named(&body, "c"), [(1, 17.5, 42.5)]);
+    assert_eq!(boxes_named(&body, "s"), [(1, 50.0, 10.0)]);
+    assert_eq!(boxes_named(&body, "t"), [(0, 75.0, 10.0)]);
+}
+
+#[test]
+fn reflowed_static_absolute_boxes_keep_their_moved_anchors() {
+    for content in [
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><div style='position:absolute;height:50%;width:10px'>T</div>",
+        "A<div>B</div>C<span style='position:absolute;height:50%;width:10px'>T</span>",
+    ] {
+        let body = positioned("top:75px;width:80px", content);
+        assert_eq!(
+            lines_of(&body, |text| text == "T"),
+            [(1, 65.0)],
+            "{content}"
+        );
+    }
+}
+
+#[test]
+fn reflowed_ratio_widths_refresh_the_childs_line_ownership() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<p style='margin:0'>A</p><p style='margin:0'>B</p><div id=c style='position:absolute;left:0;bottom:0;height:50%;aspect-ratio:1'>TT</div>",
+    );
+    assert_eq!(boxes_named(&body, "c"), [(1, 17.5, 42.5)]);
+    assert_eq!(lines_of(&body, |text| text == "TT"), [(1, 22.5)]);
+}
+
+#[test]
+fn a_reflowed_text_owner_notifies_its_own_height_dependent_children() {
+    let body = positioned(
+        "top:75px;width:80px",
+        "<p style='margin:0'>P</p><p style='margin:0'>Q</p><div style='position:absolute;top:0;left:0;min-height:50%;padding-top:10px;orphans:1;widows:1'>A<br>B<br>C<br>D<div id=g style='position:absolute;top:0;left:60px;width:5px;height:50%;background:red'></div></div>",
+    );
+    for (text, page, top) in [("A", 1, 5.0), ("B", 1, 35.0), ("C", 1, 65.0), ("D", 2, 5.0)] {
+        assert_eq!(
+            lines_of(&body, |found| found == text),
+            [(page, top)],
+            "{text}"
+        );
+    }
+    assert_eq!(boxes_named(&body, "g"), [(0, 75.0, 25.0), (1, 0.0, 52.5)]);
 }
 
 #[test]

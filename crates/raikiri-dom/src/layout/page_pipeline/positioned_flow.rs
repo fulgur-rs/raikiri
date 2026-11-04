@@ -15,18 +15,193 @@ struct ContentChange {
     position_delta: f32,
 }
 
-pub(super) struct HeightFollowers(HashMap<usize, Vec<usize>>);
+pub(super) struct HeightFollowers {
+    owners: HashMap<usize, Vec<usize>>,
+    static_owners: HashMap<usize, Vec<usize>>,
+    source_order: Vec<usize>,
+    dirty: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    reflowed: std::cell::RefCell<HashSet<usize>>,
+}
 
 impl HeightFollowers {
     pub(super) fn new(document: &Document) -> Self {
         // Containing-block ownership need not match the DOM parent.
         let mut owners: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut static_owners: HashMap<usize, Vec<usize>> = HashMap::new();
         for (&node, coordinate) in &document.oof_coordinates {
             if document.nodes[node].position() == &PositionValue::Absolute {
                 owners.entry(coordinate.owner).or_default().push(node);
+                if coordinate.follow_static_y {
+                    static_owners
+                        .entry(coordinate.static_owner)
+                        .or_default()
+                        .push(node);
+                }
             }
         }
-        Self(owners)
+        let mut source_order = vec![0; document.nodes.len()];
+        let mut pending = vec![0];
+        let mut order = 0;
+        while let Some(node) = pending.pop() {
+            source_order[node] = order;
+            order += 1;
+            pending.extend(document.nodes[node].children.iter().rev().copied());
+        }
+        Self {
+            owners,
+            static_owners,
+            source_order,
+            dirty: Default::default(),
+            reflowed: Default::default(),
+        }
+    }
+
+    fn can_reflow(document: &Document, node: usize) -> bool {
+        document
+            .oof_coordinates
+            .get(&node)
+            .is_some_and(|coordinate| coordinate.placement.is_some())
+    }
+
+    fn follows_static_line(document: &Document, node: usize) -> bool {
+        is_unfixed_absolute_box(document, node)
+            && document
+                .oof_coordinates
+                .get(&node)
+                .is_some_and(|coordinate| coordinate.follow_static_y)
+    }
+
+    pub(super) fn was_reflowed(&self, document: &Document, node: usize) -> bool {
+        let reflowed = self.reflowed.borrow();
+        document
+            .inclusive_ancestors(node)
+            .any(|id| reflowed.contains(&id))
+    }
+
+    pub(super) fn flush(
+        &self,
+        document: &mut super::super::context::LayoutSession<'_>,
+        control: &PageLayoutControl<'_>,
+    ) -> Result<(), Halt> {
+        let mut dirty: Vec<_> = std::mem::take(&mut *self.dirty.borrow_mut())
+            .into_iter()
+            .collect();
+        if dirty.is_empty() {
+            return Ok(());
+        }
+        // Cached in-flow extents describe the pre-reflow subtrees. Materialize
+        // deferred moves before the positioning pass replaces their layouts.
+        document.finish_normal_block_shifts();
+        dirty.sort_by_cached_key(|&parent| {
+            (
+                document.inclusive_ancestors(parent).count(),
+                self.source_order[parent],
+            )
+        });
+        for parent in dirty {
+            control.check_aborted().map_err(Halt::Failed)?;
+            let mut groups = std::collections::BTreeMap::new();
+            for &node in &self.owners[&parent] {
+                let style = document.physical_style(node);
+                let inset = style.inset();
+                if !(follows_height(style.size().height)
+                    || follows_height(style.min_size().height)
+                    || follows_height(style.max_size().height)
+                    || !inset.top.is_auto() && !inset.bottom.is_auto())
+                {
+                    continue;
+                }
+                let Some(placement) = document
+                    .oof_coordinates
+                    .get(&node)
+                    .and_then(|coordinate| coordinate.placement)
+                else {
+                    continue;
+                };
+                let offset = document
+                    .layout_offset_of(node)
+                    .expect("a positioned child has a layout origin");
+                let mut candidate = placement.candidate;
+                if inset.left.is_auto() && inset.right.is_auto() {
+                    let delta = offset.x - placement.offset.x;
+                    candidate.static_position.x.area.start += delta;
+                    candidate.static_position.x.area.end += delta;
+                }
+                if inset.top.is_auto() && inset.bottom.is_auto() {
+                    let delta = offset.y - placement.offset.y;
+                    candidate.static_position.y.area.start += delta;
+                    candidate.static_position.y.area.end += delta;
+                }
+                let mut current_area = placement.area;
+                let layout = document.nodes[parent].layout;
+                current_area.size.height =
+                    (layout.size.height - layout.border.top - layout.border.bottom).max(0.0);
+                let key = (
+                    current_area.offset.x.to_bits(),
+                    current_area.offset.y.to_bits(),
+                    current_area.size.width.to_bits(),
+                    current_area.size.height.to_bits(),
+                );
+                let (_, candidates) = groups.entry(key).or_insert_with(|| {
+                    (current_area, super::super::protocol::OofCandidates::new())
+                });
+                candidates.push(candidate);
+                self.reflowed.borrow_mut().insert(node);
+            }
+            for (_, (area, candidates)) in groups {
+                super::super::dispatch::refresh_container_candidates(
+                    document,
+                    super::super::protocol::NodeId::from(parent),
+                    &candidates,
+                    area,
+                );
+                take_layout_failure(document).map_err(Halt::Failed)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn queue_resize(
+        &self,
+        document: &super::super::context::LayoutSession<'_>,
+        parent: usize,
+    ) {
+        if self.owners.get(&parent).is_some_and(|nodes| {
+            nodes.iter().any(|&node| {
+                let style = document.physical_style(node);
+                let inset = style.inset();
+                Self::can_reflow(document, node)
+                    && (follows_height(style.size().height)
+                        || follows_height(style.min_size().height)
+                        || follows_height(style.max_size().height)
+                        || !inset.top.is_auto() && !inset.bottom.is_auto())
+            })
+        }) {
+            self.dirty.borrow_mut().insert(parent);
+        }
+    }
+
+    fn follow_static_after_block(
+        &self,
+        document: &mut Document,
+        parent: usize,
+        child: usize,
+        delta: f32,
+    ) {
+        if document
+            .ifc_layout_node(parent)
+            .and_then(|node| node.ifc_lines())
+            .is_some()
+        {
+            return;
+        }
+        if let Some(nodes) = self.static_owners.get(&parent) {
+            for &node in nodes {
+                if self.source_order[node] > self.source_order[child] {
+                    document.translate_pagination_y(node, delta);
+                }
+            }
+        }
     }
 
     fn resize(
@@ -36,17 +211,26 @@ impl HeightFollowers {
         old_height: f32,
         growth: f32,
     ) {
-        let Some(nodes) = self.0.get(&parent) else {
+        if growth.abs() <= 0.001 {
+            return;
+        }
+        let Some(nodes) = self.owners.get(&parent) else {
             return;
         };
         for &node in nodes {
             let style = document.physical_style(node);
             let inset = style.inset();
-            if inset.top.is_auto() == inset.bottom.is_auto()
-                || follows_height(style.size().height)
+            if follows_height(style.size().height)
                 || follows_height(style.min_size().height)
                 || follows_height(style.max_size().height)
+                || !inset.top.is_auto() && !inset.bottom.is_auto()
             {
+                if Self::can_reflow(document, node) {
+                    self.dirty.borrow_mut().insert(parent);
+                }
+                continue;
+            }
+            if inset.top.is_auto() && inset.bottom.is_auto() {
                 continue;
             }
             let delta = with_height_delta(inset.top, inset.bottom, old_height, growth);
@@ -161,6 +345,7 @@ fn keep_run(
         || ifc.boxes.iter().any(|item| {
             item.kind == IfcBoxKind::OutOfFlow
                 && out_of_flow_follow(document, env.cascade, root, item.node).is_none()
+                && !HeightFollowers::can_reflow(document, item.node)
         })
     {
         return Ok(());
@@ -267,24 +452,32 @@ fn keep_run(
         let float_before = exported_float_end(document, env.cascade, owner, root);
         let layout = document.nodes[root].layout;
         let growth = lines_shift_growth(document, root, shift);
-        let moved = LineMove {
-            block_id: root,
-            flex_line: None,
-            line,
-            shift,
-        };
         // Static anchors follow the line; all height-based insets are updated
         // once through the containing-block index, including deeper children.
-        let on_lines: Vec<_> = out_of_flow_moves(document, env.cascade, &moved, growth)
+        let ifc = document
+            .ifc_layout_node(root)
+            .and_then(|node| node.ifc.as_ref());
+        let anchors = std::cell::OnceCell::new();
+        let on_lines: HashSet<_> = ifc
             .into_iter()
-            .filter(|&(node, _)| {
-                out_of_flow_follow(document, env.cascade, root, node)
-                    == Some(OutOfFlowFollow::OnLine)
+            .flat_map(|ifc| &ifc.boxes)
+            .filter(|item| item.kind == IfcBoxKind::OutOfFlow)
+            .filter(|item| HeightFollowers::follows_static_line(document, item.node))
+            .filter(|item| {
+                anchors
+                    .get_or_init(|| {
+                        ifc.and_then(|ifc| ifc.lines.as_ref())
+                            .map(first_anchors)
+                            .unwrap_or_default()
+                    })
+                    .get(&item.node)
+                    .is_some_and(|&(anchor, _)| anchor >= line)
             })
+            .map(|item| item.node)
             .collect();
         shift_ifc_lines_from(document, root, line, shift, growth);
-        for (node, delta) in on_lines {
-            document.translate_pagination_y(node, delta);
+        for node in on_lines {
+            document.translate_pagination_y(node, shift);
         }
         followers.resize(
             document,
@@ -318,7 +511,7 @@ fn keep_run(
     Ok(())
 }
 
-fn visible_end(document: &Document, cascade: &CascadeResult, root: usize) -> f32 {
+pub(super) fn visible_end(document: &Document, cascade: &CascadeResult, root: usize) -> f32 {
     document
         .inclusive_ancestors(root)
         .filter(|&id| element_clips_overflow(document, cascade, id))
@@ -430,8 +623,7 @@ fn grow_inside(
             .flat_map(|ifc| &ifc.boxes)
             .filter(|item| {
                 item.kind == IfcBoxKind::OutOfFlow
-                    && out_of_flow_follow(document, cascade, parent, item.node)
-                        == Some(OutOfFlowFollow::OnLine)
+                    && HeightFollowers::follows_static_line(document, item.node)
             })
             .map(|item| item.node)
             .collect();
@@ -445,6 +637,7 @@ fn grow_inside(
             Some(&allowed_oof),
         );
         shift_later_block_siblings(document, parent, child, flow_delta);
+        followers.follow_static_after_block(document, parent, child, flow_delta);
         normal_block_shifts::refresh(document, cascade, owner, parent);
         let Some(grown) = grown_auto_height(
             document,

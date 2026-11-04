@@ -35,6 +35,17 @@ use crate::node::{
 };
 
 #[derive(Clone, Copy, Debug)]
+/// Positioning input retained when pagination changes the containing block.
+pub(crate) struct OofPlacement {
+    /// The candidate after it reached its final containing block.
+    pub(crate) candidate: crate::layout::protocol::OofCandidate,
+    /// The containing block's local positioning geometry.
+    pub(crate) area: crate::layout::protocol::OofPositioningArea,
+    /// The computed owner-local origin, before static-owner corrections.
+    pub(crate) offset: Point<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct OofCoordinate {
     pub(crate) owner: usize,
     pub(crate) static_owner: usize,
@@ -42,6 +53,7 @@ pub(crate) struct OofCoordinate {
     pub(crate) follow_static_y: bool,
     pub(crate) initial_owner_origin: Option<Point<f32>>,
     pub(crate) initial_static_origin: Option<Point<f32>>,
+    pub(crate) placement: Option<OofPlacement>,
 }
 
 pub(crate) mod ancestors;

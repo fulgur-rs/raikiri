@@ -5,7 +5,7 @@
 //! consumers keep locations relative to their layout parent.
 
 use super::grid_oof;
-use crate::document::OofCoordinate;
+use crate::document::{OofCoordinate, OofPlacement};
 use crate::layout::context::{LayoutSession, RootOofCapture};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutOutput, NodeId, OofCandidate,
@@ -73,6 +73,7 @@ impl LayoutSession<'_> {
                         follow_static_y,
                         initial_owner_origin: None,
                         initial_static_origin: None,
+                        placement: None,
                     },
                 );
             }
@@ -433,12 +434,84 @@ pub(super) fn layout_candidates(
     claims: ContainingBlockClaims,
     grid: Option<grid_oof::GridAxes>,
 ) -> OofLayoutResult {
+    let result = compute_candidates(tree, owner, candidates, area, direction, claims, grid);
+    tree.clear_hoisted_children(owner);
+    tree.add_hoisted_children(owner, result.hoisted.iter().copied());
+    record_placements(tree, owner, candidates, area);
+    if super::block_right_to_left(tree, usize::from(owner)).is_some() {
+        record_safe_static_positions(tree, candidates, &result.hoisted);
+    }
+    result
+}
+
+fn record_placements(
+    tree: &mut LayoutSession<'_>,
+    owner: NodeId,
+    candidates: &OofBatch,
+    area: OofPositioningArea,
+) {
+    for candidate in candidates.iter() {
+        let node = usize::from(candidate.node);
+        let offset = tree.nodes[node].layout.location;
+        if let Some(coordinate) = tree.oof_coordinates.get_mut(&node)
+            && coordinate.owner == usize::from(owner)
+        {
+            coordinate.placement = Some(OofPlacement {
+                candidate,
+                area,
+                offset,
+            });
+        }
+    }
+}
+
+/// Recompute selected positioned subtrees after their containing block grows,
+/// retaining the coordinate records of its other positioned children.
+pub(crate) fn refresh_container_candidates(
+    tree: &mut LayoutSession<'_>,
+    owner: NodeId,
+    candidates: &OofCandidates,
+    area: OofPositioningArea,
+) {
+    let batch = oof_batch(tree, candidates.iter());
+    let saved: Vec<_> = batch
+        .iter()
+        .filter_map(|candidate| {
+            let node = usize::from(candidate.node);
+            tree.oof_coordinates
+                .get(&node)
+                .copied()
+                .map(|coordinate| (node, coordinate))
+        })
+        .collect();
+    let style = tree.query_style(usize::from(owner), ReadRole::CoreContainer);
+    let direction = style.direction();
+    let claims = style.is_containing_block();
+    compute_candidates(tree, owner, &batch, area, direction, claims, None);
+    for (node, mut coordinate) in saved {
+        coordinate.initial_owner_origin = tree.layout_origin_of(coordinate.owner);
+        coordinate.initial_static_origin = tree.layout_origin_of(coordinate.static_owner);
+        tree.oof_coordinates.insert(node, coordinate);
+        tree.mark_pagination_extent_dirty(node);
+    }
+    record_placements(tree, owner, &batch, area);
+}
+
+fn compute_candidates(
+    tree: &mut LayoutSession<'_>,
+    owner: NodeId,
+    candidates: &OofBatch,
+    area: OofPositioningArea,
+    direction: Direction,
+    claims: ContainingBlockClaims,
+    grid: Option<grid_oof::GridAxes>,
+) -> OofLayoutResult {
     let candidate_ids = candidates
         .iter()
         .filter(|candidate| claims_position(claims, candidate.position))
         .map(|candidate| candidate.node)
         .collect::<Vec<_>>();
-    let result = with_oof_axes(tree, owner, |tree| {
+    with_oof_axes(tree, owner, |tree| {
         super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
             let span: OofSpan<'_> = candidates.all();
             let basis = Some(GridAreaBasis {
@@ -464,13 +537,7 @@ pub(super) fn layout_candidates(
                 }
             }
         })
-    });
-    tree.clear_hoisted_children(owner);
-    tree.add_hoisted_children(owner, result.hoisted.iter().copied());
-    if super::block_right_to_left(tree, usize::from(owner)).is_some() {
-        record_safe_static_positions(tree, candidates, &result.hoisted);
-    }
-    result
+    })
 }
 
 /// The overrides that make Taffy size a `stretch` box from its static position.
