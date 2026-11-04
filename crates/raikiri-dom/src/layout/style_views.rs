@@ -677,12 +677,13 @@ impl LayoutSession<'_> {
         // Hiding the ratio leaves the cross size to the box itself, which
         // only blocks, flex and grid containers, paragraphs and replaced boxes
         // derive from the main size they are measured at. A flex container on
-        // vertical writing axes keeps the ratio, as it leaves its height to the
-        // flex algorithm.
+        // vertical writing axes derives its height from its width, so it does
+        // that for the cross size of an item of a row only; as an item of a
+        // column it keeps the ratio, which gives the width from the height.
         let derives_cross_from_ratio = match self.nodes[idx].formatting_context {
             FormattingContext::Block | FormattingContext::Grid | FormattingContext::Inline => true,
             FormattingContext::Flex => {
-                crate::layout::dispatch::block_right_to_left(self, idx).is_none()
+                is_row || crate::layout::dispatch::block_right_to_left(self, idx).is_none()
             }
             _ => false,
         };

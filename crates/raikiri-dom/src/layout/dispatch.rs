@@ -3708,7 +3708,9 @@ pub(crate) fn flex_layout(
             }
             // A settled physical width must not be capped again by a height
             // constraint carried back through the ratio during final layout.
-            if ratio_dimensions_are_settled(tree, node_id, &inputs) {
+            let (inputs, height_from_ratio) =
+                with_vertical_ratio_height(tree, node_id, inputs, flex_layout_sized);
+            if height_from_ratio || ratio_dimensions_are_settled(tree, node_id, &inputs) {
                 return without_container_ratio(tree, node_id, |tree| {
                     flex_layout_sized(tree, node_id, inputs)
                 });
@@ -4275,10 +4277,15 @@ fn with_orthogonal_fit_content_height(
         return inputs;
     };
     let idx = usize::from(node_id);
+    // The ratio of a container with a width gives the height that the lines
+    // fit in, which `with_vertical_ratio_height` then raises to its content.
+    let ratio_gives_height = !orthogonal_flow::stretches_to_grid_row(tree, idx)
+        && vertical_ratio_sizes(tree, node_id, &inputs).is_some();
     if inputs.known_dimensions.height.is_some()
         || !tree.physical_style(idx).flex_direction_is_row()
         || !tree.physical_style(idx).size().height.is_auto()
         || !orthogonal_flow::fits_lines_in_offered_height(tree, idx)
+        || ratio_gives_height
     {
         return inputs;
     }
@@ -4394,7 +4401,9 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
             if horizontal {
                 return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
             }
-            if ratio_dimensions_are_settled(tree, node_id, &inputs) {
+            let (inputs, height_from_ratio) =
+                with_vertical_ratio_height(tree, node_id, inputs, grid_layout_sized);
+            if height_from_ratio || ratio_dimensions_are_settled(tree, node_id, &inputs) {
                 return without_container_ratio(tree, node_id, |tree| {
                     grid_layout_sized(tree, node_id, inputs)
                 });
@@ -4471,6 +4480,98 @@ fn with_ratio_height(
             layout(tree, inputs)
         },
     )
+}
+
+/// The sizes the aspect ratio of a flex or grid container that runs on the axes
+/// of a vertical writing mode gives it, once its width is known and its `height`
+/// is `auto`: the metrics of its box, its border-box width and the border-box
+/// height the ratio gives for that width. `None` where the container leaves its
+/// height to the flex or grid algorithm, because the height follows from
+/// elsewhere or the ratio has no width to work from.
+fn vertical_ratio_sizes(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> Option<(block_flow::Metrics, f32, f32)> {
+    let idx = usize::from(node_id);
+    let height_follows_width = inputs.known_dimensions.height.is_none()
+        && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal);
+    let mut style = block_flow::style_input::physical(tree, idx);
+    let auto_height = inputs.sizing_mode == SizingMode::ContentSize || style.size.height.is_auto();
+    if !height_follows_width || style.aspect_ratio.is_none() || !auto_height {
+        return None;
+    }
+    // Padding follows the containing inline size; physical width and height
+    // percentages keep their independent parent-size bases.
+    let basis = vertical_block::containing_inline_size(tree, idx, inputs);
+    style.padding = style
+        .padding
+        .resolve_or_zero(basis)
+        .map(LengthPercentage::length);
+    let metrics =
+        block_flow::Metrics::resolve(&style, false, tree.nodes[idx].ratio_in_content_box, *inputs);
+    Some((metrics, metrics.preferred.width?, metrics.preferred.height?))
+}
+
+/// [`with_ratio_height`] for a flex or grid container that runs on the axes of
+/// a vertical writing mode: the height of such a container is its inline size,
+/// which the ratio gives for its width and the lines or tracks of its content
+/// raise to their min-content size, unless the container scrolls or states a
+/// `min-height` (CSS Sizing 4 §5.1), up to the `max-height` it states.
+///
+/// `sized` is the layout of the container once its height is settled, and the
+/// bool tells that the ratio gave the height, which leaves it nothing to do.
+fn with_vertical_ratio_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> (LayoutInput, bool) {
+    let Some((metrics, width, ratio_height)) = vertical_ratio_sizes(tree, node_id, &inputs) else {
+        return (inputs, false);
+    };
+    // Taffy reads the min-content size of a container that wraps several items
+    // as the sum of their sizes, not as the largest, which is no height for the
+    // ratio to be raised to.
+    let wraps_items = tree.nodes[usize::from(node_id)].layout_display() == Display::Flex
+        && tree.physical_style(usize::from(node_id)).flex_wraps()
+        && tree
+            .child_ids(node_id)
+            .filter(|&child| {
+                let child = usize::from(child);
+                tree.nodes[child].layout_display() != Display::None
+                    && tree.nodes[child].layout_position() != Position::Absolute
+            })
+            .nth(1)
+            .is_some();
+    let height = if metrics.ratio_height && !wraps_items {
+        let probe = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            axis: RequestedAxis::Vertical,
+            known_dimensions: Size {
+                width: Some(width),
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: false,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::MinContent,
+            },
+            ..inputs
+        };
+        let content = without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
+            .size
+            .height;
+        ratio_height.max(content.maybe_clamp(None, metrics.own_max.height))
+    } else {
+        ratio_height
+    };
+    inputs.known_dimensions.height = Some(height);
+    inputs.known_dimensions_are_definite.height = true;
+    (inputs, true)
 }
 
 /// Whether an inherent layout already has a physical width and a known or
