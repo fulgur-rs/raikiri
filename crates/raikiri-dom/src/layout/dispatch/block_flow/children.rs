@@ -446,9 +446,12 @@ pub(super) fn layout(
         // The width `stretch` fills is the room the parent offers.
         let mut metrics_input = child_input;
         metrics_input.available_space.width = room.available_space.width;
+        // The `100%` width of an `<svg>` that fills the room its parent offers
+        // stands in for an `auto` one.
+        let width_stands_in = tree.nodes[usize::from(child)].svg_width_follows_available;
         let child_metrics = Metrics::resolve(
             &style,
-            tree.nodes[usize::from(child)].svg_width_follows_available,
+            width_stands_in,
             tree.nodes[usize::from(child)].ratio_in_content_box,
             metrics_input,
         );
@@ -456,10 +459,13 @@ pub(super) fn layout(
         // to resolve, since its content may raise it.
         child_input.known_dimensions.height = match stretched_height {
             Some(height) => Some(child_metrics.clamp_height(height)),
+            // The height an `<svg>` gets from the width that stands in for its
+            // `auto` one is not its own: the room it ends up in decides the
+            // width, and the ratio gives the height from that.
             None => child_metrics
                 .preferred
                 .height
-                .filter(|_| !child_metrics.ratio_height),
+                .filter(|_| !child_metrics.ratio_height && !width_stands_in),
         };
         if style.float != Float::None {
             child_input.known_dimensions.width = child_metrics
@@ -610,6 +616,11 @@ pub(super) fn layout(
                 // and caption minimum. Probe that used width before deciding
                 // whether its border box fits beside a float.
                 let width = 'width: {
+                    // A width standing in for `auto` fills the room a float
+                    // leaves.
+                    if width_stands_in {
+                        break 'width child_metrics.clamp_width(stretch.max(0.0));
+                    }
                     if !style.item_is_table
                         && let Some(preferred) = child_metrics.preferred.width
                         && !child_metrics.ratio_width

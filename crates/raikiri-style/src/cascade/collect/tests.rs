@@ -599,7 +599,7 @@ fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() 
     // importance reversal, <https://www.w3.org/TR/css-cascade-4/#importance>)
     // and its status as a total function, not an external requirement.
     // No production code path emits an `!important` presentational
-    // hint (`push_img_dimension_hints` always pushes
+    // hint (`push_dimension_hints` always pushes
     // `important = false`), so `(AuthorPresentationalHint, true)`
     // stays production-unreached. `(User, false)` / `(User, true)`
     // used to be production-unreached too (no code path routed any

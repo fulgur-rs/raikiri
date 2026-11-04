@@ -185,14 +185,23 @@ fn an_unresolved_green_image_keeps_the_stand_in_size_over_a_fallback_box() {
 
 #[test]
 fn replaced_content_without_a_natural_size_still_fills_the_width() {
+    let mut object = 0;
+    let doc = laid_out(|doc, body| {
+        object = doc.append_element(Some(body), "object", Some("display:block;height:10px"));
+    });
+    assert_eq!(size(&doc, object), (100.0, 10.0));
+}
+
+#[test]
+fn embedded_content_takes_the_default_object_width_in_a_narrower_parent() {
     let mut boxes = Vec::new();
     let doc = laid_out(|doc, body| {
-        for tag in ["object", "iframe", "video", "embed"] {
+        for tag in ["iframe", "video", "embed"] {
             boxes.push(doc.append_element(Some(body), tag, Some("display:block;height:10px")));
         }
     });
     for node in boxes {
-        assert_eq!(size(&doc, node), (100.0, 10.0));
+        assert_eq!(size(&doc, node), (300.0, 10.0));
     }
 }
 
@@ -1109,12 +1118,12 @@ fn replaced_content_without_a_natural_size_treats_a_keyword_width_as_auto() {
         ("grid", KEYWORD_WIDTH_CONTAINERS[1].1, "justify-self"),
         ("column flex", KEYWORD_WIDTH_CONTAINERS[3].1, "align-self"),
     ] {
-        let auto = child_in_container(container, "iframe", &format!("{align}:stretch"));
+        let auto = child_in_container(container, "object", &format!("{align}:stretch"));
         assert_eq!(auto.1.0, 100.0, "{name} auto");
         for width in ["min-content", "max-content", "fit-content"] {
             let css = format!("{align}:stretch;width:{width}");
             assert_eq!(
-                child_in_container(container, "iframe", &css),
+                child_in_container(container, "object", &css),
                 auto,
                 "{name} {width}"
             );

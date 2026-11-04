@@ -753,7 +753,7 @@ fn body_style_element_reaches_umbrella_cascade() {
 fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path() {
     // The initial scope reduction assumed that implementation in
     // raikiri-style (`crate::cascade::
-    // push_img_dimension_hints`) sufficed because static code inspection
+    // push_dimension_hints`) sufficed because static code inspection
     // found generic null-namespace attribute wiring into `Node.attributes`
     // in `crates/raikiri-html/src/sink.rs::wire_side_tables`. This wiring
     // had not been executed. Unlike raikiri-style's `TestDoc` unit test
@@ -820,7 +820,7 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
     // value, not just width) — `extra_stylesheets` reachability on its own is already
     // covered by `extra_stylesheets_user_rule_overrides_ua_via_umbrella` above, but this
     // test is the one cited by name from crates/raikiri-style/src/cascade.rs's
-    // `push_img_dimension_hints` doc as *the* end-to-end check for the flipped ranking, so it
+    // `push_dimension_hints` doc as *the* end-to-end check for the flipped ranking, so it
     // should stand alone.
     let extra: &[&str] = &["img { width: 30px; height: 7px }"];
     let opts = raikiri::ParseOptions::new().extra_stylesheets(extra);

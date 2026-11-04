@@ -13,12 +13,14 @@ use crate::style_dom::{
 use super::candidate::{CandidateSink, Precedence};
 use super::collect::{MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER, MARGIN_COLLAPSING_QUIRK_SPECIFICITY};
 
-/// Promote HTML `<img width>` / `<img height>` to presentational hints.
+/// Promote HTML `<img width>` / `<img height>` to presentational hints, and
+/// those of the other embedded content whose size they give: `<iframe>`,
+/// `<embed>` and `<video>`.
 ///
 /// # Spec mapping (verbatim, live HTML Standard)
 ///
-/// Map HTML `img` `width` and `height` attributes to presentational hints,
-/// following HTML Living Standard §15.4.3:
+/// Map HTML `img`, `iframe`, `embed` and `video` `width` and `height`
+/// attributes to presentational hints, following HTML Living Standard §15.4.3:
 /// <https://html.spec.whatwg.org/multipage/rendering.html#dimRendering>.
 /// Values use the HTML dimension-value parser; invalid attributes produce no
 /// hint, while zero is a valid value.
@@ -26,9 +28,9 @@ use super::collect::{MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER, MARGIN_COLLAPSING_QUI
 /// The hints use CSS Cascading Level 5's author-presentational-hint origin:
 /// <https://drafts.csswg.org/css-cascade-5/#preshint>. They lose to normal
 /// author declarations and beat normal user-origin declarations. This helper
-/// handles `img` dimensions only; `aspect-ratio` and other element mappings
-/// are outside its scope.
-pub(crate) fn push_img_dimension_hints(
+/// handles the dimensions of `img`, `iframe`, `embed` and `video` only;
+/// `aspect-ratio` and other element mappings are outside its scope.
+pub(crate) fn push_dimension_hints(
     elem: &impl StyleElement,
     sink: &mut CandidateSink<'_>,
 ) -> Result<(), CascadeError> {
@@ -43,7 +45,11 @@ pub(crate) fn push_img_dimension_hints(
     // `ruletree.rs`'s `<template>` HTML-only gate
     // (`tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none()`)
     // and the same principle applies to attribute-selector matching.
-    if !elem.tag_name().eq_ignore_ascii_case("img") || elem.namespace_uri().is_some() {
+    if !["img", "iframe", "embed", "video"]
+        .iter()
+        .any(|name| elem.tag_name().eq_ignore_ascii_case(name))
+        || elem.namespace_uri().is_some()
+    {
         return Ok(());
     }
     if let Some(width) = elem.attr("width").and_then(parse_html_dimension_value) {
@@ -71,7 +77,7 @@ pub(crate) fn push_img_dimension_hints(
 /// same way the other same-file examples of
 /// "DOM tag name vs. hardcoded literal" already are:
 /// `elem.tag_name().eq_ignore_ascii_case("img")`
-/// ([`push_img_dimension_hints`]) and
+/// ([`push_dimension_hints`]) and
 /// `tag.eq_ignore_ascii_case("template")` (`ruletree.rs`'s `<template>`
 /// gate).
 fn is_element_with_default_margins(tag_name: &str) -> bool {
@@ -298,7 +304,7 @@ fn substantial_sibling_bounds<D: StyleDom>(
 ///
 /// Both `elem` and its `body`/`td`/`th` container are gated on
 /// `namespace_uri().is_none()` — same posture
-/// [`push_img_dimension_hints`]'s own doc explains for the same reason:
+/// [`push_dimension_hints`]'s own doc explains for the same reason:
 /// HTML LS's rendering rules (§15.2's own `@namespace
 /// "http://www.w3.org/1999/xhtml";` scoping, which §15.3.9 falls under)
 /// are scoped to the HTML namespace, and [`StyleElement`] is a generic

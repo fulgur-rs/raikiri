@@ -1457,6 +1457,16 @@ impl Node {
         }
     }
 
+    /// Whether the natural width and height of this replaced element also give
+    /// it a natural aspect ratio. Only an image has its ratio from its size: a
+    /// canvas states its own, and an inline SVG root, an `<iframe>`, a
+    /// `<video>` and an `<embed>` take the 300x150 default object size
+    /// without one (CSS Images 3 §4.3), so a stated height does not give them
+    /// a width.
+    pub(crate) fn size_gives_ratio(&self) -> bool {
+        self.tag_name() == Some("img")
+    }
+
     /// Full intrinsic box, including an optional natural aspect ratio.
     pub(crate) fn image_intrinsic_box(&self) -> Option<IntrinsicBox> {
         match &self.data {

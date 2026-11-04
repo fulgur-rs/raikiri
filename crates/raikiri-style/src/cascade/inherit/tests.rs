@@ -11374,7 +11374,7 @@ fn border_revert_skips_presentational_hint_carve_out() {
     // Cover the `revert` carve-out that ignores `AuthorPresentationalHint` when
     // rolling back from Author: `<img width>` hint (presentational) plus User 9px;
     // Author `revert` must skip the hint and use User 9px.
-    // `push_img_dimension_hints` creates width/height hints for `<img>`; here we
+    // `push_dimension_hints` creates width/height hints for `<img>`; here we
     // exercise the rollback path directly via width (height hint is irrelevant).
     let mut doc = TestDoc::new();
     let img = doc.push_element(0, "img", None);

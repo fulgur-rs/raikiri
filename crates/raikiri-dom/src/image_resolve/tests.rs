@@ -385,6 +385,108 @@ fn canvas_intrinsic_handles_invalid_zero_overlong_and_foreign() {
 }
 
 #[test]
+fn embedded_content_takes_the_default_object_size_without_a_ratio() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let iframe = doc.append_element(Some(root), "iframe", None::<&str>);
+    let video = doc.append_element(Some(root), "video", None::<&str>);
+    let embed = doc.append_element(Some(root), "embed", None::<&str>);
+    doc.mark_in_document_flags();
+    resolve_default_object_sizes(&mut doc);
+    for id in [iframe, video, embed] {
+        let natural = doc.nodes[id].image_intrinsic_box().expect("a natural size");
+        assert_eq!((natural.width, natural.height), (300.0, 150.0));
+        assert_eq!(natural.aspect_ratio, None);
+        assert!(!doc.nodes[id].size_gives_ratio());
+    }
+    // Nothing changed the second time, so the layout caches stay valid.
+    doc.layout_dirty = false;
+    resolve_default_object_sizes(&mut doc);
+    assert!(!doc.layout_dirty);
+}
+
+#[test]
+fn an_image_without_a_source_has_a_natural_size_of_nothing() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let bare = doc.append_element(Some(root), "img", None::<&str>);
+    let empty_alt = doc.append_element(Some(root), "img", None::<&str>);
+    doc.set_element_attributes(empty_alt, vec![("alt".into(), " ".into())]);
+    // These name a source or have text to show: the resolver or the text
+    // decides their size.
+    let sourced = doc.append_element(Some(root), "img", None::<&str>);
+    doc.set_element_attributes(sourced, vec![("src".into(), "a.png".into())]);
+    let blank_src = doc.append_element(Some(root), "img", None::<&str>);
+    doc.set_element_attributes(blank_src, vec![("src".into(), "".into())]);
+    let set = doc.append_element(Some(root), "img", None::<&str>);
+    doc.set_element_attributes(set, vec![("srcset".into(), "a.png 2x".into())]);
+    let blank_set = doc.append_element(Some(root), "img", None::<&str>);
+    doc.set_element_attributes(blank_set, vec![("srcset".into(), " ".into())]);
+    let alt = doc.append_element(Some(root), "img", None::<&str>);
+    doc.set_element_attributes(alt, vec![("alt".into(), "text".into())]);
+    let picture = doc.append_element(Some(root), "picture", None::<&str>);
+    let in_picture = doc.append_element(Some(picture), "img", None::<&str>);
+    doc.mark_in_document_flags();
+    resolve_default_object_sizes(&mut doc);
+    for id in [bare, empty_alt, blank_set] {
+        assert_eq!(doc.nodes[id].image_intrinsic_size(), Some((0.0, 0.0)));
+    }
+    for id in [sourced, blank_src, set, alt, in_picture] {
+        assert_eq!(doc.nodes[id].image_intrinsic_size(), None);
+    }
+    // An image whose source is taken away has nothing to show, and shows its
+    // text once it has some.
+    doc.set_element_attributes(sourced, Vec::new());
+    resolve_default_object_sizes(&mut doc);
+    assert_eq!(doc.nodes[sourced].image_intrinsic_size(), Some((0.0, 0.0)));
+    doc.set_element_attributes(sourced, vec![("alt".into(), "text".into())]);
+    resolve_default_object_sizes(&mut doc);
+    assert_eq!(doc.nodes[sourced].image_intrinsic_size(), None);
+}
+
+#[test]
+fn the_inline_svg_pass_leaves_the_sizes_other_passes_set() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let frame = doc.append_element(Some(root), "iframe", None::<&str>);
+    let canvas = doc.append_element(Some(root), "canvas", None::<&str>);
+    let div = doc.append_element(Some(root), "div", None::<&str>);
+    doc.mark_in_document_flags();
+    resolve_canvas_intrinsic_sizes(&mut doc);
+    resolve_default_object_sizes(&mut doc);
+    doc.layout_dirty = false;
+    resolve_inline_svg_intrinsic_sizes(&mut doc);
+    assert!(!doc.layout_dirty);
+    assert_eq!(
+        doc.nodes[frame].image_intrinsic_size(),
+        Some((300.0, 150.0))
+    );
+    assert_eq!(
+        doc.nodes[canvas].image_intrinsic_size(),
+        Some((300.0, 150.0))
+    );
+    assert_eq!(doc.nodes[div].image_intrinsic_size(), None);
+}
+
+#[test]
+fn default_object_sizes_skip_other_elements_foreign_ones_and_inert_subtrees() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let div = doc.append_element(Some(root), "div", None::<&str>);
+    let foreign = doc.append_element(Some(root), "iframe", None::<&str>);
+    doc.set_element_namespace(foreign, Some("http://www.w3.org/2000/svg".into()));
+    doc.mark_in_document_flags();
+    resolve_default_object_sizes(&mut doc);
+    assert_eq!(doc.nodes[div].image_intrinsic_size(), None);
+    assert_eq!(doc.nodes[foreign].image_intrinsic_size(), None);
+    // An element outside the rendered tree is not visited.
+    let inert = doc.append_element(None, "iframe", None::<&str>);
+    doc.mark_in_document_flags();
+    resolve_default_object_sizes(&mut doc);
+    assert_eq!(doc.nodes[inert].image_intrinsic_size(), None);
+}
+
+#[test]
 fn resolved_urls_follow_relative_sources_base_changes_and_attribute_mutation() {
     let mut document = Document::new();
     let root = document.root_index();
