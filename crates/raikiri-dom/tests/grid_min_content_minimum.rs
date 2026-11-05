@@ -424,3 +424,55 @@ fn nested_ratio_grids_preserve_content_height_without_repeating_intrinsic_work()
         &[("g", [8.0, 8.0, 0.0, 20.0]), ("i", [8.0, 8.0, 0.0, 20.0])],
     );
 }
+
+fn assert_vertical_grid_dimensions(group: &str) {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("data/grid-minimum-vertical.json"))
+            .expect("Chromium measurements");
+    let mut mismatches = Vec::new();
+    for case in oracle["cases"].as_array().expect("cases") {
+        if case["group"].as_str() != Some(group) {
+            continue;
+        }
+        let actual = boxes(case["html"].as_str().expect("markup"));
+        if case["relative_inline"].as_bool() == Some(true) {
+            let grid = actual.iter().find(|(name, _)| name == "g").expect("grid").1;
+            let item = actual.iter().find(|(name, _)| name == "i").expect("item").1;
+            let want = (case["boxes"]["i"]["y"].as_f64().expect("item y")
+                - case["boxes"]["g"]["y"].as_f64().expect("grid y")) as f32;
+            if (item[1] - grid[1] - want).abs() >= 0.01 {
+                mismatches.push(format!(
+                    "{}: relative inline offset {}, expected {want}",
+                    case["name"].as_str().expect("name"),
+                    item[1] - grid[1]
+                ));
+            }
+        }
+        for id in ["g", "i"] {
+            let got = actual.iter().find(|(name, _)| name == id).expect("box").1;
+            let expected = &case["boxes"][id];
+            let want = [
+                expected["width"].as_f64().expect("width") as f32,
+                expected["height"].as_f64().expect("height") as f32,
+            ];
+            if (got[2] - want[0]).abs() >= 0.01 || (got[3] - want[1]).abs() >= 0.01 {
+                mismatches.push(format!(
+                    "{} #{id}: size {:?}, expected {want:?}",
+                    case["name"].as_str().expect("name"),
+                    &got[2..]
+                ));
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn vertical_and_rtl_grid_minimums_match_chromium_dimensions() {
+    assert_vertical_grid_dimensions("core");
+}
+
+#[test]
+fn vertical_grid_minimum_probes_preserve_keywords_edges_and_shared_tracks() {
+    assert_vertical_grid_dimensions("guard");
+}

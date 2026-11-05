@@ -571,14 +571,22 @@ fn apply_computed_to_style_in_session_inner(
                 )),
             );
         }
-        if let Some(fallback) =
+        if let Some(hint) =
             settled::unstretched_keyword_height_alignment(doc, cascade, idx, &settled_styles)
         {
-            settled_styles[idx].align_self = Some(fallback);
-            doc.record_pass_override(
-                idx,
-                raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
-            );
+            let (alignment, replace) = if hint.justify {
+                (
+                    &mut settled_styles[idx].justify_self,
+                    raikiri_layout_style::OwnedPropertyOverride::justify_self as fn(_) -> _,
+                )
+            } else {
+                (
+                    &mut settled_styles[idx].align_self,
+                    raikiri_layout_style::OwnedPropertyOverride::align_self as fn(_) -> _,
+                )
+            };
+            *alignment = Some(hint.fallback);
+            doc.record_pass_override(idx, replace(*alignment));
         }
         match settled::keyword_height_insets(doc, cascade, idx) {
             Some(settled::KeywordHeightInsets::Ignore(inset)) => {

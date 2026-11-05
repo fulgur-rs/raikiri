@@ -424,27 +424,36 @@ impl LayoutSession<'_> {
         {
             return height;
         }
-        let key = self.nodes.box_key(idx).expect("paragraph has a box key");
-        let record = self.box_style_data.get(key).expect("paragraph style");
-        // A probe may intentionally replace the keyword with auto. Other
-        // property overrides leave the paragraph's preferred height intact.
+        match self.retained_height_keyword(idx) {
+            Some(raikiri_style::ContentSizeKeyword::MinContent) => Dimension::min_content(),
+            Some(raikiri_style::ContentSizeKeyword::MaxContent) => Dimension::max_content(),
+            Some(raikiri_style::ContentSizeKeyword::FitContent) => Dimension::fit_content(),
+            _ => height,
+        }
+    }
+
+    /// The authored height keyword retained by a source box, unless a pass
+    /// or scoped override intentionally replaces its height. This reads
+    /// metadata only; it does not resolve a preferred height.
+    pub(crate) fn retained_height_keyword(
+        &self,
+        idx: usize,
+    ) -> Option<raikiri_style::ContentSizeKeyword> {
+        let key = self.nodes.box_key(idx).expect("live box has a key");
+        let record = self.box_style_data.get(key).expect("box style");
+        // An auto override also intentionally disables keyword restoration.
         if record
             .pass
             .iter()
             .chain(self.scoped_overrides.entries(key))
             .any(|entry| entry.overrides_length(raikiri_layout_style::LengthProperty::Height))
         {
-            return height;
+            return None;
         }
         let LayoutBase::Source(source) = record.base else {
-            return height;
+            return None;
         };
-        match self.style_views.cascade().computed[source].height_keyword {
-            Some(raikiri_style::ContentSizeKeyword::MinContent) => Dimension::min_content(),
-            Some(raikiri_style::ContentSizeKeyword::MaxContent) => Dimension::max_content(),
-            Some(raikiri_style::ContentSizeKeyword::FitContent) => Dimension::fit_content(),
-            _ => height,
-        }
+        self.style_views.cascade().computed[source].height_keyword
     }
 
     /// `reduce` applied to the box's physical style.
