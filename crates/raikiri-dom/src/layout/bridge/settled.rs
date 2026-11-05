@@ -213,6 +213,13 @@ pub(super) fn is_stretched_by_replaced_keyword_width_in_grid(
         })
 }
 
+/// The alignment along physical height that a keyword item must not stretch.
+pub(super) struct KeywordHeightAlignment {
+    /// Whether physical height is the grid's inline axis.
+    pub(super) justify: bool,
+    pub(super) fallback: AlignItems,
+}
+
 /// The alignment that replaces a stretch of item `idx` when its `height` is
 /// `min-content`, `max-content` or `fit-content` and it sits in a grid or in a
 /// flex container whose cross axis is the physical height.
@@ -220,8 +227,9 @@ pub(super) fn is_stretched_by_replaced_keyword_width_in_grid(
 /// Only an `auto` height is stretched (CSS Box Alignment 3 §6.1), but the cascade
 /// computes the keyword to `auto` ([`ComputedValues::height_keyword`] is what is
 /// left of it), so Taffy would stretch the box. It sizes itself by its content as
-/// it does for `auto`, and is aligned at the start of the block axis instead,
-/// which is where a stretch that does not apply falls back to: `start` in a grid
+/// it does for `auto`, and is aligned at the start of the height axis instead
+/// (the inline axis of a vertical grid), where a stretch that does not apply
+/// falls back to: `start` in a grid
 /// and `flex-start` in a flex container, whose cross-start edge `wrap-reverse`
 /// moves. `fit-content(<length>)` stays out, as browsers treat it like `auto`.
 /// So do an absolutely positioned box, whose size comes from its insets, and an
@@ -231,7 +239,7 @@ pub(super) fn unstretched_keyword_height_alignment(
     cascade: &CascadeResult,
     idx: usize,
     settled: &[Settled],
-) -> Option<AlignItems> {
+) -> Option<KeywordHeightAlignment> {
     let values = &cascade.computed[idx];
     if values.height_keyword.is_none()
         || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
@@ -242,24 +250,30 @@ pub(super) fn unstretched_keyword_height_alignment(
         return None;
     }
     let parent = doc.taffy_parent_of(idx)?;
-    let (container, fallback) =
+    let (container, fallback, justify) =
         if let Some(grid) = container_laid_out_as(doc, cascade, parent, Display::Grid) {
-            (grid, AlignItems::START)
+            (grid, AlignItems::START, uses_vertical_axes(cascade, parent))
         } else {
             let flex = container_laid_out_as(doc, cascade, parent, Display::Flex)?;
             if !flex_cross_axis_is_vertical(cascade, parent, flex) {
                 return None;
             }
-            (flex, AlignItems::FLEX_START)
+            (flex, AlignItems::FLEX_START, false)
         };
-    matches!(
+    let alignment = if justify {
+        settled[idx]
+            .justify_self
+            .unwrap_or_else(|| container_alignment(container.justify_items))
+    } else {
         settled[idx]
             .align_self
             .unwrap_or_else(|| container_alignment(container.align_items))
-            .keyword,
+    };
+    matches!(
+        alignment.keyword,
         AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
     )
-    .then_some(fallback)
+    .then_some(KeywordHeightAlignment { justify, fallback })
 }
 
 /// The containing block of the absolutely (`fixed` false) or fixed positioned

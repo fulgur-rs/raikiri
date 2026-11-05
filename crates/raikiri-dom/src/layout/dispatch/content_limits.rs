@@ -1521,27 +1521,31 @@ pub(super) fn with_item_content_limits(
     with_item_content_limits_for_parent_sizes(tree, node_id, inputs, |_| parent_size, dispatch)
 }
 
-/// The in-flow items of the grid container `node_id` that a measure of the
-/// container's min-content width must not widen past their `min-width`, each
-/// with that `min-width` in the box-sizing box of the item's style.
+/// The in-flow items held to their explicit minimum while measuring the
+/// min-content inline size of the grid container `node_id`.
 ///
-/// Sized under a min-content constraint, a track takes the min-content
-/// contribution of an item in place of its minimum contribution (CSS Grid 2
-/// §11.5). Browsers do this only for an item whose `min-width` is `auto`: one
-/// that states a `min-width` contributes no more than that, so a grid of
-/// `min-width: 0` items can be as narrow as `0`. Taffy takes the min-content
-/// contribution of every item that is not a scroll container, so the items
-/// here are measured as if their `width` were their `min-width`, which makes
-/// both contributions the minimum one.
-fn items_held_to_minimum_width(
+/// An item with an auto preferred inline size contributes its minimum size
+/// under this constraint (CSS Grid 2 section 11.5). The algorithm otherwise
+/// takes its min-content contribution, so the probe temporarily sets the
+/// item's preferred inline size to its minimum. All inputs and overrides
+/// here use physical axes, outside the grid's writing-mode adapter.
+fn items_held_to_minimum_inline_size(
     tree: &LayoutSession<'_>,
     node_id: NodeId,
     inputs: &LayoutInput,
+    vertical: bool,
 ) -> Vec<(usize, f32)> {
+    let (known, space) = if vertical {
+        (
+            inputs.known_dimensions.height,
+            inputs.available_space.height,
+        )
+    } else {
+        (inputs.known_dimensions.width, inputs.available_space.width)
+    };
     if inputs.run_mode != RunMode::ComputeSize
-        || inputs.known_dimensions.width.is_some()
-        || !matches!(inputs.available_space.width, AvailableSpace::MinContent)
-        || super::grid_oof::right_to_left(tree, usize::from(node_id)).is_some()
+        || known.is_some()
+        || !matches!(space, AvailableSpace::MinContent)
         || !columns_have_no_content_minimum(&tree.physical_style(usize::from(node_id)))
     {
         return Vec::new();
@@ -1556,22 +1560,39 @@ fn items_held_to_minimum_width(
                 return None;
             }
             let style = tree.physical_style(idx);
-            // This probe measures only the minimum width contribution.
+            let (preferred, minimum) = if vertical {
+                (style.size().height, style.min_size().height)
+            } else {
+                (style.size().width, style.min_size().width)
+            };
             // Replaced items keep their natural ratio in the authored-style
             // layout that follows, even when that size overflows the track.
-            if !style.size().width.is_auto() || super::is_scroll_container(style.overflow()) {
+            if !preferred.is_auto() || super::is_scroll_container(style.overflow()) {
                 return None;
             }
-            // Cyclic minimum-size percentages resolve against zero for the
-            // intrinsic contribution, including those inside calc(). The
-            // authored expression is restored for the final track-based size
-            // (CSS Sizing 3 section 5.2.1).
-            let minimum = match style.min_size().width.expand() {
+            // Height keywords are retained separately from their auto bridge
+            // representation. Min/max-content are not auto contributions;
+            // fit-content depends on the available space and uses this probe,
+            // then regains its authored size in the final layout.
+            if vertical
+                && matches!(
+                    tree.retained_height_keyword(idx),
+                    Some(
+                        raikiri_style::ContentSizeKeyword::MinContent
+                            | raikiri_style::ContentSizeKeyword::MaxContent
+                    )
+                )
+            {
+                return None;
+            }
+            // Cyclic percentages, including those inside calc(), resolve
+            // against zero only for the intrinsic contribution. The authored
+            // expression is restored for the final track-based size.
+            let minimum = match minimum.expand() {
                 ExpandedLengthPercentageAuto::Length(minimum) => minimum,
                 ExpandedLengthPercentageAuto::Percent(_) => 0.0,
                 ExpandedLengthPercentageAuto::Calc(_) => {
-                    crate::layout::used_style_length_percentage_auto(style.min_size().width, 0.0)?
-                        .max(0.0)
+                    crate::layout::used_style_length_percentage_auto(minimum, 0.0)?.max(0.0)
                 }
                 _ => return None,
             };
@@ -1580,14 +1601,12 @@ fn items_held_to_minimum_width(
         .collect()
 }
 
-/// Lay out the grid `node_id` with `dispatch`, measuring its min-content width
-/// with the items [`items_held_to_minimum_width`] names held to their
-/// `min-width`.
+/// Measure the min-content inline size of grid `node_id` with the items
+/// [`items_held_to_minimum_inline_size`] names held to their minimum.
 ///
-/// The width is measured on its own, without the rows, since an item held to
-/// its minimum is narrower than the track it stands in whenever another item
-/// of the track is wider. Every other measure of the grid then runs at that
-/// width, with the items as the author styled them.
+/// That size is measured alone: an item held to its minimum can be narrower
+/// than another item in the same track. Other measures run at the resulting
+/// inline size with every item restored to its authored style.
 pub(super) fn with_grid_item_content_limits(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -1595,45 +1614,54 @@ pub(super) fn with_grid_item_content_limits(
     parent_size: Size<Option<f32>>,
     mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let held = items_held_to_minimum_width(tree, node_id, &inputs);
+    let vertical = super::grid_oof::right_to_left(tree, usize::from(node_id)).is_some();
+    let held = items_held_to_minimum_inline_size(tree, node_id, &inputs, vertical);
     if held.is_empty() {
         return with_resolved_grid_item_limits(tree, node_id, inputs, parent_size, dispatch);
     }
-
-    let width_inputs = LayoutInput {
-        axis: RequestedAxis::Horizontal,
-        ..inputs
+    let axis = if vertical {
+        RequestedAxis::Vertical
+    } else {
+        RequestedAxis::Horizontal
     };
-    // The override changes the inputs the box inside an item is asked with and
-    // the item's own sizes, so it stays out of the cache generation and the
-    // item's caches are kept apart while it lasts. Moving the generation would
-    // have a chain of nested grids measure the one inside it again at each width
-    // its parent tries.
-    let width_output = scoped(tree, |tree| {
+    let inline_inputs = LayoutInput { axis, ..inputs };
+    // Keep the probe's item caches separate without advancing the generation:
+    // a generation change repeats nested intrinsic work at every parent size.
+    let inline_output = scoped(tree, |tree| {
         with_saved_probe_caches(tree, held.len(), |tree, saved| {
             for &(idx, minimum) in &held {
                 let key = tree.nodes.box_key(idx).expect("live grid item");
-                let width = OwnedPropertyOverride::length(
-                    LengthProperty::Width,
+                let inline_size = OwnedPropertyOverride::length(
+                    if vertical {
+                        LengthProperty::Height
+                    } else {
+                        LengthProperty::Width
+                    },
                     raikiri_style::ComputedLengthPercentageOrAuto::Px(minimum),
                     true,
                 )
-                .expect("resolved pixel width");
+                .expect("resolved pixel inline size");
                 saved.push((idx, tree.take_layout_cache(idx)));
-                tree.push_local_overrides(vec![(key, width)]);
+                tree.push_local_overrides(vec![(key, inline_size)]);
             }
-            with_resolved_grid_item_limits(tree, node_id, width_inputs, parent_size, &mut dispatch)
+            with_resolved_grid_item_limits(tree, node_id, inline_inputs, parent_size, &mut dispatch)
         })
     });
-    if inputs.axis == RequestedAxis::Horizontal {
-        return width_output;
+    if inputs.axis == axis {
+        return inline_output;
     }
-
-    let width = width_output.size.width;
     let mut inputs = inputs;
-    inputs.known_dimensions.width = Some(width);
-    inputs.known_dimensions_are_definite.width = true;
-    inputs.available_space.width = AvailableSpace::Definite(width);
+    if vertical {
+        let height = inline_output.size.height;
+        inputs.known_dimensions.height = Some(height);
+        inputs.known_dimensions_are_definite.height = true;
+        inputs.available_space.height = AvailableSpace::Definite(height);
+    } else {
+        let width = inline_output.size.width;
+        inputs.known_dimensions.width = Some(width);
+        inputs.known_dimensions_are_definite.width = true;
+        inputs.available_space.width = AvailableSpace::Definite(width);
+    }
     with_resolved_grid_item_limits(tree, node_id, inputs, parent_size, dispatch)
 }
 

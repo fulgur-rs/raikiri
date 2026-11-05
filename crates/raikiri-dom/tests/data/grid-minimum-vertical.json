@@ -1,0 +1,3053 @@
+{
+  "chromium": "152.0.7977.82 Arch Linux",
+  "viewport": [
+    800,
+    600
+  ],
+  "devicePixelRatio": 1,
+  "font": "Ahem 10px/10px; await document.fonts.ready",
+  "body_margin": 8,
+  "lead_block_height": 100,
+  "cases": [
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 5,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 5.5,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-auto item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 5,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 5.5,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb ltr target-min-0 item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 5,
+          "height": 20
+        },
+        "i": {
+          "x": 7.5,
+          "y": 108,
+          "width": 5.5,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-auto item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:auto\"><div id=i style=\"min-width:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 50,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 0,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 5,
+          "height": 20
+        },
+        "i": {
+          "x": 7.5,
+          "y": 108,
+          "width": 5.5,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "horizontal-tb rtl target-min-0 item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:horizontal-tb;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-width:0\"><div id=i style=\"min-width:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 20
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-auto item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-rl ltr target-min-0 item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 110.5,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-auto item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 110.5,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-rl rtl target-min-0 item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-auto item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-lr ltr target-min-0 item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 110.5,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-auto item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:auto\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-auto",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:auto\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-0",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-10px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-50px",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:50px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 50
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-10%",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10%\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-calc(10% + 5px)",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:calc(10% + 5px)\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 111,
+          "width": 20,
+          "height": 5
+        },
+        "i": {
+          "x": 8,
+          "y": 110.5,
+          "width": 20,
+          "height": 5.5
+        }
+      }
+    },
+    {
+      "name": "vertical-lr rtl target-min-0 item-min-min-content",
+      "group": "core",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:min-content\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl ltr min-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl ltr min-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl ltr max-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl ltr max-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl ltr fit-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl ltr fit-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "edges vertical-rl ltr padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "edges vertical-rl ltr box-sizing:content-box;padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;box-sizing:content-box;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        }
+      }
+    },
+    {
+      "name": "edges vertical-rl ltr grid-column:span 1;overflow:hidden",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;grid-column:span 1;overflow:hidden\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "shared-column vertical-rl ltr",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div><div style=\"min-height:25px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 25
+        },
+        "i": {
+          "x": 28,
+          "y": 108,
+          "width": 20,
+          "height": 25
+        }
+      }
+    },
+    {
+      "name": "nested vertical-rl ltr",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl rtl min-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl rtl min-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl rtl max-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl rtl max-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl rtl fit-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 76,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-rl rtl fit-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 78,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "edges vertical-rl rtl padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "edges vertical-rl rtl box-sizing:content-box;padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;box-sizing:content-box;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        }
+      }
+    },
+    {
+      "name": "edges vertical-rl rtl grid-column:span 1;overflow:hidden",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;grid-column:span 1;overflow:hidden\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "shared-column vertical-rl rtl",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div><div style=\"min-height:25px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 25
+        },
+        "i": {
+          "x": 28,
+          "y": 108,
+          "width": 20,
+          "height": 25
+        }
+      }
+    },
+    {
+      "name": "nested vertical-rl rtl",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 106,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr ltr min-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr ltr min-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr ltr max-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr ltr max-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr ltr fit-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr ltr fit-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "edges vertical-lr ltr padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "edges vertical-lr ltr box-sizing:content-box;padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;box-sizing:content-box;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        }
+      }
+    },
+    {
+      "name": "edges vertical-lr ltr grid-column:span 1;overflow:hidden",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;grid-column:span 1;overflow:hidden\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "shared-column vertical-lr ltr",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div><div style=\"min-height:25px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 25
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 25
+        }
+      }
+    },
+    {
+      "name": "nested vertical-lr ltr",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr rtl min-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr rtl min-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:min-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr rtl max-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr rtl max-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:max-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 10,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr rtl fit-content min-0",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 76,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "preferred vertical-lr rtl fit-content min-10px",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 78,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "edges vertical-lr rtl padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "edges vertical-lr rtl box-sizing:content-box;padding:3px 2px;border:1px solid",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;box-sizing:content-box;padding:3px 2px;border:1px solid\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 26,
+          "height": 18
+        }
+      }
+    },
+    {
+      "name": "edges vertical-lr rtl grid-column:span 1;overflow:hidden",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px;grid-column:span 1;overflow:hidden\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "shared-column vertical-lr rtl",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div><div style=\"min-height:25px\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 40,
+          "height": 25
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 25
+        }
+      }
+    },
+    {
+      "name": "nested vertical-lr rtl",
+      "group": "guard",
+      "relative_inline": false,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div style=\"display:grid;min-height:0\"><div id=i style=\"min-height:10px\">AAAA BBBB</div></div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 106,
+          "width": 20,
+          "height": 10
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl ltr min-0 start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl ltr min-0 center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 96,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl ltr min-0 end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 76,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl ltr min-10px start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl ltr min-10px center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 93,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl ltr min-10px end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 78,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl rtl min-0 start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 76,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl rtl min-0 center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 96,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl rtl min-0 end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl rtl min-10px start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 78,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl rtl min-10px center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 93,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-rl rtl min-10px end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-rl;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr ltr min-0 start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr ltr min-0 center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 96,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr ltr min-0 end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 76,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr ltr min-10px start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr ltr min-10px center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 93,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr ltr min-10px end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:ltr;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 78,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr rtl min-0 start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 76,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr rtl min-0 center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 96,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr rtl min-0 end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:0;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 0
+        },
+        "i": {
+          "x": 8,
+          "y": 116,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr rtl min-10px start",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:start\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 78,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr rtl min-10px center",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:center\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 93,
+          "width": 20,
+          "height": 40
+        }
+      }
+    },
+    {
+      "name": "explicit-justify vertical-lr rtl min-10px end",
+      "group": "guard",
+      "relative_inline": true,
+      "html": "<div style=\"height:100px\"></div><div style=\"display:inline-grid;writing-mode:vertical-lr;direction:rtl;grid-template-columns:min-content\"><div id=g style=\"display:grid;min-height:0\"><div id=i style=\"height:fit-content;min-height:10px;justify-self:end\">AAAA BBBB</div></div></div>",
+      "boxes": {
+        "g": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 10
+        },
+        "i": {
+          "x": 8,
+          "y": 108,
+          "width": 20,
+          "height": 40
+        }
+      }
+    }
+  ]
+}
