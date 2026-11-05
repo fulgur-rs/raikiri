@@ -26,6 +26,7 @@ use crate::layout::ifc::boxes::{box_sizing_height_adjustment, max_height_cap, op
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
 };
+use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::columns_follow_their_items;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
@@ -259,7 +260,7 @@ pub(super) fn stretches_to_grid_row(tree: &LayoutSession<'_>, idx: usize) -> boo
     let Some(grid) = horizontal_grid_of_vertical_item(tree, idx) else {
         return false;
     };
-    let style = tree.physical_style(idx);
+    let style = tree.query_style(idx, ReadRole::GridItem);
     let margin = style.margin();
     if margin.top.is_auto() || margin.bottom.is_auto() {
         return false;

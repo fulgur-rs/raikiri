@@ -885,3 +885,133 @@ pub(super) fn wrapping_min_content_width(
     }
     widest
 }
+
+/// The content-box min-content inline height of a vertical wrapping flex box.
+///
+/// Each item contributes its own preferred min-content height, within its
+/// bounds and with its margins, independently of its flex basis or flexing.
+/// For a row, its width is the cross size before main sizing; for a column,
+/// it is the unflexed main size before cross sizing. An automatic width stays
+/// unknown in both measurements. Physical width percentages keep their
+/// definite block-size basis, while percentage edges have no definite inline
+/// height and contribute zero. The caller adds the container's insets once.
+pub(super) fn wrapping_min_content_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    parent_width: Option<f32>,
+) -> f32 {
+    let children: Vec<NodeId> = tree.child_ids(node_id).collect();
+    let mut tallest: f32 = 0.0;
+    for child in children {
+        let style = tree.physical_style(usize::from(child));
+        if style.box_generation_mode() == BoxGenerationMode::None
+            || style.position() == Position::Absolute
+        {
+            continue;
+        }
+        let margin = style.margin();
+        let margins = margins_sum(margin.top, margin.bottom, None);
+        let padding = style.padding();
+        let border = style.border();
+        let insets: f32 = [padding.left, padding.right, border.left, border.right]
+            .into_iter()
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0))
+            .sum();
+        let edges = if style.box_sizing() == BoxSizing::ContentBox {
+            insets
+        } else {
+            0.0
+        };
+        // Keep the physical width basis without giving cyclic percentage
+        // edges that block-size basis instead of their unknown inline size.
+        let edge_overrides = if has_percent_padding_or_border(&style) {
+            [
+                (P::PaddingTop, padding.top),
+                (P::PaddingRight, padding.right),
+                (P::PaddingBottom, padding.bottom),
+                (P::PaddingLeft, padding.left),
+                (P::BorderTop, border.top),
+                (P::BorderRight, border.right),
+                (P::BorderBottom, border.bottom),
+                (P::BorderLeft, border.left),
+            ]
+            .into_iter()
+            .map(|(property, edge)| {
+                O::length(
+                    property,
+                    L::Px(edge.resolve(Some(0.0)).unwrap_or(0.0)),
+                    false,
+                )
+                .expect("resolved intrinsic edge")
+            })
+            .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let width = crate::layout::resolve_dimension(style.size().width, parent_width)
+            .map(|width| width + edges)
+            .or_else(|| {
+                matches!(style.size().width.expand(), ExpandedDimension::Stretch)
+                    .then(|| {
+                        parent_width.map(|room| {
+                            (room - margins_sum(margin.left, margin.right, None)).max(0.0)
+                        })
+                    })
+                    .flatten()
+            });
+        // A replaced item's inherent-size probe trusts a known width, so
+        // apply its numeric bounds before it derives the height from ratio.
+        let width = width.map(|width| {
+            let bound = |length| {
+                crate::layout::resolve_length_percentage_auto(length, parent_width)
+                    .map(|bound| bound + edges)
+            };
+            width
+                .min(bound(style.max_size().width).unwrap_or(f32::INFINITY))
+                .max(bound(style.min_size().width).unwrap_or(0.0))
+                .max(insets)
+        });
+        let probe = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Vertical,
+            known_dimensions: Size {
+                width,
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: width.is_some(),
+                height: false,
+            },
+            parent_size: Size {
+                width: parent_width,
+                height: None,
+            },
+            available_space: Size {
+                width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+                height: AvailableSpace::MinContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let measure =
+            |tree: &mut LayoutSession<'_>| tree.compute_child_layout(child, probe).size.height;
+        let contribution = if edge_overrides.is_empty() {
+            measure(tree)
+        } else {
+            with_saved_probe_caches(tree, 1, |tree, saved| {
+                let idx = usize::from(child);
+                let key = tree.nodes.box_key(idx).expect("flex item has a box key");
+                saved.push((idx, tree.take_layout_cache(idx)));
+                tree.push_local_overrides(
+                    edge_overrides
+                        .into_iter()
+                        .map(|entry| (key, entry))
+                        .collect(),
+                );
+                measure(tree)
+            })
+        };
+        tallest = tallest.max(contribution + margins);
+    }
+    tallest
+}
