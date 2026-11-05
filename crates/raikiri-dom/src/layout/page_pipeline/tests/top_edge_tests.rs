@@ -1,5 +1,94 @@
 use super::*;
 
+#[test]
+fn body_atomic_line_crossing_a_page_edge_moves_once_with_its_text() {
+    for text in [true, false] {
+        let mut atomic = 0;
+        let (doc, pages) = paged_body_with_ifc(|doc, body| {
+            doc.set_element_attribute(
+                body,
+                "style",
+                "display:block;margin:0;width:100px;font:10px/10px Ahem",
+            )
+            .unwrap();
+            doc.append_element(Some(body), "div", Some("display:block;height:50px"));
+            if text {
+                doc.append_text(body, "aa");
+            }
+            atomic = doc.append_element(
+                Some(body),
+                "span",
+                Some("display:inline-block;width:30px;height:60px"),
+            );
+            if text {
+                doc.append_text(body, "bb");
+            }
+        });
+        assert_eq!(page_flow_y(&doc, atomic), 100.0, "text={text}");
+        assert_eq!(pages, 2, "text={text}");
+    }
+}
+
+#[test]
+fn body_atomic_line_matches_chromium_print_placement() {
+    use raikiri_traits::PageBox;
+
+    // RAIKIRI-1383: Chromium's 800x600 print output puts the whole atomic
+    // on page two, while the preceding block remains on page one.
+    for display in ["inline-block", "inline-flex", "inline"] {
+        for text in [false, true] {
+            let mut doc = Document::new();
+            with_ahem(&mut doc);
+            let html = doc.append_element(Some(0), "html", Some("display:block"));
+            let body = doc.append_element(
+                Some(html),
+                "body",
+                Some("display:block;margin:8px;font:10px/10px Ahem"),
+            );
+            let before = doc.append_element(Some(body), "div", Some("display:block;height:300px"));
+            let prefix = text.then(|| doc.append_text(body, "aa"));
+            let atomic = doc.append_element(
+                Some(body),
+                if display == "inline" { "img" } else { "span" },
+                Some(format!("display:{display};width:300px;height:400px")),
+            );
+            let suffix = text.then(|| doc.append_text(body, "bb"));
+            doc.mark_in_document_flags();
+            let styles =
+                raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+            let mut page = PageBox::new();
+            page.width = 800.0;
+            page.height = 600.0;
+            let pages = layout_pages(&mut doc, &styles, page).unwrap();
+            assert_eq!(page_flow_y(&doc, before), 8.0);
+            assert_eq!(page_flow_y(&doc, atomic), 600.0, "{display}, text={text}");
+            assert_eq!(doc.nodes[atomic].layout.size.height, 400.0);
+            assert_eq!(pages.len(), 2);
+            for source in prefix.into_iter().chain(suffix) {
+                let owned = doc.ifc_text_lines(source).unwrap();
+                let top = page_flow_y(&doc, owned.root) + owned.lines[0].top;
+                assert_eq!(top, 600.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn forced_break_before_unequal_body_atomics_keeps_the_tallest_on_the_next_page() {
+    let (mut short, mut tall) = (0, 0);
+    let (doc, pages) = paged_body(|doc, body| {
+        block(doc, body, "float:left;width:40px;height:80px");
+        block(doc, body, "display:block;height:10px;break-after:page");
+        short = block(doc, body, "display:inline-block;width:20px;height:10px");
+        tall = block(doc, body, "display:inline-block;width:20px;height:20px");
+    });
+    assert_eq!(
+        [short, tall].map(|id| page_flow_y(&doc, id)),
+        [110.0, 100.0]
+    );
+    assert_eq!(pages, 2);
+}
+
 fn block(doc: &mut Document, parent: usize, css: &str) -> usize {
     doc.append_element(Some(parent), "div", Some(css))
 }

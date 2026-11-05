@@ -701,7 +701,15 @@ impl PaginationState {
             natural
         };
         reach_page(env.control, target)?;
-        let shift = (env.page_origins.origin(target) - flow_top).max(0.0);
+        // A forced break may already have cleared this atomic's box to the
+        // next page while its line's leading still reaches the previous one.
+        // Preserve that box placement rather than adding the leading again.
+        let placed_top = if pending && candidate.context.leading_block_piece_end().is_none() {
+            super::leading_inline::atomic_top(document, owner) - relative
+        } else {
+            flow_top
+        };
+        let shift = (env.page_origins.origin(target) - placed_top).max(0.0);
         if shift > 0.0 {
             let growth = super::leading_inline::move_line(
                 document,

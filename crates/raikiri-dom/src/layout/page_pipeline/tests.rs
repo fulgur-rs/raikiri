@@ -9547,9 +9547,11 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
         ),
         (60.0, 60.0, 2)
     );
+    // Chromium moves the whole atomic inline-flex line onto the next page;
+    // its item still does not participate in the outer block flow.
     assert_eq!(
         nested_avoiding_block("display:inline-flex", "break-inside:avoid").0,
-        60.0
+        100.0
     );
     // Nor do boxes in different columns of a multi-column container.
     assert_eq!(
