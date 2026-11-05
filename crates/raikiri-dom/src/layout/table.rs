@@ -961,9 +961,13 @@ fn compute_table_layout_checked(
         // A flex or grid parent assigns the height of the whole wrapper box,
         // caption included, and so does the layout of an absolutely positioned
         // table, which measures the wrapper and lays the table out at that
-        // size.
-        let wrapper_height_is_assigned =
-            parent_assigns_wrapper_height || absolute_table || item_is_flexed;
+        // size. An orthogonal block caller also returns a measured wrapper
+        // height, rather than an authored grid height.
+        let measured_wrapper_height = doc.context.table_wrapper_height_owner == Some(table_idx);
+        let wrapper_height_is_assigned = parent_assigns_wrapper_height
+            || absolute_table
+            || item_is_flexed
+            || measured_wrapper_height;
         // What is left of the flex and grid items is the item of a flex column
         // with a definite `flex-basis` that the container has left alone: the
         // height it is given is that of its grid box, as an authored `height`
@@ -972,7 +976,8 @@ fn compute_table_layout_checked(
         let parent_sizes_grid_alone = parent_is_flex_or_grid && !wrapper_height_is_assigned;
         let known_is_wrapper_height = (wrapper_measured_by_library
             && inputs.known_dimensions.height.is_some())
-            || item_is_flexed;
+            || item_is_flexed
+            || measured_wrapper_height;
         // Without a known height the stated one stands in for it. The library
         // would have reported it in the outer box-sizing domain and within the
         // limits (the minimum wins), and the grid below does not shrink to a

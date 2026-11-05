@@ -2916,7 +2916,16 @@ fn layout_vertical_block_child_with_edges(
             .map(|width| (width - margin.left - margin.right).max(0.0));
         orthogonal_fit_content_width(tree, node, room, parent_size)
     });
-    let own_inline_size = used_block_height(tree, node, inline_basis)
+    let stated_height = used_block_height(tree, node, inline_basis);
+    // A content measure returns the entire table wrapper, including its
+    // caption. An authored height still sizes only the table's grid box.
+    let measured_table_height = stated_height.is_none()
+        && matches!(
+            tree.nodes[node].display(),
+            DisplayValue::Table | DisplayValue::InlineTable
+        )
+        && !crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
+    let own_inline_size = stated_height
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
         .or_else(|| orthogonal_content_height(tree, node, width, parent_size, shares_context));
@@ -2992,9 +3001,15 @@ fn layout_vertical_block_child_with_edges(
                         },
                         vertical_margins_are_collapsible: Line::FALSE,
                     };
-                    tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
-                        .size
-                        .width
+                    let compute = |tree: &mut LayoutSession<'_>| {
+                        tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+                    };
+                    let output = if measured_table_height {
+                        tree.with_measured_table_height(node, compute)
+                    } else {
+                        compute(tree)
+                    };
+                    output.size.width
                 }
             },
         );
@@ -3109,12 +3124,19 @@ fn layout_vertical_block_child_with_edges(
                 },
             };
             let node_id = NodeId::from(node);
-            let output = if shares_context {
-                tree.context.keep_text_group =
-                    !matches!(tree.context.text_group, TextGroupScope::None);
-                tree.compute_child_layout_with_block_ctx(node_id, inputs, child_ctx.as_mut())
+            let mut compute = |tree: &mut LayoutSession<'_>| {
+                if shares_context {
+                    tree.context.keep_text_group =
+                        !matches!(tree.context.text_group, TextGroupScope::None);
+                    tree.compute_child_layout_with_block_ctx(node_id, inputs, child_ctx.as_mut())
+                } else {
+                    tree.compute_child_layout(node_id, inputs)
+                }
+            };
+            let output = if measured_table_height {
+                tree.with_measured_table_height(node, compute)
             } else {
-                tree.compute_child_layout(node_id, inputs)
+                compute(tree)
             };
             let floats_bottom = child_ctx.as_ref().map_or(
                 f32::NEG_INFINITY,

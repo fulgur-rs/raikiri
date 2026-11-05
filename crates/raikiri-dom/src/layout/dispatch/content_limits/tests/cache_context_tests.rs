@@ -4,6 +4,47 @@ use raikiri_layout_style::values::Dimension;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
+#[test]
+fn measured_table_height_separates_content_limit_memo_entries() {
+    let mut table = 0;
+    let fixture = block_fixture("width:200px;height:300px", |doc, root| {
+        table = doc.append_element(
+            Some(root),
+            "div",
+            Some("display:table;width:100px;padding:20px;box-sizing:border-box"),
+        );
+        doc.append_element(
+            Some(table),
+            "div",
+            Some("display:block;width:60px;height:60px"),
+        );
+    });
+    let mut doc = fixture.doc;
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.sync_layout_cache_mutations();
+    let inputs = LayoutInput {
+        known_dimensions: Size {
+            width: None,
+            height: Some(100.0),
+        },
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: true,
+        },
+        ..input(100.0, 100.0)
+    };
+    let measure = |tree: &mut LayoutSession<'_>| {
+        let key =
+            super::super::MeasureKey::new(tree, table, false, &inputs, Bounds::default(), None);
+        super::super::probe(tree, NodeId::from(table), key, inputs, Vec::new())
+    };
+    assert_eq!(measure(&mut tree), 60.0);
+    let wrapper = tree.with_measured_table_height(table, measure);
+    assert_eq!(wrapper, 100.0);
+    assert_eq!(measure(&mut tree), 60.0);
+}
+
 fn input(width: f32, height: f32) -> LayoutInput {
     LayoutInput {
         run_mode: RunMode::ComputeSize,
