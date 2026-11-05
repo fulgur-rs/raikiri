@@ -15,6 +15,79 @@ struct ContentChange {
     position_delta: f32,
 }
 
+fn padding_box_height(document: &Document, owner: usize) -> f32 {
+    let layout = document.nodes[owner].layout;
+    (layout.size.height - layout.border.top - layout.border.bottom).max(0.0)
+}
+
+fn depends_on_height(style: &raikiri_layout_style::LayoutStyleView<'_>) -> bool {
+    let inset = style.inset();
+    HeightFollowers::needs_reflow(style) || !inset.bottom.is_auto() || follows_height(inset.top)
+}
+
+fn supports_owner(document: &super::super::context::LayoutSession<'_>, owner: usize) -> bool {
+    !document.context.pagination_on_transposed_axes
+        && document.nodes.initial_containing_block_key() != Some(owner)
+        && is_plain_block_box(document, owner)
+}
+
+pub(super) fn follows_ancestor_height(
+    document: &super::super::context::LayoutSession<'_>,
+    root: usize,
+    node: usize,
+) -> bool {
+    document
+        .oof_coordinates
+        .get(&node)
+        .is_some_and(|coordinate| {
+            coordinate.owner != root
+                && coordinate.placement.is_some()
+                && supports_owner(document, coordinate.owner)
+                && is_descendant_or_self(document, root, coordinate.owner)
+                && depends_on_height(&document.physical_style(node))
+        })
+}
+
+pub(super) fn owner_heights(
+    document: &super::super::context::LayoutSession<'_>,
+) -> HashMap<usize, f32> {
+    if document.context.pagination_on_transposed_axes {
+        return HashMap::new();
+    }
+    document
+        .oof_coordinates
+        .iter()
+        .filter(|&(&node, coordinate)| {
+            document.nodes[node].position() == &PositionValue::Absolute
+                && coordinate.placement.is_some()
+                && supports_owner(document, coordinate.owner)
+                && depends_on_height(&document.physical_style(node))
+        })
+        .map(|(_, coordinate)| {
+            (
+                coordinate.owner,
+                padding_box_height(document, coordinate.owner),
+            )
+        })
+        .collect()
+}
+
+pub(super) fn changed_owners(
+    document: &Document,
+    heights: &HashMap<usize, f32>,
+    edge_growth: &HashMap<usize, f32>,
+) -> HashMap<usize, f32> {
+    heights
+        .iter()
+        .filter_map(|(&owner, &height)| {
+            let current = (padding_box_height(document, owner)
+                - edge_growth.get(&owner).copied().unwrap_or(0.0))
+            .max(0.0);
+            ((current - height).abs() > 0.001).then_some((owner, current))
+        })
+        .collect()
+}
+
 pub(super) struct HeightFollowers {
     owners: HashMap<usize, Vec<usize>>,
     static_owners: HashMap<usize, Vec<usize>>,
@@ -90,6 +163,7 @@ impl HeightFollowers {
         &self,
         document: &mut super::super::context::LayoutSession<'_>,
         control: &PageLayoutControl<'_>,
+        outer_heights: Option<&HashMap<usize, f32>>,
     ) -> Result<(), Halt> {
         let mut dirty: Vec<_> = std::mem::take(&mut *self.dirty.borrow_mut())
             .into_iter()
@@ -132,9 +206,9 @@ impl HeightFollowers {
                     candidate.static_position.y.area.end += delta;
                 }
                 let mut current_area = placement.area;
-                let layout = document.nodes[parent].layout;
-                current_area.size.height =
-                    (layout.size.height - layout.border.top - layout.border.bottom).max(0.0);
+                current_area.size.height = outer_heights
+                    .and_then(|heights| heights.get(&parent).copied())
+                    .unwrap_or_else(|| padding_box_height(document, parent));
                 let key = (
                     current_area.offset.x.to_bits(),
                     current_area.offset.y.to_bits(),
@@ -176,6 +250,23 @@ impl HeightFollowers {
                         .or_default()
                         .insert(node);
                 }
+            }
+        }
+    }
+
+    pub(super) fn queue_outer_resize(
+        &self,
+        document: &super::super::context::LayoutSession<'_>,
+        parent: usize,
+    ) {
+        for &node in self.owners.get(&parent).into_iter().flatten() {
+            if Self::can_reflow(document, node) && depends_on_height(&document.physical_style(node))
+            {
+                self.dirty
+                    .borrow_mut()
+                    .entry(parent)
+                    .or_default()
+                    .insert(node);
             }
         }
     }
