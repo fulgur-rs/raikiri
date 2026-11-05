@@ -259,17 +259,14 @@ impl HeightFollowers {
         document: &super::super::context::LayoutSession<'_>,
         parent: usize,
     ) {
-        if let Some(nodes) = self.owners.get(&parent) {
-            for &node in nodes {
-                if Self::can_reflow(document, node)
-                    && depends_on_height(&document.physical_style(node))
-                {
-                    self.dirty
-                        .borrow_mut()
-                        .entry(parent)
-                        .or_default()
-                        .insert(node);
-                }
+        for &node in self.owners.get(&parent).into_iter().flatten() {
+            if Self::can_reflow(document, node) && depends_on_height(&document.physical_style(node))
+            {
+                self.dirty
+                    .borrow_mut()
+                    .entry(parent)
+                    .or_default()
+                    .insert(node);
             }
         }
     }
