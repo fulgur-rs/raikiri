@@ -90,6 +90,12 @@ pub(super) fn may_declare(source: &str) -> bool {
     }
     source.match_indices(':').any(|(at, _)| {
         let head = source[..at].trim_end();
+        // A comment may stand between the name and the colon, as in
+        // `width/**/:20px`, which the declaration is read past. What is
+        // before the comment is not looked for: the colon counts.
+        if head.ends_with("*/") {
+            return true;
+        }
         let len = head
             .bytes()
             .rev()

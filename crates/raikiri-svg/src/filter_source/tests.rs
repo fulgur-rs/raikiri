@@ -537,6 +537,11 @@ fn the_geometry_of_a_declaration_goes_into_the_attribute() {
             "<rect style=\"height:30px;width:20px\"/>",
             "<rect width=\"20px\" height=\"30px\" style=\"height:30px;width:20px\"/>",
         ),
+        // A comment between a name and its colon is read past.
+        (
+            "<rect style=\"width/**/:20px;height /* c */ : 10px\"/>",
+            "<rect width=\"20px\" height=\"10px\" style=\"width/**/:20px;height /* c */ : 10px\"/>",
+        ),
         (
             "<rect style=\"ry:4px;rx:3px;y:2px;x:1px\"/>",
             "<rect x=\"1px\" y=\"2px\" rx=\"3px\" ry=\"4px\" style=\"ry:4px;rx:3px;y:2px;x:1px\"/>",

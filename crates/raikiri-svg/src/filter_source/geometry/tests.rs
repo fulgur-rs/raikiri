@@ -15,6 +15,11 @@ fn a_property_name_followed_by_a_colon_may_declare_geometry() {
         "<style>path { D\n:\npath('M0 0') }</style>",
         "<style>rect{x:1;y:2}</style>",
         "<style>ellipse{cx:1;cy:2;rx:3;ry:4}</style>",
+        // A comment between the name and the colon.
+        "<rect style=\"width/**/:20px\"/>",
+        "<rect style=\"height /* c */ : 10px\"/>",
+        "<style>circle{r/* a *//* b */:5}</style>",
+        "<style>rect{x/* /* */:1}</style>",
     ] {
         assert!(may_declare(source), "{source}");
     }
