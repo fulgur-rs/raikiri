@@ -954,6 +954,28 @@ fn a_shape_is_drawn_where_its_declarations_put_it() {
             "<rect x=\"-10\" y=\"10\" width=\"30\" height=\"10\" style=\"x:-5px\"/>",
             Some([0, 10, 24, 19]),
         ),
+        // The mark of an important declaration is read in any case.
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:30px !IMPORTANT;height:20px\"/>",
+            Some([0, 10, 29, 29]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:30px!important;width:20px !IMPORTANT;height:20px\"/>",
+            Some([0, 10, 19, 29]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:30px!IMPORTANT;width:20px;height:20px\"/>",
+            Some([0, 10, 29, 29]),
+        ),
+        // A math function with an error is dropped.
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;width:calc(garbage)\"/>",
+            Some([0, 10, 19, 19]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;width:calc(1px + 2)\"/>",
+            Some([0, 10, 19, 19]),
+        ),
         // The cascade.
         (
             "<style>rect{width:40px!important}</style><rect x=\"10\" y=\"10\" height=\"10\" style=\"width:20px\"/>",
@@ -1086,4 +1108,76 @@ fn a_shape_is_drawn_where_its_declarations_put_it() {
     ] {
         assert_eq!(drawn_box(fragment), expected, "{fragment}");
     }
+}
+
+#[test]
+fn an_important_mark_in_any_case_is_read() {
+    // Both declarations are read, and the mark is one.
+    assert_eq!(
+        geometry_of(
+            "<rect width=\"50\" height=\"50\" style=\"width:10px !IMPORTANT;height:20px\"/>"
+        ),
+        plain("<rect width=\"10px\" height=\"20px\" style=\"width:10px !IMPORTANT;height:20px\"/>")
+    );
+    // It makes a declaration important, which a later one does not beat.
+    assert_eq!(
+        geometry_of("<rect width=\"50\" height=\"10\" style=\"width:10px!Important;width:20px\"/>"),
+        plain("<rect width=\"10px\" height=\"10\" style=\"width:10px!Important;width:20px\"/>")
+    );
+    // The mark of a rule, which beats the `style` attribute.
+    assert_eq!(
+        geometry_of(
+            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"50\" height=\"10\" style=\"width:10px\"/>"
+        ),
+        plain(
+            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"30px\" height=\"20px\" style=\"width:10px\"/>"
+        )
+    );
+    // A string that holds the mark is not a mark, and the attribute and the
+    // text of the document keep their spelling.
+    let body = "<rect width=\"50\" height=\"10\" style=\"width:10px;font-family:'!IMPORTANT'\"/><text>a !IMPORTANT</text>";
+    assert_eq!(
+        geometry_of(body),
+        plain(&body.replace("width=\"50\"", "width=\"10px\""))
+    );
+}
+
+#[test]
+fn a_math_function_with_an_error_does_not_hide_the_declaration_below_it() {
+    for (style, width) in [
+        ("width:20px;width:calc(garbage)", Some("20px")),
+        ("width:20px;width:calc(1px + 2)", Some("20px")),
+        ("width:20px;width:calc(30)", Some("20px")),
+        ("width:20px;width:min(1px, 2deg)", Some("20px")),
+        ("width:20px;width:calc(1px) calc(2px)", Some("20px")),
+        ("width:20px;width:-moz-calc(1px)", Some("20px")),
+        // A function that a browser reads wins, and the attribute is left.
+        ("width:20px;width:calc(1px + 2px)", None),
+        ("width:20px;width:min(30px, 40px)", None),
+        ("width:20px;width:calc(30px * 2px / 1px)", None),
+        ("width:20px;width:calc(garbage var(--w))", None),
+    ] {
+        let body = format!("<rect width=\"50\" height=\"10\" style=\"{style}\"/>");
+        let expected = match width {
+            Some(width) => plain(&format!(
+                "<rect width=\"{width}\" height=\"10\" style=\"{style}\"/>"
+            )),
+            None => plain(&body),
+        };
+        assert_eq!(geometry_of(&body), expected, "{style}");
+    }
+    // A number that a function gives is a length to a position, not to a size.
+    let body = "<rect x=\"5\" width=\"50\" height=\"10\" style=\"x:20px;x:calc(40)\"/>";
+    assert_eq!(geometry_of(body), plain(body));
+    let body = "<rect x=\"5\" width=\"50\" height=\"10\" style=\"x:20px;x:calc(1px + 39)\"/>";
+    assert_eq!(
+        geometry_of(body),
+        plain("<rect x=\"20px\" width=\"50\" height=\"10\" style=\"x:20px;x:calc(1px + 39)\"/>")
+    );
+    // Nor is a math function a path.
+    let body = "<path d=\"M0 0H9\" style=\"d:path('M0 0H5');d:calc(1px)\"/>";
+    assert_eq!(
+        geometry_of(body),
+        plain("<path d=\"M0 0H5\" style=\"d:path('M0 0H5');d:calc(1px)\"/>")
+    );
 }

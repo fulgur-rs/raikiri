@@ -190,6 +190,22 @@ fn a_value_that_is_not_one_of_the_property_is_invalid() {
         ("width", "calcs(1px)"),
         ("width", "xcalc(1px)"),
         ("width", "10px + calc(1px)"),
+        ("r", "sqrt(4) * 1px"),
+        ("width", "-moz-calc(1px)"),
+        // A math function with an error, or of a type that is no length.
+        ("width", "calc(garbage)"),
+        ("height", "calc()"),
+        ("x", "calc(1px + 39)"),
+        ("cx", "min(1px, 2deg)"),
+        ("width", "calc(30)"),
+        ("height", "min(40, 50)"),
+        ("width", "calc(1px) calc(2px)"),
+        ("rx", "calc(10px+20px)"),
+        ("ry", "clamp(1px, 2px)"),
+        // A math function is no value of `d`.
+        ("d", "calc(1px)"),
+        ("d", "min(1px)"),
+        ("d", "calc(garbage)"),
         // `svgtypes` reads the number of SVG, which CSS does not: a dot needs
         // a digit after it, and the unit is one word.
         ("width", "1.px"),
@@ -235,7 +251,24 @@ fn a_value_that_is_not_computed_here_is_opaque() {
         ("width", "2px var(--x)"),
         ("width", "env(safe-area-inset-left)"),
         ("width", "attr(data-w px)"),
-        ("r", "sqrt(4) * 1px"),
+        ("r", "calc(sqrt(4) * 1px)"),
+        ("width", "calc(garbage var(--x))"),
+        ("width", "min(1px, var(--y))"),
+        // A math function that a browser reads, with the types that fit.
+        ("width", "calc(30px * 1px / 1px)"),
+        ("height", "round(up, 21px, 10px)"),
+        ("rx", "clamp(none, 3px, 4%)"),
+        ("cy", "calc(-infinity * 1px)"),
+        // A sizing function, which is not looked into.
+        ("width", "calc-size(auto, size)"),
+        ("height", "CALC-SIZE(30px, size)"),
+        // A number that a function gives is a length to the position and the
+        // radii, but not to a size.
+        ("x", "calc(40)"),
+        ("y", "min(40, 50)"),
+        ("cx", "calc(20 + 20)"),
+        ("r", "abs(40)"),
+        ("rx", "calc(sign(5) * 40)"),
         ("width", "2rem"),
         ("width", "10vw"),
         ("width", "1Q"),
@@ -438,6 +471,10 @@ fn an_invalid_declaration_does_not_take_part() {
         "width:10px!important;width:1.!important",
         "width:10px;width:-1rem",
         "width:10px!important;width:-2vmin!important",
+        "width:10px;width:calc(garbage)",
+        "width:10px;width:calc(30)",
+        "width:10px!important;width:calc(1px + 2)!important",
+        "width:10px;width:min(1px, 2deg)",
     ] {
         assert_eq!(
             attributes(&winners(css, rect)),
@@ -464,4 +501,89 @@ fn an_opaque_declaration_hides_the_ones_below_it() {
         winners("width:calc(1px + 2px)!important;width:10px", rect),
         [("width", Declared::Opaque)]
     );
+}
+
+#[test]
+fn an_important_mark_is_read_in_any_case() {
+    for (css, lowercased) in [
+        ("width:10px !IMPORTANT", "width:10px !important"),
+        (
+            "width:10px!Important;height:20px",
+            "width:10px!important;height:20px",
+        ),
+        ("width:10px ! IMPORTANT;", "width:10px ! important;"),
+        ("width:10px !\n\tIMPORTANT", "width:10px !\n\timportant"),
+        (
+            "width:10px !/* c */IMPORTANT",
+            "width:10px !/* c */important",
+        ),
+        (
+            "width:10px !/* a *//* b */ Important",
+            "width:10px !/* a *//* b */ important",
+        ),
+        (
+            "a{width:1px!IMPORTANT}b{height:1px!IMPORTANT}",
+            "a{width:1px!important}b{height:1px!important}",
+        ),
+        // Another mark does not hide the one after it.
+        (
+            "a:b!Important;c:d !IMPORTANT",
+            "a:b!important;c:d !important",
+        ),
+        ("\u{e9}:1 !IMPORTANT", "\u{e9}:1 !important"),
+    ] {
+        assert_eq!(with_lowercase_important(css), lowercased, "{css}");
+    }
+}
+
+#[test]
+fn text_that_is_not_an_important_mark_is_left_as_it_is() {
+    for css in [
+        "",
+        "!",
+        "width:10px",
+        "width:10px !important",
+        "width:10px!important;height:20px",
+        // Not the keyword.
+        "width:10px !IMPORTANTX",
+        "width:10px !IMPORTANT-",
+        "width:10px !IMPORTANT_1",
+        "width:10px !IMPORTANT\u{e9}",
+        "width:10px !IMPORTAN",
+        "width:10px !IMPORT",
+        "width:10px ! x IMPORTANT",
+        // Strings, comments and addresses are not CSS to be read.
+        "font-family:\"!IMPORTANT\"",
+        "font-family:'!IMPORTANT'",
+        "font-family:'a\\'!IMPORTANT'",
+        "/* !IMPORTANT */width:1px",
+        "/* !IMPORTANT",
+        "background:url(a!IMPORTANT)",
+        "background:URL( a!IMPORTANT )",
+        "background:url(a\\)!IMPORTANT)",
+        "background:url(\"a\") !important",
+        // A name that ends in `url`, and a quote that stands alone.
+        "a:curl(!IMPORTANT",
+    ] {
+        let read = with_lowercase_important(css);
+        if css == "a:curl(!IMPORTANT" {
+            // `curl(` is no `url(`, so the mark after it is a mark.
+            assert_eq!(read, "a:curl(!important", "{css}");
+        } else {
+            assert!(matches!(read, Cow::Borrowed(_)), "{css}");
+            assert_eq!(read, css);
+        }
+    }
+    // The mark after a string, a comment or a `url()` still counts.
+    for (css, lowercased) in [
+        ("a:'x' !IMPORTANT", "a:'x' !important"),
+        // A string that is not closed ends with its line.
+        ("a:'x\n!IMPORTANT", "a:'x\n!important"),
+        ("a:/* x */1 !IMPORTANT", "a:/* x */1 !important"),
+        ("a:url(x) !IMPORTANT", "a:url(x) !important"),
+        ("a:url('x') !IMPORTANT", "a:url('x') !important"),
+        ("a:\"'\" !IMPORTANT", "a:\"'\" !important"),
+    ] {
+        assert_eq!(with_lowercase_important(css), lowercased, "{css}");
+    }
 }

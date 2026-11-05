@@ -11,6 +11,9 @@
 //! tells what each of its geometry attributes has to say. The rewrite that
 //! writes that into the source lives in the parent module.
 
+mod math;
+
+use std::borrow::Cow;
 use std::str::FromStr;
 
 /// The geometry properties.
@@ -120,6 +123,94 @@ pub(super) fn may_declare(source: &str) -> bool {
             .iter()
             .any(|property| name.eq_ignore_ascii_case(property))
     })
+}
+
+/// Whether `c` is white space in CSS.
+fn is_css_space(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+}
+
+/// Whether `c` is a byte of a CSS name: a letter, a digit, a hyphen, an
+/// underscore, or part of a character that is not ASCII.
+fn is_name_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_') || !c.is_ascii()
+}
+
+/// The end of the white space and comments that stand at `from` in `css`.
+fn skip_space_and_comments(css: &str, mut from: usize) -> usize {
+    let bytes = css.as_bytes();
+    loop {
+        if bytes.get(from).is_some_and(|byte| is_css_space(*byte)) {
+            from += 1;
+        } else if css[from..].starts_with("/*") {
+            from = css[from + 2..]
+                .find("*/")
+                .map_or(css.len(), |end| from + 2 + end + 2);
+        } else {
+            return from;
+        }
+    }
+}
+
+/// `css` with each `!important` written in lowercase.
+///
+/// CSS reads the keyword in any case, as in `width:10px !IMPORTANT`, but
+/// `simplecss` reads it in lowercase only, and loses the rest of the
+/// declarations at one that is not. A string, a comment and the address of an
+/// unquoted `url()` are left as they are. Only the case of letters changes, so
+/// every position in the text stays where it was.
+pub(super) fn with_lowercase_important(css: &str) -> Cow<'_, str> {
+    const KEYWORD: &str = "important";
+    let bytes = css.as_bytes();
+    let mut lowercased: Option<String> = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'/' if bytes.get(at + 1) == Some(&b'*') => {
+                at = skip_space_and_comments(css, at);
+            }
+            quote @ (b'"' | b'\'') => {
+                at += 1;
+                while at < bytes.len() && bytes[at] != quote && bytes[at] != b'\n' {
+                    // A backslash takes the character after it.
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                at += 1;
+            }
+            b'u' | b'U'
+                if bytes
+                    .get(at..at + 4)
+                    .is_some_and(|head| head.eq_ignore_ascii_case(b"url("))
+                    && (at == 0 || !is_name_byte(bytes[at - 1])) =>
+            {
+                at += 4;
+                at = skip_space_and_comments(css, at);
+                if !matches!(bytes.get(at), Some(b'"' | b'\'')) {
+                    // The address of an unquoted `url()` runs to its end.
+                    while at < bytes.len() && bytes[at] != b')' {
+                        at += if bytes[at] == b'\\' { 2 } else { 1 };
+                    }
+                }
+            }
+            b'!' => {
+                at += 1;
+                let word = skip_space_and_comments(css, at);
+                if css
+                    .get(word..word + KEYWORD.len())
+                    .is_some_and(|head| head.eq_ignore_ascii_case(KEYWORD) && head != KEYWORD)
+                    && !bytes
+                        .get(word + KEYWORD.len())
+                        .is_some_and(|byte| is_name_byte(*byte))
+                {
+                    lowercased
+                        .get_or_insert_with(|| css.to_owned())
+                        .replace_range(word..word + KEYWORD.len(), KEYWORD);
+                }
+            }
+            _ => at += 1,
+        }
+    }
+    lowercased.map_or(Cow::Borrowed(css), Cow::Owned)
 }
 
 /// What a declaration says about a property.
@@ -247,7 +338,7 @@ fn length(property: &str, value: &str) -> Parsed {
         Ok(_) if !is_css_length(&text) => Parsed::Invalid,
         Ok(length) if length.number < 0.0 && is_non_negative(property) => Parsed::Invalid,
         Ok(_) => Parsed::Value(Declared::Attribute(text)),
-        Err(_) if is_deferred(value) => Parsed::Value(Declared::Opaque),
+        Err(_) if has_substitution(value) || is_calc_size(value) => Parsed::Value(Declared::Opaque),
         Err(_) if has_length_unit(value) => {
             // A unit that `svgtypes` lacks still has a sign that a browser
             // checks while it parses: `width:-1rem` is invalid, not deferred.
@@ -257,8 +348,19 @@ fn length(property: &str, value: &str) -> Parsed {
                 Parsed::Value(Declared::Opaque)
             }
         }
+        Err(_) if math::is_length(value, takes_number_math(property)) => {
+            Parsed::Value(Declared::Opaque)
+        }
         Err(_) => Parsed::Invalid,
     }
+}
+
+/// Whether a math function may come to a number for the property, which then
+/// is a length. The position and the radii take a number as a length, and so
+/// do they when a function gives it; a size takes a plain number, but not a
+/// function of numbers.
+fn takes_number_math(property: &str) -> bool {
+    !matches!(property, "width" | "height")
 }
 
 /// Whether the number that starts `value` is below zero. A negative zero is
@@ -267,50 +369,22 @@ fn is_negative(value: &str) -> bool {
     number_len(value).is_some_and(|at| value[..at].parse::<f64>().is_ok_and(|number| number < 0.0))
 }
 
-/// Whether `value` is, or holds, a function whose result a browser computes
-/// later: a math function such as `calc()`, or a substitution such as `var()`.
-/// Such a value is valid when it is parsed, whatever it comes to.
-fn is_deferred(value: &str) -> bool {
-    const MATH: [&str; 22] = [
-        "calc",
-        "min",
-        "max",
-        "clamp",
-        "round",
-        "mod",
-        "rem",
-        "sin",
-        "cos",
-        "tan",
-        "asin",
-        "acos",
-        "atan",
-        "atan2",
-        "pow",
-        "sqrt",
-        "hypot",
-        "log",
-        "exp",
-        "abs",
-        "sign",
-        "calc-size",
-    ];
+/// Whether `value` holds a substitution that a browser makes later: `var()`,
+/// `env()` or `attr()`. Such a value is valid when it is parsed, whatever the
+/// rest of it is and whatever it comes to.
+fn has_substitution(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    if ["var(", "env(", "attr("]
+    ["var(", "env(", "attr("]
         .iter()
         .any(|function| value.contains(function))
-    {
-        return true;
-    }
-    let value = value
-        .strip_prefix("-webkit-")
-        .or_else(|| value.strip_prefix("-moz-"))
-        .unwrap_or(&value);
-    MATH.iter().any(|function| {
-        value
-            .strip_prefix(function)
-            .is_some_and(|rest| rest.starts_with('('))
-    })
+}
+
+/// Whether `value` starts a `calc-size()`, which sizes a box from its content
+/// and is valid on the sizes. It is not checked here: it is taken as valid.
+fn is_calc_size(value: &str) -> bool {
+    value
+        .get(.."calc-size(".len())
+        .is_some_and(|head| head.eq_ignore_ascii_case("calc-size("))
 }
 
 /// The length of the number that starts `text`, in the grammar of CSS. A dot
@@ -399,7 +473,7 @@ fn path(value: &str) -> Parsed {
         .filter(|head| head.eq_ignore_ascii_case("path("))
         .and_then(|_| value[5..].strip_suffix(')'))
     else {
-        return if is_deferred(value) {
+        return if has_substitution(value) {
             Parsed::Value(Declared::Opaque)
         } else {
             Parsed::Invalid
