@@ -83,3 +83,44 @@ fn viewport_overflow_keeps_existing_projection_classification() {
         assert_eq!(projected.content_width, rebreak.content_width);
     }
 }
+
+#[test]
+fn rebreak_contexts_resolve_the_viewport_source_once() {
+    use crate::layout::test_support::VIEWPORT_OVERFLOW_SOURCE_QUERIES;
+    for count in [8, 128] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block;width:400px"));
+        let head = doc.append_element(Some(html), "head", Some("display:none"));
+        for _ in 0..count {
+            doc.append_element(Some(head), "meta", Some("display:none"));
+        }
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        let scrollers: Vec<_> = (0..count)
+            .map(|_| {
+                doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:inline-block;overflow:auto;margin-left:1px"),
+                )
+            })
+            .collect();
+        doc.mark_in_document_flags();
+        let cascade = bridged(&mut doc);
+        VIEWPORT_OVERFLOW_SOURCE_QUERIES.with(|queries| queries.set(0));
+        let _ = AncestorFacts::new(&doc, &cascade, 800.0);
+        assert_eq!(
+            VIEWPORT_OVERFLOW_SOURCE_QUERIES.with(|queries| queries.get()),
+            0
+        );
+        VIEWPORT_OVERFLOW_SOURCE_QUERIES.with(|queries| queries.set(0));
+        let facts = AncestorFacts::for_rebreak(&doc, &cascade, 800.0);
+        assert_eq!(
+            VIEWPORT_OVERFLOW_SOURCE_QUERIES.with(|queries| queries.get()),
+            1,
+            "{count} scrollers"
+        );
+        for node in scrollers {
+            assert!(facts.sized_by_context_root(node));
+        }
+    }
+}

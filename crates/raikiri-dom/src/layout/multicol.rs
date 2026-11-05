@@ -3834,11 +3834,17 @@ pub(crate) struct AncestorFacts {
 /// scroll container, a box with layout or paint containment or with
 /// `align-content` other than `normal`, or a multicol container. Overflow
 /// propagated to the viewport is not the box's own.
-fn roots_formatting_context(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+/// Normal projection queries the source lazily; rebreaking supplies a value
+/// cached before its additional walk.
+fn roots_formatting_context(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    viewport_source: impl FnOnce() -> Option<usize>,
+) -> bool {
     let cv = &cascade.computed[id];
     let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
-    (scrolls(cv.overflow.x) || scrolls(cv.overflow.y))
-        && super::body_overflow::viewport_overflow_source(doc, cascade) != Some(id)
+    (scrolls(cv.overflow.x) || scrolls(cv.overflow.y)) && viewport_source() != Some(id)
         || cv
             .contain
             .contains(raikiri_style::property::Contain::LAYOUT)
@@ -3879,13 +3885,14 @@ impl AncestorFacts {
         fallback_width: f32,
     ) -> Self {
         let mut facts = Self::new(doc, cascade, fallback_width);
+        let viewport_source = super::body_overflow::viewport_overflow_source(doc, cascade);
         visit_top_down(doc, |parent, id| {
             let node = &doc.nodes[id];
             let has_box = node.kind() == NodeKind::Element
                 && !facts.inline_box[id]
                 && !matches!(node.display(), DisplayValue::None | DisplayValue::Contents);
             let context = has_box
-                && (roots_formatting_context(doc, cascade, id)
+                && (roots_formatting_context(doc, cascade, id, || viewport_source)
                     || matches!(
                         node.display(),
                         DisplayValue::FlowRoot
@@ -4029,8 +4036,10 @@ impl AncestorFacts {
         self.projected_auto_width[id] = self.can_project_auto_width(doc, cascade, id);
         // `laid_out_container` of the children reads `context_root[id]`, so it
         // is settled here, right after the projected test it depends on.
-        self.context_root[id] =
-            self.projected_auto_width[id] && roots_formatting_context(doc, cascade, id);
+        self.context_root[id] = self.projected_auto_width[id]
+            && roots_formatting_context(doc, cascade, id, || {
+                super::body_overflow::viewport_overflow_source(doc, cascade)
+            });
         // Only blocks in ordinary block flow below a root are sized by it.
         self.in_context_root[id] = self.context_root[id]
             || (self.in_context_root[parent]
