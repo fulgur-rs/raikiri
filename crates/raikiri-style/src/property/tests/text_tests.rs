@@ -4578,6 +4578,15 @@ fn tab_size_rejects_percentage_calc_terms() {
     // also invalid (same guard as the `parse_value` deferred path).
     assert_eq!(parse("calc(10px + 5%)", "tab-size"), None);
     assert_eq!(parse("calc(50%)", "tab-size"), None);
+    // The percentage coefficient cancels or is multiplied away, but the
+    // calculation still has a percentage type.
+    assert_eq!(parse("calc(50% - 50%)", "tab-size"), None);
+    assert_eq!(parse("calc(0 * 50%)", "tab-size"), None);
+    // A product without a percentage is still accepted.
+    assert_eq!(
+        parse("calc(2 * 4px)", "tab-size"),
+        Some(PropertyValue::TabSize(TabSize::Length(Length::Px(8.0))))
+    );
     // A `%` inside a comment is not a percentage token.
     assert_eq!(
         parse("calc(1em /*%*/ + 1px)", "tab-size"),

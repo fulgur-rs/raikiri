@@ -631,7 +631,14 @@ pub(super) fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
     //       (such as `calc(10px)`). Allow negative results from mixed calc expressions,
     //       deferring the clamp at computed-value time to `resolve_tab_size`
     //       (CSS Values 4 §10.7).
+    let calc_start = input.position();
     if let Some(parsed) = parse_text_indent_calc(input) {
+        // The coefficients can lose the percentage (`calc(50% - 50%)`,
+        // `calc(0 * 50%)`) while the calculation's type still includes it, so
+        // look for a percentage token in the source too, as `text-shadow` does.
+        if math_source_has_percentage(input.slice(calc_start..input.position())) {
+            return None;
+        }
         return match parsed {
             TextIndentLength::Length(l) => {
                 if matches!(l, Length::Percent(_)) {
