@@ -39,7 +39,7 @@ pub(super) fn discard(
         .and_then(|node| node.ifc.as_ref())
         .into_iter()
         .flat_map(|ifc| &ifc.boxes)
-        .filter(|item| matches!(item.kind, IfcBoxKind::Atomic | IfcBoxKind::Float))
+        .filter(|item| item.kind == IfcBoxKind::Float)
         .map(|item| item.node)
         .collect();
     let growth = shift_paragraph_lines(

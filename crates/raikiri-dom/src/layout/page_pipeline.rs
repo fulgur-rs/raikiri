@@ -9788,8 +9788,8 @@ fn lines_can_shift_inside(
 
 /// Whether the lines of the paragraph `block_id` that follow its block
 /// children can move down inside it: its height grows with them, it is in one
-/// column, and the only boxes it lays out are those block children, which
-/// follow the moved lines when pagination reaches them, and out-of-flow boxes
+/// column, and the only boxes it lays out are atomic inlines, those block
+/// children, which follow the moved lines when pagination reaches them, and out-of-flow boxes
 /// that a block-axis inset places away from the lines or that follow them (see
 /// [`out_of_flow_follow`]).
 fn lines_can_shift_between_blocks(
@@ -9804,7 +9804,7 @@ fn lines_can_shift_between_blocks(
             .is_some_and(|ifc| {
                 ifc.multicol_fragments.is_none()
                     && ifc.boxes.iter().all(|b| {
-                        b.kind == IfcBoxKind::Block
+                        matches!(b.kind, IfcBoxKind::Block | IfcBoxKind::Atomic)
                             || (b.kind == IfcBoxKind::OutOfFlow
                                 && (has_explicit_block_axis_inset(document, cascade, b.node)
                                     || out_of_flow_follow(document, cascade, block_id, b.node)
@@ -10815,7 +10815,26 @@ fn shift_paragraph_lines(
 ) -> f32 {
     let growth = lines_shift_growth(document, moved.block_id, moved.shift);
     let follows = out_of_flow_moves(document, cascade, moved, growth);
+    // Atomic boxes keep their positions on the shifted lines, whether a
+    // text candidate or a delegated atomic-only line owns the move.
+    let atomics: HashSet<usize> = document
+        .ifc_layout_node(moved.block_id)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .into_iter()
+        .flat_map(|lines| lines.lines[moved.line..].iter())
+        .flat_map(|line| line.fragments())
+        .filter_map(|fragment| match fragment {
+            shodo::Fragment::Atomic(atomic) => usize::try_from(atomic.node.0)
+                .ok()
+                .filter(|&node| node < document.nodes.len()),
+            _ => None,
+        })
+        .collect();
     shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
+    for node in atomics {
+        document.translate_pagination_y(node, moved.shift);
+    }
     for (node, delta) in follows {
         document.translate_pagination_y(node, delta);
     }

@@ -693,15 +693,37 @@ impl PaginationState {
         let start = env.page_origins.origin(natural);
         let end = start + env.page_origins.step_at(natural);
         let pending = self.pending_break.applies_to(document, candidate.node_id);
-        let target = if pending && self.saw_child {
+        let named_page_change = box_changes_page_name(
+            entry.name_context_seen,
+            &candidate.page_name,
+            &entry.comparison_page_name,
+            self.last_named.joins_transition(candidate),
+        );
+        let page_transition = (pending || named_page_change) && self.saw_child;
+        let target = if page_transition {
             forced_target_page(self.current_page, natural)
-        } else if flow_top > start + 0.001 && flow_top + height > end + 0.001 {
+        } else if flow_top > start + 0.001
+            && flow_top + height > end + 0.001
+            && (candidate.context.leading_block_piece_end().is_some()
+                || block_fits_page_step(
+                    height,
+                    env.page_origins.step_at(natural.saturating_add(1)),
+                ))
+        {
             natural.saturating_add(1)
         } else {
             natural
         };
         reach_page(env.control, target)?;
-        let shift = (env.page_origins.origin(target) - flow_top).max(0.0);
+        // Forced and named-page boundaries place the atomic margin boxes at
+        // the page start. Do not add their line's leading to that placement.
+        let placed_top = if page_transition && candidate.context.leading_block_piece_end().is_none()
+        {
+            super::leading_inline::atomic_flow_top(document, env.cascade, env.body_id, owner)
+        } else {
+            flow_top
+        };
+        let shift = (env.page_origins.origin(target) - placed_top).max(0.0);
         if shift > 0.0 {
             let growth = super::leading_inline::move_line(
                 document,
@@ -725,12 +747,37 @@ impl PaginationState {
         }
         self.saw_child = true;
         self.current_page = self.current_page.max(target);
+        if box_sets_page_name(
+            &candidate.context,
+            page_transition,
+            page_type_leaves_local_flow(
+                entry.keep_local_page_type,
+                self.current_page,
+                entry.page_before_candidate,
+            ),
+        ) {
+            self.page_names.current = candidate.page_name.clone();
+            if candidate.context.is_direct_body_element() {
+                self.last_named = LastNamedBox::new(
+                    document,
+                    candidate,
+                    candidate.node_id,
+                    candidate.raw_y,
+                    candidate.height,
+                );
+            }
+        }
         self.record_pages(
             env.control,
             Some(env.page_origins.page_index_for_end(top + shift + height)),
             true,
         )?;
-        Ok(())
+        self.finish_box(
+            document,
+            env,
+            candidate,
+            current_abs_y(document, candidate.node_id),
+        )
     }
 
     /// Places the box `candidate` after its start: keeps a footnote in the
