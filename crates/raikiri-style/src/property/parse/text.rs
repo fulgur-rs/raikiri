@@ -231,11 +231,22 @@ fn parse_text_indent_calc_sum<'i>(
 ) -> Result<CalcOperand, ParseError<'i, ()>> {
     let mut value = parse_text_indent_calc_term(input, allow_ch)?;
     while !input.is_exhausted() {
+        // The operator of a sum needs white space on both sides (CSS Values 4
+        // section 10.1): `calc(1px+ 2px)` and `calc(1px +2px)` are invalid.
+        match input.next_including_whitespace()?.clone() {
+            Token::WhiteSpace(_) => {}
+            token => return Err(input.new_unexpected_token_error(token)),
+        }
+        // `next` skips any further white space and comments before the operator.
         let sign = match input.next()?.clone() {
             Token::Delim('+') => 1.0,
             Token::Delim('-') => -1.0,
             token => return Err(input.new_unexpected_token_error(token)),
         };
+        match input.next_including_whitespace()?.clone() {
+            Token::WhiteSpace(_) => {}
+            token => return Err(input.new_unexpected_token_error(token)),
+        }
         let term = parse_text_indent_calc_term(input, allow_ch)?;
         // `<number>` and `<length-percentage>` terms cannot be added together.
         value = match (value, term) {

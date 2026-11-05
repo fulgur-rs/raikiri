@@ -4337,6 +4337,12 @@ fn word_spacing_calc_multiplies_and_divides_by_numbers() {
         )))
     );
     assert_eq!(
+        parse("calc( ( 1 + 2 ) * 10px )", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(30.0)
+        )))
+    );
+    assert_eq!(
         parse("calc(6 / 3 * 10px)", "word-spacing"),
         Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
             Length::Px(20.0)
@@ -4365,6 +4371,22 @@ fn word_spacing_calc_rejects_invalid_products() {
     // numbers cannot be added to lengths.
     assert_eq!(parse("calc(2 * 3)", "word-spacing"), None);
     assert_eq!(parse("calc(1 + 2px)", "word-spacing"), None);
+    // The operator of a sum needs white space on both sides (CSS Values 4
+    // section 10.1), whether the terms are numbers or lengths.
+    assert_eq!(parse("calc((1+ 2) * 10px)", "word-spacing"), None);
+    assert_eq!(parse("calc((1 +2) * 10px)", "word-spacing"), None);
+    assert_eq!(parse("calc(10px+ 5px)", "word-spacing"), None);
+    assert_eq!(parse("calc(10px -5px)", "word-spacing"), None);
+    assert_eq!(parse("calc(10px +(5px))", "word-spacing"), None);
+    assert_eq!(parse("calc(10px -(5px))", "word-spacing"), None);
+    // A comment is not white space, but the white space around it still counts.
+    assert_eq!(parse("calc(10px/**/+ 5px)", "word-spacing"), None);
+    assert_eq!(
+        parse("calc(10px /**/ + /**/ 5px)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(15.0)
+        )))
+    );
     // A product that overflows `f32` is not folded into a linear value.
     assert!(!matches!(
         parse("calc(1e30px * 1e30)", "word-spacing"),
