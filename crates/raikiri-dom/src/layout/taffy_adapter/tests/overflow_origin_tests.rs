@@ -79,6 +79,10 @@ fn physical_and_legacy_overflow_keep_empty_rectangles_and_padding_extent() {
         (0.0, 150.0)
     );
     assert_eq!(output.physical_overflow(100.0, true), physical);
+    let encoded = output.scrollable_overflow_rect;
+    output.encode_overflow(100.0, true);
+    assert_eq!(output.scrollable_overflow_rect, encoded);
+    assert_eq!(output.overflow_origin, OverflowOrigin::ScrollOrigin);
     output.scrollable_overflow_rect = Edges::ZERO;
     assert_eq!(output.physical_overflow(100.0, true), Edges::ZERO);
     output.overflow_origin = OverflowOrigin::Physical;
