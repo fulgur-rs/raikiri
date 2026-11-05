@@ -1,6 +1,27 @@
 use crate::layout::context::LayoutSession;
 
 impl LayoutSession<'_> {
+    /// Resolve a table at its measured wrapper height, keeping that domain
+    /// separate in the caches and restoring the owner when layout unwinds.
+    pub(crate) fn with_measured_table_height<R>(
+        &mut self,
+        idx: usize,
+        compute: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let mut saved = self.take_layout_cache(idx);
+        let previous = self.context.table_wrapper_height_owner.replace(idx);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(self)));
+        self.context.table_wrapper_height_owner = previous;
+        // Size probes remain valid in their original domain. Its final
+        // layout no longer describes geometry written in the scoped domain.
+        saved.forget_final_layout();
+        self.restore_layout_cache(idx, saved);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
     pub(crate) fn with_resolved_edges<R>(
         &mut self,
         idx: usize,

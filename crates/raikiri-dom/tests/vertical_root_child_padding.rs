@@ -525,3 +525,656 @@ fn every_display_that_flows_horizontally_pads_the_same() {
 fn an_absolutely_positioned_box_pads_against_the_height_of_its_containing_block() {
     assert_rows(ABSOLUTE_ROWS);
 }
+
+#[test]
+fn orthogonal_tables_keep_their_measured_outer_height() {
+    // Chromium 152, Ahem 10px, an 800x600 viewport, after fonts are ready.
+    // A table fragment describes its grid. Caption cases subtract the
+    // measured caption from Chromium's wrapper rectangle and check both.
+    // Collapsed-cell inline geometry is separate from this height contract;
+    // those rows compare the table box, leaving the cell width out.
+    let cases = [
+        (
+            "vertical-rl-table-padding",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-table-border",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;border:20px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-table-padding-y",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-rl-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-table-percent-y",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10% 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-rl-table-padding-border",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10px;border:10px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-table-width60",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:60px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:40,0,60,160 g:60,20,20,120",
+        ),
+        (
+            "vertical-rl-inline-table-padding",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-inline-table-border",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;border:20px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-inline-table-padding-y",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-rl-inline-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-inline-table-percent-y",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10% 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-rl-inline-table-padding-border",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10px;border:10px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-inline-table-width60",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;width:60px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:40,0,60,160 g:60,20,20,120",
+        ),
+        (
+            "vertical-rl-native-padding",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-native-border",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;border:20px solid;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-native-padding-y",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px 0;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,86 g:2,22,96,42",
+        ),
+        (
+            "vertical-rl-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-native-percent-y",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10% 0;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,86 g:2,22,96,42",
+        ),
+        (
+            "vertical-rl-native-padding-border",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10px;border:10px solid;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-native-width60",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:60px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:34,0,66,166 g:56,22,22,122",
+        ),
+        (
+            "vertical-lr-table-padding",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-table-border",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;border:20px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-table-padding-y",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-lr-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-table-percent-y",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10% 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-lr-table-padding-border",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10px;border:10px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-table-width60",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:60px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,60,160 g:20,20,20,120",
+        ),
+        (
+            "vertical-lr-inline-table-padding",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-inline-table-border",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;border:20px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-inline-table-padding-y",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-lr-inline-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-inline-table-percent-y",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10% 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "vertical-lr-inline-table-padding-border",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10px;border:10px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-inline-table-width60",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;width:60px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,60,160 g:20,20,20,120",
+        ),
+        (
+            "vertical-lr-native-padding",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-native-border",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;border:20px solid;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-native-padding-y",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px 0;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,86 g:2,22,96,42",
+        ),
+        (
+            "vertical-lr-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-native-percent-y",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10% 0;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,86 g:2,22,96,42",
+        ),
+        (
+            "vertical-lr-native-padding-border",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10px;border:10px solid;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-native-width60",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:60px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,66,166 g:22,22,22,122",
+        ),
+        (
+            "horizontal-tb-table-padding",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "horizontal-tb-table-border",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;border:20px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "horizontal-tb-table-padding-y",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "horizontal-tb-table-percent",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,60 g:10,10,80,40",
+        ),
+        (
+            "horizontal-tb-table-percent-y",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10% 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,60 g:0,10,100,40",
+        ),
+        (
+            "horizontal-tb-table-padding-border",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10px;border:10px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "horizontal-tb-table-width60",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:60px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,60,160 g:20,20,20,120",
+        ),
+        (
+            "horizontal-tb-inline-table-padding",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "horizontal-tb-inline-table-border",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;border:20px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "horizontal-tb-inline-table-padding-y",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,80 g:0,20,100,40",
+        ),
+        (
+            "horizontal-tb-inline-table-percent",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,60 g:10,10,80,40",
+        ),
+        (
+            "horizontal-tb-inline-table-percent-y",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10% 0;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,60 g:0,10,100,40",
+        ),
+        (
+            "horizontal-tb-inline-table-padding-border",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:10px;border:10px solid;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "horizontal-tb-inline-table-width60",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;width:60px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,60,160 g:20,20,20,120",
+        ),
+        (
+            "horizontal-tb-native-padding",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "horizontal-tb-native-border",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;border:20px solid;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "horizontal-tb-native-padding-y",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px 0;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,86 g:2,22,96,42",
+        ),
+        (
+            "horizontal-tb-native-percent",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,86 g:12,12,76,62",
+        ),
+        (
+            "horizontal-tb-native-percent-y",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10% 0;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,66 g:2,12,96,42",
+        ),
+        (
+            "horizontal-tb-native-padding-border",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:10px;border:10px solid;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "horizontal-tb-native-width60",
+            r#"<div id="r" style="writing-mode:horizontal-tb;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:60px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,66,166 g:22,22,22,122",
+        ),
+        (
+            "vertical-rl-flex-table",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;display:flex"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-flex-inline-table",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;display:flex"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-flex-native",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;display:flex"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-grid-table",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;display:grid"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,200 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-grid-inline-table",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;display:grid"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,200 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-grid-native",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;display:grid"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,200 g:22,22,56,156",
+        ),
+        (
+            "vertical-rl-caption-top",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><caption id="cap" style="caption-side:top">caption</caption><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,10,100,106 g:22,32,56,62 cap:0,0,100,10",
+        ),
+        (
+            "vertical-rl-caption-bottom",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><caption id="cap" style="caption-side:bottom">caption</caption><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62 cap:0,106,100,10",
+        ),
+        (
+            "vertical-rl-table-empty",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"></div></div>"#,
+            "c:60,0,40,40",
+        ),
+        (
+            "vertical-rl-table-height-border-box",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:border-box"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,160 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-table-height-content-box",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:content-box"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,200 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-native-empty",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"></table></div>"#,
+            "c:60,0,40,40",
+        ),
+        (
+            "vertical-rl-native-height-border-box",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:border-box"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,160 g:22,22,56,116",
+        ),
+        (
+            "vertical-rl-native-height-content-box",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:content-box"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,200 g:22,22,56,156",
+        ),
+        (
+            "vertical-rl-collapsed",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;border:20px solid;border-collapse:collapse"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,102",
+        ),
+        (
+            "vertical-lr-flex-table",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;display:flex"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-flex-inline-table",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;display:flex"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-flex-native",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;display:flex"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-grid-table",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;display:grid"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,200 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-grid-inline-table",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;display:grid"><div id="c" style="display:inline-table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,200 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-grid-native",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;display:grid"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,200 g:22,22,56,156",
+        ),
+        (
+            "vertical-lr-caption-top",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><caption id="cap" style="caption-side:top">caption</caption><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,10,100,106 g:22,32,56,62 cap:0,0,100,10",
+        ),
+        (
+            "vertical-lr-caption-bottom",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><caption id="cap" style="caption-side:bottom">caption</caption><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62 cap:0,106,100,10",
+        ),
+        (
+            "vertical-lr-table-empty",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"></div></div>"#,
+            "c:0,0,40,40",
+        ),
+        (
+            "vertical-lr-table-height-border-box",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:border-box"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,160 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-table-height-content-box",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:content-box"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,200 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-native-empty",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;"></table></div>"#,
+            "c:0,0,40,40",
+        ),
+        (
+            "vertical-lr-native-height-border-box",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:border-box"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,160 g:22,22,56,116",
+        ),
+        (
+            "vertical-lr-native-height-content-box",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;padding:20px;height:160px;box-sizing:content-box"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,200 g:22,22,56,156",
+        ),
+        (
+            "vertical-lr-collapsed",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><table id="c" style="writing-mode:horizontal-tb;border:20px solid;border-collapse:collapse"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,102",
+        ),
+        (
+            "vertical-rl-float-left-table-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,70,100,100 g:20,90,60,60",
+        ),
+        (
+            "vertical-rl-float-left-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,70,100,100 g:20,90,60,60",
+        ),
+        (
+            "vertical-rl-float-left-native-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,70,100,106 g:22,92,56,62",
+        ),
+        (
+            "vertical-rl-float-left-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,70,100,106 g:22,92,56,62",
+        ),
+        (
+            "vertical-rl-float-right-table-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-float-right-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-rl-float-right-native-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-float-right-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-float-left-table-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,70,100,100 g:20,90,60,60",
+        ),
+        (
+            "vertical-lr-float-left-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,70,100,100 g:20,90,60,60",
+        ),
+        (
+            "vertical-lr-float-left-native-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,70,100,106 g:22,92,56,62",
+        ),
+        (
+            "vertical-lr-float-left-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:left;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,70,100,106 g:22,92,56,62",
+        ),
+        (
+            "vertical-lr-float-right-table-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-float-right-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:0,0,100,100 g:20,20,60,60",
+        ),
+        (
+            "vertical-lr-float-right-native-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-lr-float-right-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:0,0,100,106 g:22,22,56,62",
+        ),
+        (
+            "vertical-rl-two-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:30,0,110,100 g:50,20,70,60",
+        ),
+        (
+            "vertical-rl-two-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:30,0,110,100 g:50,20,70,60",
+        ),
+        (
+            "vertical-rl-two-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:30,0,110,106 g:52,22,66,62",
+        ),
+        (
+            "vertical-rl-two-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:30,0,110,106 g:52,22,66,62",
+        ),
+        (
+            "vertical-lr-two-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:20,0,110,100 g:40,20,70,60",
+        ),
+        (
+            "vertical-lr-two-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:20,0,110,100 g:40,20,70,60",
+        ),
+        (
+            "vertical-lr-two-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:20,0,110,106 g:42,22,66,62",
+        ),
+        (
+            "vertical-lr-two-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:20,0,110,106 g:42,22,66,62",
+        ),
+        (
+            "vertical-rl-three-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:40,0,110,100 g:60,20,70,60",
+        ),
+        (
+            "vertical-rl-three-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:40,0,110,100 g:60,20,70,60",
+        ),
+        (
+            "vertical-rl-three-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:40,0,110,106 g:62,22,66,62",
+        ),
+        (
+            "vertical-rl-three-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:40,0,110,106 g:62,22,66,62",
+        ),
+        (
+            "vertical-lr-three-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:50,0,110,100 g:70,20,70,60",
+        ),
+        (
+            "vertical-lr-three-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:50,0,110,100 g:70,20,70,60",
+        ),
+        (
+            "vertical-lr-three-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:50,0,110,106 g:72,22,66,62",
+        ),
+        (
+            "vertical-lr-three-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:50,0,110,106 g:72,22,66,62",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, body, expected) in cases {
+        let actual = boxes(body);
+        for entry in expected.split(' ') {
+            let (id, rect) = entry.split_once(':').unwrap();
+            let wanted: Vec<f32> = rect.split(',').map(|n| n.parse().unwrap()).collect();
+            let found = actual
+                .iter()
+                .find(|(name, _)| name == id)
+                .map(|(_, rect)| rect);
+            if found.is_none_or(|rect| rect.iter().zip(&wanted).any(|(a, b)| (a - b).abs() > 0.01))
+            {
+                failures.push(format!("{name} #{id}: {found:?} != {wanted:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

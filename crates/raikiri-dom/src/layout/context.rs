@@ -44,6 +44,8 @@ pub(crate) struct LayoutContext {
     /// axes than the library assumes (see `with_oof_axes` in [`crate::layout::dispatch`]).
     pub(crate) oof_axes_vertical: bool,
     pub(crate) orthogonal_block_in_layout: Option<usize>,
+    /// The table whose known height is an already measured wrapper height.
+    pub(crate) table_wrapper_height_owner: Option<usize>,
     pub(crate) transposed_style_index: crate::layout::dispatch::TransposedStyleIndex,
     pub(crate) transposed_frame_serial: u64,
     pub(crate) transposed_blocks: Vec<crate::layout::dispatch::TransposedBlock>,
