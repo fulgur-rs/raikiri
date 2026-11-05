@@ -89,6 +89,41 @@ fn forced_break_before_unequal_body_atomics_keeps_the_tallest_on_the_next_page()
     assert_eq!(pages, 2);
 }
 
+#[test]
+fn generated_suffix_moves_with_a_forced_body_atomic_line() {
+    let (mut atomic, mut root) = (0, 0);
+    let (doc, pages) = paged_body_with_ifc(|doc, body| {
+        root = body;
+        doc.set_element_attribute(
+            body,
+            "style",
+            "display:block;margin:0;width:100px;font:10px/10px Ahem",
+        )
+        .unwrap();
+        let style = doc.append_element(Some(0), "style", None::<&str>);
+        doc.append_text(style, "body::after { content:'M' }");
+        block(doc, body, "display:block;height:60px;break-after:page");
+        atomic = block(doc, body, "display:inline-block;width:20px;height:20px");
+    });
+    let lines = doc
+        .ifc_layout_node(root)
+        .unwrap()
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap();
+    assert!(
+        lines.lines[0]
+            .fragments()
+            .any(|fragment| matches!(fragment, shodo::Fragment::GlyphRun(_)))
+    );
+    assert_eq!(lines.line_top(0), 100.0);
+    assert_eq!(page_flow_y(&doc, atomic), 100.0);
+    assert_eq!(pages, 2);
+}
+
 fn block(doc: &mut Document, parent: usize, css: &str) -> usize {
     doc.append_element(Some(parent), "div", Some(css))
 }
