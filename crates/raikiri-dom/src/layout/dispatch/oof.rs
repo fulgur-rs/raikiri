@@ -21,6 +21,7 @@ use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Point, Size};
 use raikiri_layout_style::values::{
     AlignItems, AlignmentSafety, BaselineSet, ContainingBlockClaims, Direction, ExpandedDimension,
+    ResolveOrZero,
 };
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 
@@ -143,9 +144,17 @@ pub(super) fn layout_local_oof_now(
     let grid = grid_oof::GridAxes::of(tree, usize::from(node), output.size.width);
     let result = layout_candidates_of(tree, node, candidates.iter(), area, grid);
     output.oof_candidates = result.unclaimed;
+    let mut overflow = LayoutOutput::from_sizes(output.size, result.scrollable_overflow_rect);
+    if output.overflow_origin == crate::layout::protocol::OverflowOrigin::Physical {
+        let style = tree.physical_style(usize::from(node));
+        let border = style.border().resolve_or_zero(None);
+        let width = (output.size.width - border.left - border.right).max(0.0);
+        overflow.scrollable_overflow_rect =
+            overflow.physical_overflow(width, style.direction().is_rtl());
+    }
     output.scrollable_overflow_rect = output
         .scrollable_overflow_rect
-        .union(result.scrollable_overflow_rect);
+        .union(overflow.scrollable_overflow_rect);
 }
 
 /// Position the `candidates` that `node` contains against `area`, its

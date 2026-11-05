@@ -601,6 +601,7 @@ fn layout_context(
             .then(|| positioned::positioning_area(metrics, size)),
         size,
         scrollable_overflow_rect: overflow,
+        overflow_origin: crate::layout::protocol::OverflowOrigin::ScrollOrigin,
         baselines: flow.baselines,
         top_margin: if collapse_start {
             flow.leading

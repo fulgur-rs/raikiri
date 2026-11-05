@@ -265,6 +265,12 @@ impl LayoutPartialTree for RowMeasure<'_, '_> {
             self.baselines
                 .insert(usize::from(node), output.baselines.first);
         }
+        let reversed = self
+            .tree
+            .query_style(usize::from(self.owner), ReadRole::CoreContainer)
+            .direction()
+            .is_rtl();
+        let output = super::native_child_output(self.tree, node, output, Some(reversed));
         if let Some(calls) = &mut self.flex_calls {
             calls.push(super::FlexReplayCall {
                 node,

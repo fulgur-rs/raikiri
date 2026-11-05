@@ -34,8 +34,8 @@ use raikiri_layout_style::values::{ExpandedDimension, Position, ResolveOrZero};
 
 use super::block_flow::compute_block_flow;
 use super::transposed_axes::{
-    physical_layout, transpose_child_output_to_vertical, transpose_inputs,
-    transpose_output_to_physical,
+    OverflowFrame, padding_box, physical_layout, swap, transpose_child_output_to_vertical,
+    transpose_inputs, transpose_output_to_physical,
 };
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
@@ -128,6 +128,27 @@ impl TransposedBlock {
         })
     }
 
+    /// Map overflow within a box's padding box on this frame's layout axes.
+    fn overflow_frame(&self, padding_box: Size<f32>) -> OverflowFrame {
+        OverflowFrame {
+            block_reversed: self.right_to_left,
+            inline_reversed: self.inline_reversed(),
+            padding_box,
+        }
+    }
+
+    /// Block flow interprets each child's overflow using that child's direction.
+    fn child_overflow_frame(&self, child: usize, padding_box: Size<f32>) -> OverflowFrame {
+        let input = self
+            .child_views
+            .get(&child)
+            .expect("a frame holds its child's view input");
+        OverflowFrame {
+            inline_reversed: input.view().direction().is_rtl(),
+            ..self.overflow_frame(padding_box)
+        }
+    }
+
     /// Whether the container is laid out on the axes of its own writing mode:
     /// a flex or grid container, as opposed to a block container.
     pub(super) fn is_on_own_axes(&self) -> bool {
@@ -151,10 +172,16 @@ impl TransposedBlock {
     /// The children taffy stored a layout for on the axes of the frame, each
     /// once.
     pub(super) fn into_placed(mut self) -> Vec<usize> {
+        self.take_placed()
+    }
+
+    /// Take the placed children while retaining the frame's prepared views.
+    fn take_placed(&mut self) -> Vec<usize> {
         // Taffy may store a child's layout more than once; the last one stands.
-        self.placed.sort_unstable();
-        self.placed.dedup();
-        self.placed
+        let mut placed = std::mem::take(&mut self.placed);
+        placed.sort_unstable();
+        placed.dedup();
+        placed
     }
 
     pub(in crate::layout) fn has_child(&self, idx: usize) -> bool {
@@ -555,12 +582,28 @@ impl LayoutSession<'_> {
                 child_block_ctx,
             );
             let reverse_extent = output.size.width;
+            let border = tree.physical_style(idx).border().resolve_or_zero(None);
+            let layout_border = Edges {
+                left: border.top,
+                right: border.bottom,
+                top: border.left,
+                bottom: border.right,
+            };
+            let physical = output.physical_overflow(
+                padding_box(output.size, border).width,
+                tree.physical_style(idx).direction().is_rtl(),
+            );
+            let overflow = block
+                .child_overflow_frame(idx, padding_box(swap(output.size), layout_border))
+                .on_layout_axes(physical);
             let mut output = transpose_child_output_to_vertical(
                 output,
                 right_to_left,
                 reverse_extent,
                 share_context,
             );
+            output.scrollable_overflow_rect = overflow;
+            output.overflow_origin = crate::layout::protocol::OverflowOrigin::ScrollOrigin;
             // A child's baselines are offsets from its own block-start edge,
             // which is this container's only when the block axes agree.
             if !same_vertical_block_mode(tree, block.container, idx) {
@@ -784,7 +827,7 @@ pub(super) fn compute_vertical_block(
         let border = border.resolve_or_zero(None);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
-    let (output, block) = with_transposed_frame(tree, block, |tree| {
+    let (output, mut block) = with_transposed_frame(tree, block, |tree| {
         if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
             inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
         }
@@ -794,11 +837,19 @@ pub(super) fn compute_vertical_block(
         compute_block_flow(tree, node_id, inputs, block_ctx)
     });
     let reverse_extent = output.size.height;
-    let output =
+    let overflow_frame = block.overflow_frame(padding_box(output.size, block.container_border()));
+    let overflow = overflow_frame.physical(output.scrollable_overflow_rect);
+    let mut output =
         transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);
-    for child in block.into_placed() {
+    output.scrollable_overflow_rect = overflow;
+    output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
+    for child in block.take_placed() {
         let layout = &mut tree.nodes[child].layout;
+        let overflow = block
+            .child_overflow_frame(child, padding_box(layout.size, layout.border))
+            .physical(layout.scrollable_overflow_rect);
         *layout = physical_layout(layout, output.size.width, right_to_left);
+        layout.scrollable_overflow_rect = overflow;
     }
     output
 }

@@ -48,6 +48,8 @@ pub(crate) struct LayoutContext {
     pub(crate) table_wrapper_height_owner: Option<usize>,
     pub(crate) transposed_style_index: crate::layout::dispatch::TransposedStyleIndex,
     pub(crate) transposed_frame_serial: u64,
+    /// Overflow conversion state of the innermost native algorithm.
+    pub(crate) native_overflow: Option<super::taffy_adapter::algorithms::NativeOverflow>,
     pub(crate) transposed_blocks: Vec<crate::layout::dispatch::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     /// The height that the vertical items of each grid container being laid

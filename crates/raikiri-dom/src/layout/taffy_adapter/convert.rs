@@ -729,6 +729,9 @@ impl IntoTaffy for LayoutOutput {
             margins_can_collapse_through,
             oof_candidates,
             oof_positioning_area,
+            // Cache transport keeps the origin alongside its one final entry;
+            // algorithm callbacks encode physical output before this boundary.
+            overflow_origin: _,
         } = self;
         taffy::LayoutOutput {
             size: size.into_taffy(),
@@ -761,6 +764,7 @@ impl FromTaffy for LayoutOutput {
         LayoutOutput {
             size: Size::from_taffy(size),
             scrollable_overflow_rect: Edges::from_taffy(scrollable_overflow_rect),
+            overflow_origin: crate::layout::protocol::OverflowOrigin::ScrollOrigin,
             baselines: Baselines::from_taffy(baselines),
             top_margin: FromTaffy::from_taffy(top_margin),
             bottom_margin: FromTaffy::from_taffy(bottom_margin),
