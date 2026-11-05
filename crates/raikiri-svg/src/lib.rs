@@ -3661,6 +3661,9 @@ fn freeze_svg_stylesheet_selectors(
     for node in &style_nodes {
         if let Some(text) = node.text() {
             stylesheet.parse_more(text);
+            // The geometry of a rule is read later from the text that this
+            // writes, so it has to be written whole.
+            filter_source::read_geometry_blocks_again(&mut stylesheet, text);
         }
     }
     // Without a rule SimpleCSS applies there is nothing to freeze. Report it
