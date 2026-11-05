@@ -302,3 +302,140 @@ fn only_a_cell_with_something_in_flow_gives_a_baseline() {
     ];
     check(cases);
 }
+
+#[test]
+fn a_rowspan_cannot_push_the_fallback_baseline_below_the_first_row() {
+    let cases: &[Case<'_>] = &[
+        (
+            "middle ",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 13.328125, 10.0), ("t", 8.0, 40.0)],
+        ),
+        (
+            "middle border-collapse:collapse",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-collapse:collapse\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 13.328125, 10.0), ("t", 8.0, 40.0)],
+        ),
+        (
+            "middle border-spacing:3px 7px",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-spacing:3px 7px\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 18.0, 10.0), ("t", 8.0, 54.0)],
+        ),
+        (
+            "middle padding:3px;border:2px solid",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;padding:3px;border:2px solid\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 18.328125, 10.0), ("t", 8.0, 50.0)],
+        ),
+        (
+            "top ",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:top\">X</td><td style=\"font:10px/10px Ahem;vertical-align:top\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:top\">X</td></tr></table>",
+            &[("y", 13.328125, 10.0), ("t", 8.0, 40.0)],
+        ),
+        (
+            "top border-collapse:collapse",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-collapse:collapse\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:top\">X</td><td style=\"font:10px/10px Ahem;vertical-align:top\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:top\">X</td></tr></table>",
+            &[("y", 13.328125, 10.0), ("t", 8.0, 40.0)],
+        ),
+        (
+            "top border-spacing:3px 7px",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-spacing:3px 7px\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:top\">X</td><td style=\"font:10px/10px Ahem;vertical-align:top\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:top\">X</td></tr></table>",
+            &[("y", 18.0, 10.0), ("t", 8.0, 54.0)],
+        ),
+        (
+            "top padding:3px;border:2px solid",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;padding:3px;border:2px solid\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:top\">X</td><td style=\"font:10px/10px Ahem;vertical-align:top\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:top\">X</td></tr></table>",
+            &[("y", 18.328125, 10.0), ("t", 8.0, 50.0)],
+        ),
+        (
+            "bottom ",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:bottom\">X</td><td style=\"font:10px/10px Ahem;vertical-align:bottom\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:bottom\">X</td></tr></table>",
+            &[("y", 13.328125, 10.0), ("t", 8.0, 40.0)],
+        ),
+        (
+            "bottom border-collapse:collapse",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-collapse:collapse\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:bottom\">X</td><td style=\"font:10px/10px Ahem;vertical-align:bottom\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:bottom\">X</td></tr></table>",
+            &[("y", 13.328125, 10.0), ("t", 8.0, 40.0)],
+        ),
+        (
+            "bottom border-spacing:3px 7px",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-spacing:3px 7px\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:bottom\">X</td><td style=\"font:10px/10px Ahem;vertical-align:bottom\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:bottom\">X</td></tr></table>",
+            &[("y", 18.0, 10.0), ("t", 8.0, 54.0)],
+        ),
+        (
+            "bottom padding:3px;border:2px solid",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;padding:3px;border:2px solid\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:bottom\">X</td><td style=\"font:10px/10px Ahem;vertical-align:bottom\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:bottom\">X</td></tr></table>",
+            &[("y", 18.328125, 10.0), ("t", 8.0, 50.0)],
+        ),
+        (
+            "baseline ",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:baseline\">X</td><td style=\"font:10px/10px Ahem;vertical-align:baseline\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:baseline\">X</td></tr></table>",
+            &[("y", 32.0, 10.0), ("t", 8.0, 54.0)],
+        ),
+        (
+            "baseline border-collapse:collapse",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-collapse:collapse\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:baseline\">X</td><td style=\"font:10px/10px Ahem;vertical-align:baseline\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:baseline\">X</td></tr></table>",
+            &[("y", 32.0, 10.0), ("t", 8.0, 54.0)],
+        ),
+        (
+            "baseline border-spacing:3px 7px",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;border-spacing:3px 7px\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:baseline\">X</td><td style=\"font:10px/10px Ahem;vertical-align:baseline\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:baseline\">X</td></tr></table>",
+            &[("y", 39.0, 10.0), ("t", 8.0, 75.0)],
+        ),
+        (
+            "baseline padding:3px;border:2px solid",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;padding:3px;border:2px solid\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:baseline\">X</td><td style=\"font:10px/10px Ahem;vertical-align:baseline\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:baseline\">X</td></tr></table>",
+            &[("y", 37.0, 10.0), ("t", 8.0, 64.0)],
+        ),
+        (
+            "collapsed first",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0 style=\"visibility:collapse\"><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 8.0, 10.0), ("t", 16.0, 26.671875)],
+        ),
+        (
+            "padding single",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"padding:3px 0 5px;font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 23.0, 10.0), ("t", 8.0, 28.0)],
+        ),
+        (
+            "empty row",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0 style=\"height:30px\"></tr><tr><td style=\"font:20px/20px Ahem\">X</td></tr></table>",
+            &[("y", 8.0, 10.0), ("t", 16.0, 50.0)],
+        ),
+        (
+            "span padding-bottom:9px",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;padding-bottom:9px;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 16.328125, 10.0), ("t", 8.0, 49.0)],
+        ),
+        (
+            "span padding-top:5px;padding-bottom:9px",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;padding-top:5px;padding-bottom:9px;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 18.0, 10.0), ("t", 8.0, 54.0)],
+        ),
+        (
+            "span border-bottom:7px solid",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;border-bottom:7px solid;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 15.65625, 10.0), ("t", 8.0, 47.0)],
+        ),
+        (
+            "span padding-bottom:9px;border-bottom:7px solid",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=2 id=c style=\"font:40px/40px Ahem;padding-bottom:9px;border-bottom:7px solid;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 18.65625, 10.0), ("t", 8.0, 56.0)],
+        ),
+        (
+            "first row 30",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0 style=\"height:30px\"><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 30.0, 10.0), ("t", 8.0, 50.0)],
+        ),
+        (
+            "first row 60",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0 style=\"height:60px\"><td rowspan=2 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr></table>",
+            &[("y", 60.0, 10.0), ("t", 8.0, 80.0)],
+        ),
+        (
+            "span three rows",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table;\"><tr id=r0><td rowspan=3 id=c style=\"font:40px/40px Ahem;vertical-align:middle\">X</td><td style=\"font:10px/10px Ahem;vertical-align:middle\">X</td></tr><tr id=r1><td style=\"font:20px/20px Ahem;vertical-align:middle\">X</td></tr><tr><td style=\"font:30px/30px Ahem\">X</td></tr></table>",
+            &[("y", 10.0, 10.0), ("t", 8.0, 60.0)],
+        ),
+    ];
+    check(cases);
+}

@@ -2005,8 +2005,9 @@ fn compute_table_layout_checked(
         // align by a baseline and have something in flow to take one from
         // (a line, or a box with height of its own) supply it, the greatest
         // offset winning. With none, it is the lowest content edge among the
-        // cells, measured as the row stretched them; a cell in a collapsed row
-        // has no extent, so that edge is the row's top.
+        // cells, measured as the row stretched them and capped at the first
+        // row's height even when a cell spans later rows. A collapsed first
+        // row has no extent, so the fallback edge is the row's top.
         let first_row_cells = || grid.cells.iter().filter(|cell| cell.row == 0);
         let first_row_baseline = first_row_cells()
             .filter(|cell| {
@@ -2017,7 +2018,9 @@ fn compute_table_layout_checked(
             .unwrap_or_else(|| {
                 first_row_cells()
                     .map(|cell| {
-                        doc.nodes[cell.node_id].layout.size.height - cell_block_end_edges(doc, cell)
+                        let content_edge = doc.nodes[cell.node_id].layout.size.height
+                            - cell_block_end_edges(doc, cell);
+                        content_edge.min(row_heights.first().copied().unwrap_or(0.0))
                     })
                     .fold(0.0, f32::max)
             });
