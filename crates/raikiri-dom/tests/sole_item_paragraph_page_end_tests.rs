@@ -1,6 +1,6 @@
-//! A paragraph in a flex container that holds nothing else moves its lines at
-//! a page end as it does in plain block flow: the container grows around
-//! them and the flow after it follows.
+//! A paragraph in a flex container or a grid that holds nothing else moves its
+//! lines at a page end as it does in plain block flow: the container grows
+//! around them and the flow after it follows.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -45,19 +45,9 @@ fn glyphs(html: &str) -> Vec<(u32, String, f32)> {
     glyphs
 }
 
-#[test]
-fn paragraphs_in_flex_containers_with_one_item_match_printed_lines_and_following_boxes() {
-    // Chromium PDF glyph bounds with loaded Ahem, 100px pages and CSS page
-    // sizing. The paragraph is four or eight 30px lines `z` in a 20px column;
-    // `C` follows the flex container inside its wrapper and `D` follows the
-    // wrapper. The cases cover narrow and wrapping containers, `row-reverse`
-    // and centered items, padding, a container with a `min-height` or
-    // `height`, flex containers nested in flex containers and in blocks, a
-    // paragraph or several in a block inside the item, items and paragraphs
-    // with a height of their own, column containers, and orphans or widows
-    // that move the whole paragraph or pull lines back from the page end.
-    let cases: serde_json::Value =
-        serde_json::from_str(include_str!("data/flex-item-paragraph-page-end.json")).unwrap();
+/// Checks every case of the JSON `cases` against its recorded glyphs.
+fn check(cases: &str) {
+    let cases: serde_json::Value = serde_json::from_str(cases).unwrap();
     for case in cases.as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let mut expected: Vec<(u32, String, f32)> =
@@ -73,4 +63,29 @@ fn paragraphs_in_flex_containers_with_one_item_match_printed_lines_and_following
             );
         }
     }
+}
+
+#[test]
+fn paragraphs_in_flex_containers_with_one_item_match_printed_lines_and_following_boxes() {
+    // Chromium PDF glyph bounds with loaded Ahem, 100px pages and CSS page
+    // sizing. The paragraph is four or eight 30px lines `z` in a 20px column;
+    // `C` follows the flex container inside its wrapper and `D` follows the
+    // wrapper. The cases cover narrow and wrapping containers, `row-reverse`
+    // and centered items, padding, a container with a `min-height` or
+    // `height`, flex containers nested in flex containers and in blocks, a
+    // paragraph or several in a block inside the item, items and paragraphs
+    // with a height of their own, column containers, and orphans or widows
+    // that move the whole paragraph or pull lines back from the page end.
+    check(include_str!("data/flex-item-paragraph-page-end.json"));
+}
+
+#[test]
+fn a_paragraph_alone_in_a_flex_container_or_grid_moves_its_edges_and_lines_like_block_flow() {
+    // The same measurement for a paragraph with a top edge taller than what
+    // is left of the page, which Chromium starts on the next page, and for a
+    // narrow paragraph in a grid whose rows size to their content, with the
+    // grid wrapped or not, centered, in one or two columns, flowing in
+    // columns, with a minimum height or clipping its overflow. `D` follows
+    // the grid.
+    check(include_str!("data/sole-item-edges-and-grids.json"));
 }

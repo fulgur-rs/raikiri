@@ -1085,7 +1085,7 @@ pub(crate) fn trailing_flex_child_for_pagination(
         .find(|&child| is_in_flow_flex_child_for_pagination(document, parent_id, child))
 }
 
-fn is_in_flow_grid_item_for_pagination(document: &Document, child_id: usize) -> bool {
+pub(crate) fn is_in_flow_grid_item_for_pagination(document: &Document, child_id: usize) -> bool {
     match document.nodes[child_id].kind() {
         NodeKind::Element => {
             document.nodes[child_id].display() != DisplayValue::None
@@ -1096,7 +1096,8 @@ fn is_in_flow_grid_item_for_pagination(document: &Document, child_id: usize) -> 
         }
         NodeKind::Text => matches!(
             &document.nodes[child_id].data,
-            NodeData::Text(text) if !text.text_content.trim().is_empty()
+            NodeData::Text(text)
+                if !text.text_content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
         ),
         _ => false,
     }
