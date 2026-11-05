@@ -610,6 +610,22 @@ fn resolves_padding_on_physical_axes(tree: &Document, idx: usize) -> bool {
             ))
 }
 
+/// Whether the child `idx` of a vertical container has a padding that taffy
+/// resolves against the physical width of its parent (see
+/// [`resolves_padding_on_physical_axes`]) and that a percentage or a `calc()`
+/// makes depend on that width. Only such a child needs the inline size of the
+/// container as its basis: scoping the edges of any other empties the layout
+/// cache of the box, and a chain of boxes that alternate between the two
+/// writing directions then measures its content again for each probe.
+pub(crate) fn pads_by_percentage_on_physical_axes(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    resolves_padding_on_physical_axes(tree, idx) && {
+        let padding = tree.physical_style(idx).padding();
+        [padding.left, padding.right, padding.top, padding.bottom]
+            .into_iter()
+            .any(super::edge_depends_on_basis)
+    }
+}
+
 /// `inputs` for the child `idx` of a vertical container, already on
 /// physical axes. A child that flows horizontally is an orthogonal flow:
 /// its block size is its physical height, which comes from its content, not
