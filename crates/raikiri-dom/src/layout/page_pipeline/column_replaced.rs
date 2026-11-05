@@ -1,4 +1,4 @@
-//! Leading replaced content of a column flex container with no leading gap.
+//! Leading replaced or size-contained content of a column with no gap.
 
 use super::*;
 use crate::layout::context::LayoutSession;
@@ -6,7 +6,7 @@ use crate::layout::page::pagination_child_order_borrowed;
 
 const TOLERANCE: f32 = 0.001;
 
-/// The first replaced piece touching the column's block-start edge. Ordinary
+/// The first replaced or size-contained piece at the column's block-start edge. Ordinary
 /// lines and cuttable boxes remain on their existing pagination paths.
 pub(super) fn first_piece(
     document: &LayoutSession<'_>,
@@ -30,12 +30,12 @@ pub(super) fn first_piece(
         return None;
     }
     let first = first_box(document, cascade, column)?;
-    let piece = replaced_piece(document, cascade, body_id, column, first, 0)?;
+    let piece = unbreakable_piece(document, cascade, body_id, column, first, 0)?;
     // Only scan later descendants once a leading replaced piece was found.
     container_can_be_judged(document, cascade, column).then_some(piece)
 }
 
-fn replaced_piece(
+fn unbreakable_piece(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
@@ -63,7 +63,9 @@ fn replaced_piece(
     {
         return None;
     }
-    if is_replaced_for_pagination(document, id) {
+    if is_replaced_for_pagination(document, id)
+        || size_contained_for_pagination(BoxTree::for_layout(document), id)
+    {
         return Some(node.layout.size.height);
     }
     // Only a leading chain of ordinary content-sized blocks is transparent.
@@ -78,7 +80,7 @@ fn replaced_piece(
         return None;
     }
     let child = first_box(document, cascade, id)?;
-    replaced_piece(document, cascade, body_id, id, child, depth + 1)
+    unbreakable_piece(document, cascade, body_id, id, child, depth + 1)
 }
 
 fn first_box(document: &Document, cascade: &CascadeResult, parent: usize) -> Option<usize> {

@@ -99,7 +99,8 @@ fn keep_after_a_float(
         &env,
         &candidate,
         false,
-        &state.checked_paragraphs,
+        &mut state.checked_paragraphs,
+        &mut TrailingFlexChildren::default(),
     );
     let mut position = pagination_state::TextPosition {
         effective_y: 95.0,

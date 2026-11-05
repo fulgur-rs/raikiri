@@ -237,17 +237,23 @@ pub(super) struct LineBlocks {
     /// The paragraph and its flex container, for a paragraph that is a flex
     /// item alone on its line; see [`flex_line_paragraph`].
     pub(super) flex_line: Option<(usize, usize)>,
+    /// A content-height paragraph that ends an eligible column flex box.
+    /// Its lines can move without invoking row-flex sibling movement.
+    pub(super) column_paragraph: Option<usize>,
 }
 
 impl LineBlocks {
-    /// Looks the blocks of `candidate` up. The flex line is looked for only
-    /// when no line block was found.
+    /// Looks the blocks of `candidate` up. Flex paragraphs are considered
+    /// only when no ordinary line block was found. Trailing identities are
+    /// cached, and a column paragraph is considered only before its first
+    /// orphans/widows check.
     pub(super) fn find(
         document: &LayoutSession<'_>,
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         uses_positioned_coordinates: bool,
-        checked_paragraphs: &CheckedParagraphs,
+        checked_paragraphs: &mut CheckedParagraphs,
+        trailing_flex_children: &mut TrailingFlexChildren,
     ) -> Self {
         // The block of text in an IFC paragraph is its root, including nested
         // inline elements. A block inside an inline element of an inline
@@ -274,10 +280,31 @@ impl LineBlocks {
             paragraph_root.filter(|_| block.is_none()),
             uses_positioned_coordinates,
         );
+        let column_paragraph = paragraph_root.filter(|&root| {
+            block.is_none()
+                && flex_line.is_none()
+                && !uses_positioned_coordinates
+                && !candidate.context.is_float_descendant()
+                && !candidate.context.is_out_of_flow_descendant()
+                && !checked_paragraphs.orphans_widows.contains(&root)
+                && trailing_flex_children.is_trailing(document, env.cascade, root)
+                && *checked_paragraphs
+                    .column_eligibility
+                    .entry(root)
+                    .or_insert_with(|| {
+                        super::column_first_piece::line_paragraph(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            root,
+                        )
+                    })
+        });
         Self {
             paragraph_root,
             block,
             flex_line,
+            column_paragraph,
         }
     }
 }
@@ -547,7 +574,8 @@ impl PaginationState {
             env,
             candidate,
             uses_positioned_coordinates,
-            &self.checked_paragraphs,
+            &mut self.checked_paragraphs,
+            &mut self.trailing_flex_children,
         );
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
@@ -1255,7 +1283,10 @@ impl PaginationState {
                 |&(holder, lead)| {
                     holder != node_id
                         && (lead <= 0.0
-                            || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001)
+                            || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001
+                            || super::contained_cloned_leading_holder(
+                                document, cascade, node_id, holder, lead,
+                            ))
                 },
             )
         } else {
@@ -1324,7 +1355,14 @@ impl PaginationState {
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
-        // A column can travel with its first replaced piece after earlier
+        // A trailing item's later content may fragment, but its first piece
+        // carries the box instead of leaving an empty strip on the old page.
+        overflow.page |= candidate.context.is_flex_item()
+            && self
+                .trailing_flex_children
+                .is_trailing(document, cascade, node_id)
+            && super::column_first_piece::moves(document, cascade, body_id, node_id, &fit);
+        // A column can travel with its first replaced or size-contained piece after earlier
         // flow content. At the start of the flow, the column stays and its
         // image moves on alone, even when body or wrapper margins remain.
         overflow.leading_column_replaced = column_piece.is_some_and(|end| {
@@ -1877,8 +1915,9 @@ impl PaginationState {
     /// page is moved as a unit only when its break would leave too few
     /// orphans, content comes before it on a page it does not start, and its
     /// first line fits a page; otherwise it keeps its natural break. A
-    /// paragraph that is a flex item alone on its line cannot move as a unit,
-    /// but its later lines can move down inside it. The padding and border
+    /// paragraph that is a flex item alone on its row, or that ends an
+    /// eligible column flex box, cannot move as a unit here, but its later
+    /// lines can move down inside it. The padding and border
     /// that close the boxes around the paragraph stay with its last lines:
     /// when its lines fit a page but the edges do not, the lines that the edge
     /// break asks for move down, on the page the paragraph starts on and on
@@ -1905,6 +1944,7 @@ impl PaginationState {
         if let Some((block_id, nested)) = blocks
             .block
             .or(blocks.flex_line.map(|(root, _)| (root, true)))
+            .or(blocks.column_paragraph.map(|root| (root, true)))
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
