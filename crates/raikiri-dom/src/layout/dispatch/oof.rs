@@ -220,7 +220,9 @@ pub(crate) fn compute_root_layout_with_content_limits(
             tree.with_overrides(Vec::new(), |tree| {
                 compute_root_layout(tree, root, available_space);
             });
-            tree.context.root_oof_capture = None;
+            if let Some(capture) = tree.context.root_oof_capture.take() {
+                align_root_oof_children(tree, root, available_space, &capture.candidates);
+            }
         });
     });
 }
@@ -279,6 +281,63 @@ impl LayoutSession<'_> {
     }
 }
 
+/// The area the library positions the boxes of the root `root` in: the page
+/// area less the scrollbars of the root, anchored at the origin of the canvas.
+/// `None` unless the page area is definite in both axes.
+fn root_positioning_area(
+    tree: &LayoutSession<'_>,
+    root: NodeId,
+    available_space: Size<AvailableSpace>,
+) -> Option<OofPositioningArea> {
+    let layout = tree.nodes[usize::from(root)].layout;
+    available_space
+        .width
+        .into_option()
+        .zip(available_space.height.into_option())
+        .map(|(width, height)| OofPositioningArea {
+            size: Size {
+                width: (width - layout.scrollbar_size.width).max(0.0),
+                height: (height - layout.scrollbar_size.height).max(0.0),
+            },
+            offset: Point {
+                x: -layout.location.x,
+                y: -layout.location.y,
+            },
+        })
+}
+
+/// Align the boxes that the root `root`, the initial containing block, has
+/// positioned when it is laid out on the axes of a vertical writing mode.
+///
+/// The library knows only the axes of `horizontal-tb`: it starts a box at the
+/// left or top edge of the page area, and aligns the box by `align-self` on
+/// the vertical axis and by `justify-self` on the horizontal one. A vertical
+/// root swaps both, as any vertical containing block does (see
+/// [`super::vertical_oof::align_hoisted_children`]), so the boxes `handed`
+/// to the root are placed again against the page area, as a box inside a
+/// vertical block container is.
+fn align_root_oof_children(
+    tree: &mut LayoutSession<'_>,
+    root: NodeId,
+    available_space: Size<AvailableSpace>,
+    handed: &OofCandidates,
+) {
+    let idx = usize::from(root);
+    if super::block_right_to_left(tree, idx).is_some()
+        && let Some(area) = root_positioning_area(tree, root, available_space)
+    {
+        let hoisted = tree
+            .context
+            .taffy_hoisted_children
+            .get(&idx)
+            .cloned()
+            .unwrap_or_default();
+        let batch = oof_batch(tree, handed.iter());
+        record_safe_static_positions(tree, &batch, &hoisted);
+        super::vertical_oof::align_hoisted_children(tree, idx, area);
+    }
+}
+
 /// [`static_position_overrides`] for the `handed` candidates that the root
 /// positions against the initial containing block: the page area, the available
 /// space less the scrollbars of the root, anchored at the origin of the canvas
@@ -295,21 +354,7 @@ fn root_static_position_overrides(
     if handed.is_empty() {
         return Vec::new();
     }
-    let layout = tree.nodes[usize::from(root)].layout;
-    let area = available_space
-        .width
-        .into_option()
-        .zip(available_space.height.into_option())
-        .map(|(width, height)| OofPositioningArea {
-            size: Size {
-                width: (width - layout.scrollbar_size.width).max(0.0),
-                height: (height - layout.scrollbar_size.height).max(0.0),
-            },
-            offset: Point {
-                x: -layout.location.x,
-                y: -layout.location.y,
-            },
-        });
+    let area = root_positioning_area(tree, root, available_space);
     area.map_or_else(Vec::new, |area| {
         let batch = oof_batch(tree, handed.iter());
         let mut overrides = static_position_overrides(

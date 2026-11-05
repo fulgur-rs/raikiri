@@ -931,6 +931,148 @@ fn the_sideways_root_element_gives_the_initial_containing_block_vertical_axes() 
     }
 }
 
+/// The positions that Chromium gives a 30x20 box with all four insets 10px
+/// in the 800x600 initial containing block, for each root element style, with
+/// no alignment, `align-self: start | center | end`,
+/// `justify-self: start | center | end` and both `end`.
+const ROOT_ALIGNMENT_POSITIONS: [(&str, [(f32, f32); 8]); 8] = [
+    (
+        "",
+        [
+            (10.0, 10.0),
+            (10.0, 10.0),
+            (10.0, 290.0),
+            (10.0, 570.0),
+            (10.0, 10.0),
+            (385.0, 10.0),
+            (760.0, 10.0),
+            (760.0, 570.0),
+        ],
+    ),
+    (
+        "direction:rtl",
+        [
+            (760.0, 10.0),
+            (760.0, 10.0),
+            (760.0, 290.0),
+            (760.0, 570.0),
+            (760.0, 10.0),
+            (385.0, 10.0),
+            (10.0, 10.0),
+            (10.0, 570.0),
+        ],
+    ),
+    (
+        "writing-mode:vertical-rl",
+        [
+            (760.0, 10.0),
+            (760.0, 10.0),
+            (385.0, 10.0),
+            (10.0, 10.0),
+            (760.0, 10.0),
+            (760.0, 290.0),
+            (760.0, 570.0),
+            (10.0, 570.0),
+        ],
+    ),
+    (
+        "writing-mode:vertical-rl;direction:rtl",
+        [
+            (760.0, 570.0),
+            (760.0, 570.0),
+            (385.0, 570.0),
+            (10.0, 570.0),
+            (760.0, 570.0),
+            (760.0, 290.0),
+            (760.0, 10.0),
+            (10.0, 10.0),
+        ],
+    ),
+    (
+        "writing-mode:vertical-lr",
+        [
+            (10.0, 10.0),
+            (10.0, 10.0),
+            (385.0, 10.0),
+            (760.0, 10.0),
+            (10.0, 10.0),
+            (10.0, 290.0),
+            (10.0, 570.0),
+            (760.0, 570.0),
+        ],
+    ),
+    (
+        "writing-mode:vertical-lr;direction:rtl",
+        [
+            (10.0, 570.0),
+            (10.0, 570.0),
+            (385.0, 570.0),
+            (760.0, 570.0),
+            (10.0, 570.0),
+            (10.0, 290.0),
+            (10.0, 10.0),
+            (760.0, 10.0),
+        ],
+    ),
+    (
+        "writing-mode:sideways-rl",
+        [
+            (760.0, 10.0),
+            (760.0, 10.0),
+            (385.0, 10.0),
+            (10.0, 10.0),
+            (760.0, 10.0),
+            (760.0, 290.0),
+            (760.0, 570.0),
+            (10.0, 570.0),
+        ],
+    ),
+    (
+        "writing-mode:sideways-lr",
+        [
+            (10.0, 570.0),
+            (10.0, 570.0),
+            (385.0, 570.0),
+            (760.0, 570.0),
+            (10.0, 570.0),
+            (10.0, 290.0),
+            (10.0, 10.0),
+            (760.0, 10.0),
+        ],
+    ),
+];
+
+/// The alignment declarations behind [`ROOT_ALIGNMENT_POSITIONS`].
+const ROOT_ALIGNMENTS: [&str; 8] = [
+    "",
+    "align-self:start",
+    "align-self:center",
+    "align-self:end",
+    "justify-self:start",
+    "justify-self:center",
+    "justify-self:end",
+    "align-self:end;justify-self:end",
+];
+
+#[test]
+fn the_initial_containing_block_places_its_boxes_on_the_axes_of_the_root_element() {
+    for position in ["absolute", "fixed"] {
+        for (root_css, expected) in ROOT_ALIGNMENT_POSITIONS {
+            for (alignment, &(x, y)) in ROOT_ALIGNMENTS.iter().zip(&expected) {
+                let child_css = format!(
+                    "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:20px;{alignment}"
+                );
+                let rect = root_rect(root_css, position, &child_css);
+                assert_eq!(
+                    (rect.0, rect.1, rect.2, rect.3),
+                    (x, y, 30.0, 20.0),
+                    "{position} {root_css:?} {alignment:?}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a_vertical_box_in_a_horizontal_root_leaves_the_boxes_around_it_on_their_own_axes() {
     let mut doc = Document::new();

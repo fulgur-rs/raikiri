@@ -19,8 +19,11 @@
 //! out-of-flow children to physical axes when it leaves that frame, so those
 //! children are placed like the children of a block container. Their
 //! coordinates come from Taffy's positioning of the candidates (`oof`) and
-//! from the alignment of `alignment`; the page layout rewrites them only for
-//! the auto margins of the boxes that the root contains.
+//! from the alignment of `alignment`. The root element's initial containing
+//! block is aligned the same way when the root is vertical (see
+//! `oof::compute_root_layout_with_content_limits`); the page layout then
+//! rewrites the coordinates of the boxes that the root contains only for their
+//! auto margins.
 
 use crate::layout::protocol::{AvailableSpace, LayoutInput};
 use raikiri_layout_geometry::Size;
