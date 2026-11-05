@@ -34,6 +34,9 @@ pub struct RootBox {
     /// against [`Self::border_box`], in page coordinates. `None` when the
     /// root has no transform. The matrix may be singular, in which case the
     /// root and its content are not rendered (CSS Transforms 1 §6).
+    /// Apply this around the whole canvas, outside paint events and their
+    /// coordinate transforms. Relative placement keeps its existing
+    /// layout and paint handling.
     pub transform: Option<PaintTransform>,
 }
 
@@ -299,7 +302,8 @@ impl Axis<'_> {
 }
 
 /// The first `<html>` element child of the document node.
-pub(super) fn root_element(document: &Document) -> Option<usize> {
+/// Shared with paint projection so both identify the externally transformed root.
+pub(crate) fn root_element(document: &Document) -> Option<usize> {
     document
         .get_node(document.root_index())?
         .children

@@ -144,6 +144,7 @@ pub(crate) use relative::{
     Precedence, layout_relative_insets, placed_without_relative_offset_for_layout,
     used_relative_offset_for_layout,
 };
+pub(crate) use root_box::root_element as canvas_root_element;
 pub use root_box::{RootBox, root_box};
 
 pub(crate) use page_pipeline::{
