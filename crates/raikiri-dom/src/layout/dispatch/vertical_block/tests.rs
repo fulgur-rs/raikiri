@@ -1,5 +1,6 @@
 mod frame_tests;
 mod keyword_width_tests;
+mod overflow_tests;
 mod scoped_override_tests;
 mod view_tests;
 

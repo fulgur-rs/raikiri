@@ -34,8 +34,8 @@ use raikiri_layout_style::values::{ExpandedDimension, Position, ResolveOrZero};
 
 use super::block_flow::compute_block_flow;
 use super::transposed_axes::{
-    physical_layout, transpose_child_output_to_vertical, transpose_inputs,
-    transpose_output_to_physical,
+    OverflowFrame, padding_box, physical_layout, swap, transpose_child_output_to_vertical,
+    transpose_inputs, transpose_output_to_physical,
 };
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
@@ -126,6 +126,15 @@ impl TransposedBlock {
         self.container_view.as_ref().map_or(Edges::ZERO, |input| {
             input.view().border().resolve_or_zero(None)
         })
+    }
+
+    /// Map overflow within a box's padding box on this frame's layout axes.
+    fn overflow_frame(&self, padding_box: Size<f32>) -> OverflowFrame {
+        OverflowFrame {
+            block_reversed: self.right_to_left,
+            inline_reversed: self.inline_reversed(),
+            padding_box,
+        }
     }
 
     /// Whether the container is laid out on the axes of its own writing mode:
@@ -555,12 +564,23 @@ impl LayoutSession<'_> {
                 child_block_ctx,
             );
             let reverse_extent = output.size.width;
+            let border = tree.physical_style(idx).border().resolve_or_zero(None);
+            let layout_border = Edges {
+                left: border.top,
+                right: border.bottom,
+                top: border.left,
+                bottom: border.right,
+            };
+            let overflow = block
+                .overflow_frame(padding_box(swap(output.size), layout_border))
+                .on_layout_axes(output.scrollable_overflow_rect);
             let mut output = transpose_child_output_to_vertical(
                 output,
                 right_to_left,
                 reverse_extent,
                 share_context,
             );
+            output.scrollable_overflow_rect = overflow;
             // A child's baselines are offsets from its own block-start edge,
             // which is this container's only when the block axes agree.
             if !same_vertical_block_mode(tree, block.container, idx) {
@@ -794,11 +814,20 @@ pub(super) fn compute_vertical_block(
         compute_block_flow(tree, node_id, inputs, block_ctx)
     });
     let reverse_extent = output.size.height;
-    let output =
+    let overflow_frame = block.overflow_frame(padding_box(output.size, block.container_border()));
+    let overflow = overflow_frame.physical(output.scrollable_overflow_rect);
+    let mut output =
         transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);
+    output.scrollable_overflow_rect = overflow;
     for child in block.into_placed() {
         let layout = &mut tree.nodes[child].layout;
+        let overflow = OverflowFrame {
+            padding_box: padding_box(layout.size, layout.border),
+            ..overflow_frame
+        }
+        .physical(layout.scrollable_overflow_rect);
         *layout = physical_layout(layout, output.size.width, right_to_left);
+        layout.scrollable_overflow_rect = overflow;
     }
     output
 }
