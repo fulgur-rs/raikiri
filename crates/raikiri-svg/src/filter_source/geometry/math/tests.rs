@@ -387,6 +387,8 @@ fn a_token_is_told_by_its_first_characters() {
             kinds.push((token.kind, token.space));
         }
     }
+    // A number that ends the text has nothing after it.
+    assert_eq!(kinds("12"), [(Kind::Value(NUMBER), false)]);
     assert_eq!(
         kinds("-1.5e2px"),
         [(Kind::Value(LENGTH), false)],
