@@ -327,6 +327,9 @@ pub(super) struct PaginationState {
     /// flow inside it, by the end of the clip (as bits) in the coordinates of
     /// the candidates: the clip stays where it is while they move.
     edge_pushes: HashMap<u32, f32>,
+    /// Box growth used to paint closing edges across a page break, excluded
+    /// from the height against which outer absolute children are positioned.
+    edge_growth: HashMap<usize, f32>,
     pub(super) page_names: PageNames,
     pub(super) pending_break: PendingBreak,
     pub(super) sibling_margins: SiblingMargins,
@@ -373,6 +376,7 @@ impl PaginationState {
             float_shifts: FloatShifts::default(),
             reach: PageReach::default(),
             edge_pushes: HashMap::new(),
+            edge_growth: HashMap::new(),
             page_names,
             pending_break: PendingBreak::default(),
             sibling_margins: SiblingMargins::default(),
@@ -945,6 +949,10 @@ impl PaginationState {
         Ok(())
     }
 
+    pub(super) fn track_outer_owners(&mut self, owners: &HashMap<usize, f32>) {
+        self.edge_growth = owners.keys().map(|&owner| (owner, 0.0)).collect();
+    }
+
     /// Breaks the page before the bottom padding and border of a block when
     /// they do not fit below its content on the page the content ends on, so
     /// that they begin the next page instead of running on from the content
@@ -1011,6 +1019,15 @@ impl PaginationState {
         if visible > 0.001 {
             reach_page(control, next_page)?;
         }
+        let heights: Vec<_> = if self.edge_growth.is_empty() {
+            Vec::new()
+        } else {
+            document
+                .inclusive_ancestors(node_id)
+                .filter(|owner| self.edge_growth.contains_key(owner))
+                .map(|owner| (owner, document.nodes[owner].layout.size.height))
+                .collect()
+        };
         document.nodes[edges_break.node_id].layout.size.height += gap;
         document.mark_pagination_extent_dirty(edges_break.node_id);
         grow_ancestors_for_shift(
@@ -1023,6 +1040,14 @@ impl PaginationState {
             page,
             &IfcBoxShifts::default(),
         );
+        // Bounds and float extents can absorb part of the gap. Record each
+        // box's actual growth rather than subtracting the raw gap everywhere.
+        for (owner, height) in heights {
+            let growth = document.nodes[owner].layout.size.height - height;
+            if growth > 0.001 {
+                *self.edge_growth.entry(owner).or_default() += growth;
+            }
+        }
         self.flow_shift += gap;
         self.current_page = self.current_page.max(next_page);
         if visible > 0.001 {
@@ -2548,6 +2573,7 @@ impl PaginationState {
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
         clip_edges: &HashMap<usize, f32>,
+        owner_heights: &HashMap<usize, f32>,
     ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
@@ -2567,12 +2593,22 @@ impl PaginationState {
         let mut owners: Vec<_> = owners.into_iter().collect();
         owners.sort_by_cached_key(|&owner| (document.inclusive_ancestors(owner).count(), owner));
         let followers = std::cell::OnceCell::new();
+        let changed =
+            super::positioned_flow::changed_owners(document, owner_heights, &self.edge_growth);
+        if !changed.is_empty() {
+            let followers =
+                followers.get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
+            for &owner in changed.keys() {
+                followers.queue_outer_resize(document, owner);
+            }
+            followers.flush(document, control, Some(&changed))?;
+        }
         for root in owners {
             if !lines_can_shift_inside(document, cascade, root) {
                 let followers = followers
                     .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
                 super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;
-                followers.flush(document, control)?;
+                followers.flush(document, control, None)?;
                 continue;
             }
             let Some(Some(paragraph)) = paragraphs.get(&root) else {
@@ -2640,7 +2676,7 @@ impl PaginationState {
                 }
             }
             if let Some(followers) = followers.get() {
-                followers.flush(document, control)?;
+                followers.flush(document, control, None)?;
             }
         }
         Ok(())

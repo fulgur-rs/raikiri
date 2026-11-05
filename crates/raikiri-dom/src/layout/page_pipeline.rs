@@ -4135,6 +4135,7 @@ fn paginate_flow(
     let content_height = insets.page_area_height(margins, page_box);
     let unpaginated_overflow =
         unpaginated_content_overflow(document, cascade, body_id, content_height);
+    let positioned_owner_heights = positioned_flow::owner_heights(document);
     let fixed_page_step = fixed_page_step(content_height, page_box.height);
     // A page-size/margin change can make the fragmentainer height vary by
     // page.  The default API supplies no schedule and therefore follows the
@@ -4288,6 +4289,7 @@ fn paginate_flow(
         page_names,
         ColumnContexts::new(document.nodes.len()),
     );
+    state.track_outer_owners(&positioned_owner_heights);
     let env = FlowEnv {
         cascade,
         body_id,
@@ -4340,7 +4342,22 @@ fn paginate_flow(
     })();
     document.finish_normal_block_shifts();
     candidate_result?;
-    if let Err(halt) = state.keep_positioned_lines(document, &env, &clip_edges) {
+    if !positioned_owner_heights.is_empty() {
+        // Resolve ancestor-dependent positions from normal-flow growth before
+        // positioned fragmentation and the table-box geometry finalizers.
+        // First-row break gaps added by those finalizers do not contribute
+        // to this positioning basis, as with a percentage top beside a table.
+        update_paginated_block_heights(
+            document,
+            cascade,
+            body_id,
+            content_height,
+            &unpaginated_overflow,
+        );
+    }
+    if let Err(halt) =
+        state.keep_positioned_lines(document, &env, &clip_edges, &positioned_owner_heights)
+    {
         halt.finish()?;
     }
 
@@ -6008,6 +6025,8 @@ enum OutOfFlowFollow {
     /// A `bottom`, or a `top` that is a percentage, places it against the
     /// padding box of the paragraph, whose height the moved lines grow.
     WithHeight,
+    /// An ancestor's height places it after normal-flow growth settles.
+    DeferredAncestorHeight,
 }
 
 /// Whether a size follows the height of the containing block: it is a
@@ -6022,10 +6041,9 @@ fn follows_height(length: impl Into<Dimension>) -> bool {
 
 /// How the out-of-flow box `node`, one of the boxes of the paragraph `root`,
 /// follows lines that move down, or `None` when it would need more than that
-/// to stay where its insets put it: another box is its containing block and a
-/// `bottom` or a percentage places it against that box, its size depends on
-/// the height of the containing block, both insets place it, or it does not
-/// follow the static position of a line.
+/// to stay where its insets put it: its size depends on the containing block's
+/// height, both insets place it, its ancestor cannot be resolved after normal
+/// flow, or it does not follow the static position of a line.
 fn out_of_flow_follow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6059,11 +6077,18 @@ fn out_of_flow_follow(
             .is_some_and(|coordinate| coordinate.follow_static_y)
             .then_some(OutOfFlowFollow::OnLine),
         (false, false) => None,
-        _ => document
-            .oof_coordinates
-            .get(&node)
-            .is_some_and(|coordinate| coordinate.owner == root)
-            .then_some(OutOfFlowFollow::WithHeight),
+        _ => {
+            if document
+                .oof_coordinates
+                .get(&node)
+                .is_some_and(|coordinate| coordinate.owner == root)
+            {
+                Some(OutOfFlowFollow::WithHeight)
+            } else {
+                positioned_flow::follows_ancestor_height(document, root, node)
+                    .then_some(OutOfFlowFollow::DeferredAncestorHeight)
+            }
+        }
     }
 }
 
@@ -10764,7 +10789,9 @@ fn out_of_flow_moves(
                         return None;
                     }
                     let delta = match out_of_flow_follow(document, cascade, root, b.node)? {
-                        OutOfFlowFollow::TopAnchored => return None,
+                        OutOfFlowFollow::TopAnchored | OutOfFlowFollow::DeferredAncestorHeight => {
+                            return None;
+                        }
                         OutOfFlowFollow::OnLine => {
                             let anchors = anchors.get_or_init(|| {
                                 ifc.lines.as_ref().map(first_anchors).unwrap_or_default()

@@ -110,6 +110,26 @@ fn positioned(style: &str, content: &str) -> String {
 }
 
 #[test]
+fn ancestor_containing_blocks_reposition_absolute_text_after_line_pagination() {
+    // Chromium 152 prints these glyph tops after the ancestor grows around
+    // the paragraph's page break; static placement follows the last line.
+    for (inset, top) in [("bottom:0", 35.0), ("top:50%", 5.0), ("", 35.0)] {
+        let body = format!(
+            "<div style='height:30px'></div>\
+             <div style='position:relative'><div style='width:20px'>\
+             z z z z<span style='position:absolute;left:40px;{inset}'>Y</span>\
+             </div></div>"
+        );
+        assert_eq!(
+            lines_of(&body, |text| text == "z"),
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            "{inset}"
+        );
+        assert_eq!(lines_of(&body, |text| text == "Y"), [(1, top)], "{inset}");
+    }
+}
+
+#[test]
 fn static_absolute_children_follow_moved_lines_inside_positioned_blocks() {
     for content in [
         "<p style='position:relative;margin:0'>A<span style='position:absolute;left:40px'>T</span><br>B</p><p style='margin:0'>C</p>",
@@ -1055,5 +1075,289 @@ fn breaks_that_push_a_line_past_the_page_limit_fail_the_layout() {
             assert!(matches!(layout_with(2), Ok(LayoutStatus::Completed(_))));
         }
         assert!(matches!(layout_with(3), Ok(LayoutStatus::Completed(_))));
+    }
+}
+
+#[test]
+fn ancestor_positioning_matches_chromium_across_flow_changes() {
+    // Chromium PDF coordinates round half-pixel placements to whole pixels.
+    let cases = [
+        (
+            "lead10-bottom:0",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "lead10-top:50%",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(1, 5.0)],
+        ),
+        (
+            "lead10-",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "lead30-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "lead30-top:50%",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 5.0)],
+        ),
+        (
+            "lead30-",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "lead60-bottom:0",
+            r#"<div style="height:60px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            [(2, 35.0)],
+        ),
+        (
+            "lead60-top:50%",
+            r#"<div style="height:60px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div></div>"#,
+            [(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            [(2, 5.0)],
+        ),
+        (
+            "lead60-",
+            r#"<div style="height:60px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;">Y</span></div></div>"#,
+            [(1, 5.0), (1, 35.0), (2, 5.0), (2, 35.0)],
+            [(2, 35.0)],
+        ),
+        (
+            "two-paragraphs-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">a a a a</div><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(2, 5.0), (2, 35.0), (3, 5.0), (3, 35.0)],
+            [(3, 35.0)],
+        ),
+        (
+            "two-paragraphs-top:50%",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">a a a a</div><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div></div>"#,
+            [(2, 5.0), (2, 35.0), (3, 5.0), (3, 35.0)],
+            [(2, 5.0)],
+        ),
+        (
+            "following-block-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div><div style="height:45px;break-inside:avoid">T</div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(2, 20.0)],
+        ),
+        (
+            "following-block-top:50%",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div><div style="height:45px;break-inside:avoid">T</div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 43.0)],
+        ),
+        (
+            "padding-border-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;padding:10px 0;border:5px solid"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(1, 20.0), (1, 50.0), (2, 5.0), (2, 35.0)],
+            [(2, 45.0)],
+        ),
+        (
+            "padding-border-top:50%",
+            r#"<div style="height:30px"></div><div style="position:relative;padding:10px 0;border:5px solid"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div></div>"#,
+            [(1, 20.0), (1, 50.0), (2, 5.0), (2, 35.0)],
+            [(2, 5.0)],
+        ),
+        (
+            "nested-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "nested-top:50%",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 5.0)],
+        ),
+        (
+            "table-tail-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div><table style="border-spacing:0"><tr><td style="padding:0;height:45px">T</td></tr></table></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(2, 5.0)],
+        ),
+        (
+            "table-tail-top:50%",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:50%">Y</span></div><table style="border-spacing:0"><tr><td style="padding:0;height:45px">T</td></tr></table></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 23.0)],
+        ),
+        (
+            "top:25%",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:25%">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(0, 53.0)],
+        ),
+        (
+            "top:calc(25% + 3px)",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:calc(25% + 3px)">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(0, 56.0)],
+        ),
+        (
+            "bottom:25%",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:25%">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(1, 5.0)],
+        ),
+        (
+            "bottom:calc(25% + 3px)",
+            r#"<div style="height:10px"></div><div style="position:relative;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:calc(25% + 3px)">Y</span></div></div>"#,
+            [(0, 15.0), (0, 45.0), (1, 5.0), (1, 35.0)],
+            [(1, 5.0)],
+        ),
+        (
+            "body-bottom:0",
+            r#"<style>body{position:relative}</style><div style="height:30px"></div><div style="position:static;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "body-top:25%",
+            r#"<style>body{position:relative}</style><div style="height:30px"></div><div style="position:static;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:25%">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(0, 45.0)],
+        ),
+        (
+            "body-",
+            r#"<style>body{position:relative}</style><div style="height:30px"></div><div style="position:static;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(1, 35.0)],
+        ),
+        (
+            "edge-own-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;padding-bottom:50px"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(2, 5.0)],
+        ),
+        (
+            "edge-own-top:10%",
+            r#"<div style="height:30px"></div><div style="position:relative;padding-bottom:50px"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:10%">Y</span></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(0, 53.0)],
+        ),
+        (
+            "edge-nested-bottom:0",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="padding-bottom:50px"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(2, 5.0)],
+        ),
+        (
+            "edge-nested-top:10%",
+            r#"<div style="height:30px"></div><div style="position:relative;"><div style="padding-bottom:50px"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:10%">Y</span></div></div></div>"#,
+            [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+            [(0, 53.0)],
+        ),
+    ];
+    for (name, body, normal, positioned) in cases {
+        if name.starts_with("table-tail") {
+            let control = r#"<div style="height:30px"></div><div style="position:relative"><div style="width:20px">z z z z</div><table style="border-spacing:0"><tr><td style="padding:0;height:45px">T</td></tr></table></div>"#;
+            assert_eq!(
+                lines_of(body, |text| text == "T"),
+                lines_of(control, |text| text == "T"),
+                "{name}"
+            );
+        } else if name.starts_with("following-block") {
+            assert_eq!(lines_of(body, |text| text == "T"), [(2, 5.0)], "{name}");
+        } else if name.starts_with("two-paragraphs") {
+            assert_eq!(
+                lines_of(body, |text| text == "a"),
+                [(0, 35.0), (0, 65.0), (1, 5.0), (1, 35.0)],
+                "{name}"
+            );
+        }
+        for (text, expected) in [("z", normal.as_slice()), ("Y", positioned.as_slice())] {
+            let actual = lines_of(body, |run| run == text);
+            assert_eq!(actual.len(), expected.len(), "{name} {text}: {actual:?}");
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert_eq!(actual.0, expected.0, "{name} {text}");
+                assert!(
+                    (actual.1 - expected.1).abs() <= 0.6,
+                    "{name} {text}: {actual:?} != {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn bounded_ancestor_keeps_its_height_for_absolute_placement() {
+    for (style, bottom_top, percent_top) in [
+        ("height:120px", 25.0, 5.0),
+        ("max-height:120px", 25.0, 5.0),
+        ("min-height:150px", 55.0, 10.0),
+    ] {
+        let body = |child: &str| {
+            format!(
+                "<div style='height:30px'></div><div style='position:relative;{style}'><div style='width:20px'>z z z z{child}</div></div>"
+            )
+        };
+        let control = lines_of(&body(""), |text| text == "z");
+        for (inset, top) in [("bottom:0", bottom_top), ("top:50%", percent_top)] {
+            let child = format!("<span style='position:absolute;left:40px;{inset}'>Y</span>");
+            let html = body(&child);
+            // RAIKIRI-1466 tracks the separate bounded normal-flow discrepancy.
+            // Its absolute child must preserve the no-child normal flow.
+            assert_eq!(
+                lines_of(&html, |text| text == "z"),
+                control,
+                "{style} {inset}"
+            );
+            assert_eq!(
+                lines_of(&html, |text| text == "Y"),
+                [(1, top)],
+                "{style} {inset}"
+            );
+        }
+    }
+}
+
+#[test]
+fn initial_containing_block_preserves_absolute_placement() {
+    for (body, expected) in [
+        (
+            r#"<div style="height:30px"></div><div style="position:static;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div>"#,
+            (0, 75.0),
+        ),
+        (
+            r#"<div style="height:30px"></div><div style="position:static;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:25%">Y</span></div></div>"#,
+            (0, 30.0),
+        ),
+        (
+            r#"<div style="height:30px"></div><div style="position:static;"><div style="width:20px">z z z z<span style="position:absolute;left:40px;">Y</span></div></div>"#,
+            (1, 35.0),
+        ),
+    ] {
+        assert_eq!(lines_of(body, |text| text == "Y"), [expected], "{body}");
+    }
+}
+
+#[test]
+fn fixed_ancestor_keeps_its_basis_when_descendant_edges_break() {
+    for (body, expected) in [
+        (
+            r#"<div style="height:30px"></div><div style="position:relative;height:200px"><div style="padding-bottom:50px"><div style="width:20px">z z z z<span style="position:absolute;left:40px;bottom:0">Y</span></div></div></div>"#,
+            (2, 5.0),
+        ),
+        (
+            r#"<div style="height:30px"></div><div style="position:relative;height:200px"><div style="padding-bottom:50px"><div style="width:20px">z z z z<span style="position:absolute;left:40px;top:10%">Y</span></div></div></div>"#,
+            (0, 55.0),
+        ),
+    ] {
+        assert_eq!(lines_of(body, |text| text == "Y"), [expected], "{body}");
     }
 }
