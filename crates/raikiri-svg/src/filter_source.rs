@@ -1,5 +1,5 @@
-//! Source rewrites for the two places where `usvg` filters differently from
-//! the specifications and the browsers.
+//! Source rewrites for the places where `usvg` differs from the
+//! specifications and the browsers.
 //!
 //! - A zero `divisor` on `feConvolveMatrix` asks for the default (the sum of
 //!   the kernel, or 1 when that sum is zero), but `usvg` drops the primitive.
@@ -7,14 +7,21 @@
 //!   without segments, draws nothing, and its filter draws nothing either,
 //!   but `usvg` keeps the filter on the empty group it makes, so an `feFlood`
 //!   fills its region.
+//! - The geometry of a shape can be a CSS property (`width`, `r`, `d`, and
+//!   the like), which takes the place of the attribute of the same name, but
+//!   `usvg` only reads the attribute. The declaration that wins the cascade is
+//!   written into the attribute.
 //!
-//! Both are mended in the XML before `usvg` reads it: the parsed tree no
+//! All are mended in the XML before `usvg` reads it: the parsed tree no
 //! longer tells an empty `g`, whose filter does draw, from a shape that was
 //! left out. The filter of such a shape is turned off in its `style`
 //! attribute, so the element keeps its name, its `id` and its place for
 //! everything that looks at them, such as a `use`, a `switch` or a selector.
 
+mod geometry;
+
 use crate::{MAX_INITIAL_PARSE_XML_NODES, SVG_NAMESPACE, XLINK_NAMESPACE};
+use geometry::Declared;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::str::FromStr;
@@ -32,14 +39,23 @@ const PREPENDED_NO_FILTER: &str = "filter:none!important;";
 /// The same, as the `style` attribute of a shape that has none.
 const ADDED_NO_FILTER: &str = " style=\"filter:none!important\"";
 
-/// `source` with the filters of the shapes that are not rendered turned off,
-/// and with a zero `divisor` of an `feConvolveMatrix` turned into the default.
+/// A change to the source: the text that takes the place of a range.
+type Edit = (Range<usize>, Cow<'static, str>);
+
+/// `source` with the geometry that CSS gives to a shape written into its
+/// attributes, with the filters of the shapes that are not rendered turned
+/// off, and with a zero `divisor` of an `feConvolveMatrix` turned into the
+/// default.
 ///
-/// The source is returned as it is when it holds no filter element, or when
-/// it is not XML that this reads, which `usvg` then reports.
+/// The source is returned as it is when nothing in it needs one of these, or
+/// when it is not XML that this reads, which `usvg` then reports.
 pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
-    // Every case needs a filter element, so a document without one is not read.
-    if !source.contains("<filter") && !source.contains(":filter") {
+    // The filter cases need a filter element, and the geometry cases need a
+    // declaration of a geometry property, so a document with neither is not
+    // read.
+    let filters = source.contains("<filter") || source.contains(":filter");
+    let styled_geometry = geometry::may_declare(source);
+    if !filters && !styled_geometry {
         return Cow::Borrowed(source);
     }
     let Ok(xml) = roxmltree::Document::parse_with_options(
@@ -56,9 +72,9 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     // when `usvg` stops at a comment or at an empty `type`.
     let mut sheet = simplecss::StyleSheet::new();
     // What a selector tests is left as it is: the edits below change the
-    // `style` and `divisor` attributes, and with them what such a selector
-    // matches.
-    let (mut tests_style, mut tests_divisor) = (false, false);
+    // `style`, `divisor` and geometry attributes, and with them what such a
+    // selector matches.
+    let (mut tests_style, mut tests_divisor, mut tests_geometry) = (false, false, false);
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
         if node
             .attribute("type")
@@ -68,11 +84,21 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
                 sheet.parse_more(css);
                 tests_style |= tests_attribute(css, "style");
                 tests_divisor |= tests_attribute(css, "divisor");
+                tests_geometry |= geometry::all()
+                    .iter()
+                    .any(|property| tests_attribute(css, property));
             }
         }
     }
+    // The rules that say something about a geometry property or a filter. The
+    // others cannot change what is read below, and are not matched.
+    let masks: Vec<u16> = sheet
+        .rules
+        .iter()
+        .map(|rule| geometry::declared_mask(&rule.declarations))
+        .collect();
     let mut budget = super::SelectorFreezeBudget::new();
-    let mut edits = Vec::new();
+    let mut edits: Vec<Edit> = Vec::new();
     for node in xml.descendants().filter(|node| node.is_element()) {
         let name = node.tag_name();
         if name.namespace() != Some(SVG_NAMESPACE) {
@@ -88,18 +114,54 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
                 let start = source[..divisor.range().start]
                     .trim_end_matches([' ', '\t', '\r', '\n'])
                     .len();
-                edits.push((start..divisor.range().end, ""));
+                edits.push((start..divisor.range().end, Cow::Borrowed("")));
             }
-        } else if !tests_style && is_not_rendered(node, &[]) {
-            // The attributes leave nothing to render, but the declarations
-            // that apply to the shape may still give it something to render,
-            // or a filter.
-            if let Some(declared) = declared_properties(node, &sheet, &mut budget)
-                && has_filter(node, &declared)
-                && is_not_rendered(node, &declared)
-            {
-                edits.push(turn_filter_off(source, node));
+            continue;
+        }
+        let properties = geometry::properties(name.name());
+        // The filter of a shape is turned off when the shape has nothing to
+        // render, which the attributes can say, or a declaration.
+        let filtering = filters && !tests_style;
+        let empty = filtering && is_not_rendered(node, &[]);
+        // What CSS makes of the geometry of the shape is read where a
+        // document declares it, and for a shape that the attributes leave
+        // with nothing to render, because a declaration may give it
+        // something. One look at the rules tells that and the filter.
+        let styled = !properties.is_empty() && (styled_geometry || empty);
+        let filtered = filtering && (empty || (styled_geometry && !properties.is_empty()));
+        let wanted = if styled {
+            geometry::mask(properties)
+        } else {
+            0
+        } | if filtered { geometry::FILTER } else { 0 };
+        let found = if wanted == 0 {
+            Vec::new()
+        } else if let Some(found) = declarations(node, &sheet, &masks, wanted, &mut budget) {
+            found
+        } else {
+            // Finding out takes more than the budget allows, which leaves the
+            // shape to `usvg`.
+            continue;
+        };
+        let mut declared = if styled {
+            geometry::cascade(found.iter().copied(), properties)
+        } else {
+            Vec::new()
+        };
+        if tests_geometry {
+            // The attributes are not changed, so a declaration is only known
+            // to say something about the geometry.
+            for (_, value) in &mut declared {
+                *value = Declared::Opaque;
             }
+        }
+        for (property, value) in &declared {
+            if let Declared::Attribute(text) = value {
+                edits.push(set_attribute(source, node, property, text));
+            }
+        }
+        if filtered && is_not_rendered(node, &declared) && has_filter(node, &found) {
+            edits.push(turn_filter_off(source, node));
         }
     }
     if edits.is_empty() {
@@ -128,76 +190,107 @@ fn is_zero_divisor(number: f64) -> bool {
     (number as f32).abs() <= 4.0 * f32::from_bits(1)
 }
 
-/// The edit that turns the filter of the shape `node` off in its `style`
-/// attribute, which it gives the shape if there is none.
-fn turn_filter_off<'a>(source: &str, node: roxmltree::Node<'_, '_>) -> (Range<usize>, &'a str) {
-    if let Some(style) = node.attribute_node("style") {
-        let start = style.range_value().start;
-        return (start..start, PREPENDED_NO_FILTER);
-    }
-    // The attribute goes right after the name of the element.
+/// Where the attributes of the element `node` can be added: right after its
+/// name.
+fn after_name(source: &str, node: roxmltree::Node<'_, '_>) -> usize {
     let name = node.range().start + 1;
     let rest = &source[name..];
-    let end = name
-        + rest
-            .find(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
-            .unwrap_or(rest.len());
-    (end..end, ADDED_NO_FILTER)
+    name + rest
+        .find(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
+        .unwrap_or(rest.len())
 }
 
-/// The names of the properties that the `style` attribute of `node` and the
-/// rules of `sheet` that select it declare, or `None` when finding out takes
-/// more than the budget allows, which leaves the shape to `usvg`.
-fn declared_properties<'a>(
-    node: roxmltree::Node<'a, '_>,
-    sheet: &simplecss::StyleSheet<'a>,
-    budget: &mut super::SelectorFreezeBudget,
-) -> Option<Vec<&'a str>> {
-    let mut declared: Vec<&str> = node
-        .attribute("style")
-        .into_iter()
-        .flat_map(simplecss::DeclarationTokenizer::from)
-        .map(|declaration| declaration.name)
-        .collect();
-    for rule in &sheet.rules {
-        if super::budgeted_selector_matches(&rule.selector, node, budget).ok()? {
-            declared.extend(rule.declarations.iter().map(|declaration| declaration.name));
+/// The edit that turns the filter of the shape `node` off in its `style`
+/// attribute, which it gives the shape if there is none.
+fn turn_filter_off(source: &str, node: roxmltree::Node<'_, '_>) -> Edit {
+    if let Some(style) = node.attribute_node("style") {
+        let start = style.range_value().start;
+        return (start..start, Cow::Borrowed(PREPENDED_NO_FILTER));
+    }
+    let end = after_name(source, node);
+    (end..end, Cow::Borrowed(ADDED_NO_FILTER))
+}
+
+/// The edit that gives the attribute `name` of `node` the value `value`, which
+/// it adds if the element has none.
+fn set_attribute(source: &str, node: roxmltree::Node<'_, '_>, name: &str, value: &str) -> Edit {
+    let mut text = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '&' => text.push_str("&amp;"),
+            '<' => text.push_str("&lt;"),
+            '"' => text.push_str("&quot;"),
+            '\'' => text.push_str("&apos;"),
+            _ => text.push(c),
         }
     }
-    Some(declared)
+    if let Some(attribute) = node.attribute_node(name) {
+        return (attribute.range_value(), Cow::Owned(text));
+    }
+    let end = after_name(source, node);
+    (end..end, Cow::Owned(format!(" {name}=\"{text}\"")))
 }
 
-/// Whether `declared` has the property `name`, whatever the case of the name.
-fn declares(declared: &[&str], name: &str) -> bool {
-    declared
-        .iter()
-        .any(|property| property.eq_ignore_ascii_case(name))
+/// The declarations that apply to `node` and that say something about the
+/// properties of `wanted`: those of the `style` attribute and of the rules
+/// that select the node, the lowest priority first. The rules are in the
+/// order of their specificity and, among the ones that are as specific, of
+/// their place in the source.
+///
+/// `None` when finding out takes more than the budget allows.
+fn declarations<'a>(
+    node: roxmltree::Node<'a, '_>,
+    sheet: &simplecss::StyleSheet<'a>,
+    masks: &[u16],
+    wanted: u16,
+    budget: &mut super::SelectorFreezeBudget,
+) -> Option<Vec<simplecss::Declaration<'a>>> {
+    let mut found = Vec::new();
+    for (rule, mask) in sheet.rules.iter().zip(masks) {
+        if mask & wanted != 0
+            && super::budgeted_selector_matches(&rule.selector, node, budget).ok()?
+        {
+            found.extend(rule.declarations.iter().copied());
+        }
+    }
+    if let Some(style) = node.attribute("style") {
+        found.extend(simplecss::DeclarationTokenizer::from(style));
+    }
+    Some(found)
 }
 
 /// Whether a filter may apply to `node`: it names one itself, or a
 /// declaration does.
-fn has_filter(node: roxmltree::Node<'_, '_>, declared: &[&str]) -> bool {
+fn has_filter(node: roxmltree::Node<'_, '_>, declarations: &[simplecss::Declaration<'_>]) -> bool {
     node.attribute("filter")
         .is_some_and(|filter| filter.trim() != "none")
-        || declares(declared, "filter")
+        || declarations
+            .iter()
+            .any(|declaration| declaration.name.eq_ignore_ascii_case("filter"))
 }
 
-/// A dimension of a shape, as far as its attribute tells.
+/// A dimension of a shape, as far as its attribute or declaration tells.
 #[derive(Clone, Copy)]
 enum Dimension {
-    /// A style declaration may give it another value.
-    Styled,
-    /// Not given, or not a length.
+    /// A declaration gives it a value that is not computed here, which may be
+    /// anything.
+    Opaque,
+    /// Not given, `auto`, or not a length.
     Auto,
     Length(f64),
 }
 
 impl Dimension {
+    /// The dimension that `text` is the value of.
+    fn of(text: &str) -> Self {
+        svgtypes::Length::from_str(text).map_or(Self::Auto, |length| Self::Length(length.number))
+    }
+
     /// Whether the dimension leaves something to render: it is above zero, or
-    /// a style declaration may make it so.
+    /// a declaration may make it so.
     fn is_positive(self) -> bool {
         match self {
-            Self::Styled => true,
+            Self::Opaque => true,
             Self::Auto => false,
             Self::Length(number) => number > 0.0,
         }
@@ -212,28 +305,31 @@ impl Dimension {
     }
 }
 
-/// Whether the shape `node` has nothing to render, by its attributes: a
-/// computed zero for a dimension disables the rendering of a `rect`, a
-/// `circle`, an `ellipse` and an `image` (SVG 2 §10), a path or a list of
-/// points without a point has no shape, and a picture without an address
-/// has nothing to draw. Other elements are rendered.
+/// Whether the shape `node` has nothing to render: a computed zero for a
+/// dimension disables the rendering of a `rect`, a `circle`, an `ellipse` and
+/// an `image` (SVG 2 §10), a path or a list of points without a point has no
+/// shape, and a picture without an address has nothing to draw. Other
+/// elements are rendered.
 ///
 /// A path of a moveto only and a list of a single point are shapes with an
 /// empty box, which a browser still draws the filter of, so they stay.
 ///
-/// The geometry of a shape can also come from a style declaration, which
-/// `usvg` does not read; a dimension that one of the `declared` properties
-/// sets is taken as rendered.
-fn is_not_rendered(node: roxmltree::Node<'_, '_>, declared: &[&str]) -> bool {
-    let styled = |name: &str| declares(declared, name);
-    let dimension = |name: &str| {
-        if styled(name) {
-            return Dimension::Styled;
-        }
-        node.attribute(name)
-            .and_then(|value| svgtypes::Length::from_str(value).ok())
-            .map_or(Dimension::Auto, |length| Dimension::Length(length.number))
+/// The geometry of a shape can also come from a declaration, which `declared`
+/// holds the winners of, and which takes the place of the attribute.
+fn is_not_rendered(node: roxmltree::Node<'_, '_>, declared: &[(&str, Declared)]) -> bool {
+    let declaration = |name: &str| {
+        declared
+            .iter()
+            .find(|(property, _)| *property == name)
+            .map(|(_, value)| value)
     };
+    let dimension = |name: &str| match declaration(name) {
+        Some(Declared::Opaque) => Dimension::Opaque,
+        Some(Declared::Attribute(text)) => Dimension::of(text),
+        None => node.attribute(name).map_or(Dimension::Auto, Dimension::of),
+    };
+    let has_segment =
+        |data: &str| svgtypes::SimplifyingPathParser::from(data).any(|segment| segment.is_ok());
     match node.tag_name().name() {
         "rect" => !dimension("width").is_positive() || !dimension("height").is_positive(),
         "circle" => !dimension("r").is_positive(),
@@ -242,12 +338,11 @@ fn is_not_rendered(node: roxmltree::Node<'_, '_>, declared: &[&str]) -> bool {
             let (rx, ry) = (dimension("rx"), dimension("ry"));
             !rx.or(ry).is_positive() || !ry.or(rx).is_positive()
         }
-        "path" => {
-            !styled("d")
-                && node.attribute("d").is_none_or(|data| {
-                    !svgtypes::SimplifyingPathParser::from(data).any(|segment| segment.is_ok())
-                })
-        }
+        "path" => match declaration("d") {
+            Some(Declared::Opaque) => false,
+            Some(Declared::Attribute(data)) => !has_segment(data),
+            None => node.attribute("d").is_none_or(|data| !has_segment(data)),
+        },
         "polygon" | "polyline" => node
             .attribute("points")
             .is_none_or(|points| svgtypes::PointsParser::from(points).next().is_none()),
@@ -266,14 +361,14 @@ fn is_not_rendered(node: roxmltree::Node<'_, '_>, declared: &[&str]) -> bool {
 }
 
 /// `source` with each of `edits` put in the place of its range. The ranges
-/// do not overlap.
-fn apply(source: &str, mut edits: Vec<(Range<usize>, &str)>) -> String {
+/// do not overlap, and the edits at one place go in the order they come in.
+fn apply(source: &str, mut edits: Vec<Edit>) -> String {
     edits.sort_by_key(|(range, _)| range.start);
     let mut out = String::with_capacity(source.len());
     let mut at = 0;
     for (range, text) in edits {
         out.push_str(&source[at..range.start]);
-        out.push_str(text);
+        out.push_str(&text);
         at = range.end;
     }
     out.push_str(&source[at..]);
