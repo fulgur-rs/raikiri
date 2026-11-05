@@ -298,7 +298,7 @@ fn a_column_box_shift_resolves_a_percentage_relative_offset() {
     let shift = box_paint_shift(
         &document,
         &cascade,
-        None,
+        &RunContext::default(),
         item,
         &cascade.computed[item],
         false,
@@ -989,7 +989,7 @@ fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
         box_paint_shift(
             &document,
             &cascade,
-            None,
+            &RunContext::default(),
             id,
             &cascade.computed[id],
             false,

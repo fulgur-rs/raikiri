@@ -1,5 +1,8 @@
-//! A page's body content as a sequence of paint steps, in the order the
+//! A page's document content as a sequence of paint steps, in the order the
 //! built-in painter draws it.
+//!
+//! The HTML root's CSS transform comes from [`crate::RootBox::transform`]
+//! and wraps the canvas outside these steps. Relative offsets stay inside.
 
 use super::generated_boxes::{GeneratedBox, LineBox, PageGeneratedBoxes, PageInlineBoxes};
 use super::generated_images::{GeneratedImageId, PageGeneratedImages};

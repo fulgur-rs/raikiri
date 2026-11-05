@@ -558,8 +558,10 @@ pub(super) struct RunContext {
     /// Elements with a column fragment the painter clips where it draws
     /// that fragment.
     pub(super) fragment_clipped: HashSet<usize>,
-    /// The body, where the painter starts.
+    /// The body, whose layout can leave relative insets to paint.
     pub(super) body: Option<usize>,
+    /// The HTML root whose CSS transform is applied around the canvas.
+    canvas_root: Option<usize>,
     /// Whether the page areas differ between pages. Layout places fixed
     /// boxes against the first page area, while the painter places them
     /// from their `right` and `bottom` insets against each page's.
@@ -632,6 +634,7 @@ impl RunContext {
             placed_in_column,
             fragment_clipped,
             body,
+            canvas_root: crate::layout::canvas_root_element(document),
             page_areas_vary: page_areas_vary(document, pages),
         }
     }
@@ -649,7 +652,7 @@ impl RunContext {
         box_paint_shift(
             document,
             cascade,
-            self.body,
+            self,
             id,
             cv,
             self.fragmented.contains(&id),
@@ -691,7 +694,7 @@ pub(super) struct BoxShift {
 pub(super) fn box_paint_shift(
     document: &Document,
     cascade: &CascadeResult,
-    body: Option<usize>,
+    context: &RunContext,
     id: usize,
     cv: &ComputedValues,
     fragmented: bool,
@@ -708,9 +711,12 @@ pub(super) fn box_paint_shift(
     // and the boxes a multicol container places in its columns are placed
     // without it, and the painter adds it, as it adds the block offset that
     // manual column placement leaves out.
-    let painted_inset =
-        crate::layout::placed_without_relative_offset_for_layout(document, cascade, body, id)
-            || (placed_in_column && !node.display().is_inline_level());
+    let painted_inset = crate::layout::placed_without_relative_offset_for_layout(
+        document,
+        cascade,
+        context.body,
+        id,
+    ) || (placed_in_column && !node.display().is_inline_level());
     let (mut dx, mut dy) = if painted_inset {
         crate::layout::used_relative_offset_for_layout(document, cascade, id)
     } else if node.needs_relative_block_paint_offset() {
@@ -721,7 +727,10 @@ pub(super) fn box_paint_shift(
     } else {
         (0.0, 0.0)
     };
-    if !crate::layout::is_transformable_for_layout(document, id, cv) || cv.transform.is_empty() {
+    if Some(id) == context.canvas_root
+        || !crate::layout::is_transformable_for_layout(document, id, cv)
+        || cv.transform.is_empty()
+    {
         return Ok(BoxShift {
             offset: (dx, dy),
             general: false,
@@ -851,8 +860,8 @@ fn paint_chain(
     let mut chain = Vec::new();
     for id in document.inclusive_ancestors(document.ifc_source_owner(root)) {
         chain.push((id, false));
-        // The painter starts at the body; the boxes above it do not move
-        // its content.
+        // Preserve the body boundary of text-run placement and omission.
+        // The canvas root is handled outside its inner motion policy.
         if Some(id) == context.body {
             break;
         }
