@@ -3832,13 +3832,13 @@ pub(crate) struct AncestorFacts {
 
 /// Whether the block `id` makes a block formatting context of its own: a
 /// scroll container, a box with layout or paint containment or with
-/// `align-content` other than `normal`, or a multicol container. The overflow
-/// of the body that propagates to the viewport is not the body's own.
+/// `align-content` other than `normal`, or a multicol container. Overflow
+/// propagated to the viewport is not the box's own.
 fn roots_formatting_context(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
     (scrolls(cv.overflow.x) || scrolls(cv.overflow.y))
-        && !super::body_overflow::body_overflow_propagates_to_viewport(doc, cascade, id)
+        && super::body_overflow::viewport_overflow_source(doc, cascade) != Some(id)
         || cv
             .contain
             .contains(raikiri_style::property::Contain::LAYOUT)

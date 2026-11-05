@@ -199,3 +199,42 @@ fn relayout_keeps_intrinsic_context_lines_unchanged() {
         }
     }
 }
+
+#[test]
+fn relayout_distinguishes_viewport_overflow_from_the_bodys_own_context() {
+    for (html_overflow, body_overflow, wide) in [
+        ("visible", "hidden", 1000.0),
+        ("hidden", "visible", 1000.0),
+        ("hidden", "hidden", 800.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Some(&format!("display:block;overflow:{html_overflow}")),
+        );
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some(&format!(
+                "display:block;margin:0;overflow:{body_overflow};\
+                 font-family:Ahem;font-size:10px;line-height:10px"
+            )),
+        );
+        let root = doc.append_element(Some(body), "div", Some("display:block"));
+        doc.append_text(root, "aaaa bbbb cccc");
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        lay_out(&mut doc, &cascade);
+        let geometry = doc.nodes[root].layout;
+        for (requested, expected) in [(50.0, 50.0), (1000.0, wide)] {
+            relayout_text_for_width(&mut doc, &cascade, requested);
+            assert_eq!(
+                stored_lines(&doc, root).width,
+                expected,
+                "html:{html_overflow}/body:{body_overflow}"
+            );
+            assert_eq!(doc.nodes[root].layout, geometry);
+        }
+    }
+}

@@ -50,3 +50,36 @@ fn rebreak_context_membership_is_separate_from_width_projection() {
     assert_eq!(projected.content_width, rebreak.content_width);
     assert_eq!(projected.laid_out_container, rebreak.laid_out_container);
 }
+
+#[test]
+fn viewport_overflow_keeps_existing_projection_classification() {
+    for (html_overflow, body_overflow, body_context) in [
+        ("visible", "hidden", false),
+        ("hidden", "visible", false),
+        ("hidden", "hidden", true),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Some(&format!(
+                "display:block;width:400px;overflow:{html_overflow}"
+            )),
+        );
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some(&format!("display:block;margin:0;overflow:{body_overflow}")),
+        );
+        doc.mark_in_document_flags();
+        let cascade = bridged(&mut doc);
+        let projected = AncestorFacts::new(&doc, &cascade, 800.0);
+        let rebreak = AncestorFacts::for_rebreak(&doc, &cascade, 800.0);
+        assert!(!projected.context_root[html]);
+        assert!(!rebreak.sized_by_context_root(html));
+        assert_eq!(projected.context_root[body], body_context);
+        assert_eq!(rebreak.sized_by_context_root(body), body_context);
+        assert_eq!(projected.context_root, rebreak.context_root);
+        assert_eq!(projected.content_width, rebreak.content_width);
+    }
+}
