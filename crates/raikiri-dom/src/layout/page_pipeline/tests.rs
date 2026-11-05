@@ -4,6 +4,7 @@ use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view
 use raikiri_layout_style::values::Clear;
 
 mod positioned_followers_tests;
+mod rebreak_context_tests;
 
 thread_local! {
     pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };

@@ -3870,6 +3870,45 @@ impl AncestorFacts {
         facts
     }
 
+    /// Include layout-sized block contexts when breaking existing lines again.
+    /// Projection keeps its narrower context-root classification; only this
+    /// optional operation needs the contexts that projection cannot size.
+    pub(crate) fn for_rebreak(
+        doc: &Document,
+        cascade: &CascadeResult,
+        fallback_width: f32,
+    ) -> Self {
+        let mut facts = Self::new(doc, cascade, fallback_width);
+        visit_top_down(doc, |parent, id| {
+            let node = &doc.nodes[id];
+            let has_box = node.kind() == NodeKind::Element
+                && !facts.inline_box[id]
+                && !matches!(node.display(), DisplayValue::None | DisplayValue::Contents);
+            let context = has_box
+                && (roots_formatting_context(doc, cascade, id)
+                    || matches!(
+                        node.display(),
+                        DisplayValue::FlowRoot
+                            | DisplayValue::InlineBlock
+                            | DisplayValue::TableCell
+                            | DisplayValue::TableCaption
+                    )
+                    || node.roots_block_context()
+                    || AuthoredBox::new(doc, cascade, id).is_floated()
+                    || matches!(
+                        node.position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ));
+            facts.in_context_root[id] = context
+                || parent.is_some_and(|parent| {
+                    facts.in_context_root[parent]
+                        && !facts.non_block_flow_ancestor[id]
+                        && !facts.multicol_ancestor[id]
+                });
+        });
+        facts
+    }
+
     fn resolve(
         &mut self,
         doc: &Document,

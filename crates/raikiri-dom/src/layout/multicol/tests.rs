@@ -1,3 +1,5 @@
+mod rebreak_context_tests;
+
 use super::*;
 use crate::layout::test_support::{cascaded, with_bridged_session, with_resumed_session};
 use crate::node::FormattingContext;
