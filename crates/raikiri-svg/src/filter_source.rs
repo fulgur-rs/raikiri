@@ -42,6 +42,13 @@ const ADDED_NO_FILTER: &str = " style=\"filter:none!important\"";
 /// A change to the source: the text that takes the place of a range.
 type Edit = (Range<usize>, Cow<'static, str>);
 
+/// Reads the geometry declarations of the rules that `sheet` took from `css`
+/// again, as a browser reads the blocks of those rules (see
+/// [`geometry::read_blocks_again`]).
+pub(crate) fn read_geometry_blocks_again<'a>(sheet: &mut simplecss::StyleSheet<'a>, css: &'a str) {
+    geometry::read_blocks_again(&mut sheet.rules, css);
+}
+
 /// `source` with the geometry that CSS gives to a shape written into its
 /// attributes, with the filters of the shapes that are not rendered turned
 /// off, and with a zero `divisor` of an `feConvolveMatrix` turned into the
@@ -82,6 +89,7 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
         {
             for css in node.children().filter_map(|child| child.text()) {
                 sheet.parse_more(css);
+                geometry::read_blocks_again(&mut sheet.rules, css);
                 tests_style |= tests_attribute(css, "style");
                 tests_divisor |= tests_attribute(css, "divisor");
                 tests_geometry |= geometry::all()

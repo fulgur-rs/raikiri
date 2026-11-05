@@ -1030,6 +1030,49 @@ fn a_shape_is_drawn_where_its_declarations_put_it() {
             "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;x:u\\72l(a;b);height:30px\"/>",
             Some([0, 10, 19, 39]),
         ),
+        // The same in the rules of a style element: a function in a
+        // declaration does not end the block, and the mark of an important
+        // declaration is read in any case.
+        (
+            "<style>rect{width:0;x:calc(min(1px,2px) + 3);width:20px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 19, 19]),
+        ),
+        (
+            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect y=\"10\" width=\"50\" height=\"10\" style=\"width:10px\"/>",
+            Some([0, 10, 29, 29]),
+        ),
+        (
+            "<style>rect{width:20px !IMPORTANT;height:30px}</style><rect y=\"10\" width=\"50\" height=\"10\" style=\"width:10px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<style>rect,circle{x:calc(min(1px,2px) + 3);width:20px;height:30px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<style>rect{x:calc(min(1px,2px) + 3)}</style><style>rect{width:20px;height:30px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<style>rect{x:calc(min(1px,2px) + 3);width:20px}rect{height:30px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<style>rect{width:20px;height:calc(min(1px,2px) + 3)}.a{height:30px}</style><rect class=\"a\" y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<style>rect{width:calc(min(1px,2px) + 3);height:30px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 49, 39]),
+        ),
+        (
+            "<style>rect{x:calc(min(1px,2px) + 3);width:20px}</style><rect y=\"10\" width=\"50\" height=\"10\" style=\"height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<style>rect{width:20px;x:calc(min(1px,2px) + 3)!important;height:30px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>",
+            Some([0, 10, 19, 39]),
+        ),
         // The cascade.
         (
             "<style>rect{width:40px!important}</style><rect x=\"10\" y=\"10\" height=\"10\" style=\"width:20px\"/>",
@@ -1251,4 +1294,25 @@ fn a_nested_function_does_not_hide_the_declarations_after_it() {
     // browser reads it, and none of them applies.
     let body = "<rect width=\"50\" height=\"10\" style=\"width:calc(20px;height:30px\"/>";
     assert_eq!(geometry_of(body), plain(body));
+}
+
+#[test]
+fn a_nested_function_in_a_rule_does_not_hide_the_declarations_after_it() {
+    assert_eq!(
+        geometry_of(
+            "<style>rect{width:0;x:calc(min(1px, 2px));width:20px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>"
+        ),
+        plain(
+            "<style>rect{width:0;x:calc(min(1px, 2px));width:20px}</style><rect y=\"10\" width=\"20px\" height=\"10\"/>"
+        )
+    );
+    // The mark of the rule, in any case, which beats the `style` attribute.
+    assert_eq!(
+        geometry_of(
+            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"50\" height=\"10\" style=\"width:10px\"/>"
+        ),
+        plain(
+            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"30px\" height=\"20px\" style=\"width:10px\"/>"
+        )
+    );
 }

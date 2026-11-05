@@ -186,11 +186,7 @@ pub(super) fn style_declarations(style: &str) -> Vec<simplecss::Declaration<'_>>
                 Ok(_) => Piece::Other,
             };
             if matches!(piece, Piece::Block) {
-                // The block ends at its closing mark, or at the end of the text.
-                let _ = parser.parse_nested_block(|inner| {
-                    while inner.next_including_whitespace_and_comments().is_ok() {}
-                    Ok::<(), cssparser::ParseError<'_, ()>>(())
-                });
+                skip_block(&mut parser);
             }
             match piece {
                 Piece::Bang => {
@@ -227,6 +223,97 @@ enum Piece {
     /// its own up to its closing mark.
     Block,
     Other,
+}
+
+/// Reads the geometry declarations of the rules of `css` again, the way a
+/// browser reads a block, for the rules that `simplecss` read from that text.
+///
+/// `simplecss` stops reading the declarations of a rule at the first one it
+/// cannot read, as in `x:calc(min(1px, 2px));width:20px`, and it reads
+/// `!important` in lowercase only. A rule that it read keeps its other
+/// declarations as they are, and takes the geometry ones of the block as
+/// [`style_declarations`] splits them. Only the geometry is read again, as
+/// nothing else is read here. A rule that has no declaration at all for
+/// `simplecss` is not in `rules`, and is not read again.
+pub(super) fn read_blocks_again<'a>(rules: &mut [simplecss::Rule<'a>], css: &'a str) {
+    // The geometry declarations of a block, by the place where it starts. The
+    // rules of a selector list share their block.
+    let mut blocks = std::collections::HashMap::<usize, Vec<simplecss::Declaration<'a>>>::new();
+    for rule in rules {
+        // A declaration is a slice of the text that it was read from, so its
+        // place says which text, and where in it, the block of its rule is.
+        let Some(first) = rule.declarations.first() else {
+            continue;
+        };
+        let Some(at) = (first.name.as_ptr() as usize).checked_sub(css.as_ptr() as usize) else {
+            continue;
+        };
+        // Another text, or the end of this one.
+        let Some(block) = css.get(at..).filter(|block| !block.is_empty()) else {
+            continue;
+        };
+        let again = blocks.entry(at).or_insert_with(|| {
+            block_declarations(block)
+                .into_iter()
+                .filter(|declaration| is_geometry(declaration.name))
+                .collect()
+        });
+        if rule
+            .declarations
+            .iter()
+            .filter(|declaration| is_geometry(declaration.name))
+            .eq(again.iter())
+        {
+            continue;
+        }
+        rule.declarations
+            .retain(|declaration| !is_geometry(declaration.name));
+        rule.declarations.extend(again.iter().copied());
+    }
+}
+
+/// Whether `name` is a geometry property.
+fn is_geometry(name: &str) -> bool {
+    bit(name) & !FILTER != 0
+}
+
+/// The declarations of a block, from the start of its declarations up to the
+/// closing brace of the block, or to the end of the text. A brace that opens
+/// another block is matched with its closing one.
+fn block_declarations(text: &str) -> Vec<simplecss::Declaration<'_>> {
+    let mut input = cssparser::ParserInput::new(text);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let start = parser.position();
+    let end = loop {
+        let before = parser.position();
+        let (closes, opens) = match parser.next_including_whitespace_and_comments() {
+            Err(_) => break parser.position(),
+            Ok(cssparser::Token::CloseCurlyBracket) => (true, false),
+            Ok(
+                cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+                | cssparser::Token::CurlyBracketBlock,
+            ) => (false, true),
+            Ok(_) => (false, false),
+        };
+        if closes {
+            break before;
+        }
+        if opens {
+            skip_block(&mut parser);
+        }
+    };
+    style_declarations(parser.slice(start..end))
+}
+
+/// Moves past the block that the token just read opened: to its closing mark,
+/// or to the end of the text.
+fn skip_block(parser: &mut cssparser::Parser<'_, '_>) {
+    let _ = parser.parse_nested_block(|inner| {
+        while inner.next_including_whitespace_and_comments().is_ok() {}
+        Ok::<(), cssparser::ParseError<'_, ()>>(())
+    });
 }
 
 /// Moves past the rest of a declaration that is not one: to the semicolon that
