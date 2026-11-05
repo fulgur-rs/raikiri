@@ -19206,12 +19206,19 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
 
 #[test]
 fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_no_block() {
+    // The second item wraps onto the next flex line, so the first is alone on
+    // its line without being the container's only item.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
-    let container = doc.append_element(Some(body), "div", Some("display:flex"));
+    let container = doc.append_element(Some(body), "div", Some("display:flex;flex-wrap:wrap"));
     let item = doc.append_element(Some(container), "div", Some("display:block;width:100%"));
     let text = doc.append_text(item, "aaaa");
+    doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;width:100%;height:10px"),
+    );
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();

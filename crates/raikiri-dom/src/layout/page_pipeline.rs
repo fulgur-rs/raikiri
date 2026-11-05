@@ -11401,7 +11401,8 @@ fn shrink_ancestors_after_content_change(
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
 /// order, and none is floated or absolutely positioned (see
-/// [`placed_in_block_flow`]). The heights of the paragraph and of its
+/// [`placed_in_block_flow`]). A flex container whose only item holds the
+/// paragraph stacks it the same way. The heights of the paragraph and of its
 /// ancestors may be constrained: moving the lines grows their boxes only as
 /// far as those constraints allow. Size containment remains outside this path.
 fn is_block_flow_paragraph(
@@ -11417,7 +11418,7 @@ fn is_block_flow_paragraph(
         return false;
     }
     !document.nodes[block].size_containment.height
-        && placed_in_block_flow(document, cascade, block, body_id)
+        && placed_in_flow_to_body(document, cascade, block, body_id, true)
 }
 
 /// Whether every box from `block` up to the body stacks its children in
@@ -11433,6 +11434,20 @@ fn placed_in_block_flow(
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
+) -> bool {
+    placed_in_flow_to_body(document, cascade, block, body_id, false)
+}
+
+/// [`placed_in_block_flow`], which with `through_sole_flex_items` also passes
+/// a flex container whose only item on its lines is the box the walk comes
+/// from: nothing sits beside that item or after it, so a box growing inside it
+/// grows the container and moves nothing else.
+fn placed_in_flow_to_body(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+    through_sole_flex_items: bool,
 ) -> bool {
     let mut child = block;
     let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
@@ -11455,9 +11470,46 @@ fn placed_in_block_flow(
             {
                 child = parent;
             }
+            Some(parent)
+                if !placed_apart
+                    && through_sole_flex_items
+                    && document.nodes[parent].display().is_flex_container()
+                    && holds_moved_lines(document, cascade, parent)
+                    && flex_siblings_on_lines(document, parent, child)
+                        .next()
+                        .is_none() =>
+            {
+                child = parent;
+            }
             _ => return false,
         }
     }
+}
+
+/// The children of the flex container `container` other than `item` that sit
+/// on a flex line. Collapsed white space between items, `display: none` and
+/// absolutely positioned children are on no flex line.
+fn flex_siblings_on_lines(
+    document: &Document,
+    container: usize,
+    item: usize,
+) -> impl Iterator<Item = &usize> {
+    document.nodes[container]
+        .children
+        .iter()
+        .filter(move |&&child| {
+            child != item
+                && match &document.nodes[child].data {
+                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                    _ => {
+                        document.nodes[child].display() != DisplayValue::None
+                            && !matches!(
+                                document.nodes[child].position(),
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                    }
+                }
+        })
 }
 
 /// The row flex container of `item` when `item` is a flex item alone on
@@ -11511,24 +11563,7 @@ fn flex_container_of_item_alone_on_its_line(
     let room = line_width - outer_width;
     let top = layout.location.y - layout.margin.top;
     let bottom = layout.location.y + layout.size.height + layout.margin.bottom;
-    document.nodes[container]
-        .children
-        .iter()
-        .filter(|&&child| {
-            // Collapsed white space between items, `display: none` and
-            // absolutely positioned children are on no flex line.
-            child != item
-                && match &document.nodes[child].data {
-                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
-                    _ => {
-                        document.nodes[child].display() != DisplayValue::None
-                            && !matches!(
-                                document.nodes[child].position(),
-                                PositionValue::Absolute | PositionValue::Fixed
-                            )
-                    }
-                }
-        })
+    flex_siblings_on_lines(document, container, item)
         .all(|&child| {
             let other = document.nodes[child].layout;
             let other_width = other.size.width + other.margin.left + other.margin.right;
