@@ -11372,10 +11372,10 @@ fn shrink_ancestors_after_content_change(
 
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
-/// order, none is floated or absolutely positioned, and every ancestor's
-/// height follows its content (see [`height_follows_content`]). The paragraph's
-/// own height may be constrained: moving its lines grows its box only as far
-/// as those constraints allow. Size containment remains outside this path.
+/// order, and none is floated or absolutely positioned (see
+/// [`placed_in_block_flow`]). The heights of the paragraph and of its
+/// ancestors may be constrained: moving the lines grows their boxes only as
+/// far as those constraints allow. Size containment remains outside this path.
 fn is_block_flow_paragraph(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -11393,9 +11393,13 @@ fn is_block_flow_paragraph(
 }
 
 /// Whether every box from `block` up to the body stacks its children in
-/// block order and grows with its content, and none is floated or
-/// absolutely positioned, so a box growing below `block` pushes the boxes
-/// after it down.
+/// block order, and none is floated or absolutely positioned, so a box
+/// growing below `block` pushes the boxes after it down. An ancestor's height
+/// may be constrained: it grows only as far as `height`, `min-height` and
+/// `max-height` allow, and the flow after it stays where that height puts it
+/// (see [`grow_ancestors_for_shift`]). One that clips its block-axis overflow
+/// at a set height, or whose size containment ignores its content, stays
+/// outside this path (see [`holds_moved_lines`]).
 fn placed_in_block_flow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -11419,7 +11423,7 @@ fn placed_in_block_flow(
                 if !placed_apart
                     && (document.nodes[parent].display() == DisplayValue::Contents
                         || moves_later_siblings(document, parent)
-                            && height_follows_content(document, parent)) =>
+                            && holds_moved_lines(document, cascade, parent)) =>
             {
                 child = parent;
             }
@@ -11535,6 +11539,20 @@ fn shift_later_flex_lines(document: &mut Document, container: usize, item: usize
     for child in later {
         document.translate_pagination_y(child, shift);
     }
+}
+
+/// Whether the box `ancestor` can hold lines that move down inside it with
+/// their paragraph: its height follows them, or it grows no further than its
+/// constraints and keeps what passes its end visible. A box that clips at a
+/// set height hides the lines past its end, and size containment makes the
+/// box ignore them.
+fn holds_moved_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    ancestor: usize,
+) -> bool {
+    !document.nodes[ancestor].size_containment.height
+        && box_leaves_lines_to_pagination(document, cascade, ancestor)
 }
 
 /// Whether the height of `block` is that of its content: no `height`,

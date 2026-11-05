@@ -1,0 +1,102 @@
+[
+  {
+    "name": "fixed-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "fixed-wrapper-after-a-spacer",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:30px\"></div><div style=\"height:120px\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 35.0], [0, "X", 65.0], [1, "X", 5.0], [1, "X", 35.0], [1, "D", 50.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "fixed-wrapper-short-of-the-lines",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:60px\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [0, "D", 60.0], [1, "X", 5.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "fixed-wrapper-one-orphan-one-widow",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:60px\"><div style=\"width:20px;orphans:1;widows:1\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [0, "D", 60.0], [0, "X", 65.0], [1, "X", 5.0], [1, "C", 30.0]]
+  },
+  {
+    "name": "fixed-wrapper-taller-than-two-pages",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:200px\"><div style=\"width:20px;\">X X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [0, "X", 65.0], [1, "X", 5.0], [1, "X", 35.0], [1, "C", 60.0], [2, "D", 0.0]]
+  },
+  {
+    "name": "min-height-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:30px\"></div><div style=\"min-height:150px\"><div style=\"width:20px;\">X X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 35.0], [0, "X", 65.0], [1, "X", 5.0], [1, "X", 35.0], [1, "X", 65.0], [1, "C", 90.0], [2, "D", 0.0]]
+  },
+  {
+    "name": "max-height-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"max-height:90px\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [0, "D", 90.0], [1, "X", 5.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "max-height-wrapper-after-a-spacer",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:30px\"></div><div style=\"max-height:90px\"><div style=\"width:20px;orphans:1;widows:1\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 35.0], [0, "X", 65.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "fixed-wrapper-in-a-fixed-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:200px\"><div style=\"height:120px\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "X", 35.0], [1, "C", 60.0], [2, "D", 0.0]]
+  },
+  {
+    "name": "auto-wrapper-in-a-fixed-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px\"><div><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "fixed-wrapper-in-an-auto-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div><div style=\"height:120px\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "fixed-paragraph-in-a-fixed-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px\"><div style=\"width:20px;height:100px\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "C", 0.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0]]
+  },
+  {
+    "name": "wrapper-with-padding",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px;padding:5px 0\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 10.0], [0, "X", 40.0], [1, "X", 5.0], [1, "D", 30.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "flow-root-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px;display:flow-root\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "relatively-positioned-wrapper",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px;position:relative\"><div style=\"width:20px;\">X X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "list-item-paragraph",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:120px\"><ul style=\"margin:0;padding:0;list-style:none\"><li style=\"width:20px\">X X X X</li></ul><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[0, "X", 5.0], [0, "X", 35.0], [1, "X", 5.0], [1, "D", 20.0], [1, "X", 35.0], [1, "C", 60.0]]
+  },
+  {
+    "name": "wrapper-moved-with-its-paragraph",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:70px\"></div><div style=\"height:100px\"><div style=\"width:20px;orphans:3;widows:2\">X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[1, "X", 5.0], [1, "X", 35.0], [1, "X", 65.0], [1, "C", 90.0], [2, "D", 0.0]]
+  },
+  {
+    "name": "min-height-wrapper-moved-with-its-paragraph",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:70px\"></div><div style=\"min-height:100px\"><div style=\"width:20px;orphans:3;widows:2\">X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[1, "X", 5.0], [1, "X", 35.0], [1, "X", 65.0], [1, "C", 90.0], [2, "D", 0.0]]
+  },
+  {
+    "name": "max-height-wrapper-moved-with-its-paragraph",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:70px\"></div><div style=\"max-height:40px\"><div style=\"width:20px;orphans:3;widows:2\">X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[1, "X", 5.0], [1, "X", 35.0], [1, "D", 40.0], [1, "X", 65.0], [1, "C", 90.0]]
+  },
+  {
+    "name": "wrapper-after-text-keeps-its-place",
+    "html": "<!doctype html><style>@page{size:100px 100px;margin:0}html,body{margin:0}body{font:20px/30px Ahem}.marker{font:10px/10px Ahem;width:10px;height:10px;margin-left:40px}</style><div style=\"height:150px\"><div style=\"height:70px\"></div><div style=\"width:20px;orphans:3;widows:2\">X X X</div><div class=\"marker\">C</div></div><div class=\"marker\">D</div>",
+    "glyphs": [[1, "X", 5.0], [1, "X", 35.0], [1, "D", 50.0], [1, "X", 65.0], [1, "C", 90.0]]
+  }
+]
