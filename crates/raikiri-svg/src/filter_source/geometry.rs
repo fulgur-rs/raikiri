@@ -61,6 +61,18 @@ pub(super) fn declared_mask(declarations: &[simplecss::Declaration<'_>]) -> u16 
         .fold(0, |mask, declaration| mask | bit(declaration.name))
 }
 
+/// The bytes of the values that `declarations` give to the geometry properties
+/// of `mask`, which is what the cascade reads of them. A value is read again
+/// for each shape that it applies to.
+pub(super) fn declared_bytes(declarations: &[simplecss::Declaration<'_>], mask: u16) -> usize {
+    declarations
+        .iter()
+        .filter(|declaration| bit(declaration.name) & mask & !FILTER != 0)
+        .fold(0, |total, declaration| {
+            total.saturating_add(declaration.value.len())
+        })
+}
+
 /// The geometry properties, which are also the names of attributes that a
 /// selector may test and a rewrite would change.
 pub(super) fn all() -> &'static [&'static str] {

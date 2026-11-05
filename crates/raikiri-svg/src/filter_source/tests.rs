@@ -1,4 +1,4 @@
-use super::like_browsers;
+use super::{Edit, attribute_bytes, escaped_len, like_browsers, set_attribute};
 use crate::{SvgDocument, SvgRootStyle, SvgViewport};
 use std::borrow::Cow;
 
@@ -766,6 +766,54 @@ fn a_stylesheet_that_takes_too_much_to_match_leaves_the_geometry_to_usvg() {
         "<style>rect[class=\"b\"]{{width:10px}}</style><rect class=\"{long}\" style=\"height:5px\"/>"
     );
     assert!(matches!(like_browsers(&plain(&body)), Cow::Borrowed(_)));
+}
+
+#[test]
+fn a_value_that_many_shapes_share_is_written_to_a_limited_number_of_them() {
+    // A rule gives its value to every shape it selects, and each one holds a
+    // copy of it in the source.
+    let data = format!("M0 0{}", " L1 1".repeat(200_000));
+    let source = plain(&format!(
+        "<style>path{{d:path('{data}')}}</style>{}",
+        "<path/>".repeat(40)
+    ));
+    let out = like_browsers(&source);
+    let written = out.matches(" d=\"").count();
+    assert!(0 < written && written < 40, "{written}");
+    // The shapes are written in turn, and the others are left as they are.
+    assert!(out.ends_with(&format!("{}</svg>", "<path/>".repeat(40 - written))));
+    assert!(out.len() < 20 * 1024 * 1024, "{}", out.len());
+}
+
+#[test]
+fn reading_a_long_value_is_charged_to_each_shape_that_it_applies_to() {
+    // A value that is not valid writes nothing, but is read for every shape.
+    let long = "a".repeat(1_000_000);
+    let source = plain(&format!(
+        "<style>rect{{width:10px;height:foo({long})}}</style>{}",
+        "<rect/>".repeat(60)
+    ));
+    let out = like_browsers(&source);
+    let written = out.matches(" width=\"10px\"").count();
+    assert!(0 < written && written < 60, "{written}");
+    assert!(out.ends_with(&format!("{}</svg>", "<rect/>".repeat(60 - written))));
+}
+
+#[test]
+fn the_bytes_of_an_attribute_are_counted_as_they_are_written() {
+    let value = "M0 0 & <é\"'>";
+    let source = "<rect/>";
+    let xml = roxmltree::Document::parse(source).unwrap();
+    let (_, text) = set_attribute(source, xml.root_element(), "d", value);
+    assert_eq!(
+        text, " d=\"M0 0 &amp; &lt;é&quot;&apos;>\"",
+        "the value is escaped"
+    );
+    assert_eq!(text.len(), " d=\"\"".len() + escaped_len(value));
+    assert_eq!(
+        attribute_bytes("d", value),
+        2 * escaped_len(value) + " d=\"\"".len() + std::mem::size_of::<Edit>()
+    );
 }
 
 /// What `fragment` draws in black, as the box of the pixels that are drawn.

@@ -77,6 +77,18 @@ fn a_mask_tells_the_properties_a_rule_declares() {
 }
 
 #[test]
+fn what_the_cascade_reads_is_the_length_of_the_values_of_its_properties() {
+    let found = declarations("width:10px;fill:rgb(1,2,3);Height : 5% ;filter:url(#f);D:none");
+    assert_eq!(declared_bytes(&found, mask(&["width", "height"])), 4 + 2);
+    assert_eq!(declared_bytes(&found, mask(&["d"])), 4);
+    // The filter is not read as a value, and a property that is not asked
+    // for is not counted.
+    assert_eq!(declared_bytes(&found, mask(&["width", "filter"])), 4);
+    assert_eq!(declared_bytes(&found, FILTER), 0);
+    assert_eq!(declared_bytes(&found, 0), 0);
+}
+
+#[test]
 fn a_length_is_written_as_the_attribute_reads_it() {
     for (property, value, expected) in [
         ("width", "20px", "20px"),

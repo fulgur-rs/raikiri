@@ -99,6 +99,9 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
         .collect();
     let mut budget = super::SelectorFreezeBudget::new();
     let mut edits: Vec<Edit> = Vec::new();
+    // Whether the budget has run out, which leaves the geometry of the shapes
+    // that follow to `usvg`.
+    let mut spent = false;
     for node in xml.descendants().filter(|node| node.is_element()) {
         let name = node.tag_name();
         if name.namespace() != Some(SVG_NAMESPACE) {
@@ -119,6 +122,9 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
             continue;
         }
         let properties = geometry::properties(name.name());
+        if spent && !properties.is_empty() {
+            continue;
+        }
         // The filter of a shape is turned off when the shape has nothing to
         // render, which the attributes can say, or a declaration.
         let filtering = filters && !tests_style;
@@ -154,6 +160,23 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
             for (_, value) in &mut declared {
                 *value = Declared::Opaque;
             }
+        }
+        // Reading the declarations and writing the attributes is charged before
+        // anything is written: a long value that a rule gives to many shapes
+        // is copied for each of them, so the source could grow without bound.
+        // A shape that goes over the budget is left to `usvg`, with the ones
+        // after it.
+        let written = declared
+            .iter()
+            .filter_map(|(property, value)| match value {
+                Declared::Attribute(text) => Some(attribute_bytes(property, text)),
+                Declared::Opaque => None,
+            })
+            .fold(0, usize::saturating_add);
+        let read = geometry::declared_bytes(&found, wanted);
+        if budget.bytes(read.saturating_add(written)).is_err() {
+            spent = true;
+            continue;
         }
         for (property, value) in &declared {
             if let Declared::Attribute(text) = value {
@@ -211,17 +234,42 @@ fn turn_filter_off(source: &str, node: roxmltree::Node<'_, '_>) -> Edit {
     (end..end, Cow::Borrowed(ADDED_NO_FILTER))
 }
 
+/// The text that takes the place of `c` in a quoted attribute, if it has to be
+/// escaped.
+fn entity(c: char) -> Option<&'static str> {
+    match c {
+        '&' => Some("&amp;"),
+        '<' => Some("&lt;"),
+        '"' => Some("&quot;"),
+        '\'' => Some("&apos;"),
+        _ => None,
+    }
+}
+
+/// The bytes that `value` takes in a quoted attribute.
+fn escaped_len(value: &str) -> usize {
+    value
+        .chars()
+        .map(|c| entity(c).map_or(c.len_utf8(), str::len))
+        .fold(0, usize::saturating_add)
+}
+
+/// What the edit of [`set_attribute`] holds on to: its text, which the output
+/// holds a second time, and the edit itself.
+fn attribute_bytes(name: &str, value: &str) -> usize {
+    escaped_len(value)
+        .saturating_mul(2)
+        .saturating_add(name.len() + " =\"\"".len() + std::mem::size_of::<Edit>())
+}
+
 /// The edit that gives the attribute `name` of `node` the value `value`, which
 /// it adds if the element has none.
 fn set_attribute(source: &str, node: roxmltree::Node<'_, '_>, name: &str, value: &str) -> Edit {
-    let mut text = String::with_capacity(value.len());
+    let mut text = String::with_capacity(escaped_len(value));
     for c in value.chars() {
-        match c {
-            '&' => text.push_str("&amp;"),
-            '<' => text.push_str("&lt;"),
-            '"' => text.push_str("&quot;"),
-            '\'' => text.push_str("&apos;"),
-            _ => text.push(c),
+        match entity(c) {
+            Some(entity) => text.push_str(entity),
+            None => text.push(c),
         }
     }
     if let Some(attribute) = node.attribute_node(name) {
