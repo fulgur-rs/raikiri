@@ -1079,6 +1079,86 @@ fn orthogonal_tables_keep_their_measured_outer_height() {
             r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;"><div style="float:right;width:30px;height:70px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
             "c:0,0,100,106 g:22,22,56,62",
         ),
+        (
+            "vertical-rl-two-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:30,0,110,100 g:50,20,70,60",
+        ),
+        (
+            "vertical-rl-two-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:30,0,110,100 g:50,20,70,60",
+        ),
+        (
+            "vertical-rl-two-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:30,0,110,106 g:52,22,66,62",
+        ),
+        (
+            "vertical-rl-two-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:30,0,110,106 g:52,22,66,62",
+        ),
+        (
+            "vertical-lr-two-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:20,0,110,100 g:40,20,70,60",
+        ),
+        (
+            "vertical-lr-two-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:20,0,110,100 g:40,20,70,60",
+        ),
+        (
+            "vertical-lr-two-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:20,0,110,106 g:42,22,66,62",
+        ),
+        (
+            "vertical-lr-two-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:160px"><div style="float:left;width:20px;height:70px"></div><div style="float:right;width:60px;height:50px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:20,0,110,106 g:42,22,66,62",
+        ),
+        (
+            "vertical-rl-three-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:40,0,110,100 g:60,20,70,60",
+        ),
+        (
+            "vertical-rl-three-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:40,0,110,100 g:60,20,70,60",
+        ),
+        (
+            "vertical-rl-three-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:40,0,110,106 g:62,22,66,62",
+        ),
+        (
+            "vertical-rl-three-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-rl;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:40,0,110,106 g:62,22,66,62",
+        ),
+        (
+            "vertical-lr-three-floats-table-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:20px;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:50,0,110,100 g:70,20,70,60",
+        ),
+        (
+            "vertical-lr-three-floats-table-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><div id="c" style="display:table;writing-mode:horizontal-tb;padding:10%;width:110px"><div id="g">aa bb cc dd ee ff gg hh ii jj kk ll</div></div></div>"#,
+            "c:50,0,110,100 g:70,20,70,60",
+        ),
+        (
+            "vertical-lr-three-floats-native-px",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:20px;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:50,0,110,106 g:72,22,66,62",
+        ),
+        (
+            "vertical-lr-three-floats-native-percent",
+            r#"<div id="r" style="writing-mode:vertical-lr;width:100px;height:200px;width:200px"><div style="float:left;width:5px;height:60px"></div><div style="float:left;width:35px;height:160px"></div><div style="float:left;width:10px;height:190px"></div><table id="c" style="writing-mode:horizontal-tb;padding:10%;width:110px"><tr><td id="g">aa bb cc dd ee ff gg hh ii jj kk ll</td></tr></table></div>"#,
+            "c:50,0,110,106 g:72,22,66,62",
+        ),
     ];
     let mut failures = Vec::new();
     for (name, body, expected) in cases {
