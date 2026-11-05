@@ -37,11 +37,8 @@
 //! physical coordinates, from the top left corner, they are mirrored within
 //! the padding box wherever the block axis runs from right to left or the
 //! inline axis from the bottom. A child hands over its rectangle in physical
-//! coordinates too, whatever its own direction is, so the one the container
-//! gets is mirrored the same way. A child whose layout still returns the
-//! rectangle measured from its own scroll origin, such as a block container
-//! in `vertical-rl` or a horizontal box under `direction: rtl`, is not
-//! corrected here.
+//! coordinates too: legacy scroll-origin output is decoded before entering
+//! the adapter, and explicitly physical output is kept as it is.
 //!
 //! Orthogonal-flow sizing of an item (stretching it, resolving its automatic
 //! sizes) is not done here: the inputs reach the child as they were.
@@ -158,6 +155,7 @@ impl AxisAdapter {
             .physical(output.scrollable_overflow_rect);
         let mut output = transpose_output_to_physical(output, self.right_to_left, extent, false);
         output.scrollable_overflow_rect = overflow;
+        output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
         output
     }
 
@@ -214,6 +212,7 @@ impl AxisAdapter {
         let mut output =
             transpose_child_output_to_vertical(output, self.right_to_left, extent, false);
         output.scrollable_overflow_rect = overflow;
+        output.overflow_origin = crate::layout::protocol::OverflowOrigin::ScrollOrigin;
         output.baselines = Baselines {
             first: Some(baseline),
             last: None,
@@ -352,7 +351,15 @@ impl LayoutSession<'_> {
                 .physical_style(usize::from(node_id))
                 .border()
                 .resolve_or_zero(None);
-            let output = tree.dispatch_physical_child(node_id, child.inputs, padding_basis, None);
+            let mut output =
+                tree.dispatch_physical_child(node_id, child.inputs, padding_basis, None);
+            output.scrollable_overflow_rect = output.physical_overflow(
+                padding_box(output.size, border).width,
+                tree.physical_style(usize::from(node_id))
+                    .direction()
+                    .is_rtl(),
+            );
+            output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
             // An item that runs against the block direction of the container
             // is aligned by the container afterwards, by the baseline of its
             // own first line.

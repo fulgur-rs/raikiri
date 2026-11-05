@@ -263,7 +263,9 @@ fn overflow(
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container();
     if !contains_overflow && style.overflow.x == Overflow::Visible {
-        let (left, right) = if style.direction == Direction::Rtl {
+        let (left, right) = if style.direction == Direction::Rtl
+            && output.overflow_origin == crate::layout::protocol::OverflowOrigin::ScrollOrigin
+        {
             let origin = location.x + output.size.width - metrics.border.right;
             (origin - child.right, origin - child.left)
         } else {

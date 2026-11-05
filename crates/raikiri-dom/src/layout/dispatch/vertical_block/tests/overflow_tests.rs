@@ -350,3 +350,109 @@ fn flex_and_grid_keep_their_parent_direction_overflow_contract() {
         }
     }
 }
+
+#[test]
+fn horizontal_rtl_block_child_overflow_is_decoded_before_transposing() {
+    let rects = overflow_rects("writing-mode:vertical-rl", |doc, container| {
+        let child = doc.append_element(
+            Some(container),
+            "div",
+            Some("display:block;writing-mode:horizontal-tb;direction:rtl;width:100px;height:100px"),
+        );
+        doc.append_element(
+            Some(child),
+            "div",
+            Some("display:block;width:150px;height:100px"),
+        );
+        vec![child]
+    });
+    assert_eq!((rects[2].left, rects[2].right), (-50.0, 100.0));
+    assert_eq!((rects[0].left, rects[0].right), (-50.0, 100.0));
+    assert_eq!(rects[1].right, 250.0);
+}
+
+#[test]
+fn horizontal_block_parent_keeps_vertical_rtl_child_overflow_physical() {
+    let rects = overflow_rects(
+        "writing-mode:vertical-rl;direction:rtl",
+        |doc, container| two_children(doc, container, "display:block;width:100px;height:100px"),
+    );
+    assert_eq!((rects[0].left, rects[0].right), (-100.0, 100.0));
+    assert_eq!(rects[1].right, 250.0);
+}
+
+#[test]
+fn horizontal_rtl_producers_share_the_block_boundary_decode() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for kind in ["block", "flex", "grid"] {
+            let rects = overflow_rects(&format!("writing-mode:{mode}"), |doc, container| {
+                let display = kind;
+                let child = doc.append_element(Some(container), "div", Some(&format!(
+                    "display:{display};writing-mode:horizontal-tb;direction:rtl;width:100px;height:100px;grid-template-columns:150px;font-family:Ahem;font-size:10px;line-height:100px;white-space:nowrap"
+                )));
+                doc.append_element(
+                    Some(child),
+                    "div",
+                    Some("display:block;width:150px;height:100px;flex-shrink:0"),
+                );
+                vec![child]
+            });
+            assert_eq!(
+                (rects[2].left, rects[2].right),
+                (-50.0, 100.0),
+                "{mode}/{kind}/child"
+            );
+            assert_eq!(
+                (rects[0].left, rects[0].right),
+                (-50.0, 100.0),
+                "{mode}/{kind}/container"
+            );
+            assert_eq!(rects[1].right, 250.0, "{mode}/{kind}/ancestor");
+        }
+    }
+}
+
+#[test]
+fn native_horizontal_parents_keep_a_vertical_childs_stored_overflow_physical() {
+    for display in ["flex", "grid"] {
+        for direction in ["ltr", "rtl"] {
+            let rects = overflow_rects(
+                &format!("display:{display};direction:{direction};grid-template-columns:100px"),
+                |doc, parent| {
+                    let child = doc.append_element(Some(parent), "div", Some(
+                        "display:block;writing-mode:vertical-rl;direction:rtl;width:100px;height:100px;flex-shrink:0"
+                    ));
+                    two_children(doc, child, "display:block;width:100px;height:100px");
+                    vec![child]
+                },
+            );
+            assert_eq!(
+                (rects[2].left, rects[2].right),
+                (-100.0, 100.0),
+                "{display}/{direction}/child"
+            );
+            assert_eq!(rects[1].right, 250.0, "{display}/{direction}/ancestor");
+        }
+    }
+}
+
+#[test]
+fn rtl_initial_containing_block_keeps_positioned_vertical_overflow_physical() {
+    for position in ["absolute", "fixed"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("direction:rtl"));
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let child = doc.append_element(Some(body), "div", Some(&format!(
+            "display:block;position:{position};left:150px;top:0;width:100px;height:100px;writing-mode:vertical-rl;direction:rtl"
+        )));
+        two_children(&mut doc, child, "display:block;width:100px;height:100px");
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        with_ahem(&mut doc);
+        for _ in 0..2 {
+            crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+            let rect = doc.nodes[child].layout.scrollable_overflow_rect;
+            assert_eq!((rect.left, rect.right), (-100.0, 100.0), "{position}");
+        }
+    }
+}

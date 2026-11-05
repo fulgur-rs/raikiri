@@ -8,12 +8,16 @@ use crate::layout::protocol::{
     AvailableSpace, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId, OofLayoutResult,
     OofPosition, OofPositioningArea, SizingMode,
 };
+use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::{Edges, Line, Size};
 use raikiri_layout_style::ToTaffy;
 use raikiri_layout_style::values::{
     AlignContent, AlignSelf, ContainingBlockClaims, Direction, ExpandedDimension,
-    LengthPercentageAuto, MaybeResolve, Position,
+    LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
 };
+
+#[cfg(test)]
+mod tests;
 
 mod flex_baseline;
 mod grid_row_measure;
@@ -56,6 +60,55 @@ fn with_stretch_width(
     inputs
 }
 
+/// The consumer origin and physical child rectangles of one native algorithm.
+#[derive(Debug)]
+pub(crate) struct NativeOverflow {
+    pub(crate) owner: NodeId,
+    pub(crate) reversed: bool,
+    pub(crate) physical_children: std::collections::HashMap<usize, Edges<f32>>,
+}
+
+// Keep the consumer direction explicit across nested native algorithms.
+fn with_overflow_direction<R>(
+    tree: &mut LayoutSession<'_>,
+    owner: NodeId,
+    reversed: bool,
+    compute: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let previous = tree.context.native_overflow.replace(NativeOverflow {
+        owner,
+        reversed,
+        physical_children: std::collections::HashMap::new(),
+    });
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(tree)));
+    tree.context.native_overflow = previous;
+    match result {
+        Ok(output) => output,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+// Convert only explicitly physical producers; legacy native inputs retain
+// their existing contract. This happens after the producer's cache store.
+pub(super) fn native_child_output(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    mut output: LayoutOutput,
+    reversed: Option<bool>,
+) -> LayoutOutput {
+    if let Some(reversed) = reversed
+        && output.overflow_origin == crate::layout::protocol::OverflowOrigin::Physical
+    {
+        let border = tree
+            .query_style(usize::from(node), ReadRole::CoreContainer)
+            .border()
+            .resolve_or_zero(None);
+        let width = (output.size.width - border.left - border.right).max(0.0);
+        output.encode_overflow(width, reversed);
+    }
+    output
+}
+
 /// Lay out a flex container.
 #[inline]
 pub(crate) fn compute_flexbox_layout(
@@ -70,11 +123,17 @@ pub(crate) fn compute_flexbox_layout(
     {
         return grid_row_measure::compute_layout(tree, node, inputs, false);
     }
-    LayoutOutput::from_taffy(taffy::compute_flexbox_layout(
-        tree,
-        node.into_taffy(),
-        inputs.into_taffy(),
-    ))
+    let reversed = tree
+        .query_style(usize::from(node), ReadRole::FlexContainer)
+        .direction()
+        .is_rtl();
+    with_overflow_direction(tree, node, reversed, |tree| {
+        LayoutOutput::from_taffy(taffy::compute_flexbox_layout(
+            tree,
+            node.into_taffy(),
+            inputs.into_taffy(),
+        ))
+    })
 }
 
 /// Lay out a grid container.
@@ -91,11 +150,17 @@ pub(crate) fn compute_grid_layout(
     {
         return grid_row_measure::compute_layout(tree, node, inputs, true);
     }
-    LayoutOutput::from_taffy(taffy::compute_grid_layout(
-        tree,
-        node.into_taffy(),
-        inputs.into_taffy(),
-    ))
+    let reversed = tree
+        .query_style(usize::from(node), ReadRole::GridContainer)
+        .direction()
+        .is_rtl();
+    with_overflow_direction(tree, node, reversed, |tree| {
+        LayoutOutput::from_taffy(taffy::compute_grid_layout(
+            tree,
+            node.into_taffy(),
+            inputs.into_taffy(),
+        ))
+    })
 }
 
 /// Lay out a leaf whose content is measured by `measure`, which is given the
@@ -142,7 +207,13 @@ pub(crate) fn compute_root_layout(
     root: NodeId,
     available_space: Size<AvailableSpace>,
 ) {
-    taffy::compute_root_layout(tree, root.into_taffy(), available_space.into_taffy());
+    let reversed = tree
+        .query_style(usize::from(root), ReadRole::CoreContainer)
+        .direction()
+        .is_rtl();
+    with_overflow_direction(tree, root, reversed, |tree| {
+        taffy::compute_root_layout(tree, root.into_taffy(), available_space.into_taffy());
+    });
 }
 
 /// Lay out the out-of-flow `candidates` against the positioning `area`, for the
@@ -164,14 +235,16 @@ pub(crate) fn compute_oof_layout_for_area(
         hoisted,
         unclaimed,
         scrollable_overflow_rect,
-    } = taffy::compute::compute_oof_layout_for_area(
-        tree,
-        owner.into_taffy(),
-        candidates.as_taffy(),
-        area.into_taffy(),
-        direction.to_taffy(),
-        claims.to_taffy(),
-    );
+    } = with_overflow_direction(tree, owner, direction.is_rtl(), |tree| {
+        taffy::compute::compute_oof_layout_for_area(
+            tree,
+            owner.into_taffy(),
+            candidates.as_taffy(),
+            area.into_taffy(),
+            direction.to_taffy(),
+            claims.to_taffy(),
+        )
+    });
     OofLayoutResult {
         hoisted: hoisted.into_iter().map(NodeId::from_taffy).collect(),
         unclaimed: FromTaffy::from_taffy(unclaimed),

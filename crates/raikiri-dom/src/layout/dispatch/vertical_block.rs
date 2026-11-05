@@ -589,9 +589,13 @@ impl LayoutSession<'_> {
                 top: border.left,
                 bottom: border.right,
             };
+            let physical = output.physical_overflow(
+                padding_box(output.size, border).width,
+                tree.physical_style(idx).direction().is_rtl(),
+            );
             let overflow = block
                 .child_overflow_frame(idx, padding_box(swap(output.size), layout_border))
-                .on_layout_axes(output.scrollable_overflow_rect);
+                .on_layout_axes(physical);
             let mut output = transpose_child_output_to_vertical(
                 output,
                 right_to_left,
@@ -599,6 +603,7 @@ impl LayoutSession<'_> {
                 share_context,
             );
             output.scrollable_overflow_rect = overflow;
+            output.overflow_origin = crate::layout::protocol::OverflowOrigin::ScrollOrigin;
             // A child's baselines are offsets from its own block-start edge,
             // which is this container's only when the block axes agree.
             if !same_vertical_block_mode(tree, block.container, idx) {
@@ -837,6 +842,7 @@ pub(super) fn compute_vertical_block(
     let mut output =
         transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);
     output.scrollable_overflow_rect = overflow;
+    output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
     for child in block.take_placed() {
         let layout = &mut tree.nodes[child].layout;
         let overflow = block

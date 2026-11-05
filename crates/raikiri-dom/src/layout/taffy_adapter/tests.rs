@@ -30,6 +30,7 @@ mod grid_info_tests;
 mod grid_row_measure_tests;
 mod grid_rows_tests;
 mod intrinsic_width_tests;
+mod overflow_origin_tests;
 mod round_trip_tests;
 mod tree_tests;
 mod variants_tests;
@@ -268,6 +269,7 @@ impl Bits for LayoutOutput {
             margins_can_collapse_through,
             oof_candidates,
             oof_positioning_area,
+            overflow_origin: _,
         } = self;
         size.bits(out);
         scrollable_overflow_rect.bits(out);
@@ -418,6 +420,7 @@ fn layout_output(floats: &mut Floats) -> LayoutOutput {
     LayoutOutput {
         size: size(floats),
         scrollable_overflow_rect: edges(floats),
+        overflow_origin: crate::layout::protocol::OverflowOrigin::ScrollOrigin,
         baselines: Baselines {
             first: floats.option(),
             last: floats.option(),

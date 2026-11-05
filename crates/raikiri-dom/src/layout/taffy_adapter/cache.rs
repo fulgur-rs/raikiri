@@ -1,5 +1,5 @@
 use super::convert::{FromTaffy, IntoTaffy};
-use crate::layout::protocol::{LayoutInput, LayoutOutput, RunMode};
+use crate::layout::protocol::{LayoutInput, LayoutOutput, OverflowOrigin, RunMode};
 
 /// How many intrinsic widths a node keeps besides its measured sizes.
 pub(super) const MAX_WIDTHS: usize = 128;
@@ -17,6 +17,8 @@ pub(super) const MAX_WIDTHS: usize = 128;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LayoutCache {
     cache: taffy::Cache,
+    // Taffy keeps one full final output; size entries reconstruct zero overflow.
+    final_overflow_origin: OverflowOrigin,
     widths: Vec<(LayoutInput, f32)>,
     /// Whether the final layout it holds no longer stands for the boxes inside
     /// the box (see [`LayoutCache::forget_final_layout`]).
@@ -29,6 +31,7 @@ impl LayoutCache {
     pub(crate) const fn new() -> Self {
         Self {
             cache: taffy::Cache::new(),
+            final_overflow_origin: OverflowOrigin::ScrollOrigin,
             widths: Vec::new(),
             final_layout_stale: false,
         }
@@ -40,9 +43,13 @@ impl LayoutCache {
         if self.final_layout_stale && input.run_mode == RunMode::PerformLayout {
             return None;
         }
-        self.cache
-            .get(&(*input).into_taffy())
-            .map(LayoutOutput::from_taffy)
+        self.cache.get(&(*input).into_taffy()).map(|cached| {
+            let mut output = LayoutOutput::from_taffy(cached);
+            if input.run_mode == RunMode::PerformLayout {
+                output.overflow_origin = self.final_overflow_origin;
+            }
+            output
+        })
     }
 
     /// Store the `output` computed for `input`.
@@ -50,6 +57,7 @@ impl LayoutCache {
     pub(crate) fn store(&mut self, input: &LayoutInput, output: LayoutOutput) {
         if input.run_mode == RunMode::PerformLayout {
             self.final_layout_stale = false;
+            self.final_overflow_origin = output.overflow_origin;
         }
         self.cache
             .store(&(*input).into_taffy(), output.into_taffy());
@@ -99,6 +107,7 @@ impl LayoutCache {
     #[inline]
     pub(crate) fn clear(&mut self) {
         self.cache.clear();
+        self.final_overflow_origin = OverflowOrigin::ScrollOrigin;
         self.widths.clear();
         self.final_layout_stale = false;
     }

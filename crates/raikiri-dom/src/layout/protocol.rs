@@ -525,6 +525,19 @@ pub(crate) struct OofLayoutResult {
     pub scrollable_overflow_rect: Edges<f32>,
 }
 
+/// The origin used by an output's overflow rectangle.
+///
+/// Legacy producers keep their existing scroll-origin contract: project block
+/// flow reads the child's direction, while native algorithms use their own
+/// container direction. Physical producers explicitly use the padding box's
+/// top-left corner, so consumers must not infer an origin from the style.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum OverflowOrigin {
+    #[default]
+    ScrollOrigin,
+    Physical,
+}
+
 /// What laying out one box returns to its parent.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LayoutOutput {
@@ -532,6 +545,8 @@ pub(crate) struct LayoutOutput {
     pub size: Size<f32>,
     /// How far the content of the box reaches on each side.
     pub scrollable_overflow_rect: Edges<f32>,
+    /// How the overflow rectangle is measured within the padding box.
+    pub overflow_origin: OverflowOrigin,
     /// The first and last baseline.
     pub baselines: Baselines,
     /// The top margin that can collapse with the margin of the parent.
@@ -555,10 +570,40 @@ pub(crate) struct LayoutOutput {
 }
 
 impl LayoutOutput {
+    /// Decode legacy right-origin overflow without moving an empty rectangle.
+    pub(crate) fn physical_overflow(&self, padding_width: f32, reversed: bool) -> Edges<f32> {
+        let rect = self.scrollable_overflow_rect;
+        if self.overflow_origin == OverflowOrigin::ScrollOrigin && reversed && rect != Edges::ZERO {
+            Edges {
+                left: padding_width - rect.right,
+                right: padding_width - rect.left,
+                ..rect
+            }
+        } else {
+            rect
+        }
+    }
+
+    /// Encode a physical rectangle for a consumer that starts at the right.
+    pub(crate) fn encode_overflow(&mut self, padding_width: f32, reversed: bool) {
+        if self.overflow_origin == OverflowOrigin::Physical {
+            if reversed && self.scrollable_overflow_rect != Edges::ZERO {
+                let rect = self.scrollable_overflow_rect;
+                self.scrollable_overflow_rect = Edges {
+                    left: padding_width - rect.right,
+                    right: padding_width - rect.left,
+                    ..rect
+                };
+            }
+            self.overflow_origin = OverflowOrigin::ScrollOrigin;
+        }
+    }
+
     /// A zero output for a hidden box.
     pub(crate) const HIDDEN: Self = Self {
         size: Size::ZERO,
         scrollable_overflow_rect: Edges::ZERO,
+        overflow_origin: OverflowOrigin::ScrollOrigin,
         baselines: Baselines::NONE,
         top_margin: CollapsibleMarginSet::ZERO,
         bottom_margin: CollapsibleMarginSet::ZERO,

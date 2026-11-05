@@ -39,6 +39,8 @@ impl CacheTree for LayoutSession<'_> {
         node_id: taffy::NodeId,
         input: &taffy::LayoutInput,
     ) -> Option<taffy::LayoutOutput> {
+        // Native root layout checks only whether this entry exists. Owned
+        // geometry consumers use the protocol cache and retain its origin.
         LayoutSession::cache_get(
             self,
             NodeId::from_taffy(node_id),
@@ -79,7 +81,16 @@ impl LayoutPartialTree for LayoutSession<'_> {
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
         let node = NodeId::from_taffy(node_id);
-        LayoutSession::set_unrounded_layout(self, node, &BoxLayout::from_taffy(*layout));
+        let mut layout = BoxLayout::from_taffy(*layout);
+        if let Some(rect) = self
+            .context
+            .native_overflow
+            .as_ref()
+            .and_then(|scope| scope.physical_children.get(&usize::from(node)))
+        {
+            layout.scrollable_overflow_rect = *rect;
+        }
+        LayoutSession::set_unrounded_layout(self, node, &layout);
         self.install_root_static_position_overrides(node);
     }
 
@@ -94,6 +105,12 @@ impl LayoutPartialTree for LayoutSession<'_> {
     ) -> taffy::LayoutOutput {
         let node = NodeId::from_taffy(node_id);
         let inputs = LayoutInput::from_taffy(inputs);
+        let reversed = self
+            .context
+            .native_overflow
+            .as_ref()
+            .filter(|scope| scope.owner != node)
+            .map(|scope| scope.reversed);
         let output = LayoutSession::compute_child_layout(self, node, inputs);
         if inputs.run_mode == RunMode::PerformLayout
             && let Some(capture) = self
@@ -104,7 +121,18 @@ impl LayoutPartialTree for LayoutSession<'_> {
         {
             capture.candidates = output.oof_candidates.clone();
         }
-        output.into_taffy()
+        if inputs.run_mode == RunMode::PerformLayout
+            && let Some(scope) = self.context.native_overflow.as_mut()
+        {
+            if output.overflow_origin == crate::layout::protocol::OverflowOrigin::Physical {
+                scope
+                    .physical_children
+                    .insert(usize::from(node), output.scrollable_overflow_rect);
+            } else {
+                scope.physical_children.remove(&usize::from(node));
+            }
+        }
+        super::algorithms::native_child_output(self, node, output, reversed).into_taffy()
     }
 }
 
