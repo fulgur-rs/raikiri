@@ -124,6 +124,37 @@ fn generated_suffix_moves_with_a_forced_body_atomic_line() {
     assert_eq!(pages, 2);
 }
 
+#[test]
+fn relative_body_atomics_do_not_change_the_forced_line_shift() {
+    for inset in [-10, 10] {
+        let (mut atomic, mut after) = (0, 0);
+        let (doc, pages) = paged_body_with_ifc(|doc, body| {
+            doc.set_element_attribute(
+                body,
+                "style",
+                "display:block;margin:0;width:100px;font:10px/10px Ahem",
+            )
+            .unwrap();
+            block(doc, body, "display:block;height:60px;break-after:page");
+            atomic = block(
+                doc,
+                body,
+                &format!(
+                    "display:inline-block;width:20px;height:20px;position:relative;top:{inset}px"
+                ),
+            );
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(
+            page_flow_y(&doc, atomic),
+            100.0 + inset as f32,
+            "top:{inset}px"
+        );
+        assert_eq!(page_flow_y(&doc, after), 122.0, "top:{inset}px");
+        assert_eq!(pages, 2);
+    }
+}
+
 fn block(doc: &mut Document, parent: usize, css: &str) -> usize {
     doc.append_element(Some(parent), "div", Some(css))
 }

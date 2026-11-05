@@ -719,7 +719,7 @@ impl PaginationState {
         // the page start. Do not add their line's leading to that placement.
         let placed_top = if page_transition && candidate.context.leading_block_piece_end().is_none()
         {
-            super::leading_inline::atomic_top(document, owner) - relative
+            super::leading_inline::atomic_flow_top(document, env.cascade, env.body_id, owner)
         } else {
             flow_top
         };

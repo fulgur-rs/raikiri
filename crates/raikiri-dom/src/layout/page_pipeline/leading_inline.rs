@@ -161,7 +161,12 @@ pub(super) fn bounds(document: &Document, owner: LeadingInlineLine) -> (f32, f32
     (top, height)
 }
 
-pub(super) fn atomic_top(document: &Document, owner: LeadingInlineLine) -> f32 {
+pub(super) fn atomic_flow_top(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    owner: LeadingInlineLine,
+) -> f32 {
     let lines = document
         .ifc_layout_node(owner.root)
         .and_then(|node| node.ifc.as_ref())
@@ -175,7 +180,11 @@ pub(super) fn atomic_top(document: &Document, owner: LeadingInlineLine) -> f32 {
                 .filter(|&node| node < document.nodes.len()),
             _ => None,
         })
-        .map(|node| current_abs_y(document, node) - document.nodes[node].layout.margin.top)
+        .map(|node| {
+            current_abs_y(document, node)
+                - accumulated_relative_offset_y(document, cascade, body_id, node)
+                - document.nodes[node].layout.margin.top
+        })
         .fold(f32::INFINITY, f32::min)
 }
 
