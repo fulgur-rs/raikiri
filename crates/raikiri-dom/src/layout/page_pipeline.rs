@@ -828,8 +828,15 @@ fn grows_with_paginated_content(
                 match parent_node.formatting_context {
                     FormattingContext::Flex => parent_node.percent_basis_height.is_some(),
                     FormattingContext::Grid => {
+                        // A percentage height resolves against the grid area
+                        // once the tracks are settled, so the grid has
+                        // assigned it even where the row sizes to the item.
                         parent_node.percent_basis_height.is_some()
                             || !grid_rows_size_to_content(document, parent)
+                            || matches!(
+                                block_axis.height().expand(),
+                                ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
+                            )
                     }
                     _ => false,
                 }
