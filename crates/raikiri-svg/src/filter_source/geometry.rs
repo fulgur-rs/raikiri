@@ -372,7 +372,9 @@ fn has_length_unit(value: &str) -> bool {
 /// `none`, or a `path()` of a string, which is the data of the attribute.
 ///
 /// A `path()` that starts with a fill rule is not a value of `d`: Chromium
-/// drops `d:path(evenodd, '...')` and keeps the attribute.
+/// drops `d:path(evenodd, '...')` and keeps the attribute. It drops the
+/// declaration as well when the data has an error anywhere, where the
+/// attribute is drawn up to the error.
 fn path(value: &str) -> Parsed {
     if value.eq_ignore_ascii_case("none") {
         return Parsed::Value(Declared::Attribute(String::new()));
@@ -396,7 +398,9 @@ fn path(value: &str) -> Parsed {
     match rest.find(quote) {
         // A line break ends a string that is not closed.
         Some(end)
-            if rest[end + 1..].trim().is_empty() && !rest[..end].contains(['\n', '\r', '\x0c']) =>
+            if rest[end + 1..].trim().is_empty()
+                && !rest[..end].contains(['\n', '\r', '\x0c'])
+                && svgtypes::PathParser::from(&rest[..end]).all(|segment| segment.is_ok()) =>
         {
             Parsed::Value(Declared::Attribute(rest[..end].to_owned()))
         }

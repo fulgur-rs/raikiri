@@ -612,15 +612,6 @@ fn the_geometry_of_a_declaration_goes_into_the_attribute() {
             "<path d=\"M0 0L1 1\" style=\"d:none\"/>",
             "<path d=\"\" style=\"d:none\"/>",
         ),
-        // What goes into an attribute is escaped.
-        (
-            "<path style=\"d:path(&quot;M &amp; &lt; ' &gt; Z&quot;)\"/>",
-            "<path d=\"M &amp; &lt; &apos; > Z\" style=\"d:path(&quot;M &amp; &lt; ' &gt; Z&quot;)\"/>",
-        ),
-        (
-            "<path style=\"d:path('M &quot; Z')\"/>",
-            "<path d=\"M &quot; Z\" style=\"d:path('M &quot; Z')\"/>",
-        ),
         // A name with a prefix, and a name in capitals.
         (
             "<s:rect xmlns:s=\"http://www.w3.org/2000/svg\" STYLE=\"width:1px\" style=\"WIDTH:2px\"/>",
@@ -803,6 +794,32 @@ fn a_length_that_css_does_not_read_leaves_the_attribute_alone() {
     assert_eq!(
         geometry_of(body),
         plain("<rect width=\"20.0px\" height=\"10\" style=\"width:1.px;width:20.0px\"/>")
+    );
+}
+
+#[test]
+fn path_data_with_an_error_leaves_the_attribute_alone() {
+    // A browser drops `d:path()` of data with an error anywhere in it, where
+    // the attribute is drawn up to the error. The data is never a string of
+    // characters that an attribute has to escape.
+    for data in [
+        "garbage",
+        "M0 0H20V20H0Z garbage",
+        "M0 0 L",
+        "L10 10 L20 20",
+        "M0 0 A5 5 0 2 0 10 10",
+        "M0 0H20V20H0Z,",
+        "M &amp; &lt; ' &gt; Z",
+    ] {
+        let body = format!("<path d=\"M10 10H50V50H10Z\" style=\"d:path(&quot;{data}&quot;)\"/>");
+        assert_eq!(geometry_of(&body), plain(&body), "{data}");
+    }
+    let body = "<path d=\"M10 10H50V50H10Z\" style=\"d:path('M0 0H20V20H0Z garbage');d:path('M0,0 20,0 20,20z')\"/>";
+    assert_eq!(
+        geometry_of(body),
+        plain(
+            "<path d=\"M0,0 20,0 20,20z\" style=\"d:path('M0 0H20V20H0Z garbage');d:path('M0,0 20,0 20,20z')\"/>"
+        )
     );
 }
 
