@@ -1944,6 +1944,15 @@ fn compute_ifc_root(
         // the cumulative block extent and must replace that probe result.
         output.size.width = measured_size.width + measure.insets.left + measure.insets.right;
     }
+    if vertical_paragraph {
+        // Leaf overflow uses its effective horizontal scroll origin. Convert
+        // before adding OOF overflow, whose vertical alignment is physical.
+        let border = layout_style.border.resolve_or_zero(None);
+        let padding_width = (output.size.width - border.left - border.right).max(0.0);
+        output.scrollable_overflow_rect =
+            output.physical_overflow(padding_width, layout_style.direction.is_rtl());
+        output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
+    }
     output.top_margin = leading_margin;
     // The baseline of a horizontal root lies below the top edge of its border
     // box; that of a vertical root, along the block axis from the edge its
