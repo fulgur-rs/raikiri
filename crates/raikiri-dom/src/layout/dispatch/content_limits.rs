@@ -2312,6 +2312,7 @@ pub(crate) struct MeasureKey {
     cross_sizes: [Option<LengthIdentity>; 3],
     empty: bool,
     orthogonal_guard: bool,
+    table_wrapper_height: bool,
     /// The minimum and maximum width the height is measured under.
     bounds: [Option<u32>; 2],
     known: [Option<u32>; 2],
@@ -2385,6 +2386,7 @@ impl MeasureKey {
             cross_sizes,
             empty: tree.context.size_contained_measure.last() == Some(&node),
             orthogonal_guard: tree.context.orthogonal_block_in_layout == Some(node),
+            table_wrapper_height: tree.context.table_wrapper_height_owner == Some(node),
             bounds: [bits(bounds.min), bits(bounds.max)],
             known: [
                 bits(inputs.known_dimensions.width),
