@@ -190,5 +190,69 @@ by `raikiri-spike-0vv.124` and currently returns an explicit unsupported error.
 The pinned `first-letter-space-not-selected.html` reference removes styling
 that current Chromium applies to the letters after Unicode spaces. Both
 Chromium 152 and Raikiri mismatch that unmodified reference. The dated exact
-expected failure in `raikiri-spike-0vv.125` keeps this result visible while
+expected failure in `RAIKIRI-1470` keeps this result visible while
 avoiding a vacuous PASS from dropping the entire first-letter rule.
+
+
+## Pinned-reference review, 2026-11-05
+
+RAIKIRI-1468 rechecked the six exact comparisons below at WPT commit
+`97ea26e26a2aac3eec7e770650b25e7049ed4a4e`. All remain XFAIL in Raikiri,
+with no XPASS or ERROR. Chromium 151.0.7922.34 and 152.0.7977.82 also
+mismatch every unmodified reference. This review did not rerun Chromium 153.
+RAIKIRI-1470 tracks the next review by 2026-12-05, or earlier when the pin
+or upstream tests change. The original added dates are preserved.
+
+In the table, `trim` means
+`css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html`.
+`letter` means `css/css-backgrounds/first-letter-space-not-selected.html`.
+Pixel counts are the number of pixels with any channel difference in an
+800 by 600 screenshot; both Chromium versions produced the same counts.
+
+| Exact comparison | Chromium different pixels | Raikiri different pixels |
+| --- | ---: | ---: |
+| `trim` | 2905 | 2892 |
+| `trim?class=halt,htb` | 2905 | 2892 |
+| `trim?class=chws,htb` | 2905 | 2892 |
+| `trim?class=halt,vrl` | 2588 | 2767 |
+| `trim?class=chws,vrl` | 2588 | 2767 |
+| `letter` | 12031 | 8849 |
+
+The trim test omits a `text-spacing-trim` declaration; its reference uses
+`space-all` and explicit `halt`/`vhal` font features. The letter reference
+omits the first-letter styling after Unicode spaces that Chromium applies.
+Chromium's mismatch supports keeping these pinned-reference exceptions;
+it does not prove that every Raikiri pixel difference has the same cause.
+None of these results qualifies for promotion to the pass baseline.
+
+For the Chromium comparison, serve the unmodified pinned checkout over
+loopback HTTP, use an 800 by 600 viewport at device scale 1 and screen media,
+and apply each exact query to both the test and its `rel=match` reference.
+Via the DevTools protocol, wait for `Page.loadEventFired`,
+`document.fonts.ready`, and two animation frames before
+`Page.captureScreenshot` with `captureBeyondViewport: false`. The selected
+halt/chws web font reported `loaded`; no HTTP resource requests failed.
+Compare the full screenshots with zero tolerance. The reported pixel counts
+were obtained from ImageMagick's difference image after converting it to
+grayscale and thresholding at zero; its HDRI `AE` metric is fractional and
+was not used as a pixel count.
+
+Reproduce the Raikiri check with the pinned WPT fonts available at
+`target/wpt` (created by `scripts/wpt/fetch.sh`):
+
+```sh
+cargo run --locked -p raikiri-wpt --bin run-baseline-report -- \
+  --wpt-root target/wpt --strict \
+  --only 'css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html' \
+  --only 'css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html?class=halt,htb' \
+  --only 'css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html?class=chws,htb' \
+  --only 'css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html?class=halt,vrl' \
+  --only 'css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html?class=chws,vrl' \
+  --only 'css/css-backgrounds/first-letter-space-not-selected.html'
+```
+
+A missing-font error is an invalid run, not XFAIL evidence. Recheck the
+browser version, font loading, and resources on every review. If an exact
+Raikiri comparison passes with resources loaded, remove its expected-failure row
+and move its exact id to the pass baseline; otherwise update its reason and
+review date. Keep an open tracking issue attached to every active exception.
