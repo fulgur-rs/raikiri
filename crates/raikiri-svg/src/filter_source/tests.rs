@@ -792,6 +792,21 @@ fn a_stylesheet_that_takes_too_much_to_match_leaves_the_geometry_to_usvg() {
 }
 
 #[test]
+fn a_length_that_css_does_not_read_leaves_the_attribute_alone() {
+    // `1.px` is a length for `svgtypes` and not for a browser, which drops the
+    // declaration and keeps the width of the attribute.
+    for style in ["width:1.px", "width:20.", "width:1.5.px", "width:20 px"] {
+        let body = format!("<rect width=\"30\" height=\"10\" style=\"{style}\"/>");
+        assert_eq!(geometry_of(&body), plain(&body), "{style}");
+    }
+    let body = "<rect width=\"30\" height=\"10\" style=\"width:1.px;width:20.0px\"/>";
+    assert_eq!(
+        geometry_of(body),
+        plain("<rect width=\"20.0px\" height=\"10\" style=\"width:1.px;width:20.0px\"/>")
+    );
+}
+
+#[test]
 fn a_value_that_many_shapes_share_is_written_to_a_limited_number_of_them() {
     // A rule gives its value to every shape it selects, and each one holds a
     // copy of it in the source.

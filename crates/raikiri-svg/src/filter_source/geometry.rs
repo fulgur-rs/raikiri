@@ -244,6 +244,7 @@ fn length(property: &str, value: &str) -> Parsed {
     // `usvg` reads the units in lowercase only.
     let text = value.to_ascii_lowercase();
     match svgtypes::Length::from_str(&text) {
+        Ok(_) if !is_css_length(&text) => Parsed::Invalid,
         Ok(length) if length.number < 0.0 && is_non_negative(property) => Parsed::Invalid,
         Ok(_) => Parsed::Value(Declared::Attribute(text)),
         Err(_) if is_deferred(value) || has_other_unit(value) => Parsed::Value(Declared::Opaque),
@@ -297,42 +298,57 @@ fn is_deferred(value: &str) -> bool {
     })
 }
 
+/// The length of the number that starts `text`, in the grammar of CSS. A dot
+/// needs a digit after it, so `1.px` is the number `1` and then `.px`, and an
+/// exponent needs a digit, or the `e` starts the unit, as in `em`.
+fn number_len(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let digits = |at: usize| {
+        bytes[at..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
+    let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let whole = digits(at);
+    at += whole;
+    let mut fraction = 0;
+    if bytes.get(at) == Some(&b'.') {
+        fraction = digits(at + 1);
+        if fraction > 0 {
+            at += 1 + fraction;
+        }
+    }
+    if whole + fraction == 0 {
+        return None;
+    }
+    if matches!(bytes.get(at), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(bytes.get(at + 1), Some(b'+' | b'-')));
+        let exponent = digits(at + 1 + sign);
+        if exponent > 0 {
+            at += 1 + sign + exponent;
+        }
+    }
+    Some(at)
+}
+
+/// Whether `text`, which `svgtypes` has taken for a length, is one in CSS: a
+/// number of CSS, and then a percent sign or a unit of letters, or nothing.
+/// `svgtypes` reads the number of SVG, which allows `1.px`.
+fn is_css_length(text: &str) -> bool {
+    number_len(text).is_some_and(|at| {
+        let unit = &text[at..];
+        unit == "%" || unit.bytes().all(|byte| byte.is_ascii_alphabetic())
+    })
+}
+
 /// Whether `value` is a number with a unit that `svgtypes` does not know, such
 /// as `rem` or `vw`, which a browser reads.
 fn has_other_unit(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let mut at = 0;
-    let digits = |at: &mut usize| {
-        let start = *at;
-        while bytes.get(*at).is_some_and(u8::is_ascii_digit) {
-            *at += 1;
-        }
-        *at - start
-    };
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
-        at += 1;
-    }
-    let mut count = digits(&mut at);
-    if bytes.get(at) == Some(&b'.') {
-        at += 1;
-        count += digits(&mut at);
-    }
-    if count == 0 {
-        return false;
-    }
-    // An exponent needs a digit, or the `e` starts the unit, as in `em`.
-    if matches!(bytes.get(at), Some(b'e' | b'E')) {
-        let mut next = at + 1;
-        if matches!(bytes.get(next), Some(b'+' | b'-')) {
-            next += 1;
-        }
-        if bytes.get(next).is_some_and(u8::is_ascii_digit) {
-            at = next;
-            digits(&mut at);
-        }
-    }
-    let unit = &value[at..];
-    !unit.is_empty() && unit.bytes().all(|byte| byte.is_ascii_alphabetic())
+    number_len(value).is_some_and(|at| {
+        let unit = &value[at..];
+        !unit.is_empty() && unit.bytes().all(|byte| byte.is_ascii_alphabetic())
+    })
 }
 
 /// `none`, or a `path()` of a string, which is the data of the attribute.

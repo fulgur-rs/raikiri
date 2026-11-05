@@ -126,6 +126,13 @@ fn a_length_is_written_as_the_attribute_reads_it() {
         ("height", "1in", "1in"),
         ("height", "1cm", "1cm"),
         ("ry", "1pc", "1pc"),
+        // The number of CSS: a dot has digits after it, and an exponent may
+        // have a sign.
+        ("width", "20.0px", "20.0px"),
+        ("width", ".5px", ".5px"),
+        ("width", "2.5E1PX", "2.5e1px"),
+        ("width", "2e+1px", "2e+1px"),
+        ("width", "20.0%", "20.0%"),
         ("width", "AUTO", "auto"),
         ("height", "auto", "auto"),
         ("rx", "Auto", "auto"),
@@ -174,6 +181,15 @@ fn a_value_that_is_not_one_of_the_property_is_invalid() {
         ("width", "calcs(1px)"),
         ("width", "xcalc(1px)"),
         ("width", "10px + calc(1px)"),
+        // `svgtypes` reads the number of SVG, which CSS does not: a dot needs
+        // a digit after it, and the unit is one word.
+        ("width", "1.px"),
+        ("width", "20."),
+        ("width", "20.%"),
+        ("height", "2.e1px"),
+        ("cx", "1.5.px"),
+        ("width", "20 px"),
+        ("r", "5.e0"),
     ] {
         assert_eq!(
             parse(property, value),
@@ -254,13 +270,48 @@ fn a_path_is_the_string_of_its_function() {
 
 #[test]
 fn a_number_with_a_unit_of_letters_is_told_from_the_rest() {
-    for value in ["2rem", "-1.5vw", "+.5Q", "1e3ch", "1e-3vh", "10e", "5E"] {
+    for value in [
+        "2rem",
+        "-1.5vw",
+        "+.5Q",
+        "1e3ch",
+        "1e-3vh",
+        "10e",
+        "5E",
+        "1.5E+2rem",
+    ] {
         assert!(has_other_unit(value), "{value}");
     }
     for value in [
-        "", "rem", "-", ".", "+.", "1 rem", "1-rem", "1%", "1px2", "1.2.3ch",
+        "", "rem", "-", ".", "+.", "1 rem", "1-rem", "1%", "1px2", "1.2.3ch", "1.rem", "1.e1ch",
     ] {
         assert!(!has_other_unit(value), "{value}");
+    }
+}
+
+#[test]
+fn a_number_is_read_the_way_css_reads_it() {
+    for (text, len) in [
+        ("1", 1),
+        ("+1", 2),
+        ("-.5px", 3),
+        ("20.0%", 4),
+        ("1e3", 3),
+        ("1E+3px", 4),
+        ("1.5e-2em", 6),
+        // The dot and the exponent that have no digits are not of the number.
+        ("1.", 1),
+        ("1.px", 1),
+        ("1.e1", 1),
+        ("1e", 1),
+        ("1e+", 1),
+        ("1em", 1),
+        ("1.5.2", 3),
+    ] {
+        assert_eq!(number_len(text), Some(len), "{text}");
+    }
+    for text in ["", "+", "-", ".", "+.", ".e1", "px", "e1", "-px"] {
+        assert_eq!(number_len(text), None, "{text}");
     }
 }
 
@@ -330,6 +381,8 @@ fn an_invalid_declaration_does_not_take_part() {
         "width:10px;width:-5px!important",
         "width:10px!important;width:20px 30px!important",
         "width:10px;width:auto auto",
+        "width:10px;width:20.px",
+        "width:10px!important;width:1.!important",
     ] {
         assert_eq!(
             attributes(&winners(css, rect)),
