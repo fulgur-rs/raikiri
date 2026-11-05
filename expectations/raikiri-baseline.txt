@@ -5537,3 +5537,7 @@ css/css-tables/baseline-vertical.html
 # --- The automatic minimum height of an absolute box with an aspect ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-11-02) ---
 # An absolute box that states its width and an aspect ratio, and leaves its height `auto`, is as tall as its content at that width, not as tall as the ratio gives (CSS Sizing 4 section 5.1): the 100px wide box with a 100px tall child is a 100px square. audit-vacuous-passes reports VACUOUS-UNSTYLED in two runs, because the box is the same square without the aspect ratio; the test failed (a box 50px tall) before the change and is kept as a guard, as the css-page entries above are.
 css/css-sizing/aspect-ratio/abspos-012.html
+
+# --- A line that holds an avoiding inline table (WPT pin 97ea26e2, EXACT, Linux, 2026-11-05) ---
+# The text and the `page-break-inside: avoid` inline table after it sit on one line box, and a page break falls between line boxes, not inside one (CSS 2 section 13.3.3). The table is taller than the page area, so the whole line goes to the next page and the text no longer stays below the end of the first page while the table starts on the next. audit-vacuous-passes reports VACUOUS-UNSTYLED, because the pair still matches after one declaration of the test is removed; the test was an expected failure before the change and is kept as a guard, as the abspos-012 entry above is.
+css/CSS2/pagination/table-page-break-inside-avoid-4-print.html
