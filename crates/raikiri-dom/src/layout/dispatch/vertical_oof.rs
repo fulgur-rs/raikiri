@@ -21,7 +21,7 @@
 //! coordinates come from Taffy's positioning of the candidates (`oof`) and
 //! from the alignment of `alignment`. The root element's initial containing
 //! block is aligned the same way when the root is vertical (see
-//! `oof::compute_root_layout_with_content_limits`); the page layout then
+//! [`super::oof::compute_root_layout_with_content_limits`]); the page layout then
 //! rewrites the coordinates of the boxes that the root contains only for their
 //! auto margins.
 
