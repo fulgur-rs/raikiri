@@ -20,6 +20,14 @@ fn a_property_name_followed_by_a_colon_may_declare_geometry() {
         "<rect style=\"height /* c */ : 10px\"/>",
         "<style>circle{r/* a *//* b */:5}</style>",
         "<style>rect{x/* /* */:1}</style>",
+        // CDATA sections that cut a name up, or the colon off its name.
+        "<style><![CDATA[rect{wid]]><![CDATA[th:1px}]]></style>",
+        "<style><![CDATA[rect{width]]><![CDATA[:1px}]]></style>",
+        "<style>rect{wid<![CDATA[th:1px}]]></style>",
+        "<style>rect{width]]>:1px}</style>",
+        // A character reference that the XML parser decodes.
+        "<rect style=\"width&#58;20px\"/>",
+        "<rect style=\"&#x77;idth:20px\"/>",
     ] {
         assert!(may_declare(source), "{source}");
     }
@@ -34,6 +42,10 @@ fn a_property_name_followed_by_a_colon_may_declare_geometry() {
         // CSS is read from `style` elements and attributes only.
         "<text>d: 1, width: 2</text>",
         "<rect><title>x: y</title></rect>",
+        // A style in a CDATA section is read as it stands.
+        "<style><![CDATA[rect{fill:red;stroke-width:2}]]></style>",
+        // The entities that XML predefines spell no name and no colon.
+        "<rect style=\"fill:red\" id=\"a&amp;b&lt;&quot;\"/>",
         "",
     ] {
         assert!(!may_declare(source), "{source}");

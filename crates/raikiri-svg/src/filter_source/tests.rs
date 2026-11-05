@@ -527,6 +527,14 @@ fn a_document_that_declares_no_geometry_is_not_read() {
         like_browsers("<svg><rect style=\"width:1px\""),
         Cow::Borrowed(_)
     ));
+    // Nor one that declares an entity, which can spell a name.
+    assert!(matches!(
+        like_browsers(
+            "<!DOCTYPE svg [<!ENTITY w \"width\">]>\
+             <svg xmlns=\"http://www.w3.org/2000/svg\"><rect style=\"&w;:1px\"/></svg>"
+        ),
+        Cow::Borrowed(_)
+    ));
 }
 
 #[test]
@@ -541,6 +549,16 @@ fn the_geometry_of_a_declaration_goes_into_the_attribute() {
         (
             "<rect style=\"width/**/:20px;height /* c */ : 10px\"/>",
             "<rect width=\"20px\" height=\"10px\" style=\"width/**/:20px;height /* c */ : 10px\"/>",
+        ),
+        // A name that CDATA sections cut up is one text for the XML parser.
+        (
+            "<style><![CDATA[rect{wid]]><![CDATA[th:10px;height]]><![CDATA[:5px}]]></style><rect/>",
+            "<style><![CDATA[rect{wid]]><![CDATA[th:10px;height]]><![CDATA[:5px}]]></style><rect width=\"10px\" height=\"5px\"/>",
+        ),
+        // And so is a character reference that spells a name or the colon.
+        (
+            "<rect style=\"width&#58;20px;&#104;eight&#x3a;10px\"/>",
+            "<rect width=\"20px\" height=\"10px\" style=\"width&#58;20px;&#104;eight&#x3a;10px\"/>",
         ),
         (
             "<rect style=\"ry:4px;rx:3px;y:2px;x:1px\"/>",

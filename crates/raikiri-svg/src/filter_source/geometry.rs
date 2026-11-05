@@ -88,20 +88,34 @@ pub(super) fn may_declare(source: &str) -> bool {
     if !source.contains("style") {
         return false;
     }
+    // A character reference may spell a name or the colon, as in
+    // `width&#58;20px`, which the XML parser decodes and this scan does not
+    // see. The entities that XML predefines spell none of them, and a document
+    // that declares its own is not read at all.
+    if source.contains("&#") {
+        return true;
+    }
     source.match_indices(':').any(|(at, _)| {
         let head = source[..at].trim_end();
-        // A comment may stand between the name and the colon, as in
-        // `width/**/:20px`, which the declaration is read past. What is
-        // before the comment is not looked for: the colon counts.
-        if head.ends_with("*/") {
-            return true;
-        }
         let len = head
             .bytes()
             .rev()
             .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
             .count();
         let name = &head[head.len() - len..];
+        // A comment may stand between the name and the colon, as in
+        // `width/**/:20px`, which the declaration is read past. CDATA
+        // sections may cut the name up, as in `wid]]><![CDATA[th:`, and the
+        // XML parser joins them. What is before such a mark is not looked for:
+        // the colon counts.
+        let before = &head[..head.len() - len];
+        if head.ends_with("*/")
+            || ["]]>", "<![CDATA["]
+                .iter()
+                .any(|mark| before.ends_with(mark))
+        {
+            return true;
+        }
         PROPERTIES
             .iter()
             .any(|property| name.eq_ignore_ascii_case(property))
