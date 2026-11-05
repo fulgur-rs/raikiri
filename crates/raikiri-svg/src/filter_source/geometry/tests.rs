@@ -206,6 +206,14 @@ fn a_value_that_is_not_one_of_the_property_is_invalid() {
         ("x", "20fr"),
         ("width", "20deg"),
         ("width", "20s"),
+        // A unit that `svgtypes` lacks does not let a negative size through.
+        ("width", "-1rem"),
+        ("height", "-1vw"),
+        ("r", "-2VMIN"),
+        ("rx", "-0.5lh"),
+        ("ry", "-1e3dvh"),
+        ("rx", "-1e999px"),
+        ("ry", "-1e999%"),
     ] {
         assert_eq!(
             parse(property, value),
@@ -237,6 +245,11 @@ fn a_value_that_is_not_computed_here_is_opaque() {
         ("width", "3lh"),
         ("width", "5cqw"),
         ("height", "2rex"),
+        // A negative offset is valid, and so is a size of negative zero.
+        ("x", "-1rem"),
+        ("cy", "-2VMIN"),
+        ("width", "-0rem"),
+        ("r", "-0e5vw"),
         // Too large for a float, which a browser takes for the largest one.
         ("width", "1e999px"),
         ("width", "1e999%"),
@@ -314,6 +327,18 @@ fn a_number_with_a_unit_of_length_is_told_from_the_rest() {
         "5E", "1bogus", "20pxx", "1fr", "1deg",
     ] {
         assert!(!has_length_unit(value), "{value}");
+    }
+}
+
+#[test]
+fn a_number_below_zero_is_told_from_the_rest() {
+    for value in ["-1rem", "-.5vw", "-1e3ch", "-1e999px", "-0.0001em"] {
+        assert!(is_negative(value), "{value}");
+    }
+    for value in [
+        "1rem", "+1rem", "0", "-0rem", "-0.0vw", "-0e5ch", "", "-", "rem",
+    ] {
+        assert!(!is_negative(value), "{value}");
     }
 }
 
@@ -411,6 +436,8 @@ fn an_invalid_declaration_does_not_take_part() {
         "width:10px;width:auto auto",
         "width:10px;width:20.px",
         "width:10px!important;width:1.!important",
+        "width:10px;width:-1rem",
+        "width:10px!important;width:-2vmin!important",
     ] {
         assert_eq!(
             attributes(&winners(css, rect)),

@@ -247,9 +247,24 @@ fn length(property: &str, value: &str) -> Parsed {
         Ok(_) if !is_css_length(&text) => Parsed::Invalid,
         Ok(length) if length.number < 0.0 && is_non_negative(property) => Parsed::Invalid,
         Ok(_) => Parsed::Value(Declared::Attribute(text)),
-        Err(_) if is_deferred(value) || has_length_unit(value) => Parsed::Value(Declared::Opaque),
+        Err(_) if is_deferred(value) => Parsed::Value(Declared::Opaque),
+        Err(_) if has_length_unit(value) => {
+            // A unit that `svgtypes` lacks still has a sign that a browser
+            // checks while it parses: `width:-1rem` is invalid, not deferred.
+            if is_non_negative(property) && is_negative(value) {
+                Parsed::Invalid
+            } else {
+                Parsed::Value(Declared::Opaque)
+            }
+        }
         Err(_) => Parsed::Invalid,
     }
+}
+
+/// Whether the number that starts `value` is below zero. A negative zero is
+/// not, as it is a length of none.
+fn is_negative(value: &str) -> bool {
+    number_len(value).is_some_and(|at| value[..at].parse::<f64>().is_ok_and(|number| number < 0.0))
 }
 
 /// Whether `value` is, or holds, a function whose result a browser computes

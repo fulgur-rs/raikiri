@@ -835,6 +835,15 @@ fn a_suffix_that_is_not_a_unit_does_not_hide_the_declaration_below_it() {
     );
     let body = "<rect width=\"50\" height=\"10\" style=\"width:20px;width:1vw\"/>";
     assert_eq!(geometry_of(body), plain(body));
+    // A negative size is invalid whatever its unit, so it hides nothing either.
+    let body = "<rect width=\"50\" height=\"10\" style=\"width:20px;width:-1rem\"/>";
+    assert_eq!(
+        geometry_of(body),
+        plain("<rect width=\"20px\" height=\"10\" style=\"width:20px;width:-1rem\"/>")
+    );
+    // An offset may be negative, so it wins and the attribute is left alone.
+    let body = "<rect x=\"5\" width=\"50\" height=\"10\" style=\"x:20px;x:-1rem\"/>";
+    assert_eq!(geometry_of(body), plain(body));
 }
 
 #[test]
