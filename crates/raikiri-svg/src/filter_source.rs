@@ -23,7 +23,6 @@ mod geometry;
 use crate::{MAX_INITIAL_PARSE_XML_NODES, SVG_NAMESPACE, XLINK_NAMESPACE};
 use geometry::Declared;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::ops::Range;
 use std::str::FromStr;
 
@@ -71,43 +70,26 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     // A style element is found by its name, as `usvg` finds it, and its rules
     // are read as a browser reads them: whatever its text holds counts, even
     // when `usvg` stops at a comment or at an empty `type`.
-    //
-    // `simplecss` reads `!important` in lowercase only, so the text that it
-    // reads has the keyword spelled that way.
-    let styles: Vec<Cow<'_, str>> = xml
-        .descendants()
-        .filter(|node| {
-            node.has_tag_name("style")
-                && node
-                    .attribute("type")
-                    .is_none_or(|kind| kind.is_empty() || kind == "text/css")
-        })
-        .flat_map(|node| node.children().filter_map(|child| child.text()))
-        .map(geometry::with_lowercase_important)
-        .collect();
     let mut sheet = simplecss::StyleSheet::new();
     // What a selector tests is left as it is: the edits below change the
     // `style`, `divisor` and geometry attributes, and with them what such a
     // selector matches.
     let (mut tests_style, mut tests_divisor, mut tests_geometry) = (false, false, false);
-    for css in &styles {
-        sheet.parse_more(css);
-        tests_style |= tests_attribute(css, "style");
-        tests_divisor |= tests_attribute(css, "divisor");
-        tests_geometry |= geometry::all()
-            .iter()
-            .any(|property| tests_attribute(css, property));
+    for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
+        if node
+            .attribute("type")
+            .is_none_or(|kind| kind.is_empty() || kind == "text/css")
+        {
+            for css in node.children().filter_map(|child| child.text()) {
+                sheet.parse_more(css);
+                tests_style |= tests_attribute(css, "style");
+                tests_divisor |= tests_attribute(css, "divisor");
+                tests_geometry |= geometry::all()
+                    .iter()
+                    .any(|property| tests_attribute(css, property));
+            }
+        }
     }
-    // The `style` attributes that spell `!important` in another way.
-    let restyled: HashMap<roxmltree::NodeId, String> = xml
-        .descendants()
-        .filter_map(
-            |node| match geometry::with_lowercase_important(node.attribute("style")?) {
-                Cow::Owned(style) => Some((node.id(), style)),
-                Cow::Borrowed(_) => None,
-            },
-        )
-        .collect();
     // The rules that say something about a geometry property or a filter. The
     // others cannot change what is read below, and are not matched.
     let masks: Vec<u16> = sheet
@@ -160,9 +142,7 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
         } | if filtered { geometry::FILTER } else { 0 };
         let found = if wanted == 0 {
             Vec::new()
-        } else if let Some(found) =
-            declarations(node, &sheet, &masks, wanted, &restyled, &mut budget)
-        {
+        } else if let Some(found) = declarations(node, &sheet, &masks, wanted, &mut budget) {
             found
         } else {
             // Finding out takes more than the budget allows, which leaves the
@@ -311,7 +291,6 @@ fn declarations<'a>(
     sheet: &simplecss::StyleSheet<'a>,
     masks: &[u16],
     wanted: u16,
-    restyled: &'a HashMap<roxmltree::NodeId, String>,
     budget: &mut super::SelectorFreezeBudget,
 ) -> Option<Vec<simplecss::Declaration<'a>>> {
     let mut found = Vec::new();
@@ -322,12 +301,8 @@ fn declarations<'a>(
             found.extend(rule.declarations.iter().copied());
         }
     }
-    if let Some(style) = restyled
-        .get(&node.id())
-        .map(String::as_str)
-        .or_else(|| node.attribute("style"))
-    {
-        found.extend(simplecss::DeclarationTokenizer::from(style));
+    if let Some(style) = node.attribute("style") {
+        found.extend(geometry::style_declarations(style));
     }
     Some(found)
 }

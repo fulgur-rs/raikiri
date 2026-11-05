@@ -13,7 +13,6 @@
 
 mod math;
 
-use std::borrow::Cow;
 use std::str::FromStr;
 
 /// The geometry properties.
@@ -125,92 +124,119 @@ pub(super) fn may_declare(source: &str) -> bool {
     })
 }
 
-/// Whether `c` is white space in CSS.
-fn is_css_space(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
-}
-
-/// Whether `c` is a byte of a CSS name: a letter, a digit, a hyphen, an
-/// underscore, or part of a character that is not ASCII.
-fn is_name_byte(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_') || !c.is_ascii()
-}
-
-/// The end of the white space and comments that stand at `from` in `css`.
-fn skip_space_and_comments(css: &str, mut from: usize) -> usize {
-    let bytes = css.as_bytes();
-    loop {
-        if bytes.get(from).is_some_and(|byte| is_css_space(*byte)) {
-            from += 1;
-        } else if css[from..].starts_with("/*") {
-            from = css[from + 2..]
-                .find("*/")
-                .map_or(css.len(), |end| from + 2 + end + 2);
-        } else {
-            return from;
-        }
-    }
-}
-
-/// `css` with each `!important` written in lowercase.
+/// The declarations of a `style` attribute, as a browser splits them.
 ///
-/// CSS reads the keyword in any case, as in `width:10px !IMPORTANT`, but
-/// `simplecss` reads it in lowercase only, and loses the rest of the
-/// declarations at one that is not. A string, a comment and the address of an
-/// unquoted `url()` are left as they are. Only the case of letters changes, so
-/// every position in the text stays where it was.
-pub(super) fn with_lowercase_important(css: &str) -> Cow<'_, str> {
-    const KEYWORD: &str = "important";
-    let bytes = css.as_bytes();
-    let mut lowercased: Option<String> = None;
-    let mut at = 0;
-    while at < bytes.len() {
-        match bytes[at] {
-            b'/' if bytes.get(at + 1) == Some(&b'*') => {
-                at = skip_space_and_comments(css, at);
+/// `simplecss` ends a function at the first closing parenthesis, so it loses
+/// every declaration after a nested one, as in `x:calc(min(1px, 2px));y:3px`,
+/// and it reads `!important` in lowercase only. Here a function, a
+/// parenthesis, a bracket and a brace are blocks that nest, a string and a
+/// comment are single tokens, and `!important` may be spelled in any case with
+/// white space or comments inside. A declaration without a name, a colon or a
+/// value is skipped up to the next semicolon, which is how a browser recovers.
+pub(super) fn style_declarations(style: &str) -> Vec<simplecss::Declaration<'_>> {
+    use cssparser::Token;
+
+    let mut input = cssparser::ParserInput::new(style);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut declarations = Vec::new();
+    loop {
+        parser.skip_whitespace();
+        let name_start = parser.position();
+        match parser.next_including_whitespace_and_comments() {
+            Err(_) => return declarations,
+            Ok(Token::Semicolon) => continue,
+            Ok(Token::Ident(_)) => {}
+            Ok(_) => {
+                skip_declaration(&mut parser);
+                continue;
             }
-            quote @ (b'"' | b'\'') => {
-                at += 1;
-                while at < bytes.len() && bytes[at] != quote && bytes[at] != b'\n' {
-                    // A backslash takes the character after it.
-                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+        }
+        let name = parser.slice_from(name_start);
+        match parser.next() {
+            Ok(Token::Colon) => {}
+            Ok(Token::Semicolon) => continue,
+            Err(_) => return declarations,
+            Ok(_) => {
+                skip_declaration(&mut parser);
+                continue;
+            }
+        }
+        parser.skip_whitespace();
+        let value_start = parser.position();
+        // Where the value ends: after its last token that is not white space or
+        // a comment, and before the `!important` that closes it if it has one.
+        let mut end = value_start;
+        let mut cut = None;
+        // Where the value ended before a `!` that is the last token.
+        let mut bang = None;
+        loop {
+            let piece = match parser.next_including_whitespace_and_comments() {
+                Ok(Token::Semicolon) | Err(_) => break,
+                Ok(Token::WhiteSpace(_) | Token::Comment(_)) => continue,
+                Ok(Token::Delim('!')) => Piece::Bang,
+                Ok(Token::Ident(word)) if word.eq_ignore_ascii_case("important") => {
+                    Piece::Important
                 }
-                at += 1;
+                Ok(
+                    Token::Function(_)
+                    | Token::ParenthesisBlock
+                    | Token::SquareBracketBlock
+                    | Token::CurlyBracketBlock,
+                ) => Piece::Block,
+                Ok(_) => Piece::Other,
+            };
+            if matches!(piece, Piece::Block) {
+                // The block ends at its closing mark, or at the end of the text.
+                let _ = parser.parse_nested_block(|inner| {
+                    while inner.next_including_whitespace_and_comments().is_ok() {}
+                    Ok::<(), cssparser::ParseError<'_, ()>>(())
+                });
             }
-            b'u' | b'U'
-                if bytes
-                    .get(at..at + 4)
-                    .is_some_and(|head| head.eq_ignore_ascii_case(b"url("))
-                    && (at == 0 || !is_name_byte(bytes[at - 1])) =>
-            {
-                at += 4;
-                at = skip_space_and_comments(css, at);
-                if !matches!(bytes.get(at), Some(b'"' | b'\'')) {
-                    // The address of an unquoted `url()` runs to its end.
-                    while at < bytes.len() && bytes[at] != b')' {
-                        at += if bytes[at] == b'\\' { 2 } else { 1 };
-                    }
+            match piece {
+                Piece::Bang => {
+                    bang = Some(end);
+                    cut = None;
+                }
+                Piece::Important if bang.is_some() => cut = bang.take(),
+                _ => {
+                    bang = None;
+                    cut = None;
                 }
             }
-            b'!' => {
-                at += 1;
-                let word = skip_space_and_comments(css, at);
-                if css
-                    .get(word..word + KEYWORD.len())
-                    .is_some_and(|head| head.eq_ignore_ascii_case(KEYWORD) && head != KEYWORD)
-                    && !bytes
-                        .get(word + KEYWORD.len())
-                        .is_some_and(|byte| is_name_byte(*byte))
-                {
-                    lowercased
-                        .get_or_insert_with(|| css.to_owned())
-                        .replace_range(word..word + KEYWORD.len(), KEYWORD);
-                }
-            }
-            _ => at += 1,
+            end = parser.position();
+        }
+        let important = cut.is_some();
+        let value = parser.slice(value_start..cut.unwrap_or(end));
+        if !value.is_empty() {
+            declarations.push(simplecss::Declaration {
+                name,
+                value,
+                important,
+            });
         }
     }
-    lowercased.map_or(Cow::Borrowed(css), Cow::Owned)
+}
+
+/// The kinds of token that a value is told apart by.
+enum Piece {
+    /// The `!` that may start `!important`.
+    Bang,
+    /// The word `important`, in any case.
+    Important,
+    /// A function, a parenthesis, a bracket or a brace, which holds tokens of
+    /// its own up to its closing mark.
+    Block,
+    Other,
+}
+
+/// Moves past the rest of a declaration that is not one: to the semicolon that
+/// ends it, or to the end. A block stands for a single token, so a semicolon in
+/// one does not end the declaration.
+fn skip_declaration(parser: &mut cssparser::Parser<'_, '_>) {
+    while !matches!(
+        parser.next_including_whitespace_and_comments(),
+        Ok(cssparser::Token::Semicolon) | Err(_)
+    ) {}
 }
 
 /// What a declaration says about a property.

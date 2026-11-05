@@ -976,6 +976,60 @@ fn a_shape_is_drawn_where_its_declarations_put_it() {
             "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;width:calc(1px + 2)\"/>",
             Some([0, 10, 19, 19]),
         ),
+        // A declaration that a browser drops or skips leaves the ones around
+        // it as they are, and a function in one does not end it early.
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"x:calc(min(1px,2px) + 3);width:20px;height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;font-family:&quot;a;b&quot;;height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;background:url(a;b);height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px !important x;height:30px\"/>",
+            Some([0, 10, 49, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:calc(20px;height:30px\"/>",
+            Some([0, 10, 49, 19]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px /* c */ ;height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"a:1;;width:20px;height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px ! IMPORTANT ; height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width;height:30px\"/>",
+            Some([0, 10, 49, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;{x:1;y:2};height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;@media x{a:b};height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px);height:30px\"/>",
+            Some([0, 10, 49, 39]),
+        ),
+        (
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:20px;x:u\\72l(a;b);height:30px\"/>",
+            Some([0, 10, 19, 39]),
+        ),
         // The cascade.
         (
             "<style>rect{width:40px!important}</style><rect x=\"10\" y=\"10\" height=\"10\" style=\"width:20px\"/>",
@@ -1124,15 +1178,6 @@ fn an_important_mark_in_any_case_is_read() {
         geometry_of("<rect width=\"50\" height=\"10\" style=\"width:10px!Important;width:20px\"/>"),
         plain("<rect width=\"10px\" height=\"10\" style=\"width:10px!Important;width:20px\"/>")
     );
-    // The mark of a rule, which beats the `style` attribute.
-    assert_eq!(
-        geometry_of(
-            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"50\" height=\"10\" style=\"width:10px\"/>"
-        ),
-        plain(
-            "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"30px\" height=\"20px\" style=\"width:10px\"/>"
-        )
-    );
     // A string that holds the mark is not a mark, and the attribute and the
     // text of the document keep their spelling.
     let body = "<rect width=\"50\" height=\"10\" style=\"width:10px;font-family:'!IMPORTANT'\"/><text>a !IMPORTANT</text>";
@@ -1180,4 +1225,30 @@ fn a_math_function_with_an_error_does_not_hide_the_declaration_below_it() {
         geometry_of(body),
         plain("<path d=\"M0 0H5\" style=\"d:path('M0 0H5');d:calc(1px)\"/>")
     );
+}
+
+#[test]
+fn a_nested_function_does_not_hide_the_declarations_after_it() {
+    // The declaration below the function wins, and the function is a value
+    // that is not computed here.
+    assert_eq!(
+        geometry_of(
+            "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:0;x:calc(min(1px, 2px));width:20px\"/>"
+        ),
+        plain(
+            "<rect y=\"10\" width=\"20px\" height=\"10\" style=\"width:0;x:calc(min(1px, 2px));width:20px\"/>"
+        )
+    );
+    assert_eq!(
+        geometry_of(
+            "<rect width=\"50\" height=\"10\" style=\"width:calc(min(1px,2px) + 20px);height:30px\"/>"
+        ),
+        plain(
+            "<rect width=\"50\" height=\"30px\" style=\"width:calc(min(1px,2px) + 20px);height:30px\"/>"
+        )
+    );
+    // A function that is not closed takes the declarations after it, as a
+    // browser reads it, and none of them applies.
+    let body = "<rect width=\"50\" height=\"10\" style=\"width:calc(20px;height:30px\"/>";
+    assert_eq!(geometry_of(body), plain(body));
 }

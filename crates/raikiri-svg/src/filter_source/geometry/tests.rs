@@ -503,87 +503,246 @@ fn an_opaque_declaration_hides_the_ones_below_it() {
     );
 }
 
+/// The declarations of a `style` attribute as name, value and importance.
+fn read(style: &str) -> Vec<(&str, &str, bool)> {
+    style_declarations(style)
+        .into_iter()
+        .map(|declaration| (declaration.name, declaration.value, declaration.important))
+        .collect()
+}
+
 #[test]
-fn an_important_mark_is_read_in_any_case() {
-    for (css, lowercased) in [
-        ("width:10px !IMPORTANT", "width:10px !important"),
-        (
-            "width:10px!Important;height:20px",
-            "width:10px!important;height:20px",
-        ),
-        ("width:10px ! IMPORTANT;", "width:10px ! important;"),
-        ("width:10px !\n\tIMPORTANT", "width:10px !\n\timportant"),
-        (
-            "width:10px !/* c */IMPORTANT",
-            "width:10px !/* c */important",
-        ),
-        (
-            "width:10px !/* a *//* b */ Important",
-            "width:10px !/* a *//* b */ important",
-        ),
-        (
-            "a{width:1px!IMPORTANT}b{height:1px!IMPORTANT}",
-            "a{width:1px!important}b{height:1px!important}",
-        ),
-        // Another mark does not hide the one after it.
-        (
-            "a:b!Important;c:d !IMPORTANT",
-            "a:b!important;c:d !important",
-        ),
-        ("\u{e9}:1 !IMPORTANT", "\u{e9}:1 !important"),
+fn the_declarations_of_a_style_attribute_are_split_at_semicolons() {
+    assert_eq!(
+        read("width:10px;height:20px"),
+        [("width", "10px", false), ("height", "20px", false)]
+    );
+    // Names keep their spelling, and white space and comments around them go.
+    assert_eq!(
+        read(" /* a */ WIDTH /* b */ : /* c */ 5px /* d */ ; Height:\n6px\t;"),
+        [("WIDTH", "5px", false), ("Height", "6px", false)]
+    );
+    // Semicolons that stand alone, and a missing last one.
+    assert_eq!(
+        read(";;a:1;;;b:2;;"),
+        [("a", "1", false), ("b", "2", false)]
+    );
+    assert!(read("").is_empty());
+    assert!(read(" ;; /* a */ ").is_empty());
+}
+
+#[test]
+fn a_nested_function_does_not_end_the_declaration_early() {
+    // `simplecss` ends a function at its first closing parenthesis and loses
+    // everything after it.
+    assert_eq!(
+        read("width:0;x:calc(min(1px, 2px));width:20px"),
+        [
+            ("width", "0", false),
+            ("x", "calc(min(1px, 2px))", false),
+            ("width", "20px", false),
+        ]
+    );
+    assert_eq!(
+        read("width:calc(min(1px,2px) + 20px);height:30px"),
+        [
+            ("width", "calc(min(1px,2px) + 20px)", false),
+            ("height", "30px", false),
+        ]
+    );
+    assert_eq!(
+        read("x:a(b(c;d));width:20px"),
+        [("x", "a(b(c;d))", false), ("width", "20px", false)]
+    );
+    assert_eq!(
+        read("x:calc((1px + 2px) * 2)!important;y:1px"),
+        [("x", "calc((1px + 2px) * 2)", true), ("y", "1px", false)]
+    );
+}
+
+#[test]
+fn a_semicolon_in_a_string_or_a_block_does_not_end_the_declaration() {
+    for value in [
+        "\"a;b\"",
+        "'a;b'",
+        "url(a;b)",
+        "url(\"a;b\")",
+        "u\\72l(a;b)",
+        "{a;b}",
+        "[a;b]",
+        "(a;b)",
     ] {
-        assert_eq!(with_lowercase_important(css), lowercased, "{css}");
+        let style = format!("width:20px;x:{value};height:30px");
+        assert_eq!(
+            read(&style),
+            [
+                ("width", "20px", false),
+                ("x", value, false),
+                ("height", "30px", false)
+            ],
+            "{style}"
+        );
     }
 }
 
 #[test]
-fn text_that_is_not_an_important_mark_is_left_as_it_is() {
-    for css in [
-        "",
-        "!",
-        "width:10px",
-        "width:10px !important",
-        "width:10px!important;height:20px",
-        // Not the keyword.
-        "width:10px !IMPORTANTX",
-        "width:10px !IMPORTANT-",
-        "width:10px !IMPORTANT_1",
-        "width:10px !IMPORTANT\u{e9}",
-        "width:10px !IMPORTAN",
-        "width:10px !IMPORT",
-        "width:10px ! x IMPORTANT",
-        // Strings, comments and addresses are not CSS to be read.
-        "font-family:\"!IMPORTANT\"",
-        "font-family:'!IMPORTANT'",
-        "font-family:'a\\'!IMPORTANT'",
-        "/* !IMPORTANT */width:1px",
-        "/* !IMPORTANT",
-        "background:url(a!IMPORTANT)",
-        "background:URL( a!IMPORTANT )",
-        "background:url(a\\)!IMPORTANT)",
-        "background:url(\"a\") !important",
-        // A name that ends in `url`, and a quote that stands alone.
-        "a:curl(!IMPORTANT",
+fn a_block_that_is_not_closed_takes_the_rest_of_the_text() {
+    assert_eq!(
+        read("width:calc(20px;height:30px"),
+        [("width", "calc(20px;height:30px", false)]
+    );
+    assert_eq!(
+        read("width:20px;x:a(b(c;d);height:30px"),
+        [
+            ("width", "20px", false),
+            ("x", "a(b(c;d);height:30px", false)
+        ]
+    );
+    // A string that is not closed ends with its line, or with the text.
+    assert_eq!(
+        read("width:20px;font-family:\"a\n;height:30px"),
+        [
+            ("width", "20px", false),
+            ("font-family", "\"a", false),
+            ("height", "30px", false),
+        ]
+    );
+    assert_eq!(
+        read("width:20px;font-family:\"a;height:30px"),
+        [
+            ("width", "20px", false),
+            ("font-family", "\"a;height:30px", false),
+        ]
+    );
+}
+
+#[test]
+fn a_closing_mark_with_no_opening_one_stays_in_its_value() {
+    // The value is not one of the property, so it is dropped there, and the
+    // declarations after it are read.
+    assert_eq!(
+        read("width:20px);height:30px"),
+        [("width", "20px)", false), ("height", "30px", false)]
+    );
+    assert_eq!(
+        read("width:20px};height:30px"),
+        [("width", "20px}", false), ("height", "30px", false)]
+    );
+    assert_eq!(
+        read("width:20px;x:a(b(c;d)));height:30px"),
+        [
+            ("width", "20px", false),
+            ("x", "a(b(c;d)))", false),
+            ("height", "30px", false),
+        ]
+    );
+}
+
+#[test]
+fn what_is_not_a_declaration_is_skipped_up_to_the_next_semicolon() {
+    for style in [
+        // No colon.
+        "width;height:30px",
+        // No name.
+        ":width;height:30px",
+        // Not a name.
+        "123:x;height:30px",
+        "*width:20px;height:30px",
+        "\"width\":20px;height:30px",
+        "#a:b;height:30px",
+        // A function or a block at the place of the name.
+        "foo(1;2);height:30px",
+        "{x:1;y:2};height:30px",
+        "[a;b];height:30px",
+        // At-rules.
+        "@foo;height:30px",
+        "@media x{a:b};height:30px",
+        // A name and a word where the colon is.
+        "width 20px;height:30px",
+        "width 20px {a;b};height:30px",
+        // A name with a semicolon after it.
+        "width;height:30px;",
+        // No value.
+        "width:;height:30px",
+        "width: /* a */ ;height:30px",
+        "width:\n;height:30px",
     ] {
-        let read = with_lowercase_important(css);
-        if css == "a:curl(!IMPORTANT" {
-            // `curl(` is no `url(`, so the mark after it is a mark.
-            assert_eq!(read, "a:curl(!important", "{css}");
-        } else {
-            assert!(matches!(read, Cow::Borrowed(_)), "{css}");
-            assert_eq!(read, css);
-        }
+        assert_eq!(read(style), [("height", "30px", false)], "{style}");
     }
-    // The mark after a string, a comment or a `url()` still counts.
-    for (css, lowercased) in [
-        ("a:'x' !IMPORTANT", "a:'x' !important"),
-        // A string that is not closed ends with its line.
-        ("a:'x\n!IMPORTANT", "a:'x\n!important"),
-        ("a:/* x */1 !IMPORTANT", "a:/* x */1 !important"),
-        ("a:url(x) !IMPORTANT", "a:url(x) !important"),
-        ("a:url('x') !IMPORTANT", "a:url('x') !important"),
-        ("a:\"'\" !IMPORTANT", "a:\"'\" !important"),
+    // The end of the text ends a declaration that is not one.
+    assert_eq!(read("width:20px;height"), [("width", "20px", false)]);
+    assert_eq!(read("width:20px;height:"), [("width", "20px", false)]);
+    assert_eq!(read("width:20px;height:;"), [("width", "20px", false)]);
+    assert!(read("width").is_empty());
+    assert!(read("{a;b").is_empty());
+}
+
+#[test]
+fn a_comment_at_the_end_of_a_value_is_not_part_of_it() {
+    assert_eq!(
+        read("width:20px /* c */;height:30px/* unterminated"),
+        [("width", "20px", false), ("height", "30px", false)]
+    );
+    assert_eq!(
+        read("/* c */ width:20px;/* d */height:30px"),
+        [("width", "20px", false), ("height", "30px", false)]
+    );
+    // One inside the value stays, and the value is not read any further.
+    assert_eq!(read("x:1/**/2"), [("x", "1/**/2", false)]);
+}
+
+#[test]
+fn an_important_mark_is_read_in_any_case() {
+    for (style, value) in [
+        ("width:10px !important", "10px"),
+        ("width:10px !IMPORTANT", "10px"),
+        ("width:10px!Important", "10px"),
+        ("width:10px ! important ", "10px"),
+        ("width:10px !\n\tIMPORTANT", "10px"),
+        ("width:10px !/* c */IMPORTANT", "10px"),
+        ("width:10px !/* a *//* b */ Important /* c */", "10px"),
+        ("width:10px /* a */ ! /* b */ important", "10px"),
+        ("width:calc(1px + 2px)!IMPORTANT", "calc(1px + 2px)"),
+        ("width:\"x\" !IMPORTANT", "\"x\""),
+        ("width:url(x) !IMPORTANT", "url(x)"),
+        ("width:1px!important", "1px"),
     ] {
-        assert_eq!(with_lowercase_important(css), lowercased, "{css}");
+        assert_eq!(read(style), [("width", value, true)], "{style}");
+    }
+    // The mark is for the declaration that it ends.
+    assert_eq!(
+        read("a:b!Important;c:d !IMPORTANT;e:f"),
+        [("a", "b", true), ("c", "d", true), ("e", "f", false)]
+    );
+    assert_eq!(read("\u{e9}:1 !IMPORTANT"), [("\u{e9}", "1", true)]);
+}
+
+#[test]
+fn text_that_is_not_an_important_mark_stays_in_the_value() {
+    for (style, value, important) in [
+        ("width:10px !important x", "10px !important x", false),
+        ("width:10px !IMPORTANTX", "10px !IMPORTANTX", false),
+        ("width:10px !IMPORTANT-", "10px !IMPORTANT-", false),
+        ("width:10px !IMPORTANT_1", "10px !IMPORTANT_1", false),
+        (
+            "width:10px !IMPORTANT\u{e9}",
+            "10px !IMPORTANT\u{e9}",
+            false,
+        ),
+        ("width:10px !IMPORTAN", "10px !IMPORTAN", false),
+        ("width:10px ! x IMPORTANT", "10px ! x IMPORTANT", false),
+        ("width:10px ! 1 important", "10px ! 1 important", false),
+        ("width:10px important", "10px important", false),
+        ("width:10px !important !", "10px !important !", false),
+        // Only the last mark is one, and the one before it stays.
+        ("width:10px !important !important", "10px !important", true),
+        ("width:10px !! important", "10px !", true),
+        ("width:!", "!", false),
+        ("width:\"!important\"", "\"!important\"", false),
+        ("width:'!IMPORTANT'", "'!IMPORTANT'", false),
+        ("width:url(a!IMPORTANT)", "url(a!IMPORTANT)", false),
+        ("width:(a !important)", "(a !important)", false),
+    ] {
+        assert_eq!(read(style), [("width", value, important)], "{style}");
     }
 }
