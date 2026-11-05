@@ -59,6 +59,42 @@ fn height_constraints_on_ancestors_keep_a_paragraph_in_plain_block_flow() {
 }
 
 #[test]
+fn text_beside_a_flex_item_is_another_item_unless_it_is_collapsible_white_space() {
+    // Only space, tab, line feed, carriage return and form feed collapse away
+    // between flex items; a no-break space is text that makes an item of its
+    // own beside the paragraph.
+    let cases = [
+        (" \t\n\r\u{000c}", true),
+        ("\u{00a0}", false),
+        (" \u{00a0} ", false),
+        ("\u{2003}", false),
+        ("x", false),
+    ];
+    for (text, expected) in cases {
+        let mut paragraph = 0;
+        let mut fixture =
+            crate::layout::ifc::test_support::block_fixture("display:flex", |doc, wrapper| {
+                paragraph = doc.append_element(
+                    Some(wrapper),
+                    "div",
+                    Some("display:block;height:100px".to_owned()),
+                );
+                doc.append_text(wrapper, text);
+            });
+        let body = fixture.doc.parent_of(fixture.root).unwrap();
+        let session = super::super::super::context::LayoutSession::bridged(
+            &mut fixture.doc,
+            &fixture.cascade,
+        );
+        assert_eq!(
+            is_block_flow_paragraph(&session, &fixture.cascade, paragraph, body),
+            expected,
+            "text={text:?}"
+        );
+    }
+}
+
+#[test]
 fn a_flex_container_with_another_item_keeps_its_paragraph_out_of_plain_block_flow() {
     // Another item on a flex line sits beside the paragraph, or after it in a
     // column, and does not follow the lines that move down inside it. Boxes

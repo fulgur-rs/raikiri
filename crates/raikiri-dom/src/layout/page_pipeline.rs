@@ -11487,8 +11487,10 @@ fn placed_in_flow_to_body(
 }
 
 /// The children of the flex container `container` other than `item` that sit
-/// on a flex line. Collapsed white space between items, `display: none` and
-/// absolutely positioned children are on no flex line.
+/// on a flex line. Collapsible white space between items, `display: none` and
+/// absolutely positioned children are on no flex line; the test is the one the
+/// pagination of the flex items uses, so a text node holding a no-break space
+/// counts as an item.
 fn flex_siblings_on_lines(
     document: &Document,
     container: usize,
@@ -11498,17 +11500,7 @@ fn flex_siblings_on_lines(
         .children
         .iter()
         .filter(move |&&child| {
-            child != item
-                && match &document.nodes[child].data {
-                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
-                    _ => {
-                        document.nodes[child].display() != DisplayValue::None
-                            && !matches!(
-                                document.nodes[child].position(),
-                                PositionValue::Absolute | PositionValue::Fixed
-                            )
-                    }
-                }
+            child != item && is_in_flow_flex_child_for_pagination(document, container, child)
         })
 }
 
