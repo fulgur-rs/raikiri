@@ -169,7 +169,10 @@ fn parse_text_indent_calc_terms<'i>(
     input: &mut Parser<'i, '_>,
     allow_ch: bool,
 ) -> Result<TextIndentLength, ParseError<'i, ()>> {
-    let value = parse_text_indent_calc_sum(input, allow_ch)?;
+    // A bare `<number>` result (`calc(2 * 3)`) is not a `<length-percentage>`.
+    let CalcOperand::Linear(value) = parse_text_indent_calc_sum(input, allow_ch)? else {
+        return Err(input.new_custom_error(()));
+    };
     if value.ch != 0.0 {
         if value.percent == 0.0 && value.px == 0.0 && value.em == 0.0 {
             Ok(TextIndentLength::Length(Length::Ch(value.ch)))
@@ -191,10 +194,41 @@ fn parse_text_indent_calc_terms<'i>(
     }
 }
 
+/// One operand of a text-property `calc()`: a `<number>` (valid only as a
+/// multiplier or divisor) or a linear `<length-percentage>` combination.
+#[derive(Clone, Copy)]
+enum CalcOperand {
+    Number(f32),
+    Linear(LengthPercentageCalc),
+}
+
+fn scale_calc(value: LengthPercentageCalc, factor: f32) -> LengthPercentageCalc {
+    LengthPercentageCalc {
+        percent: value.percent * factor,
+        px: value.px * factor,
+        em: value.em * factor,
+        ch: value.ch * factor,
+    }
+}
+
+fn calc_is_finite(value: &LengthPercentageCalc) -> bool {
+    value.percent.is_finite()
+        && value.px.is_finite()
+        && value.em.is_finite()
+        && value.ch.is_finite()
+}
+
+fn calc_operand_is_finite(value: &CalcOperand) -> bool {
+    match value {
+        CalcOperand::Number(number) => number.is_finite(),
+        CalcOperand::Linear(linear) => calc_is_finite(linear),
+    }
+}
+
 fn parse_text_indent_calc_sum<'i>(
     input: &mut Parser<'i, '_>,
     allow_ch: bool,
-) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
+) -> Result<CalcOperand, ParseError<'i, ()>> {
     let mut value = parse_text_indent_calc_term(input, allow_ch)?;
     while !input.is_exhausted() {
         let sign = match input.next()?.clone() {
@@ -203,35 +237,89 @@ fn parse_text_indent_calc_sum<'i>(
             token => return Err(input.new_unexpected_token_error(token)),
         };
         let term = parse_text_indent_calc_term(input, allow_ch)?;
-        value.percent += sign * term.percent;
-        value.px += sign * term.px;
-        value.em += sign * term.em;
-        value.ch += sign * term.ch;
-        if !value.percent.is_finite()
-            || !value.px.is_finite()
-            || !value.em.is_finite()
-            || !value.ch.is_finite()
-        {
+        // `<number>` and `<length-percentage>` terms cannot be added together.
+        value = match (value, term) {
+            (CalcOperand::Number(a), CalcOperand::Number(b)) => CalcOperand::Number(a + sign * b),
+            (CalcOperand::Linear(a), CalcOperand::Linear(b)) => {
+                CalcOperand::Linear(LengthPercentageCalc {
+                    percent: a.percent + sign * b.percent,
+                    px: a.px + sign * b.px,
+                    em: a.em + sign * b.em,
+                    ch: a.ch + sign * b.ch,
+                })
+            }
+            _ => return Err(input.new_custom_error(())),
+        };
+        if !calc_operand_is_finite(&value) {
             return Err(input.new_custom_error(()));
         }
     }
     Ok(value)
 }
 
+/// `<calc-product>`: a factor followed by any number of `* <factor>` and
+/// `/ <factor>` steps (CSS Values 4 §10.1 "Calculation Grammar").
+///
+/// At most one side of a product may be a `<length-percentage>`; a divisor
+/// must be a non-zero `<number>`.
 fn parse_text_indent_calc_term<'i>(
     input: &mut Parser<'i, '_>,
     allow_ch: bool,
-) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
+) -> Result<CalcOperand, ParseError<'i, ()>> {
+    let mut value = parse_text_indent_calc_factor(input, allow_ch)?;
+    loop {
+        let state = input.state();
+        let is_division = match input.next().cloned() {
+            Ok(Token::Delim('*')) => false,
+            Ok(Token::Delim('/')) => true,
+            _ => {
+                input.reset(&state);
+                break;
+            }
+        };
+        let rhs = parse_text_indent_calc_factor(input, allow_ch)?;
+        value = match (value, rhs, is_division) {
+            (CalcOperand::Number(a), CalcOperand::Number(b), false) => CalcOperand::Number(a * b),
+            (CalcOperand::Number(a), CalcOperand::Linear(b), false) => {
+                CalcOperand::Linear(scale_calc(b, a))
+            }
+            (CalcOperand::Linear(a), CalcOperand::Number(b), false) => {
+                CalcOperand::Linear(scale_calc(a, b))
+            }
+            (CalcOperand::Number(a), CalcOperand::Number(b), true) if b != 0.0 => {
+                CalcOperand::Number(a / b)
+            }
+            (CalcOperand::Linear(a), CalcOperand::Number(b), true) if b != 0.0 => {
+                CalcOperand::Linear(scale_calc(a, 1.0 / b))
+            }
+            _ => return Err(input.new_custom_error(())),
+        };
+        if !calc_operand_is_finite(&value) {
+            return Err(input.new_custom_error(()));
+        }
+    }
+    Ok(value)
+}
+
+fn parse_text_indent_calc_factor<'i>(
+    input: &mut Parser<'i, '_>,
+    allow_ch: bool,
+) -> Result<CalcOperand, ParseError<'i, ()>> {
     let start = input.state();
     if matches!(input.next()?.clone(), Token::ParenthesisBlock) {
         return input.parse_nested_block(|i| parse_text_indent_calc_sum(i, allow_ch));
     }
     input.reset(&start);
 
-    // A bare number is not a `<length-percentage>` calc term, even for zero.
+    // A bare number is only a multiplier or divisor; the caller rejects a
+    // calculation that resolves to one, even for zero.
     let token = next_numeric_stable(input)?;
-    if !matches!(&token, Token::Dimension { .. } | Token::Percentage { .. }) {
-        return Err(input.new_unexpected_token_error(token));
+    match &token {
+        Token::Number { value, .. } if value.is_finite() => {
+            return Ok(CalcOperand::Number(*value));
+        }
+        Token::Dimension { .. } | Token::Percentage { .. } => {}
+        _ => return Err(input.new_unexpected_token_error(token)),
     }
     input.reset(&start);
     let length = parse_length_value(input, true).ok_or_else(|| input.new_custom_error(()))?;
@@ -298,12 +386,8 @@ fn parse_text_indent_calc_term<'i>(
         },
         _ => return Err(input.new_custom_error(())),
     };
-    if value.percent.is_finite()
-        && value.px.is_finite()
-        && value.em.is_finite()
-        && value.ch.is_finite()
-    {
-        Ok(value)
+    if calc_is_finite(&value) {
+        Ok(CalcOperand::Linear(value))
     } else {
         Err(input.new_custom_error(()))
     }

@@ -5541,3 +5541,7 @@ css/css-sizing/aspect-ratio/abspos-012.html
 # --- A line that holds an avoiding inline table (WPT pin 97ea26e2, EXACT, Linux, 2026-11-05) ---
 # The text and the `page-break-inside: avoid` inline table after it sit on one line box, and a page break falls between line boxes, not inside one (CSS 2 section 13.3.3). The table is taller than the page area, so the whole line goes to the next page and the text no longer stays below the end of the first page while the table starts on the next. audit-vacuous-passes reports VACUOUS-UNSTYLED, because the pair still matches after one declaration of the test is removed; the test was an expected failure before the change and is kept as a guard, as the abspos-012 entry above is.
 css/CSS2/pagination/table-page-break-inside-avoid-4-print.html
+
+# --- word-spacing with multiplied and divided calc terms (WPT pin 97ea26e2, EXACT, Linux, 2026-11-05) ---
+# A `calc()` for word-spacing, letter-spacing, text-indent and tab-size may multiply or divide a term by a number (CSS Values 4 section 10.1), so `calc(100% + 6em + 50%*4 - 12em/2)` is 300% of the space width. The test was an expected failure before the change because the mixed row was dropped, and audit-vacuous-passes reports KEEP.
+css/css-text/word-spacing/word-spacing-001.html

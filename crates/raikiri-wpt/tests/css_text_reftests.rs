@@ -722,7 +722,7 @@ fn word_spacing_matrix_at_800x600_with_bundled_fonts() {
     // Pin each file's exact pixel outcome. Track mismatches as exact expected
     // failures; render and harness errors remain hard failures.
     let candidates = [
-        ("css/css-text/word-spacing/word-spacing-001.html", 4000),
+        ("css/css-text/word-spacing/word-spacing-001.html", 0),
         ("css/css-text/word-spacing/word-spacing-002.html", 0),
         ("css/css-text/word-spacing/word-spacing-003.html", 0),
         (

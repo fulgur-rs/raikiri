@@ -73,3 +73,29 @@ fn calc_adds_em_after_resolving_the_element_font_size() {
         ComputedTextIndent::Px(30.0),
     );
 }
+
+#[test]
+fn calc_multiplies_and_divides_retained_coefficients() {
+    let Some(PropertyValue::TextIndent(value)) =
+        parse_entire("calc(10px * 2 + 50% / 4 - 0.5em * 2)", "text-indent")
+    else {
+        panic!("expected a parsed text-indent calc")
+    };
+    let TextIndentLength::Calc(calc) = value.length else {
+        panic!("expected retained percentage, px and em coefficients")
+    };
+    assert_eq!(
+        calc,
+        LengthPercentageCalc {
+            percent: 12.5,
+            px: 20.0,
+            em: -1.0,
+            ch: 0.0,
+        }
+    );
+    assert_eq!(parse_entire("calc(10px * 2px)", "text-indent"), None);
+    assert!(matches!(
+        parse_entire("calc(10px / 0)", "text-indent"),
+        Some(PropertyValue::Deferred(_))
+    ));
+}
