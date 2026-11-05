@@ -435,3 +435,98 @@ fn a_float_wider_than_the_room_after_two_glyphs_goes_below_their_line() {
     assert_eq!(laid.rect("t"), (0.0, 0.0, 20.0, 10.0));
     assert_eq!(laid.rect("f"), (0.0, 10.0, 50.0, 20.0));
 }
+
+#[test]
+fn late_floats_follow_the_line_below_a_leading_float() {
+    for side in ["left", "right"] {
+        for width in [5, 20] {
+            let content = format!(
+                "{}x{}",
+                float("a", side, 55, "AAAA BBBB"),
+                float("b", side, width, "B")
+            );
+            let laid = lay_out(&paragraph("", &content));
+            let a_x = if side == "left" { 0.0 } else { 5.0 };
+            let b_x = if side == "left" {
+                0.0
+            } else {
+                60.0 - width as f32
+            };
+            let text_x = if side == "left" { width as f32 } else { 0.0 };
+            assert_eq!(laid.rect("a"), (a_x, 0.0, 55.0, 20.0));
+            assert_eq!(
+                laid.rect("b"),
+                (b_x, 20.0, width as f32, 10.0),
+                "{side}/{width}"
+            );
+            assert_eq!(laid.rect("o"), (0.0, 0.0, 60.0, 30.0));
+            assert_eq!(laid.run("x"), (text_x, 20.0));
+        }
+    }
+}
+
+#[test]
+fn moving_a_line_rechecks_late_floats_without_changing_other_placement_rules() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("data/late-floats-after-line-move.json")).unwrap();
+    let mut differences = Vec::new();
+    for case in fixture["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let laid = lay_out(&paragraph(
+            case["style"].as_str().unwrap(),
+            case["content"].as_str().unwrap(),
+        ));
+        for (id, expected) in case["rects"].as_object().unwrap() {
+            let expected: Rect = serde_json::from_value(expected.clone()).unwrap();
+            if laid.rect(id) != expected {
+                differences.push(format!(
+                    "{name}: #{id}: {:?} != {expected:?}",
+                    laid.rect(id)
+                ));
+            }
+        }
+        for (text, expected) in case["runs"].as_object().unwrap() {
+            let expected: (f32, f32) = serde_json::from_value(expected.clone()).unwrap();
+            if laid.run(text) != expected {
+                differences.push(format!(
+                    "{name}: {text}: {:?} != {expected:?}",
+                    laid.run(text)
+                ));
+            }
+        }
+    }
+    assert!(differences.is_empty(), "{differences:#?}");
+}
+
+#[test]
+fn a_nowrap_line_keeps_its_existing_float_placement_when_it_does_not_move() {
+    let content = format!(
+        "{}x{}",
+        float("a", "left", 55, "AAAA BBBB"),
+        float("b", "left", 5, "B")
+    );
+    let laid = lay_out(&paragraph("white-space:nowrap", &content));
+    // This pre-existing nowrap placement differs from Chromium, which puts
+    // b below the line. Moving wrappable lines must not change this path.
+    assert_eq!(laid.rect("b"), (55.0, 0.0, 5.0, 10.0));
+    assert_eq!(laid.run("x"), (60.0, 0.0));
+}
+
+#[test]
+fn a_negative_inline_margin_keeps_the_existing_zero_advance_line_behavior() {
+    for clear in ["", "clear:left"] {
+        let content = format!(
+            "{}x{}<span style='margin-left:-10px'></span>\
+             <div id=c style='float:left;width:20px;{clear}'>B</div>",
+            float("a", "left", 55, "AAAA BBBB"),
+            float("b", "left", 5, "B")
+        );
+        let laid = lay_out(&paragraph("", &content));
+        // The negative margin reduces the reported advance to zero, so the
+        // line does not move. This existing Chromium difference is separate.
+        assert_eq!(laid.rect("b"), (55.0, 0.0, 5.0, 10.0));
+        assert_eq!(laid.rect("c"), (0.0, 20.0, 20.0, 10.0));
+        assert_eq!(laid.rect("o"), (0.0, 0.0, 60.0, 10.0));
+        assert_eq!(laid.run("x"), (60.0, 0.0));
+    }
+}

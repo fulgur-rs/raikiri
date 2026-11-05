@@ -1,0 +1,500 @@
+{
+  "browser": "Chromium 152.0.7977.82, Linux, Ahem 10px/10px, body margin 0",
+  "measured": "2026-11-06 Asia/Tokyo",
+  "cases": [
+    {
+      "name": "two-left",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:5px;\">B</div><div id=c style=\"float:left;width:20px;\">B</div>",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          20,
+          5,
+          10
+        ],
+        "c": [
+          5,
+          20,
+          20,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          25,
+          20
+        ]
+      }
+    },
+    {
+      "name": "mixed",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:right;width:5px;\">B</div><div id=c style=\"float:left;width:20px;\">B</div>",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          55,
+          20,
+          5,
+          10
+        ],
+        "c": [
+          0,
+          20,
+          20,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          20,
+          20
+        ]
+      }
+    },
+    {
+      "name": "cleared",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:5px;clear:left\">B</div>",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          20,
+          5,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          5,
+          20
+        ]
+      }
+    },
+    {
+      "name": "indent",
+      "style": "text-indent:10px",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:5px;\">B</div>",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          20,
+          5,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          15,
+          20
+        ]
+      }
+    },
+    {
+      "name": "forced",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<br><div id=b style=\"float:left;width:20px;\">B</div>y",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          40
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          30,
+          20,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          0,
+          20
+        ],
+        "y": [
+          20,
+          30
+        ]
+      }
+    },
+    {
+      "name": "wide-late",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:55px;\">B</div>y",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          30,
+          55,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          0,
+          20
+        ],
+        "y": [
+          10,
+          20
+        ]
+      }
+    },
+    {
+      "name": "empty-inline",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div><span style=\"font-size:0\"> </span>x<div id=b style=\"float:left;width:5px;\">B</div>",
+      "rects": {
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          20,
+          5,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          5,
+          20
+        ]
+      }
+    },
+    {
+      "name": "zero-inline",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div><span style=\"display:inline-block;width:0;height:10px\"></span>x<div id=b style=\"float:left;width:5px;\">B</div>",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          20,
+          5,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          5,
+          20
+        ]
+      }
+    },
+    {
+      "name": "block-after",
+      "style": "",
+      "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:20px;\">B</div><div id=c>y</div>",
+      "rects": {
+        "o": [
+          0,
+          0,
+          60,
+          40
+        ],
+        "a": [
+          0,
+          0,
+          55,
+          20
+        ],
+        "b": [
+          0,
+          20,
+          20,
+          10
+        ],
+        "c": [
+          0,
+          30,
+          60,
+          10
+        ]
+      },
+      "runs": {
+        "x": [
+          20,
+          20
+        ],
+        "y": [
+          0,
+          30
+        ]
+      }
+    }
+  ],
+  "existing_differences": [
+    {
+      "name": "nowrap",
+      "chromium": {
+        "name": "nowrap",
+        "style": "white-space:nowrap",
+        "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:5px;\">B</div>",
+        "rects": {
+          "o": [
+            0,
+            0,
+            60,
+            10
+          ],
+          "a": [
+            0,
+            0,
+            55,
+            10
+          ],
+          "b": [
+            0,
+            10,
+            5,
+            10
+          ]
+        },
+        "runs": {
+          "x": [
+            55,
+            0
+          ]
+        }
+      },
+      "baseline_and_candidate": {
+        "b": [
+          55,
+          0,
+          5,
+          10
+        ],
+        "x": [
+          60,
+          0
+        ]
+      }
+    },
+    {
+      "name": "empty-inline-parent-height",
+      "chromium": [
+        0,
+        0,
+        60,
+        30
+      ],
+      "baseline_and_candidate": [
+        0,
+        0,
+        60,
+        33
+      ]
+    },
+    {
+      "name": "negative-clear",
+      "chromium": {
+        "name": "negative-clear",
+        "style": "",
+        "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:5px;\">B</div><span style=\"margin-left:-10px\"></span><div id=c style=\"float:left;width:20px;clear:left\">B</div>",
+        "rects": {
+          "o": [
+            0,
+            0,
+            60,
+            30
+          ],
+          "a": [
+            0,
+            0,
+            55,
+            20
+          ],
+          "b": [
+            0,
+            20,
+            5,
+            10
+          ],
+          "c": [
+            0,
+            30,
+            20,
+            10
+          ]
+        },
+        "runs": {
+          "x": [
+            5,
+            20
+          ]
+        }
+      },
+      "baseline_and_candidate": {
+        "b": [
+          55,
+          0,
+          5,
+          10
+        ],
+        "c": [
+          0,
+          20,
+          20,
+          10
+        ],
+        "o": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "x": [
+          60,
+          0
+        ]
+      }
+    },
+    {
+      "name": "negative-wide",
+      "chromium": {
+        "name": "negative-wide",
+        "style": "",
+        "content": "<div id=a style=\"float:left;width:55px\">AAAA BBBB</div>x<div id=b style=\"float:left;width:5px;\">B</div><span style=\"margin-left:-10px\"></span><div id=c style=\"float:left;width:20px;\">B</div>",
+        "rects": {
+          "o": [
+            0,
+            0,
+            60,
+            30
+          ],
+          "a": [
+            0,
+            0,
+            55,
+            20
+          ],
+          "b": [
+            0,
+            20,
+            5,
+            10
+          ],
+          "c": [
+            5,
+            20,
+            20,
+            10
+          ]
+        },
+        "runs": {
+          "x": [
+            25,
+            20
+          ]
+        }
+      },
+      "baseline_and_candidate": {
+        "b": [
+          55,
+          0,
+          5,
+          10
+        ],
+        "c": [
+          0,
+          20,
+          20,
+          10
+        ],
+        "o": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "x": [
+          60,
+          0
+        ]
+      }
+    }
+  ]
+}

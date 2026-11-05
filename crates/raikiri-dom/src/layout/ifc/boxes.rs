@@ -809,6 +809,7 @@ fn run_boxes_segment(
         (ctx.cleared_threshold(Clear::Both).unwrap_or(top_edge) - top_edge).max(0.0);
     let mut earliest_float_top = f32::INFINITY;
     let mut cursor: Option<FloatCursor> = None;
+    let mut first_late: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
     let mut lines: Vec<shodo::Line> = Vec::new();
     let mut tentative: Vec<TentativeFloat> = Vec::new();
@@ -950,6 +951,13 @@ fn run_boxes_segment(
                     continue;
                 }
                 let mut float = measure_float(tree, node, geometry);
+                // Negative inline margins can make a later float appear to
+                // start the line; it still belongs to the uncommitted suffix.
+                float.late = !starts_line || first_late.is_some();
+                if float.late {
+                    first_late =
+                        Some(first_late.map_or(float_cursor, |first| first.min(float_cursor)));
+                }
                 // `space` already has the tentative floats taken off. A float
                 // with no other float beside it is placed where it is even
                 // when it is wider than the line.
@@ -984,6 +992,7 @@ fn run_boxes_segment(
                 // have no content before them either, so they are final too.
                 if (!fits || below)
                     && starts_line
+                    && first_late.is_none()
                     && deferred.is_empty()
                     && !withdrawn.contains(&node)
                 {
@@ -1012,7 +1021,6 @@ fn run_boxes_segment(
                 if withdrawn.contains(&node) || !fits || below || !deferred.is_empty() {
                     deferred.push(float);
                 } else {
-                    float.late = !starts_line;
                     tentative.push(float);
                     start_floats = if starts_line { start_floats + 1 } else { 0 };
                     if start_floats > HELD_AFTER_START_FLOATS {
@@ -1075,7 +1083,8 @@ fn run_boxes_segment(
                 } // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
-                // Its own floats keep the place they have at this offset.
+                // Only its leading floats keep their place at this offset;
+                // floats met after content follow the line when it moves.
                 // The engine indents the first line, and with `each-line` a
                 // line after a forced break or a block; a hanging indent is on
                 // every other line instead (CSS Text 3 §8.1).
@@ -1132,7 +1141,8 @@ fn run_boxes_segment(
                     && line.inline_size() + indent > space.inline_size + 0.01
                     && moves < MAX_LINE_MOVES;
                 if overflows {
-                    for float in tentative.drain(..) {
+                    let leading = tentative.iter().take_while(|float| !float.late).count();
+                    for float in tentative.drain(..leading) {
                         ceiling = ceiling.max(commit_fragmented_float(
                             tree,
                             ctx,
@@ -1151,6 +1161,13 @@ fn run_boxes_segment(
                     }
                 }
                 if overflows && let Some(next) = next_float_edge(ctx, top_edge, line_y) {
+                    // Reconsider the uncommitted suffix in the new space,
+                    // retaining explicit withdrawals and the fixed prefix.
+                    if let Some(first) = first_late {
+                        cursor = first.before();
+                        tentative.clear();
+                        deferred.clear();
+                    }
                     y = next;
                     pending = CollapsibleMarginSet::ZERO;
                     moves += 1;
@@ -1180,6 +1197,7 @@ fn run_boxes_segment(
                     ));
                 }
                 withdrawn.clear();
+                first_late = None;
                 assumed_height = 0.0;
                 retries = 0;
                 calls = 0;
@@ -1229,6 +1247,7 @@ fn run_boxes_segment(
                 }
             }
             LineResult::BlockInInline { node, token_after } => {
+                first_late = None;
                 // Floats anchored before the block and not placed yet go
                 // above it: the block starts below the last line.
                 // cov:ignore: fragmented block-in-inline float placement is exercised by the ignored flex-float WPT.
