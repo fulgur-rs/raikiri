@@ -1580,6 +1580,7 @@ pub(crate) use oof::{
     refresh_container_candidates,
 };
 pub(crate) use transposed_axes::reverse_static_position;
+pub(crate) use vertical_block::pads_by_percentage_on_physical_axes;
 pub(crate) use vertical_block::{
     TransposedBlock, TransposedSizingUndo, TransposedStyleIndex, block_right_to_left, is_table_box,
     with_final_vertical_table_cell, with_orthogonal_fit_content,

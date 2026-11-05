@@ -14,7 +14,8 @@ use crate::layout::dispatch::block_flow::context::{
     BlockContext, BlockFormattingContext, BoxProbe,
 };
 use crate::layout::dispatch::{
-    fit_content_room, measure_against_parent_height, with_orthogonal_fit_content,
+    fit_content_room, measure_against_parent_height, pads_by_percentage_on_physical_axes,
+    with_orthogonal_fit_content,
 };
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, FloatDirection,
@@ -2822,8 +2823,53 @@ pub(crate) fn place_block_across(
 }
 
 /// Lay out an ordinary block child along a vertical root's block axis.
+///
+/// Taffy resolves the percentage padding of a block container against the
+/// width of its parent, but the containing block of a child that lays out on
+/// horizontal axes is the vertical root, whose inline size is its physical
+/// height (CSS Writing Modes 4 §7.1). The child is laid out, and measured for
+/// its width, with its padding resolved against that inline size, as a child
+/// of a vertical block container is.
 #[allow(clippy::too_many_arguments)]
 fn layout_vertical_block_child(
+    tree: &mut LayoutSession<'_>,
+    ctx: &mut BlockContext<'_>,
+    node: usize,
+    y: f32,
+    pending: CollapsibleMarginSet,
+    geometry: FlowGeometry,
+    perform: bool,
+    collapse_top: bool,
+) -> BlockChild {
+    if pads_by_percentage_on_physical_axes(tree, node) {
+        let inline_basis = geometry.axes.inline_extent(geometry.content_size);
+        return tree.with_local_resolved_edges(node, inline_basis, |tree| {
+            layout_vertical_block_child_with_edges(
+                tree,
+                ctx,
+                node,
+                y,
+                pending,
+                geometry,
+                perform,
+                collapse_top,
+            )
+        });
+    }
+    layout_vertical_block_child_with_edges(
+        tree,
+        ctx,
+        node,
+        y,
+        pending,
+        geometry,
+        perform,
+        collapse_top,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_vertical_block_child_with_edges(
     tree: &mut LayoutSession<'_>,
     ctx: &mut BlockContext<'_>,
     node: usize,

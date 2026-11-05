@@ -734,9 +734,11 @@ fn alternating_vertical_and_horizontal_boxes_are_measured_a_few_times_each() {
     // every probe, and the boxes inside were measured again for each: the
     // scans grew by a factor with each level of vertical and horizontal boxes
     // nested in turn (140 thousand at nine levels). The count follows the
-    // depth now.
+    // depth now. A percentage padding is resolved against the inline size of
+    // the vertical box around the horizontal one, which scopes the edges of the
+    // box for each probe without moving the cache generation.
     let depth = 9;
-    for display in ["block", "inline-block"] {
+    for (display, extra) in [("block", ""), ("inline-block", ""), ("block", "padding:5%")] {
         let mut chain = vec![];
         let (mut doc, cascade, root) = ahem_paragraph_with("", |doc, root| {
             let mut parent = root;
@@ -749,7 +751,7 @@ fn alternating_vertical_and_horizontal_boxes_are_measured_a_few_times_each() {
                 parent = doc.append_element(
                     Some(parent),
                     "div",
-                    Some(format!("display:{display};writing-mode:{mode}").as_str()),
+                    Some(format!("display:{display};writing-mode:{mode};{extra}").as_str()),
                 );
                 chain.push(parent);
             }
@@ -758,11 +760,12 @@ fn alternating_vertical_and_horizontal_boxes_are_measured_a_few_times_each() {
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
         assert!(
             intrinsic_measurements(&doc) < 40 * depth,
-            "{display}: {} scans",
+            "{display} {extra}: {} scans",
             intrinsic_measurements(&doc)
         );
-        if display == "inline-block" {
-            // The strut of the line each sits in is taller than the `X`.
+        if display == "inline-block" || !extra.is_empty() {
+            // The strut of the line each sits in is taller than the `X`, and
+            // the padding of a box is part of its size.
             continue;
         }
         // Every box holds one `X`, so each is as wide and as tall as it.

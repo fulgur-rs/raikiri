@@ -309,6 +309,19 @@ impl<'doc> LayoutSession<'doc> {
         self.document.layout_cache_context.override_changed(key);
     }
 
+    /// [`Self::cache_override_changed`] for a change that leaves the cache
+    /// generation alone: only the box `idx` is set apart from its cached sizes.
+    pub(crate) fn cache_local_override_changed(&mut self, idx: usize) {
+        self.assert_native_style_access_allowed();
+        let key = self
+            .nodes
+            .box_key(idx)
+            .expect("cache override has a box key");
+        self.document
+            .layout_cache_context
+            .local_override_changed(key);
+    }
+
     /// Request a horizontal box's first baseline during size-only layout,
     /// restoring the request stack even if measuring a descendant panics.
     pub(crate) fn with_baseline_measure<R>(

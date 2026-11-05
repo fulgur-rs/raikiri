@@ -99,8 +99,10 @@ fn measuring_alternating_vertical_and_horizontal_blocks_does_not_empty_their_cac
         ["horizontal-tb;direction:rtl", "vertical-rl"],
         ["vertical-rl", "vertical-lr"],
     ];
+    // A percentage padding of a horizontal box in a vertical one is resolved
+    // against the inline size of the vertical box, in a scope of its own.
     for pair in PAIRS {
-        for display in ["block", "inline-block"] {
+        for (display, padding) in [("block", ""), ("inline-block", ""), ("block", "padding:5%")] {
             assert_eq!(
                 evictions(|doc, root| {
                     let mut parent = root;
@@ -108,13 +110,13 @@ fn measuring_alternating_vertical_and_horizontal_blocks_does_not_empty_their_cac
                         parent = doc.append_element(
                             Some(parent),
                             "div",
-                            Some(&format!("display:{display};writing-mode:{mode}")),
+                            Some(&format!("display:{display};writing-mode:{mode};{padding}")),
                         );
                     }
                     doc.append_text(parent, "X");
                 }),
                 0,
-                "{pair:?} {display}"
+                "{pair:?} {display} {padding}"
             );
         }
     }

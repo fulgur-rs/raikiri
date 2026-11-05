@@ -8,8 +8,39 @@ impl LayoutSession<'_> {
         resolve_border: bool,
         compute: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        self.resolved_edge_scope(idx, basis, resolve_border, false, compute)
+    }
+
+    /// [`Self::with_resolved_edges`] for a probe that must not discard what has
+    /// been cached so far, resolving the padding of `idx` only.
+    ///
+    /// The scope above moves the cache generation, on the way in and again on
+    /// the way out, so a box that a parent lays out once for each size it tries
+    /// measures everything inside it again for each of them, and a chain of such
+    /// boxes takes time exponential in its length. This one sets only the box
+    /// apart (see [`LayoutSession::push_local_overrides`]): what is cached for
+    /// the boxes inside it stays right, since it is a function of their styles
+    /// and of the inputs they are asked with, and the sizes of the box itself
+    /// are not read again once the scope is left.
+    pub(crate) fn with_local_resolved_edges<R>(
+        &mut self,
+        idx: usize,
+        basis: f32,
+        compute: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.resolved_edge_scope(idx, basis, false, true, compute)
+    }
+
+    fn resolved_edge_scope<R>(
+        &mut self,
+        idx: usize,
+        basis: f32,
+        resolve_border: bool,
+        local: bool,
+        compute: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.sync_layout_cache_mutations();
-        self.cache_override_changed(idx);
+        self.cache_edges_changed(idx, local);
         if resolve_border && crate::layout::dispatch::is_table_box(self.nodes[idx].display()) {
             self.context.table_cache.clear();
         }
@@ -25,7 +56,7 @@ impl LayoutSession<'_> {
             .push((idx, effective_basis));
         let previous_basis = self.begin_edge_recording(idx, basis);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(self)));
-        self.cache_override_changed(idx);
+        self.cache_edges_changed(idx, local);
         if resolve_border && crate::layout::dispatch::is_table_box(self.nodes[idx].display()) {
             self.context.table_cache.clear();
         }
@@ -34,6 +65,14 @@ impl LayoutSession<'_> {
         match result {
             Ok(value) => value,
             Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    fn cache_edges_changed(&mut self, idx: usize, local: bool) {
+        if local {
+            self.cache_local_override_changed(idx);
+        } else {
+            self.cache_override_changed(idx);
         }
     }
 }

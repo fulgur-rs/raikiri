@@ -518,9 +518,10 @@ pub(crate) fn with_oof_content_limits<R>(
     })
 }
 
-/// Used percentage padding and intrinsic width floors for tables positioned
-/// against a physical containing area. Padding refers to its inline size;
-/// width constraints continue to refer to its physical width.
+/// Used percentage padding for the boxes positioned against a physical
+/// containing area, and intrinsic width floors for the tables among them.
+/// Padding refers to the inline size of the area; width constraints continue
+/// to refer to its physical width.
 pub(super) fn table_size_overrides(
     tree: &mut LayoutSession<'_>,
     candidates: &[NodeId],
@@ -529,36 +530,58 @@ pub(super) fn table_size_overrides(
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
     let mut overrides = Vec::new();
     if vertical {
-        for &candidate in candidates {
-            let idx = usize::from(candidate);
-            if !is_table_content_limits(tree, idx) {
-                continue;
-            }
-            let padding = tree.physical_style(idx).padding();
-            let key = tree.nodes.box_key(idx).expect("live out-of-flow table");
-            for (property, edge) in [
-                (LengthProperty::PaddingTop, padding.top),
-                (LengthProperty::PaddingRight, padding.right),
-                (LengthProperty::PaddingBottom, padding.bottom),
-                (LengthProperty::PaddingLeft, padding.left),
-            ] {
-                if super::edge_depends_on_basis(edge) {
-                    let used = edge.resolve_or_zero(Some(containing_size.height));
-                    let entry = OwnedPropertyOverride::length(
-                        property,
-                        raikiri_style::ComputedLengthPercentageOrAuto::Px(used),
-                        true,
-                    )
-                    .expect("resolved pixel padding");
-                    overrides.push((key, entry));
-                }
-            }
-        }
+        overrides.extend(inline_size_padding_overrides(
+            tree,
+            candidates,
+            containing_size.height,
+        ));
     }
     let floors = tree.with_overrides(overrides.clone(), |tree| {
         table_width_floors(tree, candidates, containing_size)
     });
     overrides.extend(floors);
+    overrides
+}
+
+/// The percentage padding of the `candidates`, positioned against a vertical
+/// containing block, resolved against `inline_size`, the inline size of that
+/// block (CSS Writing Modes 4 §7.1): its physical height.
+///
+/// Taffy resolves the padding of a box against the physical width of the
+/// containing block. That is the inline size for a box that lays out on
+/// vertical axes, which the library transposes, but not for a table or a box
+/// that flows horizontally.
+fn inline_size_padding_overrides(
+    tree: &mut LayoutSession<'_>,
+    candidates: &[NodeId],
+    inline_size: f32,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let mut overrides = Vec::new();
+    for &candidate in candidates {
+        let idx = usize::from(candidate);
+        if !is_table_content_limits(tree, idx) && tree.has_vertical_writing_mode(idx) {
+            continue;
+        }
+        let padding = tree.physical_style(idx).padding();
+        let key = tree.nodes.box_key(idx).expect("live out-of-flow box");
+        for (property, edge) in [
+            (LengthProperty::PaddingTop, padding.top),
+            (LengthProperty::PaddingRight, padding.right),
+            (LengthProperty::PaddingBottom, padding.bottom),
+            (LengthProperty::PaddingLeft, padding.left),
+        ] {
+            if super::edge_depends_on_basis(edge) {
+                let used = edge.resolve_or_zero(Some(inline_size));
+                let entry = OwnedPropertyOverride::length(
+                    property,
+                    raikiri_style::ComputedLengthPercentageOrAuto::Px(used),
+                    true,
+                )
+                .expect("resolved pixel padding");
+                overrides.push((key, entry));
+            }
+        }
+    }
     overrides
 }
 
