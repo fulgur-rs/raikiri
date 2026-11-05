@@ -857,3 +857,98 @@ fn a_hidden_positioned_start_has_no_artificial_extent_at_a_page_edge() {
         );
     }
 }
+
+/// Page counts for a clip box in a vertical writing mode, where the clipped
+/// (block) axis is the physical x axis. `overflow-x` is the block-axis
+/// overflow there.
+fn vertical_clip_pages(writing_mode: &str, overflow: &str, shape: &str) -> usize {
+    let words = "x ".repeat(60);
+    let lines = "x<br>".repeat(30);
+    let (body, extra) = match shape {
+        "lines" => (
+            format!(
+                "<div id='clip'><div style='width:20px'></div><div style='width:30px'>{lines}</div></div>"
+            ),
+            "",
+        ),
+        "paragraph" => (
+            format!("<div id='clip'><p>{words}</p></div>"),
+            "p{height:12px;margin:0}",
+        ),
+        "box" => (
+            "<div id='clip'><div style='width:400px;height:20px'></div></div><div id='after' style='width:10px;height:10px'>D</div>".to_owned(),
+            "",
+        ),
+        other => panic!("unknown shape {other}"),
+    };
+    let css = format!("html{{writing-mode:{writing_mode}}}#clip{{width:200px;{overflow}}}{extra}");
+    laid_out(&body, &css).page_count() as usize
+}
+
+#[test]
+fn vertical_clip_boxes_add_no_page_for_lines_past_the_block_end() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for overflow in [
+            "overflow:clip",
+            "overflow:hidden",
+            "overflow:auto",
+            "overflow:scroll",
+            "overflow-x:clip;overflow-y:visible",
+        ] {
+            for shape in ["lines", "paragraph"] {
+                assert_eq!(
+                    vertical_clip_pages(writing_mode, overflow, shape),
+                    1,
+                    "{writing_mode} {overflow} {shape}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertical_boxes_without_a_block_axis_clip_still_add_pages() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for overflow in ["overflow:visible", "overflow-y:clip;overflow-x:visible"] {
+            assert_eq!(
+                vertical_clip_pages(writing_mode, overflow, "lines"),
+                2,
+                "{writing_mode} {overflow} lines"
+            );
+            assert_eq!(
+                vertical_clip_pages(writing_mode, overflow, "paragraph"),
+                4,
+                "{writing_mode} {overflow} paragraph"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_flow_after_a_vertical_clip_starts_where_the_clip_ends() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for overflow in [
+            "overflow:clip",
+            "overflow:hidden",
+            "overflow:auto",
+            "overflow:visible",
+        ] {
+            assert_eq!(
+                vertical_clip_pages(writing_mode, overflow, "box"),
+                2,
+                "{writing_mode} {overflow} box"
+            );
+        }
+        let css = format!(
+            "html{{writing-mode:{writing_mode}}}#clip{{width:300px;overflow:hidden}}#after{{width:10px;height:10px;font:10px/10px Ahem}}"
+        );
+        let lines = "x<br>".repeat(40);
+        for body in [
+            "<div id='clip'><div style='width:600px;height:20px'></div></div><div id='after'>D</div>"
+                .to_owned(),
+            format!("<div id='clip'>{lines}</div><div id='after'>D</div>"),
+        ] {
+            assert_eq!(laid_out(&body, &css).page_count(), 2, "{writing_mode} {body}");
+        }
+    }
+}

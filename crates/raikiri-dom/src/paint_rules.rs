@@ -288,8 +288,22 @@ impl OverflowClipGeometry {
         padding: PaintInsets,
         replaced: bool,
     ) -> Self {
+        Self::with_overflow(cv, cv.overflow, border_box, border, padding, replaced)
+    }
+
+    /// [`Self::new`] for a box whose axes are not the ones `cv.overflow` names:
+    /// `overflow` is the one on the axes of `border_box`, `border` and
+    /// `padding`.
+    pub(crate) fn with_overflow(
+        cv: &ComputedValues,
+        overflow: OverflowXY,
+        border_box: PaintRect,
+        border: PaintInsets,
+        padding: PaintInsets,
+        replaced: bool,
+    ) -> Self {
         let (overflow, edges) = resolve_overflow_clip_edges(
-            cv.overflow,
+            overflow,
             cv.overflow_clip_margin,
             border,
             padding,

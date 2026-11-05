@@ -380,10 +380,32 @@ fn content_overflow(
     }
 }
 
+/// The overflow of `node_id` on the axes pagination runs along: the physical
+/// x axis then is the block axis of a vertical document, handed to the
+/// paginator on transposed axes (see [`transposed_flow`]).
+fn pagination_overflow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> raikiri_style::property::OverflowXY {
+    let overflow = cascade.computed[node_id].overflow;
+    if document.context.pagination_on_transposed_axes {
+        raikiri_style::property::OverflowXY::new(overflow.y, overflow.x)
+    } else {
+        overflow
+    }
+}
+
 /// Whether the element hides block-axis overflow when painted.
-fn element_clips_overflow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
-    !matches!(cascade.computed[node_id].overflow.y, OverflowValue::Visible)
-        && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
+fn element_clips_overflow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    !matches!(
+        pagination_overflow(document, cascade, node_id).y,
+        OverflowValue::Visible
+    ) && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
 }
 
 /// The block offset at which the overflow clip of `node_id` hides what its
@@ -391,11 +413,17 @@ fn element_clips_overflow(document: &Document, cascade: &CascadeResult, node_id:
 /// edge, or the farther one that `overflow-clip-margin` names on an
 /// `overflow: clip` axis. A clip edge inside the border box (a padding box
 /// clip) still counts as the border box's edge.
-fn clip_block_end(document: &Document, cascade: &CascadeResult, node_id: usize, y: f32) -> f32 {
+fn clip_block_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    y: f32,
+) -> f32 {
     let layout = &document.nodes[node_id].layout;
     let (border, padding) = (layout.border, layout.padding);
-    let geometry = crate::paint_rules::OverflowClipGeometry::new(
+    let geometry = crate::paint_rules::OverflowClipGeometry::with_overflow(
         &cascade.computed[node_id],
+        pagination_overflow(document, cascade, node_id),
         PaintRect::new(0.0, y, layout.size.width, layout.size.height),
         PaintInsets::new(border.top, border.right, border.bottom, border.left),
         PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),

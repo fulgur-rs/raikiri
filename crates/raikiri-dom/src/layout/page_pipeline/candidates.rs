@@ -53,25 +53,23 @@ impl ClipBounds {
         raw_y: f32,
         is_body: bool,
     ) -> Self {
-        let (clip_end, fixed_clip_end) = if document.context.pagination_on_transposed_axes {
-            (f32::INFINITY, f32::INFINITY)
-        } else {
-            // Only a fixed clip that comes down the flow unchanged is
-            // known: an absolutely positioned box has its own.
-            let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
-                PositionValue::Absolute if raw_y < self.absolute_end => {
-                    (self.absolute_end, f32::INFINITY)
-                }
-                PositionValue::Absolute if self.absolute_end.is_finite() => {
-                    let layout = &document.nodes[node_id].layout;
-                    (
-                        raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
-                        f32::INFINITY,
-                    )
-                }
-                PositionValue::Absolute | PositionValue::Fixed => (f32::INFINITY, f32::INFINITY),
-                _ => (self.end, self.fixed_end),
-            };
+        // Only a fixed clip that comes down the flow unchanged is known: an
+        // absolutely positioned box has its own.
+        let (inherited, inherited_fixed) = match document.nodes[node_id].position() {
+            PositionValue::Absolute if raw_y < self.absolute_end => {
+                (self.absolute_end, f32::INFINITY)
+            }
+            PositionValue::Absolute if self.absolute_end.is_finite() => {
+                let layout = &document.nodes[node_id].layout;
+                (
+                    raw_y + layout.border.top + layout.padding.top + HIDDEN_BOX_SLIVER,
+                    f32::INFINITY,
+                )
+            }
+            PositionValue::Absolute | PositionValue::Fixed => (f32::INFINITY, f32::INFINITY),
+            _ => (self.end, self.fixed_end),
+        };
+        let (clip_end, fixed_clip_end) =
             if !is_body && super::element_clips_overflow(document, cascade, node_id) {
                 let own = super::clip_block_end(document, cascade, node_id, raw_y);
                 // A clip on a box whose height follows its content grows
@@ -84,8 +82,7 @@ impl ClipBounds {
                 (inherited.min(own), inherited_fixed.min(own_fixed))
             } else {
                 (inherited, inherited_fixed)
-            }
-        };
+            };
         let absolute_clip_end = if clip_end != self.absolute_end
             && crate::layout::fixed::establishes_absolute_containing_block(
                 document,
