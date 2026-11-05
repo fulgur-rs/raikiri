@@ -190,6 +190,13 @@ fn a_value_that_is_not_one_of_the_property_is_invalid() {
         ("cx", "1.5.px"),
         ("width", "20 px"),
         ("r", "5.e0"),
+        // A suffix that is not a unit of length.
+        ("width", "20pxx"),
+        ("width", "1bogus"),
+        ("width", "10e"),
+        ("x", "20fr"),
+        ("width", "20deg"),
+        ("width", "20s"),
     ] {
         assert_eq!(
             parse(property, value),
@@ -215,10 +222,15 @@ fn a_value_that_is_not_computed_here_is_opaque() {
         ("width", "2rem"),
         ("width", "10vw"),
         ("width", "1Q"),
-        // A unit that nothing here knows may still be one.
-        ("width", "20pxx"),
+        // The newer units of length.
+        ("width", "2VMIN"),
+        ("width", "1dvh"),
+        ("width", "3lh"),
+        ("width", "5cqw"),
+        ("height", "2rex"),
         // Too large for a float, which a browser takes for the largest one.
         ("width", "1e999px"),
+        ("width", "1e999%"),
         ("width", "inherit"),
         ("width", "REVERT"),
         ("width", "revert-layer"),
@@ -269,23 +281,25 @@ fn a_path_is_the_string_of_its_function() {
 }
 
 #[test]
-fn a_number_with_a_unit_of_letters_is_told_from_the_rest() {
+fn a_number_with_a_unit_of_length_is_told_from_the_rest() {
     for value in [
         "2rem",
         "-1.5vw",
         "+.5Q",
         "1e3ch",
         "1e-3vh",
-        "10e",
-        "5E",
         "1.5E+2rem",
+        "5DVH",
+        "1e999px",
+        "1%",
     ] {
-        assert!(has_other_unit(value), "{value}");
+        assert!(has_length_unit(value), "{value}");
     }
     for value in [
-        "", "rem", "-", ".", "+.", "1 rem", "1-rem", "1%", "1px2", "1.2.3ch", "1.rem", "1.e1ch",
+        "", "rem", "-", ".", "+.", "1 rem", "1-rem", "1px2", "1.2.3ch", "1.rem", "1.e1ch", "10e",
+        "5E", "1bogus", "20pxx", "1fr", "1deg",
     ] {
-        assert!(!has_other_unit(value), "{value}");
+        assert!(!has_length_unit(value), "{value}");
     }
 }
 

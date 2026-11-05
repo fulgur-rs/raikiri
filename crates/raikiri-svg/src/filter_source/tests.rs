@@ -807,6 +807,20 @@ fn a_length_that_css_does_not_read_leaves_the_attribute_alone() {
 }
 
 #[test]
+fn a_suffix_that_is_not_a_unit_does_not_hide_the_declaration_below_it() {
+    // A browser drops `1bogus` as it does `1.px`, so the declaration before it
+    // stands. A real unit that is not computed here is another matter: it wins,
+    // and the attribute is left as it is.
+    let body = "<rect width=\"50\" height=\"10\" style=\"width:20px;width:1bogus\"/>";
+    assert_eq!(
+        geometry_of(body),
+        plain("<rect width=\"20px\" height=\"10\" style=\"width:20px;width:1bogus\"/>")
+    );
+    let body = "<rect width=\"50\" height=\"10\" style=\"width:20px;width:1vw\"/>";
+    assert_eq!(geometry_of(body), plain(body));
+}
+
+#[test]
 fn a_value_that_many_shapes_share_is_written_to_a_limited_number_of_them() {
     // A rule gives its value to every shape it selects, and each one holds a
     // copy of it in the source.

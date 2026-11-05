@@ -247,7 +247,7 @@ fn length(property: &str, value: &str) -> Parsed {
         Ok(_) if !is_css_length(&text) => Parsed::Invalid,
         Ok(length) if length.number < 0.0 && is_non_negative(property) => Parsed::Invalid,
         Ok(_) => Parsed::Value(Declared::Attribute(text)),
-        Err(_) if is_deferred(value) || has_other_unit(value) => Parsed::Value(Declared::Opaque),
+        Err(_) if is_deferred(value) || has_length_unit(value) => Parsed::Value(Declared::Opaque),
         Err(_) => Parsed::Invalid,
     }
 }
@@ -332,23 +332,41 @@ fn number_len(text: &str) -> Option<usize> {
     Some(at)
 }
 
-/// Whether `text`, which `svgtypes` has taken for a length, is one in CSS: a
-/// number of CSS, and then a percent sign or a unit of letters, or nothing.
-/// `svgtypes` reads the number of SVG, which allows `1.px`.
-fn is_css_length(text: &str) -> bool {
-    number_len(text).is_some_and(|at| {
-        let unit = &text[at..];
-        unit == "%" || unit.bytes().all(|byte| byte.is_ascii_alphabetic())
-    })
+/// The units of length that CSS has, in lowercase. A unit that is not one of
+/// these makes a declaration invalid, and a browser drops it.
+const LENGTH_UNITS: &[&str] = &[
+    // Relative to the font.
+    "em", "rem", "ex", "rex", "cap", "rcap", "ch", "rch", "ic", "ric", "lh", "rlh",
+    // Relative to the viewport, with its small, large and dynamic sizes.
+    "vw", "vh", "vi", "vb", "vmin", "vmax", "svw", "svh", "svi", "svb", "svmin", "svmax", "lvw",
+    "lvh", "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh", "dvi", "dvb", "dvmin", "dvmax",
+    // Relative to a container.
+    "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax", // Absolute.
+    "cm", "mm", "q", "in", "pt", "pc", "px",
+];
+
+/// Whether `unit`, which follows a number, is a percent sign or a unit of
+/// length.
+fn is_unit(unit: &str) -> bool {
+    unit == "%"
+        || LENGTH_UNITS
+            .iter()
+            .any(|known| unit.eq_ignore_ascii_case(known))
 }
 
-/// Whether `value` is a number with a unit that `svgtypes` does not know, such
-/// as `rem` or `vw`, which a browser reads.
-fn has_other_unit(value: &str) -> bool {
-    number_len(value).is_some_and(|at| {
-        let unit = &value[at..];
-        !unit.is_empty() && unit.bytes().all(|byte| byte.is_ascii_alphabetic())
-    })
+/// Whether `text`, which `svgtypes` has taken for a length, is one in CSS: a
+/// number of CSS, and then a unit or nothing. `svgtypes` reads the number of
+/// SVG, which allows `1.px`.
+fn is_css_length(text: &str) -> bool {
+    number_len(text).is_some_and(|at| text[at..].is_empty() || is_unit(&text[at..]))
+}
+
+/// Whether `value` is a number with a unit of length, which `svgtypes` failed
+/// to read: a unit it does not know, such as `rem` or `vw`, or a number too
+/// large for it. A browser reads both. A suffix that is not a unit makes the
+/// value invalid.
+fn has_length_unit(value: &str) -> bool {
+    number_len(value).is_some_and(|at| is_unit(&value[at..]))
 }
 
 /// `none`, or a `path()` of a string, which is the data of the attribute.
