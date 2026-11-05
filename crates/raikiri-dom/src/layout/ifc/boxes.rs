@@ -2393,8 +2393,10 @@ fn known_atomic_width(
     physical_width: f32,
     inline_basis: f32,
 ) -> Option<f32> {
+    let narrowest = horizontal_padding_border(tree, node, inline_basis);
     used_block_width_with_edge_basis(tree, node, physical_width, inline_basis).map(|width| {
         clamp_block_width_with_edge_basis(tree, node, physical_width, inline_basis, width)
+            .max(narrowest)
     })
 }
 
@@ -2892,8 +2894,12 @@ fn layout_vertical_block_child_with_edges(
     } else {
         (margin.left, margin.right)
     };
-    let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis)
-        .map(|width| clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width));
+    // A border box is never narrower than its padding and border, whatever
+    // width it states: a flex container takes the width it is given as it is.
+    let narrowest = horizontal_padding_border(tree, node, inline_basis);
+    let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis).map(|width| {
+        clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width).max(narrowest)
+    });
     let parent_size = Size {
         width: Some(geometry.content_size.width),
         height: Some(inline_basis),
@@ -3004,7 +3010,11 @@ fn layout_vertical_block_child_with_edges(
     } else {
         own_inline_size.map_or(inline_stretch, |own| own.at(inline_stretch))
     };
-    let height = clamp_block_height(tree, node, inline_basis, height);
+    let height = clamp_block_height(tree, node, inline_basis, height).max(vertical_padding_border(
+        tree,
+        node,
+        inline_basis,
+    ));
     let inline_free = inline_stretch - height;
     let auto_margins =
         u8::from(style_margin.top.is_auto()) + u8::from(style_margin.bottom.is_auto());
@@ -3835,6 +3845,15 @@ pub(crate) fn horizontal_padding_border(tree: &LayoutSession<'_>, node: usize, b
     let padding = style.padding().resolve_or_zero(Some(basis));
     let border = style.border().resolve_or_zero(Some(basis));
     padding.left + padding.right + border.left + border.right
+}
+
+/// The padding and border of a box down its height, whatever its
+/// `box-sizing`: the shortest a border box can be.
+fn vertical_padding_border(tree: &LayoutSession<'_>, node: usize, basis: f32) -> f32 {
+    let style = tree.physical_style(node);
+    let padding = style.padding().resolve_or_zero(Some(basis));
+    let border = style.border().resolve_or_zero(Some(basis));
+    padding.top + padding.bottom + border.top + border.bottom
 }
 
 pub(crate) fn box_sizing_height_adjustment(
