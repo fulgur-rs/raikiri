@@ -1,6 +1,7 @@
 use super::*;
 
 mod page_name_performance_tests;
+mod size_containment_tests;
 
 // ── layout_single_page driver (Task 7) ──────────────────────
 

@@ -150,8 +150,9 @@ pub(super) struct ElementContext {
     /// The line of a paragraph of one line of generated text or of atomic
     /// inlines that no text places: the box is kept whole by that line.
     pub(super) unplaced_line: Option<UnplacedBlockLine>,
-    /// The box is a replaced element or an atomic inline-level box that no
-    /// page break goes through (see [`super::box_is_unbreakable`]).
+    /// The box is replaced content, full size containment, or an atomic
+    /// inline-level box that no page break goes through (see
+    /// [`super::box_is_unbreakable`]).
     pub(super) unbreakable: bool,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
@@ -184,7 +185,7 @@ pub(super) struct ElementContext {
     /// or not the next page can hold the piece (see
     /// [`super::leading_edges_move`]).
     pub(super) leading_block_piece_end: Option<f32>,
-    /// A replaced piece touching the leading edge of a nowrap column flex
+    /// A replaced or size-contained piece at the leading edge of a nowrap column flex
     /// container. It can move the column without making the whole column
     /// monolithic or opening a page before the first box of the flow.
     pub(super) leading_column_replaced_piece_end: Option<f32>,

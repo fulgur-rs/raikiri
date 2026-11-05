@@ -19,7 +19,23 @@ use raikiri_style::property::WillChange;
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
 pub fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    generates_inline_box_with_properties(document, id, cv, query_box_properties(document, id, cv))
+    generates_inline_box_with_tree(document, id, cv, BoxTree::for_layout(document))
+}
+
+/// The same inline-box test with ancestry from the selected box tree.
+pub(in crate::layout) fn generates_inline_box_with_tree(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    boxes: BoxTree<'_>,
+) -> bool {
+    generates_inline_box_in_tree(
+        document,
+        id,
+        cv,
+        query_box_properties(document, id, cv),
+        boxes,
+    )
 }
 
 fn query_box_properties<'a>(
@@ -41,6 +57,16 @@ pub(super) fn generates_inline_box_with_properties(
     cv: &ComputedValues,
     properties: BoxPropertiesRef<'_>,
 ) -> bool {
+    generates_inline_box_in_tree(document, id, cv, properties, BoxTree::for_layout(document))
+}
+
+fn generates_inline_box_in_tree(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
+    boxes: BoxTree<'_>,
+) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.
@@ -56,11 +82,11 @@ pub(super) fn generates_inline_box_with_properties(
         && !node.is_inline_svg_root()
         && !ATOMIC_TAGS.contains(&tag)
         && !REPLACED_BOX_TAGS.contains(&tag)
-        // The bridge asks before rebuilding anonymous cells. Inspect the
-        // current source ancestry rather than the preceding pass's wrappers.
-        && !BoxTree::for_layout(document)
+        // Keep ancestry and parent display on the same identity source, so
+        // a cascade query cannot inherit the preceding layout's blockification.
+        && !boxes
             .parent(id, BoxParentScope::LayoutRoot)
-            .is_some_and(|parent| document.nodes[parent].display().is_flex_or_grid_container())
+            .is_some_and(|parent| boxes.identity(parent).display().is_flex_or_grid_container())
 }
 
 /// Whether the element's `transform` applies to it: layout makes it the

@@ -49,6 +49,7 @@ mod avoided_run_tests;
 mod candidate_context_tests;
 mod candidate_text_tests;
 mod clear_start_margin_tests;
+mod cloned_holder_tests;
 mod closing_edge_tests;
 mod collapsed_margin_tests;
 mod column_projection_tests;
@@ -19156,7 +19157,8 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         &env,
         &candidate(Some((root, 0.0))),
         false,
-        &checked,
+        &mut checked,
+        &mut TrailingFlexChildren::default(),
     );
     assert_eq!(blocks.paragraph_root, Some(root));
     assert_eq!(blocks.block, Some((root, false)));
@@ -19168,7 +19170,8 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         &env,
         &candidate(Some((root, 0.0))),
         true,
-        &checked,
+        &mut checked,
+        &mut TrailingFlexChildren::default(),
     );
     assert_eq!(positioned.paragraph_root, Some(root));
     assert_eq!(positioned.block, None);
@@ -19181,7 +19184,8 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         &env,
         &candidate(Some((root, 0.0))),
         false,
-        &checked,
+        &mut checked,
+        &mut TrailingFlexChildren::default(),
     );
     assert_eq!(checked_blocks.block, None);
 
@@ -19191,7 +19195,8 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         &env,
         &candidate(None),
         false,
-        &CheckedParagraphs::default(),
+        &mut CheckedParagraphs::default(),
+        &mut TrailingFlexChildren::default(),
     );
     assert_eq!(bare.paragraph_root, None);
     assert_eq!(bare.block, Some((root, false)));
@@ -19234,7 +19239,7 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         ifc_root: Some((item, 0.0)),
     };
     let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
-    let checked = CheckedParagraphs::default();
+    let mut checked = CheckedParagraphs::default();
 
     // The item is not a block that moves as a unit, but its later lines can
     // move down inside it.
@@ -19243,7 +19248,8 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         &env,
         &candidate(candidates::BoxContext::default()),
         false,
-        &checked,
+        &mut checked,
+        &mut TrailingFlexChildren::default(),
     );
     assert_eq!(blocks.paragraph_root, Some(item));
     assert_eq!(blocks.block, None);
@@ -19257,15 +19263,22 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         },
         candidates::ElementContext::default(),
     );
-    let floated =
-        pagination_state::LineBlocks::find(&session, &env, &candidate(in_float), false, &checked);
+    let floated = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(in_float),
+        false,
+        &mut checked,
+        &mut TrailingFlexChildren::default(),
+    );
     assert_eq!(floated.flex_line, None);
     let positioned = pagination_state::LineBlocks::find(
         &session,
         &env,
         &candidate(candidates::BoxContext::default()),
         true,
-        &checked,
+        &mut checked,
+        &mut TrailingFlexChildren::default(),
     );
     assert_eq!(positioned.flex_line, None);
 }
@@ -19335,7 +19348,8 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
             &env,
             &candidate,
             false,
-            &state.checked_paragraphs,
+            &mut state.checked_paragraphs,
+            &mut TrailingFlexChildren::default(),
         );
         let mut text = at_first_line();
         let pushed =
@@ -19420,7 +19434,8 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
                 &env,
                 &candidate,
                 false,
-                &state.checked_paragraphs,
+                &mut state.checked_paragraphs,
+                &mut TrailingFlexChildren::default(),
             );
             let mut text = pagination_state::TextPosition {
                 effective_y: spacer_height,

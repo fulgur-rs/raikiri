@@ -2,6 +2,7 @@ use super::box_tree::BoxTree;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::node::BoxPropertiesRef;
 mod candidates;
+mod column_first_piece;
 pub(crate) mod column_projection;
 mod column_replaced;
 mod external_float_gap;
@@ -5347,7 +5348,7 @@ struct BoxOverflow {
     /// also counted in `page`. It does so even as the first box of the flow
     /// when a margin above it keeps it from starting the page.
     unbreakable: bool,
-    /// The column moves with its leading replaced piece. Unlike an
+    /// The column moves with its leading replaced or size-contained piece. Unlike an
     /// unbreakable box, it does not move as the first box of the flow.
     leading_column_replaced: bool,
     /// The box avoids a break inside it (`break-inside`) and moves to the next
@@ -5744,6 +5745,55 @@ fn first_box_ancestor_at_start(
         moved = parent;
     }
     moved
+}
+
+/// Whether the lead to a contained box consists only of cloned leading
+/// edges along a static, margin-free chain. Zero-edge holders are transparent.
+/// Keeping that owner is useful even for a tall box: a page that already
+/// starts with the cloned edges gains nothing by moving the child alone.
+/// Slice edges, margins, other gaps, relative placement and replaced boxes
+/// keep their existing holder-fit policy.
+fn contained_cloned_leading_holder(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    holder: usize,
+    lead: f32,
+) -> bool {
+    if is_replaced_for_pagination(document, node_id)
+        || !size_contained_for_pagination(BoxTree::for_layout(document), node_id)
+    {
+        return false;
+    }
+    let mut child = node_id;
+    let mut repeated = 0.0;
+    let mut reached_holder = false;
+    for parent in document.layout_ancestors(node_id) {
+        if reached_holder {
+            break;
+        }
+        let node = &document.nodes[child];
+        let owner = &document.nodes[parent];
+        if !document.is_source_node(parent)
+            || !matches!(node.position(), PositionValue::Static)
+            || !matches!(owner.position(), PositionValue::Static)
+            || node.layout.margin.top != 0.0
+        {
+            return false;
+        }
+        let edges = owner.layout.border.top + owner.layout.padding.top;
+        if (edges > 0.0
+            && cascade.computed[parent].box_decoration_break
+                != raikiri_style::property::BoxDecorationBreak::Clone)
+            || (document.pagination_local_y(child) - edges).abs() > 0.001
+        {
+            return false;
+        }
+        repeated += edges;
+        reached_holder = parent == holder;
+        child = parent;
+    }
+    reached_holder && repeated > 0.0 && (lead - repeated).abs() <= 0.001
 }
 
 /// The outermost box that moves to the next page together with `node_id`, a
@@ -7724,8 +7774,8 @@ fn box_avoids_page_break_inside(
             || page_applies_to_box(document, node_id))
 }
 
-/// Whether the box `node_id` is a replaced element or an inline SVG laid out
-/// as a block-level box: no page break goes through it, so it moves to the
+/// Whether the box `node_id` is replaced content or a full size containment
+/// box laid out as a block-level box: no page break goes through it, so it moves to the
 /// next page whole when it would cross the page end, as if it said
 /// `break-inside: avoid`. It stays where it is only at the top of its page
 /// (CSS Fragmentation 3 section 5.1.1, Chromium).
@@ -7741,7 +7791,8 @@ fn box_is_unbreakable(document: &Document, node_id: usize) -> bool {
         node.position(),
         PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
     ) && !node.display().is_inline_level()
-        && is_replaced_for_pagination(document, node_id)
+        && (is_replaced_for_pagination(document, node_id)
+            || size_contained_for_pagination(BoxTree::for_layout(document), node_id))
 }
 
 /// The single line of a paragraph that no text node places, as the block
@@ -9441,6 +9492,8 @@ struct CheckedParagraphs {
     block_text: HashSet<usize>,
     /// Blocks whose orphans and widows were checked.
     orphans_widows: HashSet<usize>,
+    /// Column paragraph eligibility, including rejections, for this pass.
+    column_eligibility: HashMap<usize, bool>,
     /// Runs of lines between the block children of a paragraph that were
     /// checked against the page end: `(paragraph root, first line)`.
     lines_after_blocks: HashSet<(usize, usize)>,

@@ -1,5 +1,6 @@
 use super::super::bridge::*;
 use super::*;
+use crate::layout::box_tree::BoxTree;
 use raikiri_layout_geometry::Size;
 use raikiri_layout_style::StyleFlags;
 use raikiri_layout_style::values::{ContainingBlockClaims, Display};
@@ -193,16 +194,7 @@ pub(in crate::layout) fn size_containment(
         width: false,
         height: false,
     };
-    let applies = (cv.display.is_flex_or_grid_container()
-        || (cv.display.is_inline_flow_box()
-            || matches!(
-                cv.display,
-                DisplayValue::Block
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::TableCaption
-                    | DisplayValue::BlockRuby
-            )))
+    let applies = size_containment_display(cv.display)
         && !super::super::fixed::generates_inline_box(doc, idx, cv);
     if !applies {
         return none;
@@ -221,6 +213,31 @@ pub(in crate::layout) fn size_containment(
         width: !vertical,
         height: vertical,
     }
+}
+
+/// Full size containment with the selected box tree's blockification rules.
+pub(in crate::layout) fn full_size_containment(
+    doc: &Document,
+    idx: usize,
+    cv: &ComputedValues,
+    boxes: BoxTree<'_>,
+) -> bool {
+    cv.contain.contains(raikiri_style::property::Contain::SIZE)
+        && size_containment_display(cv.display)
+        && !super::super::fixed::generates_inline_box_with_tree(doc, idx, cv, boxes)
+}
+
+fn size_containment_display(display: DisplayValue) -> bool {
+    display.is_flex_or_grid_container()
+        || display.is_inline_flow_box()
+        || matches!(
+            display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::TableCaption
+                | DisplayValue::BlockRuby
+        )
 }
 
 /// Whether the element, as a block-level box, keeps its border box clear of

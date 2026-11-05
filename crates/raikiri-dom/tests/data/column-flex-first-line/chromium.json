@@ -1,0 +1,6121 @@
+{
+  "source": "Chromium152.0.7977.82 print;200x200 CSS px;Ahem16px/50px;PDF pages150x150pt verified;drawing rectangles converted at96/72 and clipped to page;2026-11-05",
+  "cases": [
+    {
+      "name": "flex_fixed_4_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_fixed_4_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_fixed_5_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_fixed_5_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_auto_4_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_auto_4_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_auto_5_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "flex_auto_5_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_fixed_4_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_fixed_4_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_fixed_5_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_fixed_5_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_auto_4_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_auto_4_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_auto_5_end",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_auto_5_tail",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;\">4</div><div class=i id=i5 style=\"background:#55aabb;\">5</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i5",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "size_contained",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;contain:size;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "inline_contained",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;contain:inline-size;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "size_contained_empty",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;contain:size;\"></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "widows_one",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;widows:1;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ],
+          [
+            "4",
+            10.0,
+            180.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "widows_three",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;widows:3;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              150.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              150.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              150.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "orphans_one",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:0px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;orphans:1;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              100.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              150.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            30.0
+          ],
+          [
+            "2",
+            10.0,
+            80.0
+          ],
+          [
+            "3",
+            10.0,
+            130.0
+          ],
+          [
+            "4",
+            10.0,
+            180.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ],
+          [
+            "4",
+            10.0,
+            180.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "orphans_three",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:0px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;orphans:3;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              100.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            30.0
+          ],
+          [
+            "2",
+            10.0,
+            80.0
+          ],
+          [
+            "3",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "text_spans",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;\">4<span>4</span><br>4<br><span>4</span><br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            26.016,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "contents",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div style=\"display:contents\"><div class=i id=i4 style=\"background:#44aabb;height:auto;\">4<br>4<br>4<br>4<br>4</div></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "negative_sibling",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"margin-bottom:-10px;background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "absolute_child",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;position:relative;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;\">4<span style=\"position:absolute\">5</span><br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "5",
+            26.016,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "empty",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;\"></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              194.0,
+              180.0,
+              6.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              44.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              44.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "two_lines",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;\">4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "five_lines",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "first_piece_fits",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:0px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;orphans:1;widows:1;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              100.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              150.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            30.0
+          ],
+          [
+            "2",
+            10.0,
+            80.0
+          ],
+          [
+            "3",
+            10.0,
+            130.0
+          ],
+          [
+            "4",
+            10.0,
+            180.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ],
+          [
+            "4",
+            10.0,
+            180.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "nested",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:auto;padding:5px;\"><div>4</div></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              60.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              60.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              60.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            15.0,
+            35.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "gap",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;row-gap:5px;}.i{height:50px;margin:0 10px}</style><div style=\"height:29px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              29.0,
+              200.0,
+              171.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              29.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              84.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              139.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            59.0
+          ],
+          [
+            "2",
+            10.0,
+            114.0
+          ],
+          [
+            "3",
+            10.0,
+            169.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "container_edges",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;padding:5px;border:2px solid #333;}.i{height:50px;margin:0 10px}</style><div style=\"height:37px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              37.0,
+              200.0,
+              163.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              17.0,
+              44.0,
+              166.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              17.0,
+              94.0,
+              166.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              17.0,
+              144.0,
+              166.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              57.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              17.0,
+              0.0,
+              166.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              57.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            17.0,
+            74.0
+          ],
+          [
+            "2",
+            17.0,
+            124.0
+          ],
+          [
+            "3",
+            17.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            17.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "margin",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:30px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:50px;margin:2px 10px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              30.0,
+              200.0,
+              170.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              30.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              80.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              130.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              52.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              52.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            60.0
+          ],
+          [
+            "2",
+            10.0,
+            110.0
+          ],
+          [
+            "3",
+            10.0,
+            160.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "short_box",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;height:20px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              20.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              20.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              20.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_size_contained",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "block_size_contained_empty",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;\"></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "block_inline_contained_empty",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:inline-size;\"></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              194.0,
+              180.0,
+              6.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              44.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              44.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "inline_contained_empty",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:inline-size;\"></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              194.0,
+              180.0,
+              6.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              44.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              44.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "strict_contained",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:strict;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "contained_forced",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:100px;\"><div>4</div><div style=\"break-before:page\">4</div></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "contained_named",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:100px;\"><div>4</div><div style=\"page:inner\">4</div></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              100.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              100.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "contained_tall",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_tall_empty",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:450px;\"></div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_tall_first",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_below_page",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:199px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              199.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              199.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              199.0,
+              200.0,
+              1.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              19.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "contained_equal_page",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:200px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "contained_above_page",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:201px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              1.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              1.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              1.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "contained_short_overflow",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:flex;flex-direction:column;background:#333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;\">1</div><div class=i id=i2 style=\"background:#22aabb;\">2</div><div class=i id=i3 style=\"background:#33aabb;\">3</div><div class=i id=i4 style=\"background:#44aabb;contain:size;height:50px;\">4<br>4<br>4<br>4<br>4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              44.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i2",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i3",
+            "rect": [
+              10.0,
+              144.0,
+              180.0,
+              50.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i4",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ],
+        []
+      ],
+      "chars": [
+        [
+          [
+            "1",
+            10.0,
+            74.0
+          ],
+          [
+            "2",
+            10.0,
+            124.0
+          ],
+          [
+            "3",
+            10.0,
+            174.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ],
+          [
+            "4",
+            10.0,
+            80.0
+          ],
+          [
+            "4",
+            10.0,
+            130.0
+          ],
+          [
+            "4",
+            10.0,
+            180.0
+          ]
+        ],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ]
+      ]
+    },
+    {
+      "name": "contained_holder_top",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;}.i{height:50px;margin:0 10px}</style><div style=\"height:0px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_holder_mid",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              50.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [],
+        [],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_holder_fits",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:100px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              44.0,
+              200.0,
+              156.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              94.0,
+              180.0,
+              100.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              94.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              94.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "4",
+            10.0,
+            124.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_holder_edges_overflow",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:180px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              180.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [],
+        [],
+        [
+          [
+            "4",
+            10.0,
+            30.0
+          ]
+        ],
+        []
+      ]
+    },
+    {
+      "name": "contained_holder_top_clone",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;box-decoration-break:clone;}.i{height:50px;margin:0 10px}</style><div style=\"height:0px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              150.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_holder_mid_clone",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;box-decoration-break:clone;}.i{height:50px;margin:0 10px}</style><div style=\"height:44px\"></div><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              150.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [],
+        [
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ],
+        [],
+        []
+      ]
+    },
+    {
+      "name": "contained_holder_no_spacer_clone",
+      "body": "<style>html,body{margin:0;font:16px/50px Ahem}.f{display:block;flex-direction:column;background:#333;height:400px;border-top:50px solid #333;box-decoration-break:clone;}.i{height:50px;margin:0 10px}</style><div class=f id=f><div class=i id=i1 style=\"background:#11aabb;contain:size;height:450px;\">4</div></div><div id=tail style=\"height:20px;background:#cc0000\"></div>",
+      "pages": [
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              50.0,
+              180.0,
+              150.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              200.0
+            ]
+          }
+        ],
+        [
+          {
+            "id": "f",
+            "rect": [
+              0.0,
+              0.0,
+              200.0,
+              50.0
+            ]
+          },
+          {
+            "id": "i1",
+            "rect": [
+              10.0,
+              0.0,
+              180.0,
+              100.0
+            ]
+          },
+          {
+            "id": "tail",
+            "rect": [
+              0.0,
+              50.0,
+              200.0,
+              20.0
+            ]
+          }
+        ]
+      ],
+      "chars": [
+        [
+          [
+            "4",
+            10.0,
+            80.0
+          ]
+        ],
+        [],
+        []
+      ]
+    }
+  ]
+}

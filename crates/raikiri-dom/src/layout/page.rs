@@ -1336,7 +1336,8 @@ pub(crate) fn inset_is_auto(inset: &ComputedLengthPercentageOrAuto) -> bool {
 }
 
 /// Whether pagination treats the box of `node_id` as monolithic: a replaced
-/// element, an atomic inline-level box or an orthogonal flow, and, while a
+/// element, a size containment box, an atomic inline-level box or an orthogonal
+/// flow, and, while a
 /// vertical document is paginated on transposed axes, a box laid out on
 /// horizontal axes. Its content offers no class A break points, and its
 /// descendants' page names neither open pages nor propagate to the box.
@@ -1371,6 +1372,27 @@ pub(crate) fn is_replaced_for_pagination(document: &Document, node_id: usize) ->
         })
 }
 
+/// Whether the box has active size containment in both physical axes.
+/// Inline-size containment and boxes to which containment does not apply do
+/// not qualify. Explicit-cascade queries use the same applicability rule as
+/// the bridge, before captured layout metadata is available.
+///
+/// spec: <https://www.w3.org/TR/css-contain-2/#containment-size>
+pub(crate) fn size_contained_for_pagination(boxes: BoxTree<'_>, node_id: usize) -> bool {
+    match boxes {
+        BoxTree::Layout(document) => {
+            let containment = document.nodes[node_id].size_containment;
+            containment.width && containment.height
+        }
+        BoxTree::Cascade(document, cascade) => super::style_views::metadata::full_size_containment(
+            document,
+            node_id,
+            &cascade.computed[node_id],
+            boxes,
+        ),
+    }
+}
+
 fn monolithic_with_boxes(
     document: &Document,
     cascade: &CascadeResult,
@@ -1380,6 +1402,7 @@ fn monolithic_with_boxes(
 ) -> bool {
     let node = &document.nodes[node_id];
     is_replaced_for_pagination(document, node_id)
+        || size_contained_for_pagination(boxes, node_id)
         || (!page_applies_with_boxes(boxes, node_id)
             && boxes.identity(node_id).display().is_atomic_inline_level())
         || orthogonal_flow_with_boxes(document, cascade, node_id, boxes)
