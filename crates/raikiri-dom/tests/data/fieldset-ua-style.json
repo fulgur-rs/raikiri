@@ -1,0 +1,256 @@
+[
+  {
+    "name": "empty",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c></fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 13.75],
+      "c": [2.0, 0.0, 196.0, 13.75]
+    }
+  },
+  {
+    "name": "sized",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"width:50px;height:20px\"></fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 33.75],
+      "c": [2.0, 0.0, 69.0, 33.75]
+    }
+  },
+  {
+    "name": "text",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c>aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 196.0, 23.75]
+    }
+  },
+  {
+    "name": "min-content-narrow",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:20px\"><fieldset id=c>aaaaaaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 20.0, 23.75],
+      "c": [2.0, 0.0, 99.0, 23.75]
+    }
+  },
+  {
+    "name": "min-content-words",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:20px\"><fieldset id=c>aaaa bbbbbb</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 20.0, 33.75],
+      "c": [2.0, 0.0, 79.0, 33.75]
+    }
+  },
+  {
+    "name": "border-box",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"box-sizing:border-box;width:100px;height:40px\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 40.0],
+      "c": [2.0, 0.0, 100.0, 40.0]
+    }
+  },
+  {
+    "name": "margin0",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"margin:0\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [0.0, 0.0, 200.0, 23.75]
+    }
+  },
+  {
+    "name": "border0",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"border:0\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 19.75],
+      "c": [2.0, 0.0, 196.0, 19.75]
+    }
+  },
+  {
+    "name": "padding0",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"padding:0\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 14.0],
+      "c": [2.0, 0.0, 196.0, 14.0]
+    }
+  },
+  {
+    "name": "border-width-10",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"border-width:10px\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 39.75],
+      "c": [2.0, 0.0, 196.0, 39.75]
+    }
+  },
+  {
+    "name": "font-20",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"font-size:20px;line-height:20px\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 43.5],
+      "c": [2.0, 0.0, 196.0, 43.5]
+    }
+  },
+  {
+    "name": "vertical-in-horizontal",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"writing-mode:vertical-rl\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 2.0, 200.0, 59.0],
+      "c": [0.0, 2.0, 23.75, 59.0]
+    }
+  },
+  {
+    "name": "vertical-container",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"writing-mode:vertical-rl;width:200px;height:200px\"><fieldset id=c>aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 200.0],
+      "c": [176.25, 2.0, 23.75, 196.0]
+    }
+  },
+  {
+    "name": "vertical-container-sized",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"writing-mode:vertical-rl;width:200px;height:200px\"><fieldset id=c style=\"width:50px;height:20px\"></fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 200.0],
+      "c": [136.25, 2.0, 63.75, 39.0]
+    }
+  },
+  {
+    "name": "rtl",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"direction:rtl;width:100px\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 119.0, 23.75]
+    }
+  },
+  {
+    "name": "margin-auto",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"margin-inline:auto;width:100px\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [40.5, 0.0, 119.0, 23.75]
+    }
+  },
+  {
+    "name": "float-shrink",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"float:left\">aaaa bbbb</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 0.0],
+      "c": [2.0, 0.0, 109.0, 23.75]
+    }
+  },
+  {
+    "name": "float-narrow-word",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"float:left;width:10px\">aaaaaaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 0.0],
+      "c": [2.0, 0.0, 99.0, 23.75]
+    }
+  },
+  {
+    "name": "inline-block",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"display:inline-block\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 59.0, 23.75]
+    }
+  },
+  {
+    "name": "flex-items",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:100px\"><div style=\"display:flex\"><fieldset id=c>aaaa</fieldset><fieldset id=d>bbbbbbbb</fieldset></div></div>",
+    "rects": {
+      "o": [0.0, 0.0, 100.0, 23.75],
+      "c": [2.0, 0.0, 59.0, 23.75],
+      "d": [65.0, 0.0, 99.0, 23.75]
+    }
+  },
+  {
+    "name": "flex-shrink-word",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><div style=\"display:flex;width:60px\"><fieldset id=c style=\"flex:0 1 auto;width:100px\">aaaaaaaa</fieldset></div></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 99.0, 23.75]
+    }
+  },
+  {
+    "name": "min-inline-size-0",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:20px\"><fieldset id=c style=\"min-inline-size:0;width:10px\">aaaaaaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 20.0, 23.75],
+      "c": [2.0, 0.0, 29.0, 23.75]
+    }
+  },
+  {
+    "name": "width-narrower-than-word",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"width:10px\">aaaaaaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 99.0, 23.75]
+    }
+  },
+  {
+    "name": "absolute",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"position:absolute\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 0.0],
+      "c": [2.0, 0.0, 59.0, 23.75]
+    }
+  },
+  {
+    "name": "nested",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><fieldset id=d>aaaa</fieldset></fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 37.5],
+      "c": [2.0, 0.0, 196.0, 37.5],
+      "d": [13.5, 5.5, 173.0, 23.75]
+    }
+  },
+  {
+    "name": "table-cell",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><div style=\"display:table\"><div style=\"display:table-row\"><div style=\"display:table-cell\"><fieldset id=c>aaaa</fieldset></div></div></div></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 59.0, 23.75]
+    }
+  },
+  {
+    "name": "display-flex",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"display:flex\"><span id=d>aa</span><span id=e>bbb</span></fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 23.75],
+      "c": [2.0, 0.0, 196.0, 23.75],
+      "d": [11.5, 5.5, 20.0, 10.0],
+      "e": [31.5, 5.5, 30.0, 10.0]
+    }
+  },
+  {
+    "name": "display-grid",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"display:grid\"><span id=d>aa</span><span id=e>bbb</span></fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 33.75],
+      "c": [2.0, 0.0, 196.0, 33.75],
+      "d": [11.5, 5.5, 177.0, 10.0],
+      "e": [11.5, 15.5, 177.0, 10.0]
+    }
+  },
+  {
+    "name": "inline-in-line",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\">x<fieldset id=c>aaaa</fieldset>y</div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 43.75],
+      "c": [2.0, 10.0, 196.0, 23.75]
+    }
+  },
+  {
+    "name": "height-percent",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;height:100px\"><fieldset id=c style=\"height:50%\">aaaa</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 100.0],
+      "c": [2.0, 0.0, 196.0, 63.75]
+    }
+  },
+  {
+    "name": "legend-less-multi-line",
+    "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c>aaaa bbbb cccc dddd eeee ffff gggg</fieldset></div>",
+    "rects": {
+      "o": [0.0, 0.0, 200.0, 43.75],
+      "c": [2.0, 0.0, 196.0, 43.75]
+    }
+  }
+]
