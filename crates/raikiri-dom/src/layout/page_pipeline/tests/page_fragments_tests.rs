@@ -3410,10 +3410,27 @@ fn a_paragraph_in_a_display_contents_wrapper_moves() {
 }
 
 #[test]
-fn a_paragraph_in_a_fixed_height_section_is_not_moved_out_of_it() {
-    // The section ends at 45, so moving the paragraph to 40 would push its
-    // lines past that end: it stays split inside the section.
+fn a_fixed_height_section_moves_with_its_moved_paragraph() {
+    // Nothing of the section precedes the paragraph, so the section starts
+    // page 1 with it and keeps its height; the flow after it follows the
+    // section, not the paragraph (Chromium: section at 40, block at 70).
     let laid_out = paragraph_after_a_spacer(Some("height:30px"), 15.0, "orphans:3;widows:2", 40.0);
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section, (40.0, 30.0));
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_section_that_clips_at_a_set_height_keeps_its_paragraph_split() {
+    // A set-height box that clips its block-axis overflow hides the lines
+    // past its end and adds no page for them, so its paragraph is not moved
+    // out of it as a plain-flow paragraph would be: the section stays at 15.
+    let laid_out = paragraph_after_a_spacer(
+        Some("height:30px;overflow:hidden"),
+        15.0,
+        "orphans:3;widows:2",
+        40.0,
+    );
     assert_eq!(laid_out.fragments[0].0, 0);
     assert_eq!(laid_out.section, (15.0, 30.0));
 }
@@ -3495,15 +3512,24 @@ fn a_nested_paragraph_moved_for_its_orphans_leaves_an_earlier_float_behind() {
 }
 
 #[test]
-fn a_nested_paragraph_does_not_move_a_section_whose_height_ignores_its_content() {
-    // A section whose height `min-height` or `contain: size` sets keeps its
-    // place at y 15 and the block after it its place below the section:
-    // moving the section with the paragraph would move that block as well.
-    for (section, height) in [("min-height:100px", 100.0), ("contain:size", 0.0)] {
-        let laid_out = paragraph_after_a_spacer(Some(section), 15.0, "orphans:3;widows:2", 40.0);
-        assert_eq!(laid_out.section, (15.0, height), "{section}");
-        assert_eq!(laid_out.after_top, 15.0 + height, "{section}");
-    }
+fn a_min_height_section_moves_with_its_moved_paragraph() {
+    // The section starts page 1 with the paragraph and keeps its 100px, so
+    // the block after it follows the section's end (Chromium: 40 + 100).
+    let laid_out =
+        paragraph_after_a_spacer(Some("min-height:100px"), 15.0, "orphans:3;widows:2", 40.0);
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section, (40.0, 100.0));
+    assert_eq!(laid_out.after_top, 140.0);
+}
+
+#[test]
+fn a_nested_paragraph_does_not_move_a_section_whose_size_containment_ignores_its_content() {
+    // A section whose `contain: size` sets its height keeps its place at y 15
+    // and the block after it its place below the section: its content
+    // overflows it and is not fragmented as flow.
+    let laid_out = paragraph_after_a_spacer(Some("contain:size"), 15.0, "orphans:3;widows:2", 40.0);
+    assert_eq!(laid_out.section, (15.0, 0.0));
+    assert_eq!(laid_out.after_top, 15.0);
 }
 
 #[test]
