@@ -901,15 +901,18 @@ pub(super) fn is_limit_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
 /// (CSS Sizing 3 §4 and §5).
 ///
 /// A normal-flow block, float, and inline-block use these constraints when
-/// their sizing algorithms clamp their used sizes. An absolutely positioned
-/// box also uses them; its constraints are resolved before Taffy reads its
-/// insets and sizes. A flex/grid item uses them because its parent algorithm
-/// reads the item's min/max constraints before laying it out. Other boxes size
-/// themselves as if there were no such minimum or maximum:
+/// their sizing algorithms clamp their used sizes, and so does a form control
+/// or MathML root that stays an inline box, which browsers lay out as an
+/// inline-block. An absolutely positioned box also uses them; its constraints
+/// are resolved before Taffy reads its insets and sizes. A flex/grid item uses
+/// them because its parent algorithm reads the item's min/max constraints
+/// before laying it out. Other boxes size themselves as if there were no such
+/// minimum or maximum:
 /// - a box in a multicol flow is fragmented across the columns, so its
 ///   automatic height is not the height of one fragment;
 /// - table containers and items, replaced items, and inline-level boxes
-///   other than inline-blocks measure themselves by algorithms of their own;
+///   other than inline-blocks, form controls and MathML roots measure
+///   themselves by algorithms of their own;
 /// - a vertical box swaps the axes a keyword refers to.
 pub(super) fn honors_content_limits(
     doc: &Document,
@@ -928,7 +931,9 @@ pub(super) fn honors_content_limits(
         cv.display,
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
     );
-    let non_block_sized = cv.display == DisplayValue::InlineBlock || cv.float != FloatValue::None;
+    let non_block_sized = cv.display == DisplayValue::InlineBlock
+        || cv.float != FloatValue::None
+        || is_inline_atomic_box(doc, idx, cv);
     let table = matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable);
     if table
         || (!block_sized && !non_block_sized && !out_of_flow)
@@ -939,6 +944,18 @@ pub(super) fn honors_content_limits(
         return false;
     }
     out_of_flow || !is_flex_or_grid_item(doc, cascade, idx)
+}
+
+/// Whether element `idx` is an atomic inline that is not a replaced element
+/// (see [`crate::paint_rules::is_replaced_element`]) and that `cv` leaves an
+/// inline box: a form control or a MathML root. Browsers size them like an
+/// inline-block, so the same minimum and maximum sizes clamp them.
+fn is_inline_atomic_box(doc: &Document, idx: usize, cv: &ComputedValues) -> bool {
+    cv.display == DisplayValue::Inline
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && doc.nodes[idx]
+            .tag_name()
+            .is_some_and(|tag| crate::layout::ifc::projection::REPLACED_BOX_TAGS.contains(&tag))
 }
 
 /// Whether `idx` is an in-flow flex/grid container whose own intrinsic min/max
