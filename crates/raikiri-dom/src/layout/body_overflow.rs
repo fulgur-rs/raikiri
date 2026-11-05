@@ -5,6 +5,8 @@ use super::*;
 /// The element supplying viewport overflow: the document element, or the
 /// first body child of an HTML root whose overflow is visible in both axes.
 pub(crate) fn viewport_overflow_source(doc: &Document, cascade: &CascadeResult) -> Option<usize> {
+    #[cfg(test)]
+    super::test_support::VIEWPORT_OVERFLOW_SOURCE_QUERIES.with(|count| count.set(count.get() + 1));
     let root = doc.document_element_index()?;
     let values = cascade.computed.get(root)?;
     if values.display == DisplayValue::None {

@@ -11,6 +11,7 @@ use raikiri_traits::PageBox;
 use taffy::Style as LegacyStyle; // taffy-boundary-lint:ignore: the Taffy style is the reference the style views are compared with
 
 thread_local! {
+    pub(crate) static VIEWPORT_OVERFLOW_SOURCE_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static IFC_INLINE_ELEMENT_BOX_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static IFC_INLINE_ELEMENT_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static TEXT_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

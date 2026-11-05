@@ -3832,13 +3832,19 @@ pub(crate) struct AncestorFacts {
 
 /// Whether the block `id` makes a block formatting context of its own: a
 /// scroll container, a box with layout or paint containment or with
-/// `align-content` other than `normal`, or a multicol container. The overflow
-/// of the body that propagates to the viewport is not the body's own.
-fn roots_formatting_context(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+/// `align-content` other than `normal`, or a multicol container. Overflow
+/// propagated to the viewport is not the box's own.
+/// Normal projection queries the source lazily; rebreaking supplies a value
+/// cached before its additional walk.
+fn roots_formatting_context(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    viewport_source: impl FnOnce() -> Option<usize>,
+) -> bool {
     let cv = &cascade.computed[id];
     let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
-    (scrolls(cv.overflow.x) || scrolls(cv.overflow.y))
-        && !super::body_overflow::body_overflow_propagates_to_viewport(doc, cascade, id)
+    (scrolls(cv.overflow.x) || scrolls(cv.overflow.y)) && viewport_source() != Some(id)
         || cv
             .contain
             .contains(raikiri_style::property::Contain::LAYOUT)
@@ -3866,6 +3872,46 @@ impl AncestorFacts {
         };
         visit_top_down(doc, |parent, id| {
             facts.resolve(doc, cascade, parent, id, fallback_width);
+        });
+        facts
+    }
+
+    /// Include layout-sized block contexts when breaking existing lines again.
+    /// Projection keeps its narrower context-root classification; only this
+    /// optional operation needs the contexts that projection cannot size.
+    pub(crate) fn for_rebreak(
+        doc: &Document,
+        cascade: &CascadeResult,
+        fallback_width: f32,
+    ) -> Self {
+        let mut facts = Self::new(doc, cascade, fallback_width);
+        let viewport_source = super::body_overflow::viewport_overflow_source(doc, cascade);
+        visit_top_down(doc, |parent, id| {
+            let node = &doc.nodes[id];
+            let has_box = node.kind() == NodeKind::Element
+                && !facts.inline_box[id]
+                && !matches!(node.display(), DisplayValue::None | DisplayValue::Contents);
+            let context = has_box
+                && (roots_formatting_context(doc, cascade, id, || viewport_source)
+                    || matches!(
+                        node.display(),
+                        DisplayValue::FlowRoot
+                            | DisplayValue::InlineBlock
+                            | DisplayValue::TableCell
+                            | DisplayValue::TableCaption
+                    )
+                    || node.roots_block_context()
+                    || AuthoredBox::new(doc, cascade, id).is_floated()
+                    || matches!(
+                        node.position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ));
+            facts.in_context_root[id] = context
+                || parent.is_some_and(|parent| {
+                    facts.in_context_root[parent]
+                        && !facts.non_block_flow_ancestor[id]
+                        && !facts.multicol_ancestor[id]
+                });
         });
         facts
     }
@@ -3990,8 +4036,10 @@ impl AncestorFacts {
         self.projected_auto_width[id] = self.can_project_auto_width(doc, cascade, id);
         // `laid_out_container` of the children reads `context_root[id]`, so it
         // is settled here, right after the projected test it depends on.
-        self.context_root[id] =
-            self.projected_auto_width[id] && roots_formatting_context(doc, cascade, id);
+        self.context_root[id] = self.projected_auto_width[id]
+            && roots_formatting_context(doc, cascade, id, || {
+                super::body_overflow::viewport_overflow_source(doc, cascade)
+            });
         // Only blocks in ordinary block flow below a root are sized by it.
         self.in_context_root[id] = self.context_root[id]
             || (self.in_context_root[parent]
