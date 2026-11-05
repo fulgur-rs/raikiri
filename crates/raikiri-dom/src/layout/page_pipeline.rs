@@ -11401,8 +11401,8 @@ fn shrink_ancestors_after_content_change(
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
 /// order, and none is floated or absolutely positioned (see
-/// [`placed_in_block_flow`]). A flex container whose only item holds the
-/// paragraph stacks it the same way. The heights of the paragraph and of its
+/// [`placed_in_block_flow`]). A flex container or a grid whose only item holds
+/// the paragraph stacks it the same way. The heights of the paragraph and of its
 /// ancestors may be constrained: moving the lines grows their boxes only as
 /// far as those constraints allow. Size containment remains outside this path.
 fn is_block_flow_paragraph(
@@ -11438,16 +11438,16 @@ fn placed_in_block_flow(
     placed_in_flow_to_body(document, cascade, block, body_id, false)
 }
 
-/// [`placed_in_block_flow`], which with `through_sole_flex_items` also passes
-/// a flex container whose only item on its lines is the box the walk comes
-/// from: nothing sits beside that item or after it, so a box growing inside it
-/// grows the container and moves nothing else.
+/// [`placed_in_block_flow`], which with `through_sole_items` also passes a
+/// flex container or a grid whose only item is the box the walk comes from:
+/// nothing sits beside that item or after it, so a box growing inside it grows
+/// the container and moves nothing else.
 fn placed_in_flow_to_body(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
-    through_sole_flex_items: bool,
+    through_sole_items: bool,
 ) -> bool {
     let mut child = block;
     let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
@@ -11472,17 +11472,36 @@ fn placed_in_flow_to_body(
             }
             Some(parent)
                 if !placed_apart
-                    && through_sole_flex_items
-                    && document.nodes[parent].display().is_flex_container()
+                    && through_sole_items
                     && holds_moved_lines(document, cascade, parent)
-                    && flex_siblings_on_lines(document, parent, child)
-                        .next()
-                        .is_none() =>
+                    && has_no_other_item(document, parent, child) =>
             {
                 child = parent;
             }
             _ => return false,
         }
+    }
+}
+
+/// Whether `container` is a flex container or a grid with rows that size to
+/// their content, and `item` is the only box on its lines or in its cells.
+fn has_no_other_item(
+    document: &super::context::LayoutSession<'_>,
+    container: usize,
+    item: usize,
+) -> bool {
+    let display = document.nodes[container].display();
+    if display.is_flex_container() {
+        flex_siblings_on_lines(document, container, item)
+            .next()
+            .is_none()
+    } else if display.is_grid_container() {
+        grid_rows_size_to_content(document, container)
+            && document.nodes[container].children.iter().all(|&child| {
+                child == item || !is_in_flow_grid_item_for_pagination(document, child)
+            })
+    } else {
+        false
     }
 }
 
