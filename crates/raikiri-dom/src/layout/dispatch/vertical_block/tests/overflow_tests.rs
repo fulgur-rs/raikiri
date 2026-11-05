@@ -231,3 +231,122 @@ fn an_opposite_vertical_child_keeps_the_physical_side_of_its_overflow() {
     assert_eq!(rects[0], expected);
     assert_eq!(rects[1].right, 350.0);
 }
+
+#[test]
+fn block_children_encode_overflow_with_their_own_inline_direction() {
+    for (mode, naturally_reversed) in [
+        ("vertical-rl", false),
+        ("vertical-lr", false),
+        ("sideways-rl", false),
+        ("sideways-lr", true),
+    ] {
+        for parent_rtl in [false, true] {
+            let parent_direction = if parent_rtl { "rtl" } else { "ltr" };
+            let child_rtl = !parent_rtl;
+            let child_direction = if child_rtl { "rtl" } else { "ltr" };
+            let rects = overflow_rects(
+                &format!("writing-mode:{mode};direction:{parent_direction}"),
+                |doc, container| {
+                    let child = doc.append_element(
+                        Some(container),
+                        "div",
+                        Some(&format!(
+                            "display:block;width:100px;height:100px;direction:{child_direction}"
+                        )),
+                    );
+                    doc.append_element(
+                        Some(child),
+                        "div",
+                        Some("display:block;width:100px;height:150px"),
+                    );
+                    vec![child]
+                },
+            );
+            let reversed = naturally_reversed != child_rtl;
+            let (top, bottom) = if reversed {
+                (-50.0, 100.0)
+            } else {
+                (0.0, 150.0)
+            };
+            let expected = Edges {
+                left: 0.0,
+                right: 100.0,
+                top,
+                bottom,
+            };
+            assert_eq!(
+                rects[2], expected,
+                "child {mode}/{parent_direction}/{child_direction}"
+            );
+            assert_eq!(
+                rects[0], expected,
+                "parent {mode}/{parent_direction}/{child_direction}"
+            );
+            assert_eq!(
+                (rects[1].top, rects[1].bottom),
+                (top, bottom),
+                "ancestor {mode}/{parent_direction}/{child_direction}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flex_and_grid_keep_their_parent_direction_overflow_contract() {
+    for (mode, naturally_reversed) in [
+        ("vertical-rl", false),
+        ("vertical-lr", false),
+        ("sideways-rl", false),
+        ("sideways-lr", true),
+    ] {
+        for parent_rtl in [false, true] {
+            for display in [
+                "display:flex;flex-direction:column",
+                "display:grid;grid-template-rows:100px",
+            ] {
+                let parent_direction = if parent_rtl { "rtl" } else { "ltr" };
+                let child_rtl = !parent_rtl;
+                let child_direction = if child_rtl { "rtl" } else { "ltr" };
+                let rects = overflow_rects(
+                    &format!("{display};writing-mode:{mode};direction:{parent_direction}"),
+                    |doc, container| {
+                        let child = doc.append_element(Some(container), "div", Some(&format!(
+                            "display:block;width:100px;height:100px;flex-shrink:0;direction:{child_direction}"
+                        )));
+                        doc.append_element(
+                            Some(child),
+                            "div",
+                            Some("display:block;width:100px;height:150px"),
+                        );
+                        vec![child]
+                    },
+                );
+                let reversed = naturally_reversed != child_rtl;
+                let (top, bottom) = if reversed {
+                    (-50.0, 100.0)
+                } else {
+                    (0.0, 150.0)
+                };
+                let expected = Edges {
+                    left: 0.0,
+                    right: 100.0,
+                    top,
+                    bottom,
+                };
+                assert_eq!(
+                    rects[2], expected,
+                    "child {display}/{mode}/{parent_direction}/{child_direction}"
+                );
+                assert_eq!(
+                    rects[0], expected,
+                    "parent {display}/{mode}/{parent_direction}/{child_direction}"
+                );
+                assert_eq!(
+                    (rects[1].top, rects[1].bottom),
+                    (top, bottom),
+                    "ancestor {display}/{mode}/{parent_direction}/{child_direction}"
+                );
+            }
+        }
+    }
+}
