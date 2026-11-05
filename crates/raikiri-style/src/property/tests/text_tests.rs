@@ -4295,6 +4295,109 @@ fn word_spacing_preserves_mixed_length_percentage_calcs() {
 }
 
 #[test]
+fn word_spacing_calc_multiplies_and_divides_by_numbers() {
+    // The WPT `word-spacing-001` mixed row: the product terms fold into the
+    // same linear coefficients as the additive ones (100% + 200% for the
+    // percentages, 6em - 6em for the `em` terms).
+    assert_eq!(
+        parse("calc(100% + 6em + 50%*4 - 12em/2)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Percent(300.0)
+        )))
+    );
+    assert_eq!(
+        parse("calc(2 * 10px)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(20.0)
+        )))
+    );
+    assert_eq!(
+        parse("calc(10px * 2 + 5% / 4)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Calc(
+            LengthPercentageCalc {
+                percent: 1.25,
+                px: 20.0,
+                em: 0.0,
+                ch: 0.0,
+            }
+        )))
+    );
+    // A parenthesized `<number>` sum and a chain of number factors are numbers
+    // too, so they can scale a length.
+    assert_eq!(
+        parse("calc((1 + 2) * 10px)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(30.0)
+        )))
+    );
+    assert_eq!(
+        parse("calc(2 * 3 * 1px / 4)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(1.5)
+        )))
+    );
+    assert_eq!(
+        parse("calc( ( 1 + 2 ) * 10px )", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(30.0)
+        )))
+    );
+    assert_eq!(
+        parse("calc(6 / 3 * 10px)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(20.0)
+        )))
+    );
+    assert_eq!(
+        parse("calc(3 * 2ch)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Ch(6.0)
+        )))
+    );
+}
+
+#[test]
+fn word_spacing_calc_rejects_invalid_products() {
+    // Two lengths cannot be multiplied and a length cannot be a divisor.
+    assert_eq!(parse("calc(10px * 2px)", "word-spacing"), None);
+    assert_eq!(parse("calc(2 / 10px)", "word-spacing"), None);
+    // A zero divisor is a valid (infinite) calculation: the linear parser
+    // leaves it to the deferred math path instead of folding it.
+    assert!(matches!(
+        parse("calc(10px / 0)", "word-spacing"),
+        Some(PropertyValue::Deferred(_))
+    ));
+    // A calculation that resolves to a bare `<number>` is not a length, and
+    // numbers cannot be added to lengths.
+    assert_eq!(parse("calc(2 * 3)", "word-spacing"), None);
+    assert_eq!(parse("calc(1 + 2px)", "word-spacing"), None);
+    // The operator of a sum needs white space on both sides (CSS Values 4
+    // section 10.1), whether the terms are numbers or lengths.
+    assert_eq!(parse("calc((1+ 2) * 10px)", "word-spacing"), None);
+    assert_eq!(parse("calc((1 +2) * 10px)", "word-spacing"), None);
+    assert_eq!(parse("calc(10px+ 5px)", "word-spacing"), None);
+    assert_eq!(parse("calc(10px -5px)", "word-spacing"), None);
+    assert_eq!(parse("calc(10px +(5px))", "word-spacing"), None);
+    assert_eq!(parse("calc(10px -(5px))", "word-spacing"), None);
+    // A comment is not white space, but the white space around it still counts.
+    assert_eq!(parse("calc(10px/**/+ 5px)", "word-spacing"), None);
+    assert_eq!(
+        parse("calc(10px /**/ + /**/ 5px)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Px(15.0)
+        )))
+    );
+    // A product that overflows `f32` is not folded into a linear value.
+    assert!(!matches!(
+        parse("calc(1e30px * 1e30)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(_))
+    ));
+    // Dangling operators.
+    assert_eq!(parse("calc(10px *)", "word-spacing"), None);
+    assert_eq!(parse("calc(* 2)", "word-spacing"), None);
+}
+
+#[test]
 fn letter_spacing_rejects_unknown_keyword() {
     assert_eq!(parse("bogus", "letter-spacing"), None);
     assert_eq!(parse("auto", "letter-spacing"), None);
@@ -4475,6 +4578,15 @@ fn tab_size_rejects_percentage_calc_terms() {
     // also invalid (same guard as the `parse_value` deferred path).
     assert_eq!(parse("calc(10px + 5%)", "tab-size"), None);
     assert_eq!(parse("calc(50%)", "tab-size"), None);
+    // The percentage coefficient cancels or is multiplied away, but the
+    // calculation still has a percentage type.
+    assert_eq!(parse("calc(50% - 50%)", "tab-size"), None);
+    assert_eq!(parse("calc(0 * 50%)", "tab-size"), None);
+    // A product without a percentage is still accepted.
+    assert_eq!(
+        parse("calc(2 * 4px)", "tab-size"),
+        Some(PropertyValue::TabSize(TabSize::Length(Length::Px(8.0))))
+    );
     // A `%` inside a comment is not a percentage token.
     assert_eq!(
         parse("calc(1em /*%*/ + 1px)", "tab-size"),
