@@ -818,3 +818,77 @@ fn an_invalid_stylesheet_geometry_declaration_leaves_the_attribute_alone() {
         "<svg width=30 height=30><rect width=20 height=10 /></svg>",
     );
 }
+
+#[test]
+fn a_shape_size_that_inherits_takes_the_computed_size_of_its_parent() {
+    // The size of the `svg` element, written as attributes.
+    assert_paints_like(
+        "<style>rect{width:inherit;height:inherit}</style><svg width=30 height=30><rect width=5 height=5 fill=blue /></svg>",
+        "<svg width=30 height=30><rect width=30 height=30 fill=blue /></svg>",
+    );
+    // A group that a rule gives a width.
+    assert_paints_like(
+        "<style>g{width:12px}rect{width:inherit}</style><svg width=30 height=30><g><rect width=5 height=10 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><rect width=12 height=10 fill=blue /></g></svg>",
+    );
+    // A group has no size, which is `auto`, and a rect of that width is not
+    // drawn.
+    assert_paints_like(
+        "<style>rect{width:inherit}</style><svg width=30 height=30><g><rect width=5 height=5 fill=red /></g><circle cx=20 cy=20 r=5 fill=blue /></svg>",
+        "<svg width=30 height=30><circle cx=20 cy=20 r=5 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_geometry_that_inherits_takes_the_value_of_its_parent() {
+    // A rule that gives the parent a value, in one or in two levels.
+    assert_paints_like(
+        "<style>g{x:7px}rect{x:inherit}</style><svg width=30 height=30><g><rect x=1 width=10 height=10 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><rect x=7 width=10 height=10 fill=blue /></g></svg>",
+    );
+    assert_paints_like(
+        "<style>g{x:7px}g g,rect{x:inherit}</style><svg width=30 height=30><g><g><rect x=1 width=10 height=10 fill=blue /></g></g></svg>",
+        "<svg width=30 height=30><g><g><rect x=7 width=10 height=10 fill=blue /></g></g></svg>",
+    );
+    assert_paints_like(
+        "<style>g{r:8px}circle{r:inherit}</style><svg width=30 height=30><g><circle cx=15 cy=15 r=3 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><circle cx=15 cy=15 r=8 fill=blue /></g></svg>",
+    );
+    // The `svg` element, by a rule or by its attributes.
+    assert_paints_like(
+        "<style>svg{x:4px}rect{x:inherit}</style><svg width=30 height=30><rect x=1 width=10 height=10 fill=blue /></svg>",
+        "<svg width=30 height=30><rect x=4 width=10 height=10 fill=blue /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><svg x=5 width=25 height=25><rect x=1 width=10 height=10 fill=blue /></svg></svg>",
+        "<svg width=30 height=30><svg x=5 width=25 height=25><rect x=5 width=10 height=10 fill=blue /></svg></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><svg x=2mm width=25 height=25><rect x=1 width=10 height=10 fill=blue /></svg></svg>",
+        "<svg width=30 height=30><svg x=2mm width=25 height=25><rect x=2mm width=10 height=10 fill=blue /></svg></svg>",
+    );
+    // A parent that has nothing gives the initial value.
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><g><rect x=9 width=10 height=10 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><rect x=0 width=10 height=10 fill=blue /></g></svg>",
+    );
+}
+
+#[test]
+fn a_path_whose_data_has_an_error_does_not_take_part_in_the_cascade() {
+    assert_paints_like(
+        "<style>path{d:path('M0 0h20v20h-20z');d:path('not a path')}</style><svg width=30 height=30><path fill=blue /></svg>",
+        "<svg width=30 height=30><path d='M0 0h20v20h-20z' fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_geometry_that_inherits_in_an_instantiated_shape_is_left_to_its_attribute() {
+    // Each `use` element is another parent of the shape it instantiates, and
+    // the declarations of the shape serve every instance.
+    let drawn = "<svg width=30 height=30><defs><rect id=t x=4 width=10 height=10 fill=blue /></defs><use href='#t' /></svg>";
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><defs><rect id=t x=4 width=10 height=10 fill=blue /></defs><use href='#t' /></svg>",
+        drawn,
+    );
+}

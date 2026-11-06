@@ -311,12 +311,15 @@ fn a_path_is_none_or_a_quoted_string_of_data() {
         parse_geometry("d", "PATH(\"M0 0\")").as_deref(),
         Some("path(\"M0 0\")")
     );
-    // The data is not read here; the SVG renderer reads it.
     assert_eq!(
-        parse_geometry("d", "path('not a path')").as_deref(),
-        Some("path(\"not a path\")")
+        parse_geometry("d", "path('')").as_deref(),
+        Some("path(\"\")")
     );
     for source in [
+        // The data has an error: the declaration is dropped, as a browser does.
+        "path('not a path')",
+        "path('M0 0 L')",
+        "path('M0 0 Z X')",
         "path()",
         "path(1)",
         "path('a', 'b')",

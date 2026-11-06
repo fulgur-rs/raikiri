@@ -2819,6 +2819,7 @@ dependencies = [
  "rustc-hash",
  "selectors",
  "smol_str",
+ "svgtypes",
  "triomphe",
 ]
 

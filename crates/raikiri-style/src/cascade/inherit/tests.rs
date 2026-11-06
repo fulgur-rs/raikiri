@@ -13725,6 +13725,38 @@ fn svg_geometry_follows_the_cascade_order() {
 }
 
 #[test]
+fn svg_geometry_with_path_data_that_has_an_error_does_not_take_part() {
+    let properties = svg_rect_properties(
+        "rect { d: path('M0 0h5'); d: path('not a path') }",
+        &[],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::SvgD),
+        Some((false, Some("path(\"M0 0h5\")".into())))
+    );
+}
+
+#[test]
+fn an_inherited_shape_size_is_exported_as_the_computed_size_of_the_parent() {
+    let properties = svg_rect_in(
+        "g { width: 12px } rect { width: inherit; height: inherit }",
+        Some(&[]),
+        &[],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::Width),
+        Some((false, Some("12px".into())))
+    );
+    // The group has no height, so its computed height is `auto`.
+    assert_eq!(
+        exported(&properties, PropertyKey::Height),
+        Some((false, Some("auto".into())))
+    );
+}
+
+#[test]
 fn svg_geometry_keywords_reset_to_the_initial_value() {
     let properties = svg_rect_properties(
         "rect { x: initial; y: unset; cx: inherit; rx: initial; ry: unset; r: initial; \

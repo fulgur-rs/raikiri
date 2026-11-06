@@ -1677,7 +1677,10 @@ pub(crate) fn apply_winners(
             {
                 collector.properties.push(SvgStyleProperty {
                     property: winner_key,
-                    inherited: literal_inherit
+                    // The size of a shape is a box property, so `inherit`
+                    // has already taken the parent's computed size and that
+                    // is what is exported.
+                    inherited: (literal_inherit && !winner_key.is_svg_shape_size())
                         || matches!(&value, Some(PropertyValue::ContextualColor(color))
                             if color.key == crate::property::PropertyKey::Color
                                 && svg_color_is_current_color(&color.source))

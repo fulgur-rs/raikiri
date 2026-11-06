@@ -8245,7 +8245,7 @@ impl PropertyKey {
 
     /// The initial value of an SVG geometry property, as an SVG renderer reads
     /// it; `None` for any other key.
-    pub(crate) const fn svg_geometry_initial(self) -> Option<&'static str> {
+    pub const fn svg_geometry_initial(self) -> Option<&'static str> {
         match self.svg_geometry_entry() {
             Some((_, initial)) => Some(initial),
             None => None,

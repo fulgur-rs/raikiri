@@ -201,14 +201,21 @@ fn walk_styled_elements(
                 && (!properties.is_empty() || !relative_attributes.is_empty())
                 && let Some(style) = cascade.computed.get(node_id)
             {
+                let properties = resolve_geometry_inheritance(
+                    document,
+                    cascade,
+                    node_id,
+                    instance_root,
+                    properties,
+                );
                 let properties = match instance_root {
                     Some(instance_root) => inherit_from_instantiating_use(
                         document,
                         &ancestors,
-                        properties,
+                        &properties,
                         instance_root,
                     ),
-                    None => Cow::Borrowed(properties),
+                    None => Cow::Borrowed(&properties[..]),
                 };
                 let element = StyledElement {
                     element_index,
@@ -266,6 +273,92 @@ fn iri_fragment(href: &str) -> Option<&str> {
     let rest = href.trim_start_matches(SPACES).strip_prefix('#')?;
     let (id, tail) = rest.split_once(' ').unwrap_or((rest, ""));
     (!id.is_empty() && tail.trim_matches(SPACES).is_empty()).then_some(id)
+}
+
+/// `properties` with every geometry `inherit` replaced by the value that the
+/// parent has for it. The cascade keeps no computed value for those
+/// properties, so the parent is asked here, where its attributes are known.
+/// An `inherit` that cannot be answered is left as it is, and nothing is
+/// written for it.
+fn resolve_geometry_inheritance<'a>(
+    document: &Document,
+    cascade: &CascadeResult,
+    node: usize,
+    instance_root: Option<usize>,
+    properties: &'a [SvgStyleProperty],
+) -> Cow<'a, [SvgStyleProperty]> {
+    let inherits =
+        |property: &SvgStyleProperty| property.inherited && property.property.is_svg_geometry();
+    if !properties.iter().any(inherits) {
+        return Cow::Borrowed(properties);
+    }
+    Cow::Owned(
+        properties
+            .iter()
+            .map(|property| {
+                let mut property = property.clone();
+                if inherits(&property)
+                    && let Some(value) = inherited_geometry(
+                        document,
+                        cascade,
+                        node,
+                        instance_root,
+                        property.property,
+                    )
+                {
+                    property.inherited = false;
+                    property.expression = Some(value);
+                }
+                property
+            })
+            .collect(),
+    )
+}
+
+/// The value that the geometry property `key` takes for `node` from its
+/// parent, which is what the parent declares, or the attribute of a nested
+/// `svg` for its position, or else the initial value. A parent that inherits
+/// the property asks its own parent. `None` when the answer differs between
+/// the instances of a `use` element: a target of one has another parent in
+/// each.
+fn inherited_geometry(
+    document: &Document,
+    cascade: &CascadeResult,
+    mut node: usize,
+    instance_root: Option<usize>,
+    key: PropertyKey,
+) -> Option<String> {
+    loop {
+        if instance_root == Some(node) {
+            return None;
+        }
+        let parent = document.parent_of(node)?;
+        let parent_style = cascade.svg_style_properties(StyleNodeId(parent as u64));
+        match parent_style
+            .iter()
+            .find(|declared| declared.property == key)
+        {
+            Some(declared) if declared.inherited => node = parent,
+            Some(declared) => return declared.expression.clone(),
+            None => {
+                let name = key.svg_geometry_name()?;
+                let element = document.get_node(parent)?;
+                let attribute = (element.namespace_uri() == Some(SVG_NAMESPACE)
+                    && element.tag_name() == Some("svg")
+                    && matches!(name, "x" | "y"))
+                .then(|| element.attribute(name))
+                .flatten();
+                return Some(match attribute {
+                    // An attribute takes a number where CSS takes a length.
+                    Some(text) if text.trim().parse::<f32>().is_ok() => {
+                        format!("{}px", text.trim())
+                    }
+                    Some(text) => text.trim().to_owned(),
+                    None => key.svg_geometry_initial()?.to_owned(),
+                });
+            }
+        }
+    }
 }
 
 /// `properties` of an element in the subtree that a `use` element

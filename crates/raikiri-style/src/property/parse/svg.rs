@@ -87,6 +87,11 @@ fn parse_svg_path(input: &mut Parser<'_, '_>) -> Option<String> {
             })
             .ok()
     })?;
+    // A renderer drops a declaration whose data has an error, so another
+    // declaration may still win.
+    if !svgtypes::PathParser::from(data.as_str()).all(|segment| segment.is_ok()) {
+        return None;
+    }
     let mut text = String::from("path(");
     // Writing to a `String` cannot fail.
     let _ = cssparser::serialize_string(&data, &mut text);
