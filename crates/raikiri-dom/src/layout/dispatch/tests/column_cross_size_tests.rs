@@ -4,7 +4,7 @@ use crate::layout::test_support::{absolute_rect, cascaded, page_box_800x600, wit
 
 type Rect = (f32, f32, f32, f32);
 
-fn column_document(
+pub(super) fn column_document(
     container_style: &str,
     item_style: &str,
     text: &str,
@@ -31,7 +31,7 @@ fn column_document(
     (doc, container, item)
 }
 
-fn column_rects(container_style: &str, item_style: &str, text: &str) -> (Rect, Rect) {
+pub(super) fn column_rects(container_style: &str, item_style: &str, text: &str) -> (Rect, Rect) {
     let (mut doc, container, item) = column_document(container_style, item_style, text);
     let cascade = cascaded(&doc);
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
@@ -107,11 +107,11 @@ fn hypothetical_cross_measurements_preserve_main_limits_and_ordinary_cached_size
             let expected = if vertical {
                 Size {
                     width: main,
-                    height: 10.0,
+                    height: 30.0,
                 }
             } else {
                 Size {
-                    width: 10.0,
+                    width: 20.0,
                     height: main,
                 }
             };
@@ -280,9 +280,13 @@ fn item_main_maximum_remains_effective_after_hypothetical_cross_measurement() {
             case["name"]
         );
         let vertical = case["container"].as_str().unwrap().contains("writing-mode");
-        // Container main sizes and dependent positions remain separate baseline
-        // mismatches; the fixture records their full observed Chromium rectangles.
+        // Full container sizes and positions are also checked by column_main_limits_tests.
         let cross = if vertical { actual.0.3 } else { actual.0.2 };
-        assert_eq!(cross, 10.0, "{}", case["name"]);
+        assert_eq!(
+            cross,
+            if vertical { height } else { width },
+            "{}",
+            case["name"]
+        );
     }
 }

@@ -1,0 +1,3186 @@
+{
+  "viewport": [
+    800,
+    600
+  ],
+  "cases": [
+    {
+      "name": "horizontal-factors-0-0",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-grow:0;flex-shrink:0",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-factors-0-1",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-grow:0;flex-shrink:1",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-factors-1-0",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-grow:1;flex-shrink:0",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-factors-1-1",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-grow:1;flex-shrink:1",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-below-max",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-min-above-basis",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 20px;max-height:80px;min-height:40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          40
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-min-wins",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;min-height:100px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          100
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "name": "horizontal-stated-main",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;height:200px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-container",
+      "container": "display:inline-flex;flex-direction:column;height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-max-container",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          50
+        ],
+        "a": [
+          0,
+          0,
+          30,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-min-container",
+      "container": "display:inline-flex;flex-direction:column;min-height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-border-box",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;padding:3px;border:2px solid",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          30,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-content-box",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;box-sizing:content-box;padding:3px;border:2px solid",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          90
+        ],
+        "a": [
+          0,
+          0,
+          30,
+          90
+        ]
+      }
+    },
+    {
+      "name": "horizontal-edge-floor",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;padding:25px;border:5px solid;max-height:40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          90,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          90,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-margin",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3px 4px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          28,
+          86
+        ],
+        "a": [
+          4,
+          3,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-calc-basis",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-basis:calc(100px + 20px)",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-max",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-same-writing-mode",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;writing-mode:horizontal-tb",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          120,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          120,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-relative-percent",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;position:relative;top:10%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-two-fixed",
+      "container": "display:inline-flex;flex-direction:column;row-gap:0",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:0 0 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-two-grow",
+      "container": "display:inline-flex;flex-direction:column;row-gap:0",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:2 1 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-two-shrink",
+      "container": "display:inline-flex;flex-direction:column;row-gap:0",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:0 1 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-gap-px",
+      "container": "display:inline-flex;flex-direction:column;row-gap:5px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:0 0 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          125
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          85,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-gap-percent",
+      "container": "display:inline-flex;flex-direction:column;row-gap:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:0 0 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-gap-calc",
+      "container": "display:inline-flex;flex-direction:column;row-gap:calc(10% + 5px)",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:0 0 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          125
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          85,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-gap-percent",
+      "container": "display:inline-flex;flex-direction:column;height:200px;row-gap:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:vertical-rl;flex:0 0 40px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          100,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-child",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "",
+          "children": [
+            {
+              "style": "display:block;width:20px;height:50%",
+              "text": "",
+              "id": "a_child_0"
+            }
+          ]
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a_child_0": [
+          0,
+          0,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-basis",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-basis:25%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "vertical-factors-0-0",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-grow:0;flex-shrink:0",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-factors-0-1",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-grow:0;flex-shrink:1",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-factors-1-0",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-grow:1;flex-shrink:0",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-factors-1-1",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-grow:1;flex-shrink:1",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-below-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-min-above-basis",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 20px;max-width:80px;min-width:40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          40,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-min-wins",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;min-width:100px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          100,
+          20
+        ],
+        "a": [
+          0,
+          0,
+          100,
+          20
+        ]
+      }
+    },
+    {
+      "name": "vertical-stated-main",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;width:200px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-container",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          30
+        ],
+        "a": [
+          120,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-max-container",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          30
+        ],
+        "a": [
+          -30,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-min-container",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;min-width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          30
+        ],
+        "a": [
+          120,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-border-box",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;padding:3px;border:2px solid",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          40
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          40
+        ]
+      }
+    },
+    {
+      "name": "vertical-content-box",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;box-sizing:content-box;padding:3px;border:2px solid",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          90,
+          40
+        ],
+        "a": [
+          0,
+          0,
+          90,
+          40
+        ]
+      }
+    },
+    {
+      "name": "vertical-edge-floor",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;padding:25px;border:5px solid;max-width:40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          90
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          90
+        ]
+      }
+    },
+    {
+      "name": "vertical-margin",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3px 4px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          88,
+          36
+        ],
+        "a": [
+          4,
+          3,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-calc-basis",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-basis:calc(100px + 20px)",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          160,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          160,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-same-writing-mode",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;writing-mode:vertical-rl",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          140
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          140
+        ]
+      }
+    },
+    {
+      "name": "vertical-relative-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;position:relative;left:10%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-two-fixed",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:0",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:0 0 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          120,
+          30
+        ],
+        "a": [
+          40,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-two-grow",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:0",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:2 1 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          120,
+          30
+        ],
+        "a": [
+          40,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-two-shrink",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:0",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:0 1 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          120,
+          30
+        ],
+        "a": [
+          40,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-gap-px",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:5px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:0 0 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          125,
+          30
+        ],
+        "a": [
+          45,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-gap-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:0 0 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          120,
+          30
+        ],
+        "a": [
+          40,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-gap-calc",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:calc(10% + 5px)",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:0 0 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          125,
+          30
+        ],
+        "a": [
+          45,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-gap-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px;row-gap:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "writing-mode:horizontal-tb;flex:0 0 40px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          30
+        ],
+        "a": [
+          120,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          60,
+          0,
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-child",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "",
+          "children": [
+            {
+              "style": "display:block;width:20px;height:50%",
+              "text": "",
+              "id": "a_child_0"
+            }
+          ]
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          0
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          0
+        ],
+        "a_child_0": [
+          0,
+          0,
+          20,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-basis",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-basis:25%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "horizontal-relative-calc",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;position:relative;top:calc(10% + 5px)",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-relative-fallback",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;position:relative;top:10%;bottom:5px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          -5,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-relative-end",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;position:relative;bottom:10%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-relative-reverse",
+      "container": "display:inline-flex;flex-direction:column;flex-direction:column-reverse",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;position:relative;top:10%;bottom:5px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "a": [
+          0,
+          -5,
+          20,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-partial-grow-container-min",
+      "container": "display:inline-flex;flex-direction:column;min-height:300px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "flex:.5 1 40px;writing-mode:vertical-rl",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          300
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          130
+        ]
+      }
+    },
+    {
+      "name": "horizontal-original-shrink-container-max",
+      "container": "display:inline-flex;flex-direction:column;max-height:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;flex-shrink:1;min-height:0",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "flex:0 1 80px;max-height:80px;min-height:0;writing-mode:vertical-rl",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          100
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          60
+        ],
+        "b": [
+          0,
+          60,
+          20,
+          40
+        ]
+      }
+    },
+    {
+      "name": "horizontal-auto-minimum-auto",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "flex:0 0 20px;min-height:auto;writing-mode:horizontal-tb",
+          "text": "",
+          "children": [
+            {
+              "style": "width:10px;height:120px",
+              "text": "",
+              "id": "b_child_0"
+            }
+          ]
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          120
+        ],
+        "b_child_0": [
+          0,
+          80,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-auto-minimum-0",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;",
+          "text": "xxxx xxxx xx"
+        },
+        {
+          "id": "b",
+          "style": "flex:0 0 20px;min-height:0;writing-mode:horizontal-tb",
+          "text": "",
+          "children": [
+            {
+              "style": "width:10px;height:120px",
+              "text": "",
+              "id": "b_child_0"
+            }
+          ]
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          100
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          80
+        ],
+        "b": [
+          0,
+          80,
+          20,
+          20
+        ],
+        "b_child_0": [
+          0,
+          80,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "vertical-relative-calc",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;position:relative;left:calc(10% + 5px)",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-relative-fallback",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;position:relative;left:10%;right:5px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          -5,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-relative-end",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;position:relative;right:10%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-relative-reverse",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;flex-direction:column-reverse",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;position:relative;left:10%;right:5px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          30
+        ],
+        "a": [
+          -5,
+          0,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-partial-grow-container-min",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;min-width:300px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "flex:.5 1 40px;writing-mode:horizontal-tb",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          300,
+          30
+        ],
+        "a": [
+          220,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          90,
+          0,
+          130,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-original-shrink-container-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;flex-shrink:1;min-width:0",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "flex:0 1 80px;max-width:80px;min-width:0;writing-mode:horizontal-tb",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "a": [
+          33.328125,
+          0,
+          66.671875,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          33.328125,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-auto-minimum-auto",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "flex:0 0 20px;min-width:auto;writing-mode:vertical-rl",
+          "text": "",
+          "children": [
+            {
+              "style": "width:120px;height:10px",
+              "text": "",
+              "id": "b_child_0"
+            }
+          ]
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          30
+        ],
+        "a": [
+          120,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          120,
+          30
+        ],
+        "b_child_0": [
+          0,
+          0,
+          120,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-auto-minimum-0",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;",
+          "text": "xxxx xxxx xxxx"
+        },
+        {
+          "id": "b",
+          "style": "flex:0 0 20px;min-width:0;writing-mode:vertical-rl",
+          "text": "",
+          "children": [
+            {
+              "style": "width:120px;height:10px",
+              "text": "",
+              "id": "b_child_0"
+            }
+          ]
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          100,
+          30
+        ],
+        "a": [
+          20,
+          0,
+          80,
+          30
+        ],
+        "b": [
+          0,
+          0,
+          20,
+          30
+        ],
+        "b_child_0": [
+          -100,
+          0,
+          120,
+          10
+        ]
+      }
+    },
+    {
+      "name": "horizontal-original-no-limit",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "vertical-original-no-limit",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 80px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          10
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-max-inactive",
+      "container": "display:inline-flex;flex-direction:column;max-height:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-small-no-item-max",
+      "container": "display:inline-flex;flex-direction:column;height:50px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          50
+        ],
+        "a": [
+          0,
+          0,
+          30,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-percent-max",
+      "container": "display:inline-flex;flex-direction:column;height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "name": "horizontal-min-percent-max",
+      "container": "display:inline-flex;flex-direction:column;min-height:300px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          300
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-edges",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          50
+        ],
+        "a": [
+          10,
+          10,
+          30,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-content-box",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px;box-sizing:content-box;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          64
+        ],
+        "a": [
+          10,
+          10,
+          30,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-max-percent",
+      "container": "display:inline-flex;flex-direction:column;max-height:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-max-calc-percent",
+      "container": "display:inline-flex;flex-direction:column;max-height:calc(50% + 10px)",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-min-wins",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px;min-height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-item-min",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;min-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          300
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          300
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Unresolved main minimum",
+        "rectangles": {
+          "a": [
+            0.0,
+            0.0,
+            10.0,
+            80.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            10.0,
+            80.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "horizontal-calc-percent-max",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:calc(50% + 5px)",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-calc-percent-max",
+      "container": "display:inline-flex;flex-direction:column;height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:calc(50% + 5px)",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          105
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-max-inactive",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          20
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          20
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-small-no-item-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:50px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          30
+        ],
+        "a": [
+          -110,
+          0,
+          160,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          20
+        ],
+        "a": [
+          100,
+          0,
+          100,
+          20
+        ]
+      }
+    },
+    {
+      "name": "vertical-min-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;min-width:300px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          300,
+          10
+        ],
+        "a": [
+          140,
+          0,
+          160,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          50
+        ],
+        "a": [
+          -40,
+          10,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-content-box",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px;box-sizing:content-box;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          64,
+          50
+        ],
+        "a": [
+          -26,
+          10,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-max-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-max-calc-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:calc(50% + 10px)",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-min-wins",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px;min-width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          10
+        ],
+        "a": [
+          140,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-item-min",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;min-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          400,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          400,
+          10
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Unresolved main minimum",
+        "rectangles": {
+          "a": [
+            80.0,
+            0.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            160.0,
+            10.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vertical-calc-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:calc(50% + 5px)",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          160,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          160,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-calc-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:calc(50% + 5px)",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          20
+        ],
+        "a": [
+          95,
+          0,
+          105,
+          20
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-edges",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          81.1875
+        ],
+        "a": [
+          0.59375,
+          0.59375,
+          18.8125,
+          80
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            0.29999998211860657,
+            0.29999998211860657,
+            9.399999618530273,
+            80.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            10.0,
+            80.5999984741211
+          ]
+        }
+      }
+    },
+    {
+      "name": "horizontal-limited-percent-edges",
+      "container": "display:inline-flex;flex-direction:column;max-height:100px;padding:3px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          91.1875
+        ],
+        "a": [
+          5.59375,
+          5.59375,
+          18.8125,
+          80
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            5.300000190734863,
+            5.300000190734863,
+            9.399999618530273,
+            80.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            20.0,
+            90.5999984741211
+          ]
+        }
+      }
+    },
+    {
+      "name": "horizontal-container-max-ten-percent",
+      "container": "display:inline-flex;flex-direction:column;max-height:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          81.78125,
+          30
+        ],
+        "a": [
+          0.890625,
+          0.890625,
+          80,
+          28.21875
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            80.0,
+            0.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            160.0,
+            10.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vertical-limited-percent-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:100px;padding:3px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          91.78125,
+          40
+        ],
+        "a": [
+          5.890625,
+          5.890625,
+          80,
+          28.21875
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            15.0,
+            5.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            100.0,
+            20.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vertical-container-max-ten-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "horizontal-stated-cross-percent-margin",
+      "container": "display:inline-flex;flex-direction:column;width:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          100,
+          86
+        ],
+        "a": [
+          3,
+          3,
+          94,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-stated-percentage-cross-margin",
+      "container": "display:inline-flex;flex-direction:column;width:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          400,
+          104
+        ],
+        "a": [
+          12,
+          12,
+          376,
+          80
+        ]
+      }
+    },
+    {
+      "name": "vertical-stated-cross-percent-margin",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          86,
+          100
+        ],
+        "a": [
+          3,
+          3,
+          80,
+          94
+        ]
+      }
+    },
+    {
+      "name": "vertical-stated-percentage-cross-margin",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          98,
+          300
+        ],
+        "a": [
+          9,
+          9,
+          80,
+          282
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "a9418d823",
+        "issue": "RAIKIRI-1488",
+        "reason": "Authored percentage cross cannot resolve against the original parent basis",
+        "rectangles": {
+          "a": [
+            80.0,
+            0.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            160.0,
+            10.0
+          ]
+        }
+      }
+    }
+  ],
+  "oracle": {
+    "browser": "Chromium 152.0.7977.82",
+    "font": "Ahem, 10px/10px",
+    "viewport": [
+      800,
+      600
+    ],
+    "body": "margin:0;width:800px;font-family:Ahem;font-size:10px;line-height:10px",
+    "div": "display:block;box-sizing:border-box",
+    "measurement": "CDP device viewport800x600; await document.fonts.load(\"10px Ahem\") before inserting dynamic cases; document.fonts.check and loaded face verified; canvas x advance9.999984741px; each case alone",
+    "tolerance_px": 0.02,
+    "date": "2026-11-06",
+    "font_evidence": {
+      "fontReady": true,
+      "xAdvance": 9.999984741210938,
+      "faces": [
+        {
+          "family": "Ahem",
+          "status": "loaded"
+        }
+      ]
+    },
+    "ahem_sha256": "b719ecb31c5b21fc573c03f6421c74ac63c271a5a3ff841e34f9705fb94b8448"
+  },
+  "preserved_baselines_note": "Seven explicitly excluded legacy cases retain immutable a9418d823 main rectangles; their loaded-Ahem Chromium rectangles remain separately recorded and are not claimed to match."
+}

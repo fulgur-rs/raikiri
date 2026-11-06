@@ -146,8 +146,9 @@ impl LayoutSession<'_> {
                     || entry.is_physical_inset()
                     || entry.is_physical_margin()
                     || entry.is_physical_padding()
-                    || entry.is_self_alignment(),
-                "scope entry is a physical sizing, inset, margin, padding or self-alignment override"
+                    || entry.is_self_alignment()
+                    || entry.is_gap(),
+                "scope entry is a physical sizing, inset, margin, padding, self-alignment or gap override"
             );
             *counts.entry(key).or_default() += 1;
             indexed.push((key, index, entry));

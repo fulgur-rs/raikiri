@@ -65,6 +65,9 @@ pub(crate) struct LayoutContext {
     /// Owners whose size-only layout must also provide a first baseline.
     pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
+    /// Original column contribution constraints and their isolated cache domains.
+    pub(crate) column_cross_constraints:
+        Vec<crate::layout::dispatch::column_cross_measure::Constraints>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`

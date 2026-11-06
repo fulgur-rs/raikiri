@@ -60,6 +60,14 @@ impl OwnedPropertyOverride {
         )
     }
 
+    /// Whether the entry sets a flex or grid gap for a local measurement.
+    pub fn is_gap(&self) -> bool {
+        matches!(
+            self.as_borrowed().0,
+            OverrideKind::Length(LengthProperty::RowGap | LengthProperty::ColumnGap, _)
+        )
+    }
+
     /// Whether the entry sets a self-alignment. A positioning pass holds such
     /// an entry in a scope, next to the insets it sets, to align a box inside
     /// the area those insets bound; like an inset it is not a sizing override.

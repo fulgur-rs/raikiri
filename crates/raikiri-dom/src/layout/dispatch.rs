@@ -1007,22 +1007,24 @@ impl LayoutSession<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
         self.sync_layout_cache_mutations();
-        if let Some((measure, maximum)) =
+        if let Some((measure, legacy_maximum)) =
             with_orthogonal_cross_measurement(self, usize::from(node_id), inputs)
         {
             let idx = usize::from(node_id);
-            let key = self.nodes.box_key(idx).expect("paragraph has a box key");
             return intrinsic_scopes::with_saved_probe_caches(self, 1, |tree, saved| {
                 saved.push((idx, tree.take_layout_cache(idx)));
-                tree.push_local_overrides(vec![(
-                    key,
-                    OwnedPropertyOverride::length(
-                        maximum,
-                        raikiri_style::ComputedLengthPercentageOrAuto::Auto,
-                        false,
-                    )
-                    .expect("automatic main maximum"),
-                )]);
+                if let Some(property) = legacy_maximum {
+                    let key = tree.nodes.box_key(idx).expect("live paragraph");
+                    tree.push_local_overrides(vec![(
+                        key,
+                        OwnedPropertyOverride::length(
+                            property,
+                            raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                            false,
+                        )
+                        .expect("automatic maximum"),
+                    )]);
+                }
                 let mut output =
                     tree.compute_child_layout_with_block_ctx_inner(node_id, measure, block_ctx);
                 output.size = output
@@ -1476,7 +1478,7 @@ impl LayoutSession<'_> {
             ..raikiri_layout_style::ViewContext::default()
         };
         let mut output = if let Some(basis) = edge_basis {
-            self.with_resolved_edges(idx, basis, true, |tree| {
+            let compute_edges = |tree: &mut Self| {
                 tree.with_cache_frame(idx, view_context, |tree| {
                     if tree.context.baseline_measure_owners.last() == Some(&idx) {
                         compute(tree, node_id, inputs)
@@ -1484,7 +1486,12 @@ impl LayoutSession<'_> {
                         compute_cached_layout(tree, node_id, inputs, compute)
                     }
                 })
-            })
+            };
+            if column_cross_measure::item_cache_isolated(self, idx) {
+                self.with_local_resolved_box_edges(idx, basis, compute_edges)
+            } else {
+                self.with_resolved_edges(idx, basis, true, compute_edges)
+            }
         } else if uncached {
             compute(self, node_id, inputs)
         } else {
@@ -1582,6 +1589,8 @@ mod tests;
 
 mod axis_adapter;
 pub(crate) mod block_flow;
+pub(crate) mod column_cross_measure;
+mod column_main_limits;
 pub(crate) mod content_limits;
 pub(super) mod flex_cross_margins;
 pub(crate) mod grid_baseline;
@@ -3890,18 +3899,18 @@ fn flex_layout_sized(
         }
         .is_some()
     };
-    intrinsic_scopes::with_orthogonal_percentage_flex_bases(
+    column_cross_measure::layout(
         tree,
         node_id,
+        inputs,
         main_size_is_definite,
-        inputs.run_mode,
-        |tree| {
-            intrinsic_scopes::with_hypothetical_column_height(
+        |tree, node_id, inputs| {
+            intrinsic_scopes::with_orthogonal_percentage_flex_bases(
                 tree,
                 node_id,
-                inputs,
                 main_size_is_definite,
-                |tree, inputs| flex_layout_items(tree, node_id, inputs),
+                inputs.run_mode,
+                |tree| flex_layout_items(tree, node_id, inputs, main_size_is_definite),
             )
         },
     )
@@ -3913,6 +3922,7 @@ fn flex_layout_items(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
+    main_size_is_definite: bool,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_wrapping_min_content_width(tree, node_id, inputs);
@@ -3937,48 +3947,61 @@ fn flex_layout_items(
         inputs,
         basis,
         |tree, node_id, inputs| {
-            if block_right_to_left(tree, idx).is_some() {
-                // The container runs its algorithm on the axes of its own
-                // writing mode.
-                tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
-                    let inputs = vertical_block::with_atomic_fit_content(
-                        tree,
-                        node_id,
-                        inputs,
-                        compute_flexbox_layout,
-                    );
-                    table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                })
-            } else if tree.context.flex_intrinsic_probe == Some(idx)
-                || measures_intrinsic_width(&inputs)
-            {
-                let cross_room = item_cross_room(basis.height, &inputs);
-                let min_content = inputs.run_mode == RunMode::ComputeSize
-                    && inputs.available_space.width == AvailableSpace::MinContent
-                    && inputs.known_dimensions.width.is_none();
-                with_flex_item_basis_bounds(
-                    tree,
-                    node_id,
-                    cross_room,
-                    inputs.available_space.width,
-                    |tree| {
-                        let layout = |tree: &mut LayoutSession<'_>| {
+            column_main_limits::layout(
+                tree,
+                node_id,
+                inputs,
+                main_size_is_definite,
+                |tree, node_id, inputs| {
+                    if block_right_to_left(tree, idx).is_some() {
+                        // The container runs its algorithm on the axes of its own
+                        // writing mode.
+                        tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                            let inputs = vertical_block::with_atomic_fit_content(
+                                tree,
+                                node_id,
+                                inputs,
+                                compute_flexbox_layout,
+                            );
                             table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                        };
-                        if min_content {
-                            with_compressible_item_widths(tree, node_id, layout)
-                        } else {
-                            layout(tree)
-                        }
-                    },
-                )
-            } else if inputs.known_dimensions.height.is_none() {
-                with_column_item_content_height(tree, node_id, basis.width, |tree| {
-                    table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                })
-            } else {
-                table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-            }
+                        })
+                    } else if tree.context.flex_intrinsic_probe == Some(idx)
+                        || measures_intrinsic_width(&inputs)
+                    {
+                        let cross_room = item_cross_room(basis.height, &inputs);
+                        let min_content = inputs.run_mode == RunMode::ComputeSize
+                            && inputs.available_space.width == AvailableSpace::MinContent
+                            && inputs.known_dimensions.width.is_none();
+                        with_flex_item_basis_bounds(
+                            tree,
+                            node_id,
+                            cross_room,
+                            inputs.available_space.width,
+                            |tree| {
+                                let layout = |tree: &mut LayoutSession<'_>| {
+                                    table_items::layout(
+                                        tree,
+                                        node_id,
+                                        inputs,
+                                        compute_flexbox_layout,
+                                    )
+                                };
+                                if min_content {
+                                    with_compressible_item_widths(tree, node_id, layout)
+                                } else {
+                                    layout(tree)
+                                }
+                            },
+                        )
+                    } else if inputs.known_dimensions.height.is_none() {
+                        with_column_item_content_height(tree, node_id, basis.width, |tree| {
+                            table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                        })
+                    } else {
+                        table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                    }
+                },
+            )
         },
     );
     if let Some(width) = content_limits::wrapping_column_min_content_width(tree, node_id, &inputs) {
@@ -4858,18 +4881,9 @@ fn with_stated_height_contribution(
     Some(inputs)
 }
 
-/// Measure an orthogonal paragraph's automatic hypothetical cross size in a
-/// column flex container without wrapping at its flexed main size or maximum.
-/// Parent dimensions remain percentage bases. The caller scopes the maximum
-/// override and its cache, then restores the requested main size.
-fn with_orthogonal_cross_measurement(
-    tree: &LayoutSession<'_>,
-    idx: usize,
-    mut inputs: LayoutInput,
-) -> Option<(LayoutInput, LengthProperty)> {
-    if inputs.run_mode != RunMode::ComputeSize
-        || inputs.sizing_mode != SizingMode::ContentSize
-        || tree.nodes[idx].formatting_context != FormattingContext::Inline
+/// Find an orthogonal paragraph with an automatic cross size in a nowrap column.
+fn orthogonal_column_paragraph(tree: &LayoutSession<'_>, idx: usize) -> Option<(usize, bool)> {
+    if tree.nodes[idx].formatting_context != FormattingContext::Inline
         || tree.nodes[idx].size_containment.width
         || tree.nodes[idx].size_containment.height
         || tree.nodes[idx].layout_position() == Position::Absolute
@@ -4889,15 +4903,35 @@ fn with_orthogonal_cross_measurement(
         return None;
     }
     let style = tree.physical_style(idx);
-    if style.is_replaced() || style.block_aspect_ratio().is_some() {
+    let cross = if vertical {
+        style.size().height
+    } else {
+        style.size().width
+    };
+    if style.is_replaced() || style.block_aspect_ratio().is_some() || !cross.is_auto() {
         return None;
     }
-    let (axis, known_cross, known_main, cross, maximum) = if vertical {
+    Some((parent, vertical))
+}
+
+/// Measure an automatic column cross contribution before flex distribution.
+/// Authored bounds are retained; unresolved outer constraints keep their legacy path.
+fn with_orthogonal_cross_measurement(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> Option<(LayoutInput, Option<LengthProperty>)> {
+    if inputs.run_mode != RunMode::ComputeSize || inputs.sizing_mode != SizingMode::ContentSize {
+        return None;
+    }
+    let (parent, vertical) = orthogonal_column_paragraph(tree, idx)?;
+    let style = tree.physical_style(idx);
+    let (axis, known_cross, known_main, minimum, maximum) = if vertical {
         (
             RequestedAxis::Vertical,
             inputs.known_dimensions.height,
             inputs.known_dimensions.width,
-            style.size().height,
+            style.min_size().width,
             LengthProperty::MaxWidth,
         )
     } else {
@@ -4905,23 +4939,46 @@ fn with_orthogonal_cross_measurement(
             RequestedAxis::Horizontal,
             inputs.known_dimensions.width,
             inputs.known_dimensions.height,
-            style.size().width,
+            style.min_size().height,
             LengthProperty::MaxHeight,
         )
     };
-    if inputs.axis != axis || known_cross.is_some() || known_main.is_none() || !cross.is_auto() {
+    if inputs.axis != axis || known_cross.is_some() || known_main.is_none() {
         return None;
     }
+    let parent_basis =
+        column_cross_measure::percentage_basis(tree, parent).unwrap_or(if vertical {
+            inputs.parent_size.width
+        } else {
+            inputs.parent_size.height
+        });
+    let legacy_contribution = !column_cross_measure::supported(tree, parent)
+        || (!minimum.is_auto() && minimum.maybe_resolve(parent_basis).is_none());
+    if !legacy_contribution && !column_cross_measure::measures_cross(tree, parent) {
+        return None;
+    }
+    #[cfg(test)]
+    crate::layout::test_support::COLUMN_CROSS_MEASUREMENTS.with(|count| count.set(count.get() + 1));
     if vertical {
         inputs.known_dimensions.width = None;
         inputs.known_dimensions_are_definite.width = false;
-        inputs.available_space.width = AvailableSpace::MaxContent;
     } else {
         inputs.known_dimensions.height = None;
         inputs.known_dimensions_are_definite.height = false;
-        inputs.available_space.height = AvailableSpace::MaxContent;
     }
-    Some((inputs, maximum))
+    if legacy_contribution {
+        // Preserve the existing measurement for unresolved outer contributions;
+        // their percentage policy remains tracked separately in RAIKIRI-1488.
+        if vertical {
+            inputs.available_space.width = AvailableSpace::MaxContent;
+        } else {
+            inputs.available_space.height = AvailableSpace::MaxContent;
+        }
+        return Some((inputs, Some(maximum)));
+    }
+    inputs.sizing_mode = SizingMode::InherentSize;
+    column_cross_measure::constrain_inputs(tree, idx, parent, vertical, &mut inputs);
+    Some((inputs, None))
 }
 
 /// Give a flex or grid container with a preferred aspect ratio, an `auto` width

@@ -529,6 +529,11 @@ impl LayoutSession<'_> {
         block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
     ) -> LayoutOutput {
         if let Some(basis) = padding_basis {
+            if super::column_cross_measure::item_cache_isolated(self, usize::from(node_id)) {
+                return self.with_local_resolved_edges(usize::from(node_id), basis, |tree| {
+                    tree.compute_child_layout_with_block_ctx(node_id, inputs, block_ctx)
+                });
+            }
             self.with_resolved_edges(usize::from(node_id), basis, false, |tree| {
                 tree.compute_child_layout_with_block_ctx(node_id, inputs, block_ctx)
             })

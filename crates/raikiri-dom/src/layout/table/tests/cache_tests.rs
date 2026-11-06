@@ -451,3 +451,27 @@ fn table_descendant_geometry_agrees_across_cold_warm_and_forced_miss() {
         assert_eq!(tree.override_checkpoint(), 0);
     }
 }
+
+#[test]
+fn isolated_table_edges_clear_topology_on_unwind_without_advancing_the_epoch() {
+    let (mut doc, table, _) = fixture(1, 1);
+    GRID_BUILDS.with(|count| count.set(0));
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &cascade);
+    super::super::cache::table_grid(&mut session, table).unwrap();
+    let epoch = session.layout_cache_context.epoch();
+    let saved = session.take_layout_cache(table);
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.with_local_resolved_box_edges(table, 100.0, |session| {
+            super::super::cache::table_grid(session, table).unwrap();
+            assert_eq!(session.layout_cache_context.epoch(), epoch);
+            panic!("isolated table edge unwind");
+        });
+    }));
+    session.restore_layout_cache(table, saved);
+    assert!(failed.is_err());
+    assert!(session.resolved_edge_basis(table).is_none());
+    super::super::cache::table_grid(&mut session, table).unwrap();
+    assert_eq!(GRID_BUILDS.with(|count| count.get()), 3);
+    assert_eq!(session.layout_cache_context.epoch(), epoch);
+}
