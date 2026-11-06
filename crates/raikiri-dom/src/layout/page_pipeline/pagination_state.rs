@@ -344,6 +344,8 @@ pub(super) struct PaginationState {
     positioned_paragraphs: HashMap<usize, Option<PositionedParagraph>>,
     /// Opening page and used margin for boxes whose margin starts at its boundary.
     retained_margin_starts: HashMap<usize, (u32, f32)>,
+    /// Alignment room removed above the text of a cell that spans pages.
+    fragmented_cell_shifts: HashMap<usize, f32>,
     /// Footnotes are collected in source order and stacked upward from the
     /// bottom edge of their anchor page. The normal-flow height is removed
     /// from `flow_shift`, leaving the box only in this page-local area.
@@ -386,6 +388,7 @@ impl PaginationState {
             checked_paragraphs: CheckedParagraphs::default(),
             positioned_paragraphs: HashMap::new(),
             retained_margin_starts: HashMap::new(),
+            fragmented_cell_shifts: HashMap::new(),
             footnote_areas: FootnoteAreas::default(),
             column_contexts,
             preceding_flex_items: PrecedingFlexItems::default(),
@@ -404,6 +407,18 @@ impl PaginationState {
     ) {
         self.float_gaps.prepare(document, cascade, body_id);
         self.float_gaps.assign_visits(document, candidates);
+    }
+
+    pub(super) fn rebase_fragmented_cell_text(&self, candidate: &mut PageCandidate) {
+        if candidate.context.is_text()
+            && let Some((root, offset)) = &mut candidate.ifc_root
+            && let Some(shift) = self.fragmented_cell_shifts.get(root)
+        {
+            // Rebase both coordinates so placing the text leaves its root at
+            // the same border-box top and does not shift following content.
+            candidate.raw_y -= shift;
+            *offset -= shift;
+        }
     }
 
     fn queue_prefixes(&mut self, consumed: Vec<super::external_float_gap::Removal>, page: u32) {
@@ -917,6 +932,20 @@ impl PaginationState {
                 .insert(node_id, (self.current_page, page_break.margin_top));
         }
         self.flow_shift += header_delta;
+
+        if candidate.context.is_table_row()
+            && let Some(fragment) = super::table_cell_fragments::fitting(
+                document,
+                cascade,
+                node_id,
+                effective_y,
+                page_start,
+                page_origins.origin(self.current_page + 1),
+            )
+        {
+            let (cell, shift) = fragment.apply(document);
+            self.fragmented_cell_shifts.insert(cell, shift);
+        }
 
         if box_sets_page_name(
             &candidate.context,

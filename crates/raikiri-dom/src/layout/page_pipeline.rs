@@ -23,6 +23,7 @@ mod positioned_flow;
 mod sibling_adjacency;
 mod sibling_shifts;
 mod source_walk;
+mod table_cell_fragments;
 mod transposed_flow;
 use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant};
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
@@ -4342,7 +4343,7 @@ fn paginate_flow(
         // Each candidate is placed while the page limit lets pagination reach the
         // page the flow is on. The page breaks before the edges of a block that
         // follow the candidates before them, when they do not fit.
-        while let Some(candidate) = candidates.next()
+        while let Some(mut candidate) = candidates.next()
             && control.within_page_limit(state.current_page)?
         {
             if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
@@ -4350,6 +4351,7 @@ fn paginate_flow(
                 break;
             }
             done += 1;
+            state.rebase_fragmented_cell_text(&mut candidate);
             let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
                 continue;
             };
@@ -5479,7 +5481,7 @@ impl AvoidedBreaks {
     /// flex container it looks up.
     fn measure(
         &self,
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         candidate: &PageCandidate,
         fit: &BoxFit,
@@ -5585,16 +5587,22 @@ impl AvoidedBreaks {
         // The last row of a table moves to the next page with the edges that
         // close the table when they do not fit after it.
         let item_tail = item_tail_move(candidate, fit);
+        let cell_text_fits = candidate.context.is_table_row()
+            && table_cell_fragments::fitting(
+                document, cascade, node_id, flow_y, page_start, page_end,
+            )
+            .is_some();
         let table_row = candidate.context.is_table_row()
             && (item_tail
-                || table_row_moves(
-                    flow_y,
-                    height + repeated_footer_height,
-                    table_row_lead + height + repeated_header_height + repeated_footer_height,
-                    page_start,
-                    page_end,
-                    next_page_step,
-                ));
+                || (!cell_text_fits
+                    && table_row_moves(
+                        flow_y,
+                        height + repeated_footer_height,
+                        table_row_lead + height + repeated_header_height + repeated_footer_height,
+                        page_start,
+                        page_end,
+                        next_page_step,
+                    )));
         let row_group_lead = self
             .row_groups
             .get(&node_id)
