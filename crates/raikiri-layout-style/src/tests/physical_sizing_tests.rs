@@ -112,6 +112,7 @@ fn physical_sizing_membership_matches_the_accepted_properties() {
         );
     }
     assert!(OwnedPropertyOverride::flex_shrink(0.0).is_physical_sizing());
+    assert!(OwnedPropertyOverride::flex_grow(0.0).is_physical_sizing());
     assert!(OwnedPropertyOverride::aspect_ratio(Some(2.0)).is_physical_sizing());
     let clear = OwnedPropertyOverride::clear(raikiri_style::property::ClearValue::Both);
     assert!(!clear.is_physical_sizing());
@@ -189,6 +190,9 @@ fn physical_sizing_sets_border_fields_and_ignores_shrink() {
     OwnedPropertyOverride::flex_shrink(1.0)
         .apply_physical_sizing(&mut style)
         .unwrap();
+    OwnedPropertyOverride::flex_grow(0.0)
+        .apply_physical_sizing(&mut style)
+        .unwrap();
     // A box style holds no flex properties, so the shrink factor changes nothing.
     assert_eq!(style, before_shrink);
     assert_eq!(
@@ -220,4 +224,22 @@ fn physical_sizing_keeps_border_calc_owner_identity() {
     drop(entry);
     assert_eq!(style.border.left, Lp::calc(CalcRef::new(&owner)));
     assert!(owner.non_negative());
+}
+
+#[test]
+fn gap_membership_does_not_admit_other_lengths() {
+    for property in [LengthProperty::RowGap, LengthProperty::ColumnGap] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(5.0), true).unwrap();
+        assert!(entry.is_gap());
+        assert!(!entry.is_physical_sizing());
+    }
+    for property in [
+        LengthProperty::Width,
+        LengthProperty::FlexBasis,
+        LengthProperty::Top,
+    ] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(5.0), true).unwrap();
+        assert!(!entry.is_gap());
+    }
+    assert!(!OwnedPropertyOverride::flex_grow(0.0).is_gap());
 }

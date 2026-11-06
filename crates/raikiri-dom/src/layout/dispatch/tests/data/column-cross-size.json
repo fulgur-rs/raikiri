@@ -16,7 +16,7 @@
     "measurement": "DOMRect after document.fonts.ready, each case rendered alone at the body origin",
     "scope": "Single-line column flex containers, normal white-space, orthogonal paragraph items. Separate baseline mismatches involving white-space:nowrap automatic main minima and wrapping containers are outside this fixture.",
     "reproduce": "Embed Ahem as a data-URL @font-face; apply the recorded body/div styles; render container div with one item div and its text; wait for document.fonts.ready and measure both DOMRects.",
-    "main_limit_controls": "Assert item sizes and container cross sizes only. Container main sizes and dependent item positions remain baseline mismatches recorded in RAIKIRI-1487. Full DOMRects are retained as observations, not claimed to match."
+    "main_limit_controls": "Item sizes and container cross sizes are checked here; full container and item DOMRects are additionally asserted in column_main_limits_tests after RAIKIRI-1487."
   },
   "cases": [
     {

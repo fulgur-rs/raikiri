@@ -117,6 +117,30 @@ fn flex_shrink_getter_preserves_the_override_value() {
 }
 
 #[test]
+fn flex_grow_overrides_replace_only_grow_and_restore_the_pass_value() {
+    let mut values = ComputedValues::initial();
+    values.flex_grow = 2.0;
+    let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
+    let mut pass = Vec::new();
+    OwnedPropertyOverride::flex_grow(0.25).install(&mut pass);
+    OwnedPropertyOverride::flex_shrink(0.5).install(&mut pass);
+    OwnedPropertyOverride::flex_grow(0.75).install(&mut pass);
+    assert_eq!(pass.len(), 2);
+    let view = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
+    assert_eq!(view.flex_grow(), 0.75);
+    assert_eq!(view.flex_shrink(), 0.5);
+    let scoped = [OwnedPropertyOverride::flex_grow(0.0)];
+    let view =
+        LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &scoped);
+    assert_eq!(view.flex_grow(), 0.0);
+    assert_eq!(view.flex_shrink(), 0.5);
+    let view = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
+    assert_eq!(view.flex_grow(), 0.75);
+    let view = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(view.flex_grow(), 2.0);
+}
+
+#[test]
 fn clearance_covers_each_authored_side() {
     for (value, expected) in [
         (ClearValue::None, Clear::None),

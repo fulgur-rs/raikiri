@@ -20,7 +20,9 @@ impl OwnedPropertyOverride {
                     | BorderBottom
                     | BorderLeft
             ),
-            OverrideKind::FlexShrink(_) | OverrideKind::AspectRatio(_) => true,
+            OverrideKind::FlexGrow(_)
+            | OverrideKind::FlexShrink(_)
+            | OverrideKind::AspectRatio(_) => true,
             _ => false,
         }
     }
@@ -55,6 +57,14 @@ impl OwnedPropertyOverride {
         matches!(
             self.as_borrowed().0,
             OverrideKind::Length(PaddingTop | PaddingRight | PaddingBottom | PaddingLeft, _)
+        )
+    }
+
+    /// Whether the entry sets a flex or grid gap for a local measurement.
+    pub fn is_gap(&self) -> bool {
+        matches!(
+            self.as_borrowed().0,
+            OverrideKind::Length(LengthProperty::RowGap | LengthProperty::ColumnGap, _)
         )
     }
 
@@ -100,8 +110,10 @@ impl OwnedPropertyOverride {
                 style.max_size.height = value.auto(false);
             }
             // A box style holds no flex properties, so the parent's basis and
-            // shrink overrides are accepted and change nothing in this snapshot.
-            OverrideKind::FlexShrink(_) | OverrideKind::Length(LengthProperty::FlexBasis, _) => {}
+            // grow and shrink overrides are accepted and change nothing in this snapshot.
+            OverrideKind::FlexGrow(_)
+            | OverrideKind::FlexShrink(_)
+            | OverrideKind::Length(LengthProperty::FlexBasis, _) => {}
             OverrideKind::Length(LengthProperty::BorderTop, value) => {
                 style.border.top = value.lp(crate::PercentBasis::Taffy);
             }

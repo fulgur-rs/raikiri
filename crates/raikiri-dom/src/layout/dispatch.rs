@@ -1582,6 +1582,7 @@ mod tests;
 
 mod axis_adapter;
 pub(crate) mod block_flow;
+mod column_main_limits;
 pub(crate) mod content_limits;
 pub(super) mod flex_cross_margins;
 pub(crate) mod grid_baseline;
@@ -3895,7 +3896,7 @@ fn flex_layout_sized(
         node_id,
         main_size_is_definite,
         inputs.run_mode,
-        |tree| flex_layout_items(tree, node_id, inputs),
+        |tree| flex_layout_items(tree, node_id, inputs, main_size_is_definite),
     )
 }
 
@@ -3905,6 +3906,7 @@ fn flex_layout_items(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
+    main_size_is_definite: bool,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_wrapping_min_content_width(tree, node_id, inputs);
@@ -3929,48 +3931,61 @@ fn flex_layout_items(
         inputs,
         basis,
         |tree, node_id, inputs| {
-            if block_right_to_left(tree, idx).is_some() {
-                // The container runs its algorithm on the axes of its own
-                // writing mode.
-                tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
-                    let inputs = vertical_block::with_atomic_fit_content(
-                        tree,
-                        node_id,
-                        inputs,
-                        compute_flexbox_layout,
-                    );
-                    table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                })
-            } else if tree.context.flex_intrinsic_probe == Some(idx)
-                || measures_intrinsic_width(&inputs)
-            {
-                let cross_room = item_cross_room(basis.height, &inputs);
-                let min_content = inputs.run_mode == RunMode::ComputeSize
-                    && inputs.available_space.width == AvailableSpace::MinContent
-                    && inputs.known_dimensions.width.is_none();
-                with_flex_item_basis_bounds(
-                    tree,
-                    node_id,
-                    cross_room,
-                    inputs.available_space.width,
-                    |tree| {
-                        let layout = |tree: &mut LayoutSession<'_>| {
+            column_main_limits::layout(
+                tree,
+                node_id,
+                inputs,
+                main_size_is_definite,
+                |tree, node_id, inputs| {
+                    if block_right_to_left(tree, idx).is_some() {
+                        // The container runs its algorithm on the axes of its own
+                        // writing mode.
+                        tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                            let inputs = vertical_block::with_atomic_fit_content(
+                                tree,
+                                node_id,
+                                inputs,
+                                compute_flexbox_layout,
+                            );
                             table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                        };
-                        if min_content {
-                            with_compressible_item_widths(tree, node_id, layout)
-                        } else {
-                            layout(tree)
-                        }
-                    },
-                )
-            } else if inputs.known_dimensions.height.is_none() {
-                with_column_item_content_height(tree, node_id, basis.width, |tree| {
-                    table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                })
-            } else {
-                table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-            }
+                        })
+                    } else if tree.context.flex_intrinsic_probe == Some(idx)
+                        || measures_intrinsic_width(&inputs)
+                    {
+                        let cross_room = item_cross_room(basis.height, &inputs);
+                        let min_content = inputs.run_mode == RunMode::ComputeSize
+                            && inputs.available_space.width == AvailableSpace::MinContent
+                            && inputs.known_dimensions.width.is_none();
+                        with_flex_item_basis_bounds(
+                            tree,
+                            node_id,
+                            cross_room,
+                            inputs.available_space.width,
+                            |tree| {
+                                let layout = |tree: &mut LayoutSession<'_>| {
+                                    table_items::layout(
+                                        tree,
+                                        node_id,
+                                        inputs,
+                                        compute_flexbox_layout,
+                                    )
+                                };
+                                if min_content {
+                                    with_compressible_item_widths(tree, node_id, layout)
+                                } else {
+                                    layout(tree)
+                                }
+                            },
+                        )
+                    } else if inputs.known_dimensions.height.is_none() {
+                        with_column_item_content_height(tree, node_id, basis.width, |tree| {
+                            table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                        })
+                    } else {
+                        table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                    }
+                },
+            )
         },
     );
     if let Some(width) = content_limits::wrapping_column_min_content_width(tree, node_id, &inputs) {
