@@ -1007,6 +1007,30 @@ impl LayoutSession<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
         self.sync_layout_cache_mutations();
+        if let Some((measure, maximum)) =
+            with_orthogonal_cross_measurement(self, usize::from(node_id), inputs)
+        {
+            let idx = usize::from(node_id);
+            let key = self.nodes.box_key(idx).expect("paragraph has a box key");
+            return intrinsic_scopes::with_saved_probe_caches(self, 1, |tree, saved| {
+                saved.push((idx, tree.take_layout_cache(idx)));
+                tree.push_local_overrides(vec![(
+                    key,
+                    OwnedPropertyOverride::length(
+                        maximum,
+                        raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                        false,
+                    )
+                    .expect("automatic main maximum"),
+                )]);
+                let mut output =
+                    tree.compute_child_layout_with_block_ctx_inner(node_id, measure, block_ctx);
+                output.size = output
+                    .size
+                    .zip_map(inputs.known_dimensions, |size, known| known.unwrap_or(size));
+                output
+            });
+        }
         // The height the flex algorithm measures an item of a column at, while
         // it measures the width of the container, is not what that width is
         // measured from. The box keeps the height it was asked about.
@@ -4824,6 +4848,72 @@ fn with_stated_height_contribution(
     inputs.known_dimensions.height = stated;
     inputs.known_dimensions_are_definite.height = stated.is_some();
     Some(inputs)
+}
+
+/// Measure an orthogonal paragraph's automatic hypothetical cross size in a
+/// column flex container without wrapping at its flexed main size or maximum.
+/// Parent dimensions remain percentage bases. The caller scopes the maximum
+/// override and its cache, then restores the requested main size.
+fn with_orthogonal_cross_measurement(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> Option<(LayoutInput, LengthProperty)> {
+    if inputs.run_mode != RunMode::ComputeSize
+        || inputs.sizing_mode != SizingMode::ContentSize
+        || tree.nodes[idx].formatting_context != FormattingContext::Inline
+        || tree.nodes[idx].size_containment.width
+        || tree.nodes[idx].size_containment.height
+        || tree.nodes[idx].layout_position() == Position::Absolute
+    {
+        return None;
+    }
+    let parent = tree.taffy_parent_of(idx)?;
+    if tree.nodes[parent].layout_display() != Display::Flex {
+        return None;
+    }
+    let container = tree.physical_style(parent);
+    if container.flex_direction_is_row() || container.flex_wraps() {
+        return None;
+    }
+    let vertical = tree.container_is_vertical(idx);
+    if vertical == tree.has_vertical_writing_mode(idx) {
+        return None;
+    }
+    let style = tree.physical_style(idx);
+    if style.is_replaced() || style.block_aspect_ratio().is_some() {
+        return None;
+    }
+    let (axis, known_cross, known_main, cross, maximum) = if vertical {
+        (
+            RequestedAxis::Vertical,
+            inputs.known_dimensions.height,
+            inputs.known_dimensions.width,
+            style.size().height,
+            LengthProperty::MaxWidth,
+        )
+    } else {
+        (
+            RequestedAxis::Horizontal,
+            inputs.known_dimensions.width,
+            inputs.known_dimensions.height,
+            style.size().width,
+            LengthProperty::MaxHeight,
+        )
+    };
+    if inputs.axis != axis || known_cross.is_some() || known_main.is_none() || !cross.is_auto() {
+        return None;
+    }
+    if vertical {
+        inputs.known_dimensions.width = None;
+        inputs.known_dimensions_are_definite.width = false;
+        inputs.available_space.width = AvailableSpace::MaxContent;
+    } else {
+        inputs.known_dimensions.height = None;
+        inputs.known_dimensions_are_definite.height = false;
+        inputs.available_space.height = AvailableSpace::MaxContent;
+    }
+    Some((inputs, maximum))
 }
 
 /// Give a flex or grid container with a preferred aspect ratio, an `auto` width
