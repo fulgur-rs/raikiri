@@ -785,6 +785,8 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     clip_edges: HashMap<usize, f32>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
+    /// The selected inner tail of each plain block on its column-item path.
+    inner_tail_paths: HashMap<usize, usize>,
     has_named_pages: bool,
     /// Whether runs of boxes tied by avoided breaks may be looked for inside
     /// blocks: some box avoids a break before or after it, and no box names a
@@ -818,6 +820,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             clip_edges: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
+            inner_tail_paths: HashMap::new(),
             has_named_pages,
             finds_nested_runs: !has_named_pages
                 && cascade.computed.iter().any(|computed| {
@@ -1539,8 +1542,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     0.0
                 };
-                let caption_tail_candidate = node.display() == DisplayValue::TableCaption
-                    && frame.item_tail.is_some_and(|tail| tail.item == node_id);
+                let selected_tail = frame.item_tail.is_some_and(|tail| tail.item == node_id);
+                let extra_tail_candidate = selected_tail
+                    && (node.display() == DisplayValue::TableCaption
+                        || (inside_flex
+                            && !flex_item_candidate
+                            && is_plain_block_box(document, node_id)));
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
@@ -1559,7 +1566,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || first_grid_row.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
-                        || caption_tail_candidate
+                        || extra_tail_candidate
                         || flex_item_candidate
                         || is_rendered_leaf
                         || grid_item_candidate
@@ -1701,19 +1708,33 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         );
                         !side_by_side && !bounded
                     })
-                    .map(|(item, fallback)| ItemTail {
-                        item,
-                        fallback,
-                        container_bottom: raw_y + node.layout.size.height,
-                        inherited: inherited_edges,
+                    .map(|(item, fallback)| {
+                        if node.display() == DisplayValue::Flex {
+                            for ancestor in document.ancestors(item).take_while(|&id| id != node_id)
+                            {
+                                self.inner_tail_paths.insert(ancestor, item);
+                            }
+                        }
+                        ItemTail {
+                            item,
+                            fallback,
+                            container_bottom: raw_y + node.layout.size.height,
+                            inherited: inherited_edges,
+                        }
                     });
-                // The row groups of a table pass its last row on.
+                // Row groups pass on their table's selected row. Plain blocks
+                // pass on an inner column tail only along its prepared path.
                 let child_item_tail = if matches!(
                     document.nodes[node_id].display(),
                     DisplayValue::TableRowGroup
                         | DisplayValue::TableHeaderGroup
                         | DisplayValue::TableFooterGroup
-                ) {
+                ) || (inside_flex
+                    && (is_plain_block_box(document, node_id)
+                        || node.display() == DisplayValue::Contents)
+                    && frame.item_tail.is_some_and(|tail| {
+                        self.inner_tail_paths.get(&node_id) == Some(&tail.item)
+                    })) {
                     frame.item_tail
                 } else {
                     item_tail
