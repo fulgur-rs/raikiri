@@ -743,7 +743,7 @@ impl PageContext {
     /// (the cascade's `counter_styles`). A counter style name is looked up
     /// there first, since an author rule can redefine a predefined name, and
     /// a value the rule cannot show goes to its `fallback` style (see
-    /// [`format_counter_with_styles`](super::format_counter_with_styles)).
+    /// `format_counter_with_styles`).
     /// Without the rules only the predefined styles of CSS Counter Styles 3
     /// can show a value, and any other name shows it in decimal. A
     /// `string-set` already applied keeps the text it resolved.

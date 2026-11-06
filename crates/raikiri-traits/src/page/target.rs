@@ -317,7 +317,7 @@ impl TargetRegistry {
     /// `counter_styles`). A style name they ask for is looked up there first,
     /// since an author rule can redefine a predefined name, and a value the
     /// rule cannot show goes to its `fallback` style (see
-    /// [`format_counter_with_styles`]). Slots queued before this call are
+    /// `format_counter_with_styles`). Slots queued before this call are
     /// formatted with the rules in effect when they are flushed.
     pub fn set_counter_styles(&mut self, styles: Arc<CounterStyleRegistry>) {
         self.counter_styles = Some(styles);
