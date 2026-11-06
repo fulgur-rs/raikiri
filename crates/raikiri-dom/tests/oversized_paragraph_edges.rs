@@ -12,14 +12,6 @@ struct Rendered {
 }
 
 fn render(container: &str, lead: u32, edge: &str, tail: bool) -> Rendered {
-    let fonts = FontCollectionBuilder::new()
-        .font_bytes(
-            "Ahem",
-            include_bytes!("data/text-autospace/Ahem.ttf").to_vec(),
-        )
-        .build()
-        .unwrap();
-    let resources = RenderResources::new().fonts(fonts);
     let paragraph = format!("<p id=p style='margin:0;{edge}'>z z z</p>");
     let contents = if container == "table" {
         format!(
@@ -34,10 +26,23 @@ fn render(container: &str, lead: u32, edge: &str, tail: bool) -> Rendered {
     } else {
         ""
     };
+    render_body(&format!(
+        "<div style='height:{lead}px'></div>{contents}{tail}"
+    ))
+}
+
+fn render_body(contents: &str) -> Rendered {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
     let html = format!(
         "<!DOCTYPE html><style>@page{{size:100px 100px;margin:0}}\
-         html,body{{margin:0;font:20px/30px Ahem}}</style>\
-         <div style='height:{lead}px'></div>{contents}{tail}"
+         html,body{{margin:0;font:20px/30px Ahem}}</style>{contents}"
     );
     let doc = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
     let LayoutStatus::Completed(result) = layout(
@@ -127,5 +132,23 @@ fn oversized_edge_moves_the_holder_fragments_and_following_flow_once() {
                 "{container} {id}"
             );
         }
+    }
+}
+
+#[test]
+fn a_relative_ancestor_does_not_turn_a_page_start_into_an_oversized_edge_break() {
+    for contents in [
+        "<div style='display:table'><div style='display:table-row'><div style='display:table-cell'><p style='margin:0;padding-top:125px'>z z z</p></div></div></div>",
+        "<div style='display:inline-flex'><p style='margin:0;padding-top:125px'>z z z</p></div>",
+    ] {
+        let output = render_body(&format!(
+            "<div style='position:relative;top:50px'>{contents}</div>"
+        ));
+        let (_, page, top) = output
+            .glyphs
+            .iter()
+            .find(|(text, _, _)| text.contains('z'))
+            .unwrap();
+        assert_eq!((*page, *top), (2, 80.0));
     }
 }

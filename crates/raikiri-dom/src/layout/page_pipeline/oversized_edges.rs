@@ -17,7 +17,7 @@ pub(super) fn holder(
         return None;
     }
     let parent = document.parent_of(paragraph)?;
-    if !only_child(document, parent, paragraph) {
+    if !only_child(document, cascade, parent, paragraph) {
         return None;
     }
     let holder = match document.nodes[parent].display() {
@@ -30,7 +30,7 @@ pub(super) fn holder(
             }
             let row = document.parent_of(parent)?;
             if document.nodes[row].display() != DisplayValue::TableRow
-                || !only_child(document, row, parent)
+                || !only_child(document, cascade, row, parent)
                 || !eligible_box(document, cascade, parent)
                 || !eligible_box(document, cascade, row)
             {
@@ -44,14 +44,16 @@ pub(super) fn holder(
                     | DisplayValue::TableHeaderGroup
                     | DisplayValue::TableFooterGroup
             ) {
-                if !only_child(document, owner, child) || !eligible_box(document, cascade, owner) {
+                if !only_child(document, cascade, owner, child)
+                    || !eligible_box(document, cascade, owner)
+                {
                     return None;
                 }
                 child = owner;
                 owner = document.parent_of(owner)?;
             }
             if document.nodes[owner].display() != DisplayValue::Table
-                || !only_child(document, owner, child)
+                || !only_child(document, cascade, owner, child)
             {
                 return None;
             }
@@ -59,7 +61,11 @@ pub(super) fn holder(
         }
         _ => return None,
     };
-    if !eligible_box(document, cascade, holder) {
+    if !eligible_box(document, cascade, holder)
+        || document
+            .ancestors(holder)
+            .any(|ancestor| !matches!(document.nodes[ancestor].position(), PositionValue::Static))
+    {
         return None;
     }
     if document.nodes[holder].display() == DisplayValue::Table {
@@ -80,7 +86,7 @@ pub(super) fn holder(
         .iter()
         .all(|&child| {
             child == holder
-                || !renders(document, child)
+                || !renders(document, cascade, child)
                 || document.nodes[child].kind() == NodeKind::Element
                     && !document.nodes[child].display().is_inline_level()
                     && document.nodes[child].display() != DisplayValue::Contents
@@ -102,18 +108,16 @@ fn eligible_box(
         && !is_floating_box_for_pagination(document, cascade, node)
 }
 
-fn only_child(document: &Document, parent: usize, child: usize) -> bool {
+fn only_child(document: &Document, cascade: &CascadeResult, parent: usize, child: usize) -> bool {
     document.nodes[parent]
         .children
         .iter()
-        .all(|&sibling| sibling == child || !renders(document, sibling))
+        .all(|&sibling| sibling == child || !renders(document, cascade, sibling))
 }
 
-fn renders(document: &Document, node: usize) -> bool {
+fn renders(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
     if document.nodes[node].kind() == NodeKind::Text {
-        return document.nodes[node]
-            .text_content()
-            .is_some_and(|text| !text.chars().all(|c| c.is_ascii_whitespace()));
+        return crate::layout::ifc::assign::text_makes_a_line(document, cascade, node);
     }
     sibling_renders(document, node)
 }

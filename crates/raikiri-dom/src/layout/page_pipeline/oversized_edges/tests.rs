@@ -181,3 +181,41 @@ fn nested_formatting_contexts_and_contents_text_do_not_form_an_isolated_atomic_l
     fixture.doc.append_text(wrapper, "other");
     assert!(!fixture.qualified());
 }
+
+#[test]
+fn relative_ancestors_do_not_qualify() {
+    for inner in [
+        &["table", "table-row", "table-cell", "block"][..],
+        &["inline-flex", "block"][..],
+    ] {
+        let chain = std::iter::once("block")
+            .chain(inner.iter().copied())
+            .collect::<Vec<_>>();
+        let mut fixture = Fixture::new(&chain);
+        fixture.style(0, "position:relative;top:50px");
+        assert!(!fixture.qualified(), "{inner:?}");
+    }
+}
+
+#[test]
+fn preserved_whitespace_does_not_qualify_as_an_empty_atomic_neighbor() {
+    for css in [
+        "white-space:pre",
+        "white-space:pre-wrap",
+        "white-space:break-spaces",
+        "white-space:pre-line",
+    ] {
+        for text in [" ", "\n"] {
+            if css == "white-space:pre-line" && text == " " {
+                continue;
+            }
+            let mut fixture = Fixture::new(&["inline-flex", "block"]);
+            fixture
+                .doc
+                .set_element_attribute(fixture.body, "style", format!("display:block;{css}"))
+                .unwrap();
+            fixture.doc.append_text(fixture.body, text);
+            assert!(!fixture.qualified(), "{css} {text:?}");
+        }
+    }
+}
