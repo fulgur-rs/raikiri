@@ -266,6 +266,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 .scene
                 .push_clip_layer(self.geometry.page_clip_transform, &clip);
         }
+        // The bars are given in the coordinates of the page, which a transform
+        // of the box or of an ancestor would move, so a transformed box has
+        // none.
+        let bars = cut.filter(|cut| {
+            (cut.from_before || cut.after) && !self.in_transformed_box(element.node_id)
+        });
         let scene = &mut *self.scene;
         paint_element_outline(
             scene,
@@ -277,7 +283,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             cv.outline_offset,
             cv.color,
         );
-        if let Some(cut) = cut {
+        if let Some(cut) = bars {
             paint_outline_break_bars(
                 scene,
                 (x, y, width, height),
@@ -287,6 +293,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     cut.after.then_some(cut.area.y1),
                 ),
             );
+        }
+        if cut.is_some() {
             scene.pop_layer();
         }
     }
@@ -492,7 +500,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_in_viewport,
             paint_y,
             paint_height,
-            child_transform_y,
             ..
         } = *element;
         let PageGeometry {
@@ -512,21 +519,27 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let from_before = page_top > 0.0 && f64::from(paint_y) < area.y0 - 0.01;
         let after = f64::from(paint_y + paint_height) > area.y1 + 0.01;
         // A relatively positioned box lies where its offset puts it, not
-        // where a break cut it, and neither does a box that a transform or the
-        // relative offset of an ancestor moved. Only a box that crosses an
-        // edge of the page area needs the check.
+        // where a break cut it, and neither does a box that the relative
+        // offset of an ancestor moved. Only a box that crosses an edge of the
+        // page area needs the check.
         let broken = (from_before || after)
             && match cv.position {
                 PositionValue::Absolute => true,
-                PositionValue::Static => {
-                    child_transform_y == 0.0 && !self.moved_by_relative_ancestor(node_id)
-                }
+                PositionValue::Static => !self.moved_by_relative_ancestor(node_id),
                 _ => false,
             };
         Some(PageCut {
             area,
             from_before: broken && from_before,
             after: broken && after,
+        })
+    }
+
+    /// Whether the node `node_id` or one of its ancestors has a transform
+    /// that applies to it.
+    fn in_transformed_box(&self, node_id: usize) -> bool {
+        self.document.inclusive_ancestors(node_id).any(|id| {
+            raikiri_dom::has_applied_transform(self.document, id, &self.cascade.computed[id])
         })
     }
 

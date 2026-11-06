@@ -383,3 +383,30 @@ fn a_box_that_a_relative_ancestor_or_a_transform_moves_across_the_page_area_has_
         assert_ne!(pixel(&pixels, 13, 43), BLUE, "{wrapper}: the bottom margin");
     }
 }
+
+#[test]
+fn a_transformed_box_has_no_break_bars() {
+    // The box is 80px tall, scaled to half its height from its top edge: the
+    // bar along the bottom of the page area would land in its interior (y 23
+    // to 25) when the scaled scene paints it.
+    for style in [
+        "transform:scaleY(.5);transform-origin:top left",
+        "transform:scale(1)",
+    ] {
+        for body in [
+            format!(
+                "<div style='position:absolute;top:0;left:6px;width:18px;outline:4px solid blue;{style}'>\
+                 <div style='height:80px'></div></div>"
+            ),
+            format!(
+                "<div style='position:absolute;top:0;left:0;{style}'>\
+                 <div style='margin-left:6px;width:18px;height:80px;outline:4px solid blue'></div></div>"
+            ),
+        ] {
+            let pixels = raster_page(&body, 0);
+            for y in [24, 37] {
+                assert_ne!(pixel(&pixels, 25, y), BLUE, "{body}: row {y} is empty");
+            }
+        }
+    }
+}
