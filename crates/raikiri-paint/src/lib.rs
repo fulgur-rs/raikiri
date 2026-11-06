@@ -42,6 +42,7 @@ pub struct TextHighlightRange {
     pub end_byte: usize,
 }
 
+mod bevel;
 pub mod border;
 mod capture;
 mod column_rules;

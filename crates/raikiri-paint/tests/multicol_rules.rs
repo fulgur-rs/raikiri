@@ -403,12 +403,12 @@ fn double_rule_has_a_transparent_middle_third() {
 }
 
 #[test]
-fn ridge_groove_inset_outset_use_collapsed_border_shading() {
+fn ridge_groove_inset_outset_use_the_shades_of_a_border() {
     for (style, left, right) in [
-        ("ridge", "#b1c5d9", "#32465a"),
-        ("inset", "#b1c5d9", "#32465a"),
-        ("groove", "#32465a", "#b1c5d9"),
-        ("outset", "#32465a", "#b1c5d9"),
+        ("ridge", "#8ec7ff", "#354a60"),
+        ("inset", "#8ec7ff", "#354a60"),
+        ("groove", "#354a60", "#8ec7ff"),
+        ("outset", "#354a60", "#8ec7ff"),
     ] {
         let css = format!(".mc{{column-rule:4px {style} rgb(100, 140, 180)}}");
         let reference = format!(
@@ -416,6 +416,37 @@ fn ridge_groove_inset_outset_use_collapsed_border_shading() {
         );
         compare("<div class=mc>A<br>B<br>C<br>D</div>", &css, &reference);
     }
+}
+
+#[test]
+fn an_odd_groove_rule_gives_its_extra_pixel_to_the_left_half() {
+    // A 5px rule centered in the gap spans 48..53 once rounded to whole pixels:
+    // three pixels of the dark shade and two of the light one.
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{column-rule:5px groove rgb(100, 140, 180)}",
+        "<div style='position:absolute;left:48px;top:0;width:3px;height:40px;background:#354a60'></div><div style='position:absolute;left:51px;top:0;width:2px;height:40px;background:#8ec7ff'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
+}
+
+#[test]
+fn a_one_pixel_ridge_rule_keeps_its_color() {
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{column-rule:1px ridge rgb(100, 140, 180)}",
+        "<div style='position:absolute;left:50px;top:0;width:1px;height:40px;background:rgb(100, 140, 180)'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
+}
+
+#[test]
+fn the_bars_of_a_double_rule_are_a_third_of_its_width_rounded_as_a_border_is() {
+    // Seven pixels is not a multiple of three: each bar is two pixels, and the
+    // gap between them three.
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{column-rule:7px double red}",
+        "<div style='position:absolute;left:47px;top:0;width:2px;height:40px;background:red'></div><div style='position:absolute;left:52px;top:0;width:2px;height:40px;background:red'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
 }
 
 #[test]
