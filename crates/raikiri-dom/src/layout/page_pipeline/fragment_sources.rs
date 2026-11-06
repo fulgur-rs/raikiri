@@ -8,6 +8,7 @@ use super::{
     PageFragmentRect, PaintInsets, PaintRect, ProjectionWork, flow_page_overlap,
     line_ranges::LineRanges,
 };
+use raikiri_traits::PaintClip;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A box, or the lines of a text, at its position in the shared flow space of
@@ -29,7 +30,7 @@ pub(super) struct PageFragmentSource {
     pub(super) line_start_offset: u32,
     pub(super) is_repeat: bool,
     pub(super) fragmentainer: u32,
-    pub(super) fragment_clip: Option<PaintRect>,
+    pub(super) fragment_clip: Option<PaintClip>,
     pub(super) overflow_chain: Option<usize>,
     pub(super) own_overflow_source: Option<usize>,
 }
@@ -56,8 +57,14 @@ impl PageFragmentSource {
                 }
             }),
             fragment_clip: self.fragment_clip.map(|clip| {
-                let (x, y, width, height) = axis.to_flow((clip.x, clip.y, clip.width, clip.height));
-                PaintRect::new(x, y, width, height)
+                let mut clip = clip;
+                let rect = clip.rect;
+                let (x, y, width, height) = axis.to_flow((rect.x, rect.y, rect.width, rect.height));
+                clip.rect = PaintRect::new(x, y, width, height);
+                if matches!(axis, FlowAxis::X { .. }) {
+                    std::mem::swap(&mut clip.clip_x, &mut clip.clip_y);
+                }
+                clip
             }),
             ..self.clone()
         }
@@ -325,13 +332,19 @@ fn fragment_item(
     item.fragmentainer = source.fragmentainer;
     item.overflow_chain = source.overflow_chain;
     item.own_overflow_source = source.own_overflow_source;
-    item.fragment_clip = source.fragment_clip.map(|clip| {
-        to_page((
-            clip.x,
-            clip.y + box_y - source.abs_y,
-            clip.width,
-            clip.height,
-        ))
+    item.fragment_clip = source.fragment_clip.map(|mut clip| {
+        let rect = clip.rect;
+        let rect = to_page((
+            rect.x,
+            rect.y + box_y - source.abs_y,
+            rect.width,
+            rect.height,
+        ));
+        clip.rect = PaintRect::new(rect.x, rect.y, rect.width, rect.height);
+        if matches!(page_axis, FlowAxis::X { .. }) {
+            std::mem::swap(&mut clip.clip_x, &mut clip.clip_y);
+        }
+        clip
     });
     match line_range {
         Some(range) => item.with_line_range(PageFragmentLineRange::new(

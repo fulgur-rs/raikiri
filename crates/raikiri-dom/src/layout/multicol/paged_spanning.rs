@@ -429,7 +429,7 @@ fn install_lineless_pieces(
                 parent: Some(container),
                 fragmentainer: piece.fragmentainer,
                 rect: piece.rect,
-                fragmentainer_clip: piece.clip,
+                fragmentainer_clip: piece.clip.map(Into::into),
                 fragment_index: piece.index,
                 fragment_count: piece.count,
                 line_start: None,
@@ -540,7 +540,7 @@ impl FragmentEdits {
                     let fragment = &mut self.arena[id];
                     fragment.rect.y += delta;
                     if let Some(clip) = &mut fragment.fragmentainer_clip {
-                        clip.y += delta;
+                        clip.rect.y += delta;
                     }
                 }
             }

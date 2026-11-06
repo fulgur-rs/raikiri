@@ -1647,12 +1647,15 @@ fn push_wrapped_wrapper(
                 width: size.width,
                 height: piece.height,
             },
-            fragmentainer_clip: (pieces.len() > 1).then_some(FragmentRect {
-                x: x_offset,
-                y: -parent.top,
-                width: (x + size.width).max(context.column_width),
-                height: column_height,
-            }),
+            fragmentainer_clip: (pieces.len() > 1).then_some(
+                FragmentRect {
+                    x: x_offset,
+                    y: -parent.top,
+                    width: (x + size.width).max(context.column_width),
+                    height: column_height,
+                }
+                .into(),
+            ),
             fragment_index: index,
             fragment_count: pieces.len(),
             line_start: None,
@@ -1727,12 +1730,15 @@ fn push_wrapped_block(
                 sliced.then_some((taken, size.height)),
             ),
             // A box that stays in one column is not cut.
-            fragmentainer_clip: (pieces.len() > 1).then_some(FragmentRect {
-                x: 0.0,
-                y: -parent.top,
-                width: (x + size.width).max(context.column_width),
-                height: column_height,
-            }),
+            fragmentainer_clip: (pieces.len() > 1).then_some(
+                FragmentRect {
+                    x: 0.0,
+                    y: -parent.top,
+                    width: (x + size.width).max(context.column_width),
+                    height: column_height,
+                }
+                .into(),
+            ),
             fragment_index: index,
             fragment_count: pieces.len(),
             line_start: None,
@@ -2456,6 +2462,7 @@ pub(super) fn layout(
                         width: right - left,
                         height: column_height,
                     }
+                    .into()
                 }),
                 fragment_index: index,
                 fragment_count: pieces.len(),
@@ -2490,10 +2497,13 @@ pub(super) fn layout(
                     y: piece.rect.y + shift,
                     ..piece.rect
                 },
-                fragmentainer_clip: Some(FragmentRect {
-                    y: piece.clip.y + shift,
-                    ..piece.clip
-                }),
+                fragmentainer_clip: Some(
+                    FragmentRect {
+                        y: piece.clip.y + shift,
+                        ..piece.clip
+                    }
+                    .into(),
+                ),
                 fragment_index: 0,
                 fragment_count: 1,
                 line_start: None,

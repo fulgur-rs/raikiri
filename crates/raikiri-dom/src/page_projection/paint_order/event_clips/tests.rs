@@ -27,7 +27,9 @@ fn an_event_keeps_its_line_clip_outside_the_glyphs_own_page() {
         .iter_mut()
         .find(|placement| placement.node == root)
         .unwrap();
-    placement.fragment_clip = Some(PaintRect::new(0.0, 0.0, 10.0, 20.0));
+    placement.fragment_clip = Some(raikiri_traits::PaintClip::new(PaintRect::new(
+        0.0, 0.0, 10.0, 20.0,
+    )));
     placement.overflow_chain = Some(17);
     rebuild_text_index(&mut doc, &cascade);
     let page = &doc.page_projection.pages[1];
@@ -81,7 +83,9 @@ fn a_paginated_block_pseudo_keeps_its_placement_fragmentainer_clip() {
     // Explicit fragmentainer metadata is independent of the block box's
     // slicing; assign it after layout to isolate that clip contract.
     for placement in &mut doc.page_projection.text_roots {
-        placement.fragment_clip = Some(PaintRect::new(0.0, 0.0, 10.0, 300.0));
+        placement.fragment_clip = Some(raikiri_traits::PaintClip::new(PaintRect::new(
+            0.0, 0.0, 10.0, 300.0,
+        )));
     }
     rebuild_text_index(&mut doc, &cascade);
     let mut sliced = 0;

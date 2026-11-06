@@ -2478,12 +2478,15 @@ fn apply_nested_continuation(
                 parent: Some(row_box),
                 fragmentainer,
                 rect,
-                fragmentainer_clip: Some(crate::fragment::FragmentRect {
-                    x: column_x,
-                    y: content.y,
-                    width: plan.context.column_width,
-                    height: plan.rows.heights[fragment.row],
-                }),
+                fragmentainer_clip: Some(
+                    crate::fragment::FragmentRect {
+                        x: column_x,
+                        y: content.y,
+                        width: plan.context.column_width,
+                        height: plan.rows.heights[fragment.row],
+                    }
+                    .into(),
+                ),
                 fragment_index: 0,
                 fragment_count: 1,
                 line_start: Some(fragment.line_start),
@@ -2522,12 +2525,15 @@ fn apply_nested_continuation(
                 fragmentainer: piece.row * plan.context.column_count + piece.column,
                 rect,
                 // A box that stays in one column is not cut.
-                fragmentainer_clip: (piece.count > 1).then_some(crate::fragment::FragmentRect {
-                    x: column_x,
-                    y: content.y,
-                    width: layout.size.width.max(plan.context.column_width),
-                    height: plan.rows.heights[piece.row],
-                }),
+                fragmentainer_clip: (piece.count > 1).then_some(
+                    crate::fragment::FragmentRect {
+                        x: column_x,
+                        y: content.y,
+                        width: layout.size.width.max(plan.context.column_width),
+                        height: plan.rows.heights[piece.row],
+                    }
+                    .into(),
+                ),
                 fragment_index: piece.index,
                 fragment_count: piece.count,
                 line_start: None,
@@ -3068,16 +3074,19 @@ fn record_nested_ifc_box_fragments(
                                             width: layout.size.width,
                                             height: layout.size.height,
                                         },
-                                        fragmentainer_clip: Some(crate::fragment::FragmentRect {
-                                            x: if parent == parent_fragment {
-                                                column_x
-                                            } else {
-                                                -parent_offset.x
-                                            },
-                                            y: -parent_offset.y,
-                                            width: context.column_width,
-                                            height: column_clip_height,
-                                        }),
+                                        fragmentainer_clip: Some(
+                                            crate::fragment::FragmentRect {
+                                                x: if parent == parent_fragment {
+                                                    column_x
+                                                } else {
+                                                    -parent_offset.x
+                                                },
+                                                y: -parent_offset.y,
+                                                width: context.column_width,
+                                                height: column_clip_height,
+                                            }
+                                            .into(),
+                                        ),
                                         fragment_index: 0,
                                         fragment_count: 1,
                                         line_start: (ancestor == node_id)
@@ -3109,24 +3118,27 @@ fn record_nested_ifc_box_fragments(
                                 parent: Some(parent),
                                 fragmentainer: column,
                                 rect: placement.rect,
-                                fragmentainer_clip: Some(crate::fragment::FragmentRect {
-                                    x: if parent == parent_fragment {
-                                        column_x
-                                    } else {
-                                        -parent_offset.x
-                                    },
-                                    // A box that begins above the column top
-                                    // by `piece_lead` has its column below
-                                    // that much of it.
-                                    y: -parent_offset.y
-                                        + if path.is_empty() && sliced {
-                                            piece_lead
+                                fragmentainer_clip: Some(
+                                    crate::fragment::FragmentRect {
+                                        x: if parent == parent_fragment {
+                                            column_x
                                         } else {
-                                            0.0
+                                            -parent_offset.x
                                         },
-                                    width: context.column_width,
-                                    height: column_clip_height,
-                                }),
+                                        // A box that begins above the column top
+                                        // by `piece_lead` has its column below
+                                        // that much of it.
+                                        y: -parent_offset.y
+                                            + if path.is_empty() && sliced {
+                                                piece_lead
+                                            } else {
+                                                0.0
+                                            },
+                                        width: context.column_width,
+                                        height: column_clip_height,
+                                    }
+                                    .into(),
+                                ),
                                 fragment_index: 0,
                                 fragment_count: 1,
                                 line_start: None,
@@ -3255,7 +3267,7 @@ impl FlexFloatChain {
 
 fn extend_fragment_clip(fragment: &mut crate::fragment::LayoutFragment, height: f32) {
     if let Some(clip) = fragment.fragmentainer_clip.as_mut() {
-        clip.height = clip.height.max(height);
+        clip.rect.height = clip.rect.height.max(height);
     }
 }
 

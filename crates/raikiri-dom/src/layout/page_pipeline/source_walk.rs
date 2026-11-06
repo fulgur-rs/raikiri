@@ -12,6 +12,7 @@ use super::{
 };
 use crate::fragment::LayoutFragment;
 use crate::node::Node;
+use raikiri_traits::PaintClip;
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::Arc;
 
@@ -77,7 +78,7 @@ struct ProjectionVisit {
     /// than reaching it from its parent.
     is_fragment_visit: bool,
     /// Intersection of the explicit clips of the fragments entered so far.
-    fragment_clip: Option<PaintRect>,
+    fragment_clip: Option<PaintClip>,
     /// The nearest enclosing placement overflow clip, as an index into the
     /// clips the walk collects.
     overflow_chain: Option<usize>,
@@ -160,29 +161,51 @@ impl<'a> FragmentIndex<'a> {
 pub(super) fn fragment_clip(
     fragment: &LayoutFragment,
     origin: (f32, f32),
-    outer: Option<PaintRect>,
-) -> Option<PaintRect> {
+    outer: Option<PaintClip>,
+) -> Option<PaintClip> {
     fragment
         .fragmentainer_clip
-        .map(|clip| {
-            let clip = PaintRect::new(
-                origin.0 + clip.x - fragment.rect.x,
-                origin.1 + clip.y - fragment.rect.y,
-                clip.width,
-                clip.height,
-            );
+        .map(|mut clip| {
+            clip.rect.x += origin.0 - fragment.rect.x;
+            clip.rect.y += origin.1 - fragment.rect.y;
             if let Some(parent) = outer {
-                let x = clip.x.max(parent.x);
-                let y = clip.y.max(parent.y);
-                PaintRect::new(
-                    x,
-                    y,
-                    ((clip.x + clip.width).min(parent.x + parent.width) - x).max(0.0),
-                    ((clip.y + clip.height).min(parent.y + parent.height) - y).max(0.0),
-                )
-            } else {
-                clip
+                let intersect = |start: f32,
+                                 size: f32,
+                                 closed,
+                                 other_start: f32,
+                                 other_size: f32,
+                                 other_closed| {
+                    match (closed, other_closed) {
+                        (false, _) => (other_start, other_size),
+                        (_, false) => (start, size),
+                        (true, true) => {
+                            let low = f64::from(start.max(other_start));
+                            let high = (f64::from(start) + f64::from(size))
+                                .min(f64::from(other_start) + f64::from(other_size));
+                            (low as f32, (high - low).max(0.0) as f32)
+                        }
+                    }
+                };
+                (clip.rect.x, clip.rect.width) = intersect(
+                    clip.rect.x,
+                    clip.rect.width,
+                    clip.clip_x,
+                    parent.rect.x,
+                    parent.rect.width,
+                    parent.clip_x,
+                );
+                (clip.rect.y, clip.rect.height) = intersect(
+                    clip.rect.y,
+                    clip.rect.height,
+                    clip.clip_y,
+                    parent.rect.y,
+                    parent.rect.height,
+                    parent.clip_y,
+                );
+                clip.clip_x |= parent.clip_x;
+                clip.clip_y |= parent.clip_y;
             }
+            clip
         })
         .or(outer)
 }

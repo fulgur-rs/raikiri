@@ -6,6 +6,7 @@
 //! recursively lays out children against that context.
 
 use raikiri_style::property::ColumnFillValue;
+use raikiri_traits::{PaintClip, PaintRect};
 
 /// Used multicolumn settings carried from computed style into the Taffy tree.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,6 +222,12 @@ pub struct FragmentRect {
     pub height: f32,
 }
 
+impl From<FragmentRect> for PaintClip {
+    fn from(rect: FragmentRect) -> Self {
+        Self::new(PaintRect::new(rect.x, rect.y, rect.width, rect.height))
+    }
+}
+
 /// Physical box or text-range fragment emitted by a layout strategy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[doc(hidden)]
@@ -234,7 +241,8 @@ pub struct LayoutFragment {
     /// Physical position and size relative to the parent fragment's origin.
     pub rect: FragmentRect,
     /// Clip for the owning fragmentainer in the parent fragment's space.
-    pub fragmentainer_clip: Option<FragmentRect>,
+    /// Open axes stay unbounded until the consumer selects drawing bounds.
+    pub fragmentainer_clip: Option<PaintClip>,
     /// Zero-based order among fragments of this source node.
     pub fragment_index: usize,
     /// Total number of fragments for this source node.

@@ -105,7 +105,7 @@ pub(super) struct VisitFrame {
     pub(super) fragment_origin_y: f32,
     pub(super) fragmentainer: Option<usize>,
     pub(super) fragment_rect: Option<FragmentRect>,
-    pub(super) fragment_clip: Option<FragmentRect>,
+    pub(super) fragment_clip: Option<raikiri_traits::PaintClip>,
     pub(super) is_fragment_visit: bool,
     pub(super) inside_fixed: bool,
     pub(super) inside_fixed_containing_block: bool,

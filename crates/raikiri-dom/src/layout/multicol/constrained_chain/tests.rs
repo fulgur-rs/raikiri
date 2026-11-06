@@ -166,5 +166,5 @@ fn column_clips_keep_overhanging_ruby_annotations() {
         .unwrap();
     // The inter-character annotation stands beside the end of the 80px
     // base, past the box, inside the ruby's inline box.
-    assert_eq!((clip.x, clip.width), (0.0, 100.0), "{clip:?}");
+    assert_eq!((clip.rect.x, clip.rect.width), (0.0, 100.0), "{clip:?}");
 }
