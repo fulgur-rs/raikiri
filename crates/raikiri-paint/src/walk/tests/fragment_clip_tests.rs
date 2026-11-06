@@ -100,3 +100,25 @@ fn a_fragment_open_on_both_axes_uses_only_the_page_bounds() {
         page_bounds_in_scene(transform, &page)
     );
 }
+
+#[test]
+fn snapping_does_not_reopen_empty_or_off_page_fragment_clips() {
+    let page = PageBox::new();
+    for rect in [
+        raikiri_traits::PaintRect::new(10.5, 20.5, 0.0, 40.0),
+        raikiri_traits::PaintRect::new(10.5, 20.5, 40.0, 0.0),
+        raikiri_traits::PaintRect::new(-100.0, 20.5, 10.0, 40.0),
+    ] {
+        let clip = raikiri_traits::PaintClip::new(rect);
+        let bounds = fragment_clip_bounds(clip, (0.0, 0.0), Affine::IDENTITY, &page);
+        let snapped = snap_column_clip_outward(
+            bounds,
+            Some(DeviceGrid::new(1.0, 0.5, 1.0, 0.5)),
+            OpenBlockEdges {
+                top: true,
+                bottom: true,
+            },
+        );
+        assert_eq!(snapped.area(), 0.0);
+    }
+}

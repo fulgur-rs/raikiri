@@ -4567,6 +4567,9 @@ impl OpenBlockEdges {
 /// transform that rotates or skews, has no grid (`None`) and keeps the clip
 /// exact.
 fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBlockEdges) -> Rect {
+    if clip.width() <= 0.0 || clip.height() <= 0.0 {
+        return clip;
+    }
     let Some(grid) = grid.filter(|grid| {
         grid.scale_x.is_finite() && grid.scale_x != 0.0 && grid.offset_x.is_finite()
     }) else {
