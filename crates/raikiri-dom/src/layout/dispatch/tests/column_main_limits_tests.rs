@@ -218,7 +218,7 @@ fn bounded_column_measurements_restore_styles_and_cached_results() {
                     let actual = tree
                         .compute_child_layout(container.into(), constrained)
                         .size;
-                    let (mut fresh_doc, fresh_container, _) =
+                    let (mut fresh_doc, fresh_container, fresh_item) =
                         super::column_cross_size_tests::column_document(
                             if vertical {
                                 "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:calc(10% + 5px)"
@@ -238,6 +238,12 @@ fn bounded_column_measurements_restore_styles_and_cached_results() {
                     let expected = fresh
                         .compute_child_layout(fresh_container.into(), constrained)
                         .size;
+                    if run_mode == RunMode::PerformLayout {
+                        assert_eq!(
+                            tree.nodes[item].layout, fresh.nodes[fresh_item].layout,
+                            "item geometry: vertical={vertical} definite={definite} axis={axis:?}"
+                        );
+                    }
                     // ComputeSize does not promise the unrequested axis; a cache
                     // hit may retain it while a fresh measurement leaves it zero.
                     if run_mode == RunMode::PerformLayout || axis != RequestedAxis::Vertical {
@@ -267,4 +273,95 @@ fn bounded_column_measurements_restore_styles_and_cached_results() {
             assert_eq!(tree.layout_cache_context.epoch(), epoch);
         }
     }
+}
+
+#[test]
+fn out_of_flow_and_hidden_items_do_not_set_the_column_main_contribution() {
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{absolute_rect, cascaded, page_box_800x600, with_ahem};
+    for vertical in [false, true] {
+        let (container_style, item_style) = if vertical {
+            (
+                "display:flex;flex-direction:column;writing-mode:vertical-rl;position:relative",
+                "display:block;writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px",
+            )
+        } else {
+            (
+                "display:inline-flex;flex-direction:column;position:relative",
+                "display:block;writing-mode:vertical-rl;flex:0 0 120px;max-height:80px",
+            )
+        };
+        let (mut doc, container, item) = super::column_cross_size_tests::column_document(
+            container_style,
+            item_style,
+            "xxxx xxxx xx",
+        );
+        let absolute = doc.append_element(Some(container), "div", Some("display:block;position:absolute;flex-basis:auto;width:500px;height:500px;top:0;left:0"));
+        let hidden = doc.append_element(
+            Some(container),
+            "div",
+            Some("display:none;flex-basis:auto;width:900px;height:900px"),
+        );
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+        let root_rect = absolute_rect(&doc, container);
+        let item_rect = absolute_rect(&doc, item);
+        assert_eq!(if vertical { root_rect.2 } else { root_rect.3 }, 80.0);
+        assert_eq!(if vertical { item_rect.2 } else { item_rect.3 }, 80.0);
+        let abs = absolute_rect(&doc, absolute);
+        assert_eq!((abs.2, abs.3), (500.0, 500.0));
+        let hidden = absolute_rect(&doc, hidden);
+        assert_eq!((hidden.2, hidden.3), (0.0, 0.0));
+    }
+}
+
+#[test]
+fn an_invalid_resolved_flex_basis_delegates_without_a_measurement_override() {
+    use crate::layout::context::LayoutSession;
+    use crate::layout::protocol::{LayoutInput, LayoutOutput, RequestedAxis, RunMode};
+    use crate::layout::test_support::{cascaded, with_ahem};
+    use raikiri_layout_geometry::Size;
+    use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+    use raikiri_style::ComputedLengthPercentageOrAuto as L;
+    let (mut doc, container, item) = super::column_cross_size_tests::column_document(
+        "display:inline-flex;flex-direction:column",
+        "display:block;flex:0 0 120px;max-height:80px",
+        "x",
+    );
+    with_ahem(&mut doc);
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(item).unwrap();
+    tree.push_local_overrides(vec![(
+        key,
+        OwnedPropertyOverride::length(LengthProperty::FlexBasis, L::Px(-1.0), true).unwrap(),
+    )]);
+    let checkpoint = tree.override_checkpoint();
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Both,
+        ..LayoutInput::HIDDEN
+    };
+    let calls = std::cell::Cell::new(0);
+    let marker = Size {
+        width: 17.0,
+        height: 19.0,
+    };
+    let output = super::super::column_main_limits::layout(
+        &mut tree,
+        container.into(),
+        inputs,
+        false,
+        |tree, node, received| {
+            calls.set(calls.get() + 1);
+            assert_eq!(node, container.into());
+            assert_eq!(received, inputs);
+            assert_eq!(tree.override_checkpoint(), checkpoint);
+            LayoutOutput::from_outer_size(marker)
+        },
+    );
+    assert_eq!(calls.get(), 1);
+    assert_eq!(output.size, marker);
+    tree.restore_overrides_to(0);
 }
