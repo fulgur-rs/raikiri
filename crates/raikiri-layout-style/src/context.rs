@@ -341,9 +341,10 @@ pub enum GridItemRatio {
     /// Leave natural ratio sizing to the replaced item itself. The parent
     /// retains its replaced-element alignment and independent axis bounds.
     Replaced,
-    /// Leave the automatic height to the item's ratio and content at its
-    /// final width. Preserve its resolved alignment when hiding the ratio
-    /// from the parent, whose `normal` alignment would otherwise stretch it.
+    /// Leave ratio transfer and content floors to the item, which resolves
+    /// percentage dimensions from its grid-area basis during measurement.
+    /// Preserve its resolved alignment when hiding the ratio from the parent,
+    /// whose `normal` alignment would otherwise stretch it.
     MeasuredByItem {
         /// The resolved block-axis alignment.
         align_self: crate::values::AlignSelf,
@@ -374,7 +375,7 @@ pub struct ViewContext {
     pub flex_item_ratio: FlexItemRatio,
     /// The limits on the cross size of a flex item that the size it states holds.
     pub held_cross_size: Option<HeldCrossSize>,
-    /// Whether a grid item's automatic height is measured by the item itself.
+    /// Whether a grid item's ratio-dependent sizes are measured by the item itself.
     pub grid_item_ratio: GridItemRatio,
 }
 impl Default for ViewContext {

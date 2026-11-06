@@ -543,10 +543,12 @@ impl LayoutSession<'_> {
     /// Preserve replaced sizes and defer content-based automatic ratio sizes
     /// to the item. The parent otherwise transfers bounds into stated replaced
     /// sizes or treats a non-replaced ratio height as final without its content floor.
+    /// A percentage-sized item also resolves its ratio and bounds while its
+    /// grid-area basis is known, rather than before the tracks are sized.
     fn grid_item_ratio(&self, idx: usize) -> raikiri_layout_style::GridItemRatio {
         use raikiri_layout_style::GridItemRatio;
         use raikiri_layout_style::values::{
-            AlignItemsKeyword, AlignSelf, ExpandedLengthPercentageAuto,
+            AlignItemsKeyword, AlignSelf, ExpandedDimension, ExpandedLengthPercentageAuto,
         };
         let item = self.physical_style(idx);
         let vertical_container = matches!(
@@ -579,19 +581,26 @@ impl LayoutSession<'_> {
                 GridItemRatio::Declared
             };
         }
+        let size = item.size();
+        let percentage = |size: Dimension| match size.expand() {
+            ExpandedDimension::Percent(_) => true,
+            ExpandedDimension::Calc(value) => value.has_percentage(),
+            _ => false,
+        };
+        let percentage_sized = percentage(size.width) || percentage(size.height);
+        let auto_with_minimum = size.width.is_auto()
+            && size.height.is_auto()
+            && matches!(
+                item.min_size().width.expand(),
+                ExpandedLengthPercentageAuto::Length(_)
+                    | ExpandedLengthPercentageAuto::Percent(_)
+                    | ExpandedLengthPercentageAuto::Calc(_)
+            );
         if !vertical_container
-            && (!item.size().width.is_auto()
-                || !item.size().height.is_auto()
-                || !matches!(
-                    self.nodes[idx].formatting_context,
-                    FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
-                )
-                || !matches!(
-                    item.min_size().width.expand(),
-                    ExpandedLengthPercentageAuto::Length(_)
-                        | ExpandedLengthPercentageAuto::Percent(_)
-                        | ExpandedLengthPercentageAuto::Calc(_)
-                ))
+            && (!matches!(
+                self.nodes[idx].formatting_context,
+                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
+            ) || !(percentage_sized || auto_with_minimum))
         {
             return GridItemRatio::Declared;
         }

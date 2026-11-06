@@ -1700,7 +1700,9 @@ fn compute_ifc_root(
             // The width the ratio takes from the height, raised to the
             // min-content width of the lines unless the box scrolls or
             // states a `min-width`.
-            let width = if metrics.ratio_width {
+            let width = if metrics.ratio_width
+                || grid_cyclic_ratio_content_minimum(tree, idx, &layout_style, inputs)
+            {
                 let minimum = ifc_min_content_width(tree, node_id, inputs.parent_size);
                 width.max(minimum.maybe_clamp(None, metrics.own_max.width))
             } else {
@@ -3994,6 +3996,44 @@ fn flex_layout_items(
     output
 }
 
+/// Whether a cyclic percentage width contributes the min-content floor of
+/// an otherwise automatic ratio width while the grid sizes its columns.
+fn grid_cyclic_ratio_content_minimum(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    style: &Style,
+    inputs: LayoutInput,
+) -> bool {
+    let cyclic_width = match style.size.width.expand() {
+        ExpandedDimension::Percent(_) => true,
+        ExpandedDimension::Calc(value) => value.has_percentage(),
+        _ => false,
+    };
+    inputs.run_mode == RunMode::ComputeSize
+        && inputs.sizing_mode == SizingMode::InherentSize
+        && inputs.axis == RequestedAxis::Horizontal
+        && matches!(
+            inputs.available_space.width,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
+        && inputs.parent_size.width.is_none()
+        && inputs.known_dimensions.width.is_none()
+        && inputs.known_dimensions.height.is_some()
+        && inputs.known_dimensions_are_definite.height
+        && cyclic_width
+        && style.aspect_ratio.is_some()
+        && style.min_size.width.is_auto()
+        && !style.overflow.x.is_scroll_container()
+        && !style.item_is_replaced
+        && !style.item_is_table
+        && style.position != Position::Absolute
+        && !tree.nodes[idx].used_writing_mode.is_vertical()
+        && !tree.container_is_vertical(idx)
+        && tree
+            .taffy_parent_of(idx)
+            .is_some_and(|parent| tree.nodes[parent].layout_display() == Display::Grid)
+}
+
 /// Fill a grid item's normal inline alignment at the offered area width,
 /// preserving the width floor transferred from its minimum height and edges
 /// and the ceiling transferred from its maximum height. Content may raise
@@ -4018,6 +4058,16 @@ fn with_grid_ratio_width(
         return inputs;
     }
     let style = block_flow::style_input::physical(tree, idx);
+    // A resolved authored width keeps its own bounds; a height or its bounds
+    // must not replace it through the ratio.
+    if style
+        .size
+        .width
+        .maybe_resolve(inputs.parent_size.width)
+        .is_some()
+    {
+        return inputs;
+    }
     let item = tree.physical_style(idx);
     let justify = item.bridge_justify_self().unwrap_or_else(|| {
         tree.taffy_parent_of(idx)
@@ -4033,6 +4083,12 @@ fn with_grid_ratio_width(
     let content_ratio = tree.nodes[idx].ratio_in_content_box;
     let edges = replaced_size::padding_and_border(&style, inputs.parent_size.width);
     let metrics = block_flow::Metrics::resolve(&style, false, content_ratio, inputs);
+    // The item applies its automatic content minimum at the real percentage
+    // padding basis. Do not turn its preferred width into an imposed width
+    // that would bypass that measurement.
+    if inputs.known_dimensions.width.is_none() && metrics.preferred.width.is_some() {
+        return inputs;
+    }
     let floor = metrics.min.height.unwrap_or(0.0).max(edges.height);
     let insets = replaced_size::ratio_box_insets(&style, edges, content_ratio);
     let floor = replaced_size::width_for_height(
@@ -4517,7 +4573,21 @@ fn with_ratio_height(
     let style = block_flow::style_input::physical(tree, idx);
     // A measure that ignores the sizes of the box (`ContentSize`) sees an
     // `auto` height whatever the style says.
-    let auto_height = inputs.sizing_mode == SizingMode::ContentSize || style.size.height.is_auto();
+    let cyclic_height = match style.size.height.expand() {
+        ExpandedDimension::Percent(_) => inputs.parent_size.height.is_none(),
+        ExpandedDimension::Calc(value) => {
+            value.has_percentage()
+                && style
+                    .size
+                    .height
+                    .maybe_resolve(inputs.parent_size.height)
+                    .is_none()
+        }
+        _ => false,
+    };
+    let auto_height = inputs.sizing_mode == SizingMode::ContentSize
+        || style.size.height.is_auto()
+        || cyclic_height;
     if style.aspect_ratio.is_none() || !auto_height {
         return layout(tree, inputs);
     }
@@ -4822,6 +4892,8 @@ fn with_ratio_width(
     }
     let metrics =
         block_flow::Metrics::resolve(&style, false, tree.nodes[idx].ratio_in_content_box, inputs);
+    let content_minimum =
+        metrics.ratio_width || grid_cyclic_ratio_content_minimum(tree, idx, &style, inputs);
     let stated_height = inputs.sizing_mode == SizingMode::InherentSize
         && style.size.width.is_auto()
         && style
@@ -4843,7 +4915,7 @@ fn with_ratio_width(
         )
         && tree.flex_main_axis_is_width(idx) == Some(false);
     let Some(width) = metrics.preferred.width.filter(|_| {
-        metrics.ratio_width
+        content_minimum
             || stated_height
             || flexed_height
             || flex_item_follows_main_size(tree, idx, &inputs)
@@ -4851,7 +4923,7 @@ fn with_ratio_width(
     }) else {
         return inputs;
     };
-    if vertical_content_size || !metrics.ratio_width {
+    if vertical_content_size || !content_minimum {
         // These vertical cross-size queries use the ratio on the block axis;
         // its content does not add an automatic inline-size minimum there.
         // An explicit minimum or scrolling opts out of the content minimum,
