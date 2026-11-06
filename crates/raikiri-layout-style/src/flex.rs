@@ -152,10 +152,15 @@ impl LayoutStyleView<'_> {
             self.length(LengthProperty::FlexBasis).dimension()
         }
     }
-    /// The flex grow factor of a flex item.
+    /// The flex grow factor of a flex item, including an intrinsic-probe override.
     #[inline]
     pub fn flex_grow(&self) -> f32 {
-        self.prepared.values.flex_grow
+        self.overrides()
+            .find_map(|o| match o {
+                OverrideKind::FlexGrow(v) => Some(v),
+                _ => None,
+            })
+            .unwrap_or(self.prepared.values.flex_grow)
     }
     /// The flex shrink factor of a flex item, including an intrinsic-probe override.
     #[inline]

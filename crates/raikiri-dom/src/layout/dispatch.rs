@@ -3869,7 +3869,15 @@ fn flex_layout_sized(
         node_id,
         main_size_is_definite,
         inputs.run_mode,
-        |tree| flex_layout_items(tree, node_id, inputs),
+        |tree| {
+            intrinsic_scopes::with_hypothetical_column_height(
+                tree,
+                node_id,
+                inputs,
+                main_size_is_definite,
+                |tree, inputs| flex_layout_items(tree, node_id, inputs),
+            )
+        },
     )
 }
 
