@@ -474,6 +474,7 @@ fn repeated_header_columns_shift_shared_overflow_and_break_clips_together() {
         &cascade,
         body,
         600.0,
+        &HashMap::new(),
         |_| 0.0,
         |_| false,
     );
@@ -11083,6 +11084,7 @@ fn repeated_header_copies_are_charged_to_the_projection_budget() {
         &cascade,
         body,
         600.0,
+        &HashMap::new(),
         |_| 0.0,
         |_| false,
     );
@@ -18291,6 +18293,7 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
         &cascade,
         body,
         600.0,
+        &HashMap::new(),
         |_| 0.0,
         |_| false,
     );

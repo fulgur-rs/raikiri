@@ -8,6 +8,8 @@ enum Tail {
     FooterCaption,
     HeaderCaption,
     FooterTwoAuto,
+    DirectFooterTwoAuto,
+    DirectFooterTwoAvoid,
     FooterTwoAvoid,
     MultipleCaptions,
     HeaderFirstBody,
@@ -36,16 +38,26 @@ fn printed_table_with_followers(
         "body",
         Some("display:block;margin:0;width:200px;font-family:Ahem;font-size:8px;line-height:10px"),
     );
-    let holder = doc.append_element(
-        Some(body),
-        "div",
-        Some(format!("display:block;padding-bottom:{padding}px")),
-    );
+    let holder = if matches!(tail, Tail::DirectFooterTwoAuto | Tail::DirectFooterTwoAvoid) {
+        body
+    } else {
+        doc.append_element(
+            Some(body),
+            "div",
+            Some(format!("display:block;padding-bottom:{padding}px")),
+        )
+    };
     let mut content = holder;
     for _ in 0..wrapper_depth {
         content = doc.append_element(Some(content), "div", Some("display:block"));
     }
-    let before_table = if matches!(tail, Tail::FooterTwoAuto | Tail::FooterTwoAvoid) {
+    let before_table = if matches!(
+        tail,
+        Tail::FooterTwoAuto
+            | Tail::DirectFooterTwoAuto
+            | Tail::DirectFooterTwoAvoid
+            | Tail::FooterTwoAvoid
+    ) {
         50
     } else if matches!(tail, Tail::HeaderFirstBody) {
         95
@@ -63,7 +75,13 @@ fn printed_table_with_followers(
     let table = doc.append_element(
         Some(content),
         "table",
-        Some("display:table;border-spacing:0;border-collapse:collapse"),
+        Some(if matches!(tail, Tail::DirectFooterTwoAuto | Tail::DirectFooterTwoAvoid) {
+            format!(
+                "display:table;border-spacing:0;border-collapse:separate;padding-bottom:{padding}px"
+            )
+        } else {
+            "display:table;border-spacing:0;border-collapse:collapse".to_owned()
+        }),
     );
     let row = |doc: &mut Document, parent, text, height| {
         let row_css = if height > 10 {
@@ -93,16 +111,27 @@ fn printed_table_with_followers(
     rows.push(row(&mut doc, group, "d", last_body_height));
     if matches!(
         tail,
-        Tail::Footer | Tail::FooterCaption | Tail::FooterTwoAuto | Tail::FooterTwoAvoid
+        Tail::Footer
+            | Tail::FooterCaption
+            | Tail::FooterTwoAuto
+            | Tail::DirectFooterTwoAuto
+            | Tail::DirectFooterTwoAvoid
+            | Tail::FooterTwoAvoid
     ) {
-        let footer_css = if matches!(tail, Tail::FooterTwoAvoid) {
+        let footer_css = if matches!(tail, Tail::FooterTwoAvoid | Tail::DirectFooterTwoAvoid) {
             "display:table-footer-group;break-inside:avoid"
         } else {
             "display:table-footer-group;break-inside:auto"
         };
         let footer = doc.append_element(Some(table), "tfoot", Some(footer_css));
         rows.push(row(&mut doc, footer, "f", 10));
-        if matches!(tail, Tail::FooterTwoAuto | Tail::FooterTwoAvoid) {
+        if matches!(
+            tail,
+            Tail::FooterTwoAuto
+                | Tail::DirectFooterTwoAuto
+                | Tail::DirectFooterTwoAvoid
+                | Tail::FooterTwoAvoid
+        ) {
             rows.push(row(&mut doc, footer, "g", 10));
         }
     }
@@ -218,6 +247,50 @@ fn table_tails_stay_when_the_closing_edges_fit_exactly() {
 #[test]
 fn a_multirow_footer_with_auto_breaks_moves_only_the_last_row() {
     assert_tail(Tail::FooterTwoAuto, &[150.0, 160.0, 170.0, 200.0], 240.0);
+}
+
+#[test]
+fn a_direct_table_with_auto_footer_breaks_moves_only_its_last_row() {
+    let (doc, _, table, rows, after, pages) = printed_table(Tail::DirectFooterTwoAuto, 30, false);
+    let actual: Vec<_> = rows.into_iter().map(|row| page_flow_y(&doc, row)).collect();
+    assert_eq!(actual, [150.0, 160.0, 170.0, 200.0]);
+    assert_eq!(page_flow_y(&doc, after), 240.0);
+    let (_, y, _, height) = crate::layout::test_support::absolute_rect(&doc, table);
+    assert_eq!(y + height, 240.0);
+    assert_eq!(pages, 2);
+}
+
+#[test]
+fn direct_table_footer_controls_keep_avoid_and_no_tail_behavior() {
+    for (tail, padding, expected_rows, expected_after) in [
+        (
+            Tail::DirectFooterTwoAuto,
+            0,
+            [150.0, 160.0, 170.0, 180.0],
+            190.0,
+        ),
+        (
+            Tail::DirectFooterTwoAvoid,
+            0,
+            [150.0, 160.0, 170.0, 180.0],
+            190.0,
+        ),
+        (
+            Tail::DirectFooterTwoAvoid,
+            30,
+            [150.0, 160.0, 200.0, 210.0],
+            250.0,
+        ),
+    ] {
+        let (doc, _, _, rows, after, _) = printed_table(tail, padding, false);
+        let actual: Vec<_> = rows.into_iter().map(|row| page_flow_y(&doc, row)).collect();
+        assert_eq!(actual, expected_rows, "{tail:?}, padding={padding}");
+        assert_eq!(
+            page_flow_y(&doc, after),
+            expected_after,
+            "{tail:?}, padding={padding}"
+        );
+    }
 }
 
 #[test]

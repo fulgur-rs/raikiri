@@ -88,6 +88,7 @@ impl HeaderRepeats {
         cascade: &CascadeResult,
         body: usize,
         page_height: f32,
+        footer_tail_ends: &HashMap<usize, f32>,
         absolute_y: impl Fn(usize) -> f32,
         monolithic: impl Fn(usize) -> bool,
     ) -> Self {
@@ -102,7 +103,7 @@ impl HeaderRepeats {
         // fragmentation, so a wide header on a long table cannot turn a
         // layout that succeeds without repetition into a limit failure.
         let mut copy_budget = document.fragment_tree.limit / 2;
-        for table in block_flow_tables(document, cascade, body) {
+        for table in block_flow_tables(document, cascade, body, page_height) {
             let node = document.ifc_layout_node(table).unwrap();
             let cv = &cascade.computed[table];
             if node.is_display_none()
@@ -159,10 +160,10 @@ impl HeaderRepeats {
             };
             let header = repeatable(header);
             let footer = repeatable(footer).filter(|&footer| {
-                // Keep existing direct-child behavior. A newly discovered
-                // multi-row footer that allows page breaks uses ordinary
-                // row candidates instead of moving its whole source group.
-                document.parent_of(table) == Some(body)
+                // Breakable multi-row footers with closing tails use ordinary
+                // rows instead of moving the whole source group. Preserve the
+                // existing direct-child repeat behavior when there is no tail.
+                (document.parent_of(table) == Some(body) && !footer_tail_ends.contains_key(&footer))
                     || matches!(
                         cascade.computed[footer].break_inside,
                         BreakInside::Avoid | BreakInside::AvoidPage
@@ -604,7 +605,12 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
 /// Table sources whose ancestor boxes follow the shared block flow when a
 /// repeated header adds room. Bounded or independently placed flows stop the
 /// search so their internal shifts cannot escape into their outer siblings.
-fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) -> Vec<usize> {
+fn block_flow_tables(
+    document: &Document,
+    cascade: &CascadeResult,
+    body: usize,
+    page_height: f32,
+) -> Vec<usize> {
     let mut tables = Vec::new();
     let mut pending: Vec<_> = document.nodes[body]
         .children
@@ -618,8 +624,15 @@ fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) 
             continue;
         }
         if node.display() == DisplayValue::Table {
+            // Nested discovery supports tables that fit on a page by
+            // themselves but cross a page because of preceding content or
+            // closing edges. Longer nested tables keep their existing path;
+            // general multi-page repetition also needs flex fragmentation.
+            let height = node.layout.size.height;
             if document.parent_of(id) == Some(body)
-                || shares_growing_block_flow(document, cascade, id)
+                || (height.is_finite()
+                    && height <= page_height
+                    && shares_growing_block_flow(document, cascade, id))
             {
                 tables.push(id);
             }

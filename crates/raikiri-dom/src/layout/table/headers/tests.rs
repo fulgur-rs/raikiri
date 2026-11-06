@@ -58,7 +58,7 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     assert!(!doc.nodes[ignored_containment].size_containment.height);
     assert_eq!(
-        block_flow_tables(&doc, &cascade, body),
+        block_flow_tables(&doc, &cascade, body, 200.0),
         [
             first,
             second,
@@ -67,5 +67,28 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
             fourth,
             direct_bounded
         ]
+    );
+}
+
+#[test]
+fn nested_repeat_discovery_stops_when_the_table_itself_needs_multiple_pages() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
+    let mut nested = Vec::new();
+    for height in [199.0, 200.0, 201.0, f32::INFINITY, f32::NAN] {
+        let table = doc.append_element(Some(wrapper), "table", Some("display:table"));
+        doc.nodes[table].layout.size.height = height;
+        nested.push(table);
+    }
+    let direct = doc.append_element(Some(body), "table", Some("display:table"));
+    doc.nodes[direct].layout.size.height = 300.0;
+    doc.mark_in_document_flags();
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    assert_eq!(
+        block_flow_tables(&doc, &cascade, body, 200.0),
+        [nested[0], nested[1], direct]
     );
 }

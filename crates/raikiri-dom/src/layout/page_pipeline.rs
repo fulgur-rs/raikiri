@@ -4280,11 +4280,35 @@ fn paginate_flow(
     );
     collector.collect_flow(root_flow_offset)?;
     let (clip_edges, edges_breaks) = collector.into_outputs();
+    let mut footer_tail_ends = HashMap::<usize, f32>::new();
+    for candidate in &candidates {
+        let edges = candidate.context.item_tail_edges();
+        if !candidate.context.is_table_row() || edges <= 0.0 {
+            continue;
+        }
+        let footer = document
+            .inclusive_ancestors(candidate.node_id)
+            .take_while(|&id| {
+                !matches!(
+                    document.nodes[id].display(),
+                    DisplayValue::Table | DisplayValue::InlineTable
+                )
+            })
+            .find(|&id| document.nodes[id].display() == DisplayValue::TableFooterGroup);
+        if let Some(footer) = footer {
+            let tail_end = candidate.raw_y + candidate.height + edges;
+            footer_tail_ends
+                .entry(footer)
+                .and_modify(|end| *end = end.max(tail_end))
+                .or_insert(tail_end);
+        }
+    }
     let mut table_headers = HeaderRepeats::prepare(
         document,
         cascade,
         roots.contents,
         page_step,
+        &footer_tail_ends,
         |id| root_flow_offset + current_abs_y(document, id),
         |id| {
             super::page::is_monolithic_for_pagination_with_transposed_axes(
@@ -4295,23 +4319,13 @@ fn paginate_flow(
             )
         },
     );
-    if table_headers.headers.values().any(|group| group.footer) {
-        for candidate in &candidates {
-            let edges = candidate.context.item_tail_edges();
-            if edges <= 0.0 {
-                continue;
-            }
-            if let Some(owner) = table_headers.owner(candidate.node_id)
-                && let Some(footer) = table_headers.headers.get_mut(&owner)
-                && footer.footer
-            {
-                // An avoided group may be represented by its first row. Both
-                // ends include root_flow_offset; subtract the entire footer so
-                // its remaining rows are not counted as additional closing edges.
-                let tail_end = candidate.raw_y + candidate.height + edges;
-                let footer_end = footer.source_y + footer.height;
-                footer.closing_edges = footer.closing_edges.max((tail_end - footer_end).max(0.0));
-            }
+    for (owner, tail_end) in footer_tail_ends {
+        if let Some(footer) = table_headers.headers.get_mut(&owner) {
+            // An avoided group may be represented by its first row. Both
+            // ends include root_flow_offset; subtract the entire footer so
+            // its remaining rows are not counted as additional closing edges.
+            let footer_end = footer.source_y + footer.height;
+            footer.closing_edges = (tail_end - footer_end).max(0.0);
         }
     }
     let avoided_breaks = AvoidedBreaks::collect(

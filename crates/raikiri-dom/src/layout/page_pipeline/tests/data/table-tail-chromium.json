@@ -1074,6 +1074,62 @@
       },
       "existing_unresolved_difference": "Existing last body-row/footer reservation differs near a page edge.",
       "followup": "RAIKIRI-1497"
+    },
+    {
+      "name": "direct-footer-two-auto",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:separate;padding-bottom:30px;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"height:100px\">A</div><div style=\"height:50px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot style=\"break-inside:auto\"><tr><td>f</td></tr><tr><td>g</td></tr></tfoot></table><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 150.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "g",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
     }
   ]
 }
