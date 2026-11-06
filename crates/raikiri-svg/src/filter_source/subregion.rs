@@ -230,11 +230,11 @@ fn clip(
     let qualified = &source[primitive.range().start + 1..after_name(source, primitive)];
     let prefix = qualified.rfind(':').map_or("", |at| &qualified[..=at]);
     let [x, y, width, height] = rect.map(number);
-    // A rule that styles every flood, or every composite, does not reach the
-    // clip: the style attribute of the flood goes after the rules.
+    // The flood is as black and as opaque as a flood is by default: a sheet
+    // that has something to say about the color or the opacity of a flood is
+    // not rewritten.
     let mut text = format!(
-        "<{prefix}feFlood x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" \
-         style=\"flood-color:black!important;flood-opacity:1!important\" result=\"{mask}\"/>\
+        "<{prefix}feFlood x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" result=\"{mask}\"/>\
          <{prefix}feComposite in=\"{inner}\" in2=\"{mask}\" operator=\"in\""
     );
     if let Some(result) = primitive.attribute("result") {

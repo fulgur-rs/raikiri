@@ -131,8 +131,9 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     let (mut tests_style, mut tests_divisor, mut tests_geometry, mut tests_length) =
         (false, false, false, false);
     // What the clips of the subregions add is a primitive of its own among the
-    // siblings, the `result` of a primitive moves to the clip, and the clip
-    // only carries along the attributes of the primitive.
+    // siblings, the `result` of a primitive moves to the clip, the clip only
+    // carries along the attributes of the primitive, and the flood of the clip
+    // is as black and opaque as the rules of the sheet leave a flood.
     let mut tests_primitives = false;
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
         if node
@@ -320,8 +321,10 @@ fn tests_attribute(css: &str, name: &str) -> bool {
 /// that a clip written next to it does not share: a selector that tests its
 /// `result`, or that tells one sibling from another by its place (a
 /// pseudo-class that counts, a combinator that relates siblings), or a
-/// declaration of its color space. The text is only searched, so a `+` in a
-/// function or a `~` in a string counts too, which leaves the sheet alone.
+/// declaration of its color space, or of the color or the opacity of a flood,
+/// which an important declaration of the sheet keeps the clip from setting
+/// for its own flood. The text is only searched, so a `+` in a function or a
+/// `~` in a string counts too, which leaves the sheet alone.
 fn reaches_primitives(css: &str) -> bool {
     let lowered = css.to_ascii_lowercase();
     tests_attribute(css, "result")
@@ -332,6 +335,8 @@ fn reaches_primitives(css: &str) -> bool {
             ":last",
             ":only",
             "color-interpolation-filters",
+            "flood-color",
+            "flood-opacity",
         ]
         .iter()
         .any(|text| lowered.contains(text))

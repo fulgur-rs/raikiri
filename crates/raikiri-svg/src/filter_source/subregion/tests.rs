@@ -437,7 +437,7 @@ fn the_clip_is_written_after_the_primitive() {
         fractions(
             "<feColorMatrix type='saturate' result='raikiri-subregion-0'/>\
              <feFlood x=\"0.25\" y=\"0.25\" width=\"0.5\" height=\"0.5\" \
-             style=\"flood-color:black!important;flood-opacity:1!important\" result=\"raikiri-subregion-1\"/>\
+             result=\"raikiri-subregion-1\"/>\
              <feComposite in=\"raikiri-subregion-0\" in2=\"raikiri-subregion-1\" operator=\"in\" result=\"a\"/>"
         )
     );
@@ -455,7 +455,7 @@ fn an_attribute_taken_out_may_follow_the_name_of_the_element() {
         fractions(
             "<feConvolveMatrix result=\"raikiri-subregion-0\" order='1' kernelMatrix='1'/>\
              <feFlood x=\"0.25\" y=\"0.25\" width=\"0.5\" height=\"0.5\" \
-             style=\"flood-color:black!important;flood-opacity:1!important\" result=\"raikiri-subregion-1\"/>\
+             result=\"raikiri-subregion-1\"/>\
              <feComposite in=\"raikiri-subregion-0\" in2=\"raikiri-subregion-1\" operator=\"in\"/>"
         )
     );
@@ -469,7 +469,7 @@ fn a_primitive_without_a_name_gets_one() {
         fractions(
             "<feOffset result=\"raikiri-subregion-0\" dx='1'></feOffset>\
              <feFlood x=\"0.25\" y=\"0.25\" width=\"0.5\" height=\"0.5\" \
-             style=\"flood-color:black!important;flood-opacity:1!important\" result=\"raikiri-subregion-1\"/>\
+             result=\"raikiri-subregion-1\"/>\
              <feComposite in=\"raikiri-subregion-0\" in2=\"raikiri-subregion-1\" operator=\"in\"/>"
         )
     );
@@ -590,23 +590,29 @@ fn what_a_selector_can_tell_is_left_alone() {
     // A rule about something else changes nothing.
     let source = format!(
         "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'>\
-         <style>feColorMatrix {{ flood-color: red }}</style>\
+         <style>feColorMatrix {{ lighting-color: red }}</style>\
          <filter id='f' primitiveUnits='objectBoundingBox'>{primitive}</filter></svg>"
     );
     assert!(matches!(like_browsers(&source), Cow::Owned(_)));
 }
 
 #[test]
-fn a_rule_for_every_flood_does_not_reach_the_clip() {
-    let style = "<style>feFlood { flood-color: blue; flood-opacity: 0 }</style>";
-    let source = format!(
-        "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'>{style}\
-         <filter id='f' primitiveUnits='objectBoundingBox'>\
-         <feColorMatrix {RED} x='25%' y='25%' width='50%' height='50%'/></filter>\
-         <rect x='20' y='20' width='40' height='40' fill='green' filter='url(#f)'/></svg>"
-    );
-    let drawn = rasterized(&source);
-    assert_eq!(pixel(&drawn, 35, 35), SOLID_RED);
+fn a_rule_for_the_color_or_the_opacity_of_a_flood_leaves_the_sheet_alone() {
+    // `usvg` lets an important declaration of the sheet win over the important
+    // declaration of a style attribute, so the flood of the clip could not be
+    // kept as black and opaque as it is by default.
+    let primitive = format!("<feColorMatrix {RED} x='25%' y='25%' width='50%' height='50%'/>");
+    for css in [
+        "feFlood { flood-opacity: 0 !important }",
+        "* { FLOOD-COLOR: blue }",
+        "#a { flood-opacity: .5 }",
+    ] {
+        let source = format!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'>\
+             <style>{css}</style><filter id='f' primitiveUnits='objectBoundingBox'>{primitive}</filter></svg>"
+        );
+        assert!(matches!(like_browsers(&source), Cow::Borrowed(_)), "{css}");
+    }
 }
 
 #[test]
