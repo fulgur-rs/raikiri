@@ -1766,10 +1766,39 @@ pub(crate) fn layout_page_margin_boxes(
     page_count: u32,
     page_is_left: bool,
     paired_page_increment: Option<i32>,
+    values: Option<&raikiri_dom::MarginBoxNamedValues>,
 ) -> Vec<raikiri_dom::MarginBox> {
+    if cascade.page.margin_boxes().is_empty()
+        || raikiri_dom::page_margins_for_page(&cascade.page, page_box).is_zero()
+    {
+        return Vec::new();
+    }
+    let fallback;
+    let values = if let Some(values) = values {
+        values
+    } else {
+        let index = if page_count == 1 && document.page_fragments(0).next().is_none() {
+            raikiri_dom::RunningIndex::build_single_page(document, cascade)
+        } else {
+            raikiri_dom::RunningIndex::build(
+                document,
+                cascade,
+                (0..page_count).map(|page| (document, page)),
+            )
+        };
+        fallback = raikiri_dom::MarginBoxNamedValues::with_page_index(std::sync::Arc::new(index));
+        &fallback
+    };
     let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
         .with_paired_page_increment(paired_page_increment);
-    raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
+    raikiri_dom::page_margin_boxes_with_values(
+        document,
+        cascade,
+        &cascade.page,
+        page_box,
+        context,
+        values,
+    )
 }
 
 /// Split margin boxes in drawing order into the ones that go behind the

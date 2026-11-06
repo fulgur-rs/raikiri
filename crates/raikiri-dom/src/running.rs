@@ -115,6 +115,23 @@ impl RunningIndex {
         Self::from_rendered_pages(document, cascade, &rendered_pages)
     }
 
+    /// Index one unfragmented page after single-page layout.
+    ///
+    /// That layout has no page projection. Its rendered scene geometry supplies
+    /// the preceding content needed to distinguish `start` from `first`.
+    pub fn build_single_page(document: &Document, cascade: &CascadeResult) -> Self {
+        if !has_placed_elements(cascade) {
+            return Self::default();
+        }
+        let rendered_pages = document
+            .scene_geometry()
+            .records()
+            .iter()
+            .map(|record| (record.node(), (0, 0)))
+            .collect();
+        Self::from_rendered_pages(document, cascade, &rendered_pages)
+    }
+
     /// Index the running elements and the named string assignments of
     /// `document`, given for each node that has fragments the first and last
     /// page they are on.

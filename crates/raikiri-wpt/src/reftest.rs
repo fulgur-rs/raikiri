@@ -3289,6 +3289,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // when a later page really changes its content geometry; fixed-size WPT
     // documents can keep the already-laid-out result and avoid a second full
     // parse/layout pass.
+    let mut pages_projected = false;
     let (mut uncascaded, slices, mut cascade, page_tree, mut continuations) = if geometry_varies {
         let mut fresh = parse_document()?;
         if let Some(path) = resources.focused_path {
@@ -3325,6 +3326,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         let widths_vary = page_widths
             .iter()
             .any(|width| (width - base_width).abs() > 0.001);
+        pages_projected = widths_vary;
         let pristine = widths_vary.then(|| fresh.dom.clone());
         let mut fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
@@ -3435,14 +3437,55 @@ pub(crate) fn render_raikiri_pages_with_resources(
         .map(|ranges| resolve_custom_highlights(&uncascaded.dom, ranges))
         .unwrap_or_default();
     let page_count = slices.len() as u32;
+    // Fixed-width layouts previously needed no final page projection for
+    // the builtin painter. Named values need the actual placements as well.
+    if !pages_projected
+        && cascade.computed.iter().any(|computed| {
+            !computed.string_set.is_empty() || !computed.running_templates.is_empty()
+        })
+    {
+        let mut geometries = Vec::with_capacity(slices.len());
+        let mut has_margin_boxes = false;
+        for slice in &slices {
+            let page = page_for(&cascade, &page_query_for_slice(slice, first_page_is_left));
+            has_margin_boxes |= !page.margin_boxes().is_empty();
+            let page_box = page_box_or_fallback(&page, fallback_page_box);
+            let geometry = raikiri_dom::resolve_page_geometry(&page, page_box);
+            geometries.push((geometry.page_box, geometry.margins, geometry.content_insets));
+        }
+        if has_margin_boxes {
+            uncascaded
+                .dom
+                .project_pages(&cascade, first_page_box, &slices, &geometries)?;
+        }
+    }
+    let running_index = std::sync::Arc::new(raikiri_dom::RunningIndex::build(
+        &uncascaded.dom,
+        &cascade,
+        slices.iter().map(|slice| {
+            let slot = continuations
+                .partition_point(|continuation| continuation.first_page <= slice.page_index);
+            let document = if slot == 0 {
+                &uncascaded.dom
+            } else {
+                &continuations[slot - 1].document
+            };
+            (document, slice.page_index)
+        }),
+    ));
+    // The placement index spans all layouts, but each table caches values
+    // from exactly one document/cascade pair.
+    let margin_values: Vec<_> = (0..=continuations.len())
+        .map(|_| raikiri_dom::MarginBoxNamedValues::with_page_index(running_index.clone()))
+        .collect();
     let mut pages = Vec::with_capacity(slices.len());
     let mut raster_budget = RasterBufferBudget::new();
     for slice in slices {
         // Pages from a continuation's first page on are taken from its
         // layout, laid out at their own content width.
-        let (document, cascade) = match continuations
-            .partition_point(|continuation| continuation.first_page <= slice.page_index)
-        {
+        let slot = continuations
+            .partition_point(|continuation| continuation.first_page <= slice.page_index);
+        let (document, cascade) = match slot {
             0 => (&uncascaded.dom, &mut cascade),
             slot => {
                 let continuation = &mut continuations[slot - 1];
@@ -3485,38 +3528,22 @@ pub(crate) fn render_raikiri_pages_with_resources(
         let mut paint_result = Ok(());
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |painter| {
-                if let Some(pixel_source) = image_pixel_source {
-                    paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
-                        painter,
-                        document,
-                        cascade,
-                        page_box,
-                        slice.content_origin_y,
-                        slice.page_index,
-                        page_count,
-                        query.is_left,
-                        paired_page_increment,
-                        active_page_name.as_deref(),
-                        fixed_page_width,
-                        pixel_source,
-                        &custom_highlights,
-                    );
-                } else {
-                    paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
-                        painter,
-                        document,
-                        cascade,
-                        page_box,
-                        slice.content_origin_y,
-                        slice.page_index,
-                        page_count,
-                        query.is_left,
-                        paired_page_increment,
-                        active_page_name.as_deref(),
-                        fixed_page_width,
-                        &custom_highlights,
-                    );
-                }
+                paint_result = raikiri_paint::paint_single_page_with_margin_values(
+                    painter,
+                    document,
+                    cascade,
+                    page_box,
+                    slice.content_origin_y,
+                    slice.page_index,
+                    page_count,
+                    query.is_left,
+                    paired_page_increment,
+                    active_page_name.as_deref(),
+                    fixed_page_width,
+                    image_pixel_source,
+                    &custom_highlights,
+                    &margin_values[slot],
+                );
             },
             page_width,
             page_height,
