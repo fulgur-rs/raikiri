@@ -596,16 +596,36 @@ fn overflow_clip_margin_moves_the_clip_edge_of_a_clipping_axis() {
     )
     .unwrap();
     assert_eq!(clip.rect, PaintRect::new(10.0, 20.0, 100.0, 50.0));
-    // border-box 4px on the block axis only; the open inline axis keeps its
-    // padding edge.
     let clip = clip_of(
-        "display:block;overflow-x:visible;overflow-y:clip;overflow-clip-margin:border-box 4px",
+        "display:block;overflow:clip;overflow-clip-margin:border-box 4px",
         2.0,
         3.0,
     )
     .unwrap();
-    assert_eq!(clip.rect, PaintRect::new(12.0, 16.0, 96.0, 58.0));
-    assert!(!clip.clip_x && clip.clip_y);
+    assert_eq!(clip.rect, PaintRect::new(6.0, 16.0, 108.0, 58.0));
+    // With the other axis visible the margin has no effect, as in Chromium:
+    // the clipping axis stays at the padding edge, like the open one.
+    for (style, clip_x, clip_y) in [
+        (
+            "display:block;overflow-x:visible;overflow-y:clip;overflow-clip-margin:border-box 4px",
+            false,
+            true,
+        ),
+        (
+            "display:block;overflow-x:visible;overflow-y:clip;overflow-clip-margin:content-box 1px",
+            false,
+            true,
+        ),
+        (
+            "display:block;overflow-x:clip;overflow-y:visible;overflow-clip-margin:20px",
+            true,
+            false,
+        ),
+    ] {
+        let clip = clip_of(style, 2.0, 3.0).unwrap();
+        assert_eq!(clip.rect, PaintRect::new(12.0, 22.0, 96.0, 46.0), "{style}");
+        assert_eq!((clip.clip_x, clip.clip_y), (clip_x, clip_y), "{style}");
+    }
     // A scroll container keeps the padding edge.
     let clip = clip_of(
         "display:block;overflow:hidden;overflow-clip-margin:20px",
