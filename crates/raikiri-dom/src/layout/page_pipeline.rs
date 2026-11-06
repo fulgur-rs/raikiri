@@ -16,6 +16,7 @@ mod line_ranges;
 mod link_events;
 mod margin_clearance;
 pub(super) mod normal_block_shifts;
+mod oversized_edges;
 mod page_start;
 mod pagination_state;
 mod positioned_flow;
@@ -9541,6 +9542,8 @@ impl EnteredParagraphs {
 /// text child, so it is not reflowed again for later lines.
 #[derive(Default)]
 struct CheckedParagraphs {
+    /// Paragraphs whose own edges were checked for a single exterior holder.
+    oversized_edges: HashSet<usize>,
     /// Blocks whose first line was checked against the page end.
     block_text: HashSet<usize>,
     /// Blocks whose orphans and widows were checked.
