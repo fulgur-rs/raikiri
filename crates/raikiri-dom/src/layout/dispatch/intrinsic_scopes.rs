@@ -240,6 +240,87 @@ pub(super) fn with_ratio_percentage_heights<R>(
     })
 }
 
+/// Resolve the percentage `flex-basis` of the items of the column flex
+/// container `node_id` that run in the other writing direction, against the
+/// initial containing block, while the main size of the container is open.
+///
+/// The main size of such an item is its inline size. Browsers resolve a
+/// percentage of it against the initial containing block along that axis, the
+/// size an orthogonal flow is offered when its container has none (CSS Writing
+/// Modes 4 section 7.3.1), rather than taking the content size. Along the main
+/// axis of a column container that is the page area's height, or its width
+/// where the container itself runs in a vertical writing mode. An item in the
+/// writing direction of its container keeps the percentage, which is the
+/// content size while the container leaves its main size open (CSS Flexbox 1
+/// section 9.2.3).
+///
+/// `main_size_is_definite` tells whether the main size of the container is
+/// definite; the percentage refers to it then, and nothing is overridden.
+pub(super) fn with_orthogonal_percentage_flex_bases<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    main_size_is_definite: bool,
+    run_mode: RunMode,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    use super::vertical_oof::used_writing_mode;
+    let idx = usize::from(node_id);
+    let container_vertical = used_writing_mode(tree, idx).is_vertical();
+    let room = tree.fixed_page_area.and_then(|(width, height)| {
+        let room = if container_vertical { width } else { height };
+        (room > 0.0).then_some(room)
+    });
+    let Some(room) = room
+        .filter(|_| !main_size_is_definite && !tree.physical_style(idx).flex_direction_is_row())
+    else {
+        return layout(tree);
+    };
+    let items = tree
+        .child_ids(node_id)
+        .filter_map(|child| {
+            let idx = usize::from(child);
+            if tree.nodes[idx].layout_position() == Position::Absolute
+                || used_writing_mode(tree, idx).is_vertical() == container_vertical
+            {
+                return None;
+            }
+            let basis = tree.physical_style(idx).flex_basis();
+            let percentage = match basis.expand() {
+                ExpandedDimension::Percent(_) => true,
+                ExpandedDimension::Calc(calc) => calc.has_percentage(),
+                _ => false,
+            };
+            percentage
+                .then(|| {
+                    O::length(
+                        P::FlexBasis,
+                        L::Px(basis.maybe_resolve(Some(room)).expect("percentage basis")),
+                        true,
+                    )
+                    .expect("physical flex basis")
+                })
+                .map(|entry| (idx, entry))
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return layout(tree);
+    }
+    with_saved_probe_caches(tree, items.len(), |tree, saved| {
+        for (idx, entry) in items {
+            let key = tree.nodes.box_key(idx).expect("orthogonal item box");
+            let mut cache = tree.take_layout_cache(idx);
+            if run_mode == RunMode::PerformLayout {
+                // A different final layout replaces descendant geometry, so
+                // the old final entry can no longer stand for that geometry.
+                cache.forget_final_layout();
+            }
+            saved.push((idx, cache));
+            tree.push_local_overrides(vec![(key, entry)]);
+        }
+        layout(tree)
+    })
+}
+
 /// Run `probe`, which measures the content height of the flex container
 /// `node_id` to raise the height its aspect ratio gives it, while the items the
 /// container stretches add only their `min-height` to that measure (see

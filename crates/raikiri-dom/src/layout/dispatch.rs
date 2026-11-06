@@ -3843,6 +3843,43 @@ fn flex_layout_sized(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    // A size the container was laid out at after its content settled it is
+    // not one its percentages refer to: only a size its style gives, or one
+    // its parent passes down as definite, is.
+    let main_size_is_definite = {
+        let vertical = tree.nodes[usize::from(node_id)]
+            .used_writing_mode
+            .is_vertical();
+        let mut stated = inputs;
+        if vertical && !stated.known_dimensions_are_definite.width {
+            stated.known_dimensions.width = None;
+        } else if !vertical && !stated.known_dimensions_are_definite.height {
+            stated.known_dimensions.height = None;
+        }
+        let (stated, _, _) = tree.block_definite_size(usize::from(node_id), &stated);
+        if vertical {
+            stated.width
+        } else {
+            stated.height
+        }
+        .is_some()
+    };
+    intrinsic_scopes::with_orthogonal_percentage_flex_bases(
+        tree,
+        node_id,
+        main_size_is_definite,
+        inputs.run_mode,
+        |tree| flex_layout_items(tree, node_id, inputs),
+    )
+}
+
+/// [`flex_layout_sized`] once the percentage flex bases of the items that
+/// the page area decides are settled.
+fn flex_layout_items(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_wrapping_min_content_width(tree, node_id, inputs);
     // The max-content width of a container that wraps its items is no less
