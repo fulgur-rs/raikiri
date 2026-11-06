@@ -8,6 +8,7 @@ mod column_reverse_overflow_tests;
 mod grid_static_position_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
+mod ratio_height_tests;
 mod row_cross_overflow_tests;
 mod style_view_tests;
 mod vertical_container_ratio_tests;

@@ -28,10 +28,10 @@ type Rect = (f32, f32, f32, f32);
 type Case = (&'static str, &'static str, &'static [(&'static str, Rect)]);
 
 /// The border boxes of the elements of `body` with an `id` on the first page.
-fn border_boxes(body: &str) -> Vec<(String, Rect)> {
+fn border_boxes(body: &str, body_style: &str) -> Vec<(String, Rect)> {
     let html = format!(
         "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
-         body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
+         body {{ {body_style}; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
     );
     let fonts = FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
@@ -64,7 +64,11 @@ fn border_boxes(body: &str) -> Vec<(String, Rect)> {
 const TOLERANCE: f32 = 0.02;
 
 fn check(name: &str, body: &str, expected: &[(&str, Rect)]) {
-    let actual = border_boxes(body);
+    check_with_body_style(name, body, expected, "margin:8px");
+}
+
+fn check_with_body_style(name: &str, body: &str, expected: &[(&str, Rect)], body_style: &str) {
+    let actual = border_boxes(body, body_style);
     for &(id, (x, y, width, height)) in expected {
         let found = actual
             .iter()
@@ -195,3 +199,116 @@ const CASES: &[Case] = &[
     ("d_m_gc_h50p_maxh5_e_st", r#"<div id=c style="display:grid;grid-template-columns:max-content;grid-template-rows:100px;"><div id=i style="aspect-ratio:2/1;height:50%;max-height:5px;justify-self:start;"><div style="height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 784.0, 100.0)), ("i", (8.0, 8.0, 10.0, 5.0))]),
     ("a_p13_calc", r#"<div id=c style="width:100px;display:grid;"><div id=i style="width:40px;height:calc(50% + 2px);"><div style="height:10px"></div></div></div>"#, &[("c", (8.0, 8.0, 100.0, 10.0)), ("i", (8.0, 8.0, 40.0, 7.0))]),
 ];
+
+#[test]
+fn a_cyclic_percentage_height_keeps_the_ratio_while_its_auto_row_is_sized() {
+    for (child, width) in [("height:10px", 15.0), ("width:100px;height:10px", 30.0)] {
+        check(
+            child,
+            &format!(
+                "<div id=c style='display:grid;width:100px'><div id=i style='aspect-ratio:2/1;height:50%;max-width:30px'><div style='{child}'></div></div></div>"
+            ),
+            &[
+                ("c", (8.0, 8.0, 100.0, 15.0)),
+                ("i", (8.0, 8.0, width, 7.5)),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_percentage_sized_ratio_item_contributes_to_its_max_content_column() {
+    for alignment in ["", "justify-self:start"] {
+        for (limit, width) in [("", 50.0), ("max-width:30px", 15.0)] {
+            check(
+                alignment,
+                &format!(
+                    "<div style='display:grid;grid-template-columns:max-content;grid-template-rows:100px'><div id=i style='aspect-ratio:2/1;width:50%;height:50%;{limit};{alignment}'><div style='height:10px'></div></div></div>"
+                ),
+                &[("i", (8.0, 8.0, width, 50.0))],
+            );
+        }
+    }
+}
+
+#[test]
+fn ratio_width_content_floors_keep_the_real_padding_basis() {
+    check(
+        "percentage padding and content floor",
+        "<div id=c style='display:grid;width:100px'><div id=i style='aspect-ratio:2/1;height:50%;max-width:30px;padding:5%'><div style='width:100px;height:10px'></div></div></div>",
+        &[
+            ("c", (8.0, 8.0, 100.0, 15.0)),
+            ("i", (8.0, 8.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_cyclic_width_contributes_content_even_with_a_small_max_height() {
+    check(
+        "content contributes before the percentage width resolves",
+        "<div style='display:grid;grid-template-columns:max-content;grid-template-rows:100px'><div id=i style='aspect-ratio:2/1;width:50%;height:50%;justify-self:stretch;max-height:15px'><div style='width:100px;height:10px'></div></div></div>",
+        &[("i", (8.0, 8.0, 50.0, 15.0))],
+    );
+}
+
+#[test]
+fn cyclic_ratio_contributions_use_a_min_content_floor() {
+    for (text, width) in [("xx xx xx", 15.0), ("xxxx xxxx xxxx", 20.0)] {
+        check(
+            text,
+            &format!(
+                "<div style='display:grid;grid-template-columns:max-content;grid-template-rows:100px'><div id=i style='aspect-ratio:2/1;width:50%;height:50%;max-height:15px'>{text}</div></div>"
+            ),
+            &[("i", (8.0, 8.0, width, 15.0))],
+        );
+    }
+}
+
+#[test]
+fn a_resolved_percentage_width_keeps_its_own_bounds() {
+    for (bounds, height) in [("min-height:150px", 150.0), ("max-height:15px", 15.0)] {
+        check(
+            bounds,
+            &format!(
+                "<div style='display:grid;width:300px;grid-template:100px/200px'><div id=i style='aspect-ratio:2/1;width:50%;height:50%;{bounds}'><div style='height:10px'></div></div></div>"
+            ),
+            &[("i", (8.0, 8.0, 100.0, height))],
+        );
+    }
+}
+
+#[test]
+fn a_nested_grid_uses_its_ratio_for_a_cyclic_percentage_height() {
+    check(
+        "a grid item that is itself a grid",
+        "<div id=c style='display:grid;width:100px'><div id=i style='display:grid;aspect-ratio:2/1;height:50%;max-width:30px'><div style='width:100px;height:10px'></div></div></div>",
+        &[("c", (8.0, 8.0, 100.0, 15.0)), ("i", (8.0, 8.0, 30.0, 7.5))],
+    );
+}
+
+#[test]
+fn percentage_ratio_items_match_the_chromium_matrix() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("data/grid-ratio-percent.json"))
+            .expect("Chromium fixture");
+    let cases = fixture["cases"].as_array().expect("cases");
+    assert_eq!(cases.len(), 89);
+    for case in cases {
+        let container = &case["chromium"]["container"];
+        let item = &case["chromium"]["item"];
+        let px = |value: &serde_json::Value| value.as_f64().expect("coordinate") as f32;
+        check_with_body_style(
+            case["name"].as_str().expect("case name"),
+            case["body"].as_str().expect("case body"),
+            &[
+                ("c", (0.0, 0.0, px(&container[0]), px(&container[1]))),
+                (
+                    "i",
+                    (px(&item[0]), px(&item[1]), px(&item[2]), px(&item[3])),
+                ),
+            ],
+            "margin:0;width:800px",
+        );
+    }
+}
