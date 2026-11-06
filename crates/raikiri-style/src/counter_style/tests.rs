@@ -1217,3 +1217,88 @@ fn resolve_long_finite_fallback_chain_terminates_at_default_fallback() {
     // `None` boundary without exhausting the process stack.
     assert_eq!(resolve_custom_counter(&registry, "chain-0", 2), None);
 }
+
+// ── resolve_counter_representation: where the algorithm leaves the registry ──
+
+fn representation(
+    registry: &CounterStyleRegistry,
+    name: &str,
+    value: i32,
+) -> CounterRepresentation {
+    resolve_counter_representation(registry, name, value, &|name| Cow::Borrowed(name))
+}
+
+#[test]
+fn representation_of_a_value_the_style_shows_is_its_text() {
+    let registry = CounterStyleRegistry::from_source(
+        r#"@counter-style a { system: cyclic; symbols: "*"; range: 1 1; fallback: lower-roman; }"#,
+    );
+    assert_eq!(
+        representation(&registry, "a", 1),
+        CounterRepresentation::Text("*".into())
+    );
+}
+
+#[test]
+fn representation_names_the_undefined_style_a_fallback_chain_ends_at() {
+    let registry = CounterStyleRegistry::from_source(
+        r#"
+        @counter-style a { system: cyclic; symbols: "*"; range: 1 1; fallback: b; }
+        @counter-style b { system: cyclic; symbols: "%"; range: 1 1; fallback: Lower-Roman; }
+        @counter-style c { system: cyclic; symbols: "@"; range: 1 1; }
+        "#,
+    );
+    // The name is the one the stylesheet wrote.
+    assert_eq!(
+        representation(&registry, "a", 2),
+        CounterRepresentation::Undefined(SmolStr::new("Lower-Roman"))
+    );
+    // The default `fallback` is `decimal`.
+    assert_eq!(
+        representation(&registry, "c", 2),
+        CounterRepresentation::Undefined(SmolStr::new("decimal"))
+    );
+    // A name the registry does not define is the first style to end at.
+    assert_eq!(
+        representation(&registry, "nonexistent", 1),
+        CounterRepresentation::Undefined(SmolStr::new("nonexistent"))
+    );
+    // `resolve_custom_counter` reports each of these as `None`.
+    assert_eq!(resolve_custom_counter(&registry, "a", 2), None);
+    assert_eq!(resolve_custom_counter(&registry, "c", 2), None);
+}
+
+#[test]
+fn representation_of_a_fallback_loop_is_a_loop() {
+    let registry = CounterStyleRegistry::from_source(
+        r#"
+        @counter-style a { system: cyclic; symbols: "*"; range: 1 1; fallback: b; }
+        @counter-style b { system: cyclic; symbols: "%"; range: 1 1; fallback: a; }
+        "#,
+    );
+    assert_eq!(
+        representation(&registry, "a", 5),
+        CounterRepresentation::Loop
+    );
+}
+
+#[test]
+fn representation_finds_a_fallback_by_the_name_the_caller_maps_it_to() {
+    let registry = CounterStyleRegistry::from_source(
+        r#"
+        @counter-style a { system: cyclic; symbols: "*"; range: 1 1; fallback: Lower-Roman; }
+        @counter-style lower-roman { system: cyclic; symbols: "R"; }
+        "#,
+    );
+    // Without a mapping `Lower-Roman` is a style the registry does not define.
+    assert_eq!(
+        representation(&registry, "a", 2),
+        CounterRepresentation::Undefined(SmolStr::new("Lower-Roman"))
+    );
+    assert_eq!(
+        resolve_counter_representation(&registry, "a", 2, &|name| Cow::Owned(
+            name.to_ascii_lowercase()
+        )),
+        CounterRepresentation::Text("R".into())
+    );
+}

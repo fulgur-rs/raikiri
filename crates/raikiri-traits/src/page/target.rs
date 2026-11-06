@@ -39,9 +39,12 @@
 //! backward `page_index` would silently mint a duplicate [`TargetSlotId`]
 //! for a still-pending slot from the earlier visit to that page.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use raikiri_style::property::{ContentComponent, ContentPart, CounterStyle};
+use raikiri_style::{CounterRepresentation, CounterStyleRegistry, resolve_counter_representation};
 
 use crate::dom::Symbol;
 use crate::error::TargetSlotId;
@@ -72,6 +75,11 @@ pub struct TargetRegistry {
     /// the queue after a flush (streaming intent: a later batch or
     /// finish_render pass may still land them; see design §7.4).
     pending_slots: Vec<TargetSlot>,
+    /// The author `@counter-style` rules `target-counter()` and
+    /// `target-counters()` look a style name up in, set by
+    /// [`Self::set_counter_styles`]. Without them only the predefined styles
+    /// of CSS Counter Styles 3 can show a value.
+    counter_styles: Option<Arc<CounterStyleRegistry>>,
     /// Page-local monotonic sequence stamp for pending slots, reset to 0 by
     /// [`Self::begin_page`]. Not in the §7.2 shape — see module-level
     /// "canonical shape" note.
@@ -155,7 +163,7 @@ impl TargetInfo {
     /// per-variant semantics — missing-counter fallback, empty-stack `"0"`
     /// (CSS Content 3 §2.6.2), absent text-part `""` (§2.6.3) — in one place
     /// prevents the two paths from diverging.
-    fn resolve(&self, request: &TargetRequest) -> String {
+    fn resolve(&self, request: &TargetRequest, styles: Option<&CounterStyleRegistry>) -> String {
         match request {
             TargetRequest::Counter { name, style } => {
                 // Absent counter → 0 (CSS Content 3 §2.6.2 default-init: an
@@ -165,7 +173,7 @@ impl TargetInfo {
                     .get(name)
                     .and_then(|stack| stack.last().copied())
                     .unwrap_or(0);
-                format_counter(value, style)
+                format_counter_in(value, style, styles)
             }
             TargetRequest::Counters {
                 name,
@@ -179,9 +187,9 @@ impl TargetInfo {
                 // of a one-element `[0]` is just `"0"`.
                 let stack: &[i32] = self.counters.get(name).map(|v| v.as_slice()).unwrap_or(&[]);
                 if stack.is_empty() {
-                    format_counter(0, style)
+                    format_counter_in(0, style, styles)
                 } else {
-                    join_counter_stack(stack, separator, style)
+                    join_counter_stack(stack, separator, style, styles)
                 }
             }
             TargetRequest::Text { part } => self.text_part(*part).to_owned(),
@@ -304,6 +312,17 @@ impl TargetRegistry {
         self.resolved.entry(fragment_id).or_insert(info);
     }
 
+    /// Give `target-counter()` and `target-counters()` the author
+    /// `@counter-style` rules of the document (the cascade's
+    /// `counter_styles`). A style name they ask for is looked up there first,
+    /// since an author rule can redefine a predefined name, and a value the
+    /// rule cannot show goes to its `fallback` style (see
+    /// [`format_counter_with_styles`]). Slots queued before this call are
+    /// formatted with the rules in effect when they are flushed.
+    pub fn set_counter_styles(&mut self, styles: Arc<CounterStyleRegistry>) {
+        self.counter_styles = Some(styles);
+    }
+
     /// Resolve `target-counter(url, name, style)`.
     ///
     /// URL parsing, resolved/pending dispatch, and per-variant evaluation
@@ -364,7 +383,7 @@ impl TargetRegistry {
         };
         let key = Symbol::new(fragment);
         if let Some(info) = self.resolved.get(&key) {
-            ResolveOutcome::Resolved(info.resolve(&request))
+            ResolveOutcome::Resolved(info.resolve(&request, self.counter_styles.as_deref()))
         } else {
             let id = TargetSlotId {
                 page_index: self.page_index,
@@ -395,7 +414,7 @@ impl TargetRegistry {
             if let Some(info) = self.resolved.get(&slot.fragment_id) {
                 resolutions.push(PendingResolution {
                     slot_id: slot.id,
-                    value: Some(info.resolve(&slot.request)),
+                    value: Some(info.resolve(&slot.request, self.counter_styles.as_deref())),
                 });
             } else {
                 remaining.push(slot);
@@ -568,9 +587,9 @@ fn parse_fragment(url: &str) -> Option<&str> {
 /// style in CSS Counter Styles L3 §6 "Simple Predefined Counter Styles"
 /// <https://www.w3.org/TR/css-counter-styles-3/#predefined-counters> and §7
 /// "Complex Predefined Counter Styles"
-/// <https://www.w3.org/TR/css-counter-styles-3/#complex-predefined-counters>
-/// except `disclosure-open` / `disclosure-closed` (see reason 3 below).
-/// Landed in two passes: `decimal-leading-zero`, `lower-roman` /
+/// <https://www.w3.org/TR/css-counter-styles-3/#complex-predefined-counters>,
+/// `disclosure-open` / `disclosure-closed` included (see
+/// [`format_named_counter`]). Landed in two passes: `decimal-leading-zero`, `lower-roman` /
 /// `upper-roman`, `lower-alpha` / `upper-alpha` (+ the `lower-latin` /
 /// `upper-latin` aliases §6 defines with identical symbol tables), `disc` /
 /// `circle` / `square` in an earlier pass; the remainder — §6.1 Numeric,
@@ -583,7 +602,7 @@ fn parse_fragment(url: &str) -> Option<&str> {
 /// registry — implemented or not. Cf. reason 2 below, which scopes the
 /// registry dependency to author-defined custom idents.)
 ///
-/// `CounterStyle::Named` beyond that set falls back to `decimal` for three
+/// `CounterStyle::Named` beyond that set falls back to `decimal` for two
 /// distinct reasons, and only the first is actually generate-a-counter step
 /// 1 ("If the counter style is unknown, ... generate a counter
 /// representation using the decimal style"):
@@ -592,31 +611,16 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    all. Step 1 applies verbatim; decimal is spec-correct here.
 /// 2. **A custom `@counter-style` rule** — a valid `<custom-ident>` per
 ///    spec, but this function has no registry to resolve it against.
-///    `raikiri-dom` looks an author `@counter-style` up first and calls this
-///    function only for a name the author did not define; the `string-set`
-///    and `target-counter()` paths of this crate have no registry yet, so
-///    they show such a value in decimal.
-/// 3. **`disclosure-open` / `disclosure-closed`** — the only §6/§7
-///    predefined styles still unimplemented. Deliberately
-///    deferred, not a fallback bug: §6.3
-///    <https://www.w3.org/TR/css-counter-styles-3/#simple-symbolic>'s
-///    normative stylesheet fragment leaves their `symbols` descriptor
-///    unset ("for symbols, see normative text below"), and the referenced
-///    text only says the marker "must be an image or character suitable
-///    for indicating" open/closed state, then gives U+25B8/U+25C2/U+25BE
-///    as something a UA "might use" — not a mandated codepoint — and
-///    explicitly ties the choice to bidi writing-mode direction. There is
-///    no single normative codepoint to pin, and `format_named_counter`'s
-///    signature (`value: i32, name: &str`) has no writing-mode/direction
-///    input to pick a directional variant with. Landing a guessed glyph
-///    here would be exactly the "complete but wrong" outcome this work was
-///    meant to avoid; tracked as a residual scope item for follow-up.
+///    [`format_counter_with_styles`] looks an author `@counter-style` up
+///    first and calls this function only for a name the author did not
+///    define, or for the name a `fallback` chain of author styles ends at; a
+///    caller with no registry gets decimal for such a name.
 ///
 /// **Visibility**: `pub`, hidden from the documentation and re-exported as
-/// `page::format_predefined_counter`. The sibling `page::context` module uses it
-/// for real `string-set` text resolution, and `raikiri-dom` uses it for
-/// `counter()` / `counters()` and markers, after it has looked for an author
-/// `@counter-style` of the same name.
+/// `page::format_predefined_counter`. [`format_counter_with_styles`] uses it
+/// after it has looked for an author `@counter-style` of the same name, and
+/// the sibling `page::context` module for `string-set` text resolution when
+/// it has no such rules.
 #[doc(hidden)]
 pub fn format_counter(value: i32, style: &CounterStyle) -> String {
     match style {
@@ -635,12 +639,99 @@ pub fn format_counter(value: i32, style: &CounterStyle) -> String {
     }
 }
 
+/// [`format_counter_with_styles`] when the author's `@counter-style` rules are
+/// known, else [`format_counter`].
+pub(crate) fn format_counter_in(
+    value: i32,
+    style: &CounterStyle,
+    styles: Option<&CounterStyleRegistry>,
+) -> String {
+    match styles {
+        Some(registry) => format_counter_with_styles(value, style, registry),
+        None => format_counter(value, style),
+    }
+}
+
+/// The name under which `registry` knows the style that `name` asks for.
+///
+/// A predefined name matches without regard to case, so an author style that
+/// redefines one answers to every spelling of it (stored in lower case); the
+/// name of any other style matches exactly. A rule spelled with capitals is
+/// still found by the same spelling.
+#[doc(hidden)]
+pub fn author_counter_style_name<'a>(
+    registry: &CounterStyleRegistry,
+    name: &'a str,
+) -> Cow<'a, str> {
+    if name.bytes().any(|byte| byte.is_ascii_uppercase()) && is_predefined_counter_style(name) {
+        let lowered = name.to_ascii_lowercase();
+        if registry.get(&lowered).is_some() {
+            return Cow::Owned(lowered);
+        }
+    }
+    Cow::Borrowed(name)
+}
+
+/// `value` in the author `@counter-style` `name` of `registry`, or `None`
+/// when the author defined no style of that name.
+///
+/// A value the style cannot show goes to the style named by its `fallback`
+/// descriptor, and so on down the chain. A style the author did not define
+/// ends the chain: it shows the value if it is a predefined style of CSS
+/// Counter Styles 3 (`fallback: lower-roman`), else in decimal, as a loop in
+/// the chain does too (CSS Counter Styles 3, "generate a counter
+/// representation" and the `fallback` descriptor).
+#[doc(hidden)]
+pub fn format_author_counter(
+    registry: &CounterStyleRegistry,
+    name: &str,
+    value: i32,
+) -> Option<String> {
+    registry.get(name)?;
+    Some(
+        match resolve_counter_representation(registry, name, value, &|fallback| {
+            author_counter_style_name(registry, fallback)
+        }) {
+            CounterRepresentation::Text(text) => text,
+            CounterRepresentation::Undefined(fallback) => {
+                format_counter(value, &CounterStyle::Named(fallback))
+            }
+            _ => format_decimal(value),
+        },
+    )
+}
+
+/// `value` in the counter style `style`: an author `@counter-style` of
+/// `registry` first, since it can redefine a predefined name, then the
+/// predefined styles of CSS Counter Styles 3 ([`format_counter`]), else
+/// decimal.
+///
+/// `registry` is the cascade's `counter_styles`. `raikiri-dom` formats
+/// `counter()`, `counters()` and markers with it, and
+/// [`PageContext`](super::PageContext) and [`TargetRegistry`] format
+/// `string-set` and `target-counter()` with the registry they are given
+/// through their `set_counter_styles`.
+#[doc(hidden)]
+pub fn format_counter_with_styles(
+    value: i32,
+    style: &CounterStyle,
+    registry: &CounterStyleRegistry,
+) -> String {
+    if let CounterStyle::Named(name) = style {
+        let author_name = author_counter_style_name(registry, name.as_str());
+        if let Some(text) = format_author_counter(registry, &author_name, value) {
+            return text;
+        }
+    }
+    format_counter(value, style)
+}
+
 /// Whether `name` is, without regard to case, the name of a predefined
 /// counter style of CSS Counter Styles 3 (sections 6 and 7), including the
-/// two `disclosure-*` styles this module does not format. Such a name matches
-/// ASCII case-insensitively, while the name of an author `@counter-style`
-/// matches exactly, so a caller that looks the name up among author styles
-/// first has to lower-case a predefined name and only that.
+/// two `disclosure-*` styles. Such a name matches ASCII case-insensitively,
+/// while the name of an author `@counter-style` matches exactly, so a caller
+/// that looks the name up among author styles first has to lower-case a
+/// predefined name and only that.
 #[doc(hidden)]
 pub fn is_predefined_counter_style(name: &str) -> bool {
     const OTHER: &[&str] = &[
@@ -686,7 +777,8 @@ pub fn is_predefined_counter_style(name: &str) -> bool {
 /// ideographic comma, the Korean ones a comma and a space, and
 /// `ethiopic-numeric` a slash and a space (CSS Counter Styles 3, sections 6
 /// and 7). `disc`, `circle` and `square` take a space, but a marker draws
-/// them as a bullet and does not use their suffix.
+/// them as a bullet and does not use their suffix. `disclosure-open` and
+/// `disclosure-closed` take a space as well, and their marker is text.
 #[doc(hidden)]
 pub fn predefined_counter_suffix(name: &str) -> &'static str {
     const IDEOGRAPHIC_COMMA: &[&str] = &[
@@ -717,6 +809,10 @@ pub fn predefined_counter_suffix(name: &str) -> &'static str {
         ", "
     } else if name.eq_ignore_ascii_case("ethiopic-numeric") {
         "/ "
+    } else if name.eq_ignore_ascii_case("disclosure-open")
+        || name.eq_ignore_ascii_case("disclosure-closed")
+    {
+        " "
     } else {
         ". "
     }
@@ -733,9 +829,8 @@ fn format_decimal(value: i32) -> String {
 
 /// Dispatch the predefined [`CounterStyle::Named`] styles implemented here
 /// (a style added below belongs in [`is_predefined_counter_style`] too)
-/// (see [`format_counter`] doc for the overall implemented/deferred split
-/// and the three distinct reasons an unmatched name falls back to
-/// `decimal`).
+/// (see [`format_counter`] doc for the overall coverage and the two distinct
+/// reasons an unmatched name falls back to `decimal`).
 ///
 /// Matching is ASCII case-insensitive, consistent with how
 /// `raikiri_style::property`'s parser already treats the `decimal` keyword
@@ -780,6 +875,19 @@ fn format_named_counter(value: i32, name: &str) -> String {
         "\u{25E6}".to_string()
     } else if name.eq_ignore_ascii_case("square") {
         "\u{25AA}".to_string()
+    } else if name.eq_ignore_ascii_case("disclosure-open") {
+        // `system: cyclic` with one symbol, like the bullets above, so every
+        // value shows it. CSS Counter Styles 3 section 6.3 asks for "an image
+        // or character suitable for indicating" an open disclosure widget and
+        // names U+25BE only as one a user agent might use, and leaves the
+        // closed marker's direction to the writing mode. Chromium shows
+        // U+25BE for `disclosure-open` and U+25B8 for `disclosure-closed` in
+        // every direction and writing mode, so the same two characters are
+        // used here (as measured, for `list-style-type`, `counter()` and a
+        // `fallback`).
+        "\u{25BE}".to_string()
+    } else if name.eq_ignore_ascii_case("disclosure-closed") {
+        "\u{25B8}".to_string()
     } else if let Some((_, digits)) = NUMERIC_DIGIT_STYLES
         .iter()
         .find(|(n, _)| name.eq_ignore_ascii_case(n))
@@ -850,10 +958,9 @@ fn format_named_counter(value: i32, name: &str) -> String {
     } else if name.eq_ignore_ascii_case("ethiopic-numeric") {
         format_ethiopic_numeric(value).unwrap_or_else(|| format_decimal(value))
     } else {
-        // Unmatched named style — decimal fallback for one of the three
+        // Unmatched named style — decimal fallback for one of the two
         // reasons enumerated in the `format_counter` doc (genuinely
-        // unknown / unreachable custom @counter-style /
-        // disclosure-open/-closed's undefined-codepoint deferral).
+        // unknown / unreachable custom @counter-style).
         format_decimal(value)
     }
 }
@@ -2116,10 +2223,15 @@ fn format_ethiopic_numeric(value: i32) -> Option<String> {
 /// [`crate::page::PageContext::apply_directive`]), so crate-internal
 /// visibility is the minimal fix (resolved here rather than duplicating the
 /// formatting logic elsewhere).
-pub(crate) fn join_counter_stack(stack: &[i32], separator: &str, style: &CounterStyle) -> String {
+pub(crate) fn join_counter_stack(
+    stack: &[i32],
+    separator: &str,
+    style: &CounterStyle,
+    styles: Option<&CounterStyleRegistry>,
+) -> String {
     stack
         .iter()
-        .map(|v| format_counter(*v, style))
+        .map(|v| format_counter_in(*v, style, styles))
         .collect::<Vec<_>>()
         .join(separator)
 }

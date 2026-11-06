@@ -169,7 +169,7 @@ mod resolve_content_source_tests {
         let source = ContentSource::new(vec![ContentValueItem::Literal("Ch. ".into())]);
         let counters = HashMap::new();
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             Some("Ch. ".to_owned())
         );
     }
@@ -185,7 +185,7 @@ mod resolve_content_source_tests {
             style: CounterStyle::Decimal,
         }]);
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             Some("3".to_owned())
         );
     }
@@ -198,7 +198,7 @@ mod resolve_content_source_tests {
             style: CounterStyle::Decimal,
         }]);
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             Some("0".to_owned())
         );
     }
@@ -221,7 +221,7 @@ mod resolve_content_source_tests {
             style: CounterStyle::Named("upper-roman".into()),
         }]);
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             Some("III".to_owned())
         );
     }
@@ -239,7 +239,7 @@ mod resolve_content_source_tests {
             style: CounterStyle::Decimal,
         }]);
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             Some("1.1".to_owned())
         );
     }
@@ -258,7 +258,7 @@ mod resolve_content_source_tests {
             },
         ]);
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             Some("Ch. 2".to_owned())
         );
     }
@@ -278,7 +278,7 @@ mod resolve_content_source_tests {
             ContentValueItem::Literal("]".into()),
         ]);
         assert_eq!(
-            resolve_content_source(&source, &counters),
+            resolve_content_source(&source, &counters, None),
             None,
             "Attr needs DOM element access unavailable here — the whole \
              content-list must be skipped, not partially resolved to \"[]\""
@@ -406,6 +406,85 @@ mod apply_directive_tests {
         assert_eq!(
             ctx.counter(&chapter).and_then(CounterStack::current),
             Some(103)
+        );
+    }
+
+    #[test]
+    fn string_set_shows_a_counter_in_an_author_style() {
+        let mut ctx = PageContext::default();
+        ctx.set_counter_styles(Arc::new(CounterStyleRegistry::from_source(
+            "@counter-style x { system: cyclic; symbols: '\u{2605}'; range: 1 2; \
+             fallback: lower-roman }",
+        )));
+        let chapter = Symbol::new("chapter");
+        let title = Symbol::new("title");
+        ctx.apply_directive(&GcpmDirective::CounterReset {
+            name: chapter.clone(),
+            value: 4,
+        });
+        ctx.apply_directive(&GcpmDirective::StringSet {
+            name: title.clone(),
+            source: ContentSource::new(vec![
+                ContentValueItem::Counter {
+                    name: chapter.clone(),
+                    style: CounterStyle::Named("x".into()),
+                },
+                ContentValueItem::Literal(" / ".into()),
+                ContentValueItem::Counters {
+                    name: chapter.clone(),
+                    separator: "-".into(),
+                    style: CounterStyle::Named("x".into()),
+                },
+            ]),
+        });
+        // 4 is outside the range of `x`: its fallback, lower-roman, shows it.
+        assert_eq!(
+            ctx.string_state(&title).and_then(NamedStringState::running),
+            Some("iv / iv")
+        );
+    }
+
+    #[test]
+    fn string_set_without_author_styles_shows_an_unknown_style_in_decimal() {
+        let mut ctx = PageContext::default();
+        let chapter = Symbol::new("chapter");
+        let title = Symbol::new("title");
+        ctx.apply_directive(&GcpmDirective::CounterReset {
+            name: chapter.clone(),
+            value: 4,
+        });
+        ctx.apply_directive(&GcpmDirective::StringSet {
+            name: title.clone(),
+            source: ContentSource::new(vec![ContentValueItem::Counter {
+                name: chapter,
+                style: CounterStyle::Named("x".into()),
+            }]),
+        });
+        assert_eq!(
+            ctx.string_state(&title).and_then(NamedStringState::running),
+            Some("4")
+        );
+    }
+
+    #[test]
+    fn the_author_styles_of_a_context_reach_a_registry_set_afterwards() {
+        let mut ctx = PageContext::default();
+        ctx.set_counter_styles(Arc::new(CounterStyleRegistry::from_source(
+            "@counter-style x { system: cyclic; symbols: '\u{2605}' }",
+        )));
+        let mut targets = TargetRegistry::default();
+        let mut info = TargetInfo::default();
+        info.counters.insert(Symbol::new("chapter"), vec![3]);
+        targets.register(Symbol::new("here"), info);
+        ctx.set_targets(targets);
+        let mut resolved = ctx.targets().clone();
+        assert_eq!(
+            resolved.resolve_target_counter(
+                "#here",
+                Symbol::new("chapter"),
+                CounterStyle::Named("x".into()),
+            ),
+            crate::page::ResolveOutcome::Resolved("\u{2605}".to_owned())
         );
     }
 

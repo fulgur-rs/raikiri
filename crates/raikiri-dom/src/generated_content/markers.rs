@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{CompactCounterSnapshots, CounterSnapshots, Document};
 use raikiri_style::property::{ContentComponent, CounterStyle, DisplayValue, ListStyleType};
-use raikiri_style::{CascadeResult, CounterStyleRegistry, PseudoElem, resolve_custom_counter};
+use raikiri_style::{CascadeResult, CounterStyleRegistry, PseudoElem};
 
 impl Document {
     /// Place a standalone image marker from the principal border-box origin.
@@ -159,11 +159,11 @@ fn list_item_ordinal(document: &Document, cascade: &CascadeResult, node_id: usiz
 
 fn custom_marker_text(registry: &CounterStyleRegistry, name: &str, value: i32) -> Option<String> {
     let rule = registry.get(name)?;
-    // A value no style in the fallback chain can render uses `decimal`, but
-    // the marker keeps the requested style's own prefix and suffix
-    // (CSS Counter Styles 3, the `prefix` and `suffix` descriptors).
-    let representation =
-        resolve_custom_counter(registry, name, value).unwrap_or_else(|| value.to_string());
+    // A value the style cannot show is written by the style its `fallback`
+    // names, or by decimal at the end of the chain, but the marker keeps the
+    // requested style's own prefix and suffix (CSS Counter Styles 3, the
+    // `prefix` and `suffix` descriptors).
+    let representation = raikiri_traits::page::format_author_counter(registry, name, value)?;
     Some(format!(
         "{}{}{}",
         rule.prefix.0.as_str(),
@@ -205,10 +205,9 @@ fn list_marker_text_with_ordinal(
                 return Some(marker);
             }
             // Every other predefined style, and `decimal` for a name that is
-            // not one (`disclosure-open` and `disclosure-closed` among them,
-            // which this does not draw yet). A value the style cannot show is
-            // decimal, with the suffix of the style asked for (CSS Counter
-            // Styles 3, the `fallback` and `suffix` descriptors).
+            // not one. A value the style cannot show is decimal, with the
+            // suffix of the style asked for (CSS Counter Styles 3, the
+            // `fallback` and `suffix` descriptors).
             Some(format!(
                 "{}{}",
                 raikiri_traits::page::format_predefined_counter(
