@@ -271,20 +271,20 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
     assert_eq!(headers.repeated_height_before(last), 10.0);
     let cascade = crate::layout::test_support::cascaded(&doc);
     let tree = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
-    let candidate = PageCandidate {
-        node_id: last,
-        raw_y: 180.0,
+    let candidate = |node_id, raw_y, edges| PageCandidate {
+        node_id,
+        raw_y,
         height: 10.0,
         context: element_candidate_context(candidates::ElementContext {
             is_table_row: true,
-            item_tail_edges: 30.0,
+            item_tail_edges: edges,
             ..Default::default()
         }),
         page_name: None,
         named_flex_context: None,
         ifc_root: None,
     };
-    let fit = BoxFit {
+    let base_fit = BoxFit {
         effective_y: 180.0,
         flow_y: 180.0,
         margin_top: 0.0,
@@ -297,23 +297,63 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
         page_end: 200.0,
         next_page_step: 15.0,
     };
-    assert!(item_tail_move(&candidate, &fit));
-    let breaks = AvoidedBreaks::default();
     let mut trailing = TrailingFlexChildren::default();
-    let too_short = breaks.measure(&tree, &cascade, &candidate, &fit, &headers, &mut trailing);
-    assert!(!too_short.table_row);
-    let fits = breaks.measure(
-        &tree,
-        &cascade,
-        &candidate,
-        &BoxFit {
-            next_page_step: 20.0,
-            ..fit
-        },
-        &headers,
-        &mut trailing,
+    for group_height in [None, Some(10.0), Some(20.0)] {
+        let mut breaks = AvoidedBreaks::default();
+        if let Some(height) = group_height {
+            breaks.row_groups.insert(last, (180.0 + height, 0.0));
+        }
+        let height = group_height.unwrap_or(10.0);
+        let tail = candidate(last, 180.0, 30.0 + height - 10.0);
+        let needed = tail.height + headers.repeated_height_before(last);
+        let short = BoxFit {
+            next_page_step: needed - 5.0,
+            ..base_fit
+        };
+        assert!(item_tail_move(&tail, &short));
+        let overflow = breaks.measure(&tree, &cascade, &tail, &short, &headers, &mut trailing);
+        assert!(!overflow.table_row, "{group_height:?}");
+        assert!(!overflow.moves_box(), "{group_height:?}");
+        let exact = BoxFit {
+            next_page_step: needed,
+            ..base_fit
+        };
+        let overflow = breaks.measure(&tree, &cascade, &tail, &exact, &headers, &mut trailing);
+        assert!(overflow.table_row, "{group_height:?}");
+        assert!(overflow.moves_box(), "{group_height:?}");
+    }
+    // An unfitting group does not prevent its final fallback row moving alone.
+    let first = rows[1];
+    let mut breaks = AvoidedBreaks::default();
+    breaks.row_groups.insert(first, (200.0, 0.0));
+    let short = BoxFit {
+        effective_y: 170.0,
+        flow_y: 170.0,
+        next_page_step: 25.0,
+        ..base_fit
+    };
+    let group = PageCandidate {
+        height: 20.0,
+        ..candidate(first, 170.0, 40.0)
+    };
+    assert!(item_tail_move(&group, &short));
+    assert!(
+        !breaks
+            .measure(&tree, &cascade, &group, &short, &headers, &mut trailing)
+            .moves_box()
     );
-    assert!(fits.table_row);
+    let fallback = candidate(last, 190.0, 30.0);
+    let fit = BoxFit {
+        effective_y: 190.0,
+        flow_y: 190.0,
+        next_page_step: 25.0,
+        ..base_fit
+    };
+    assert!(
+        breaks
+            .measure(&tree, &cascade, &fallback, &fit, &headers, &mut trailing)
+            .moves_box()
+    );
 }
 
 #[test]

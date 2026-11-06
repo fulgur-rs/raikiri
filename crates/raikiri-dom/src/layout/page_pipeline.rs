@@ -5612,16 +5612,18 @@ impl AvoidedBreaks {
         let item_tail = item_tail_move(candidate, fit);
         let page =
             page || (item_tail && document.nodes[node_id].display() == DisplayValue::TableCaption);
-        let tail_row_fits =
-            table_row_lead + height + repeated_header_height + repeated_footer_height
-                <= next_page_step + 0.001;
+        let row_group = self.row_groups.get(&node_id).copied();
+        // An avoided tail group may split after moving to a shorter page.
+        // Its first row and the repeated groups must fit, not the whole group.
+        let tail_fits = table_row_lead + height + repeated_header_height + repeated_footer_height
+            <= next_page_step + 0.001;
         let cell_text_fits = candidate.context.is_table_row()
             && table_cell_fragments::fitting(
                 document, cascade, node_id, flow_y, page_start, page_end,
             )
             .is_some();
         let table_row = candidate.context.is_table_row()
-            && ((item_tail && tail_row_fits)
+            && ((item_tail && tail_fits)
                 || (!cell_text_fits
                     && table_row_moves(
                         flow_y,
@@ -5631,12 +5633,10 @@ impl AvoidedBreaks {
                         page_end,
                         next_page_step,
                     )));
-        let row_group_lead = self
-            .row_groups
-            .get(&node_id)
-            .copied()
+        let row_group_lead = row_group
             .filter(|&(end, _)| {
-                item_tail || row_group_moves(flow_y, end - raw_y, page_start, page_end)
+                (item_tail && tail_fits)
+                    || row_group_moves(flow_y, end - raw_y, page_start, page_end)
             })
             .map(|(_, lead)| lead);
         // A trailing flex item may extend into the containing flex box's
@@ -9073,17 +9073,19 @@ fn container_moves_whole(
 }
 
 /// The last item of the flex container `node_id` that stacks its items in a
-/// column, or the last row of the table `node_id`, when the page breaks
+/// column, or the visual last row or unbreakable bottom caption of the table
+/// `node_id`, when the page breaks
 /// between its items or rows rather than moving the container whole (see
 /// [`container_moves_whole`]) and that item or row is a box the page cannot
 /// break inside.
 ///
 /// The closing edges of the container, and of the blocks it ends, follow that
 /// box. Browsers send it to the next page with them when they do not fit after
-/// it, and the container stays where it is with the items before it. A table
-/// with a header or footer group, a caption below its rows or boxes that are
-/// no rows, and a flex container that wraps its items, are left to the rules
-/// for those.
+/// it, and the container stays where it is with the items before it. Header
+/// and footer groups follow the table's visual order; the first row of an
+/// avoided final group can represent the whole group. Rowspans, anonymous
+/// cells, unsupported captions and wrapping flex containers keep their
+/// existing fragmentation paths.
 fn container_item_tail(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
