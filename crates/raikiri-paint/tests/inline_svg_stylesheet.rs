@@ -910,3 +910,23 @@ fn a_geometry_that_inherits_a_font_relative_length_keeps_the_font_size_of_the_pa
         "<svg width=60 height=30><svg x=20 y=0 width=30 height=25 style='font-size:20px'><rect x=20 width=10 height=10 fill=blue /></svg></svg>",
     );
 }
+
+#[test]
+fn a_size_in_the_style_attribute_is_read_by_the_svg_renderer_not_the_cascade() {
+    // A number without a unit is a length in the `style` attribute of an SVG
+    // element, so the last declaration is the one that counts.
+    assert_paints_like(
+        "<svg width=40 height=30><rect height=10 style='width:10px;width:20' fill=blue /></svg>",
+        "<svg width=40 height=30><rect height=10 width=20 fill=blue /></svg>",
+    );
+    // The attribute beats a rule that is not important, and an important rule
+    // beats the attribute.
+    assert_paints_like(
+        "<style>rect{width:30px}</style><svg width=40 height=30><rect height=10 style='width:10px;width:20' fill=blue /></svg>",
+        "<svg width=40 height=30><rect height=10 width=20 fill=blue /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:30px !important}</style><svg width=40 height=30><rect height=10 style='width:10px;width:20' fill=blue /></svg>",
+        "<svg width=40 height=30><rect height=10 width=30 fill=blue /></svg>",
+    );
+}

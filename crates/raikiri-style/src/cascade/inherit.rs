@@ -36,8 +36,8 @@ use super::candidate::{
     SharedDeclarations,
 };
 use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, cascade_rank,
-    flow_mapping, pick_winners,
+    CASCADED_PSEUDO_ELEMENTS, Collector, INLINE_SOURCE_ORDER, INLINE_SPECIFICITY, RankedDecl,
+    STORED_BLOCK_BUDGET, cascade_rank, flow_mapping, pick_winners,
 };
 use super::custom_property::{DeferredResolver, resolve_custom_properties};
 use super::first_line::first_line_property_applies;
@@ -1668,9 +1668,20 @@ pub(crate) fn apply_winners(
                     inherited_from: None,
                 });
             }
+            // A size that the `style` attribute of the element gives is in the
+            // SVG source already, and the renderer reads it there as a browser
+            // does for an SVG element, where a number without a unit is a
+            // length. This cascade reads a size as a box property, which has
+            // no such number, so it would pick another declaration.
+            let inline_size = winner_key.is_svg_shape_size()
+                && supplier.is_some_and(|supplier| {
+                    supplier.specificity == INLINE_SPECIFICITY
+                        && supplier.source_order == INLINE_SOURCE_ORDER
+                });
             if let Some(collector) = svg_properties.as_mut()
                 && svg_property_is_collected(winner_key, collector.painting_only)
                 && !winning_paint_hint
+                && !inline_size
                 && !(winner_key.is_svg_shape_size()
                     && winner.rank
                         == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false))

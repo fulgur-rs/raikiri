@@ -13738,6 +13738,37 @@ fn svg_geometry_with_path_data_that_has_an_error_does_not_take_part() {
 }
 
 #[test]
+fn a_shape_size_that_the_style_attribute_wins_is_left_to_the_svg_source() {
+    let size = |css: &str, inline_style: Option<&str>| {
+        exported(
+            &svg_rect_properties(css, &[], inline_style),
+            PropertyKey::Width,
+        )
+    };
+    // The attribute wins a rule that is not important, so the source says it.
+    assert_eq!(size("rect { width: 30px }", Some("width: 10px")), None);
+    assert_eq!(size("", Some("width: 10px; width: 20")), None);
+    // An important rule wins the attribute, and a rule wins when the
+    // attribute has no size.
+    assert_eq!(
+        size("rect { width: 30px !important }", Some("width: 10px")),
+        Some((false, Some("30px".into())))
+    );
+    assert_eq!(
+        size("rect { width: 30px }", Some("height: 10px")),
+        Some((false, Some("30px".into())))
+    );
+    // The other geometry is read in the same way from every source.
+    assert_eq!(
+        exported(
+            &svg_rect_properties("rect { x: 3px }", &[], Some("x: 4px")),
+            PropertyKey::SvgX
+        ),
+        Some((false, Some("4px".into())))
+    );
+}
+
+#[test]
 fn an_inherited_shape_size_is_exported_as_the_computed_size_of_the_parent() {
     let properties = svg_rect_in(
         "g { width: 12px } rect { width: inherit; height: inherit }",
