@@ -20,6 +20,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
+mod css;
 mod filter_source;
 mod filters;
 mod fonts;
@@ -1089,7 +1090,9 @@ fn parse_tree_with(
         font_resolver,
         ..usvg::Options::default()
     };
-    usvg::Tree::from_str(&filter_source::like_browsers(source), &options)
+    let geometry_source = filter_source::like_browsers(source);
+    let backend_source = css::backend_source(&geometry_source)?;
+    usvg::Tree::from_str(&backend_source, &options)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))
 }
 
@@ -1950,11 +1953,19 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
             continue;
         };
         budget.charge_bytes(stylesheet_text.len())?;
-        let estimate = estimate_initial_stylesheet_resources(stylesheet_text)?;
+        let mut estimate = estimate_initial_stylesheet_resources(stylesheet_text)?;
+        let recovered = css::estimate(stylesheet_text);
+        estimate.selector_count = estimate.selector_count.max(recovered.selector_count);
+        estimate.selector_ast_bytes = estimate
+            .selector_ast_bytes
+            .max(recovered.selector_ast_bytes);
+        estimate.declaration_storage_bytes = estimate
+            .declaration_storage_bytes
+            .max(recovered.declaration_storage_bytes);
         budget.check_selector_capacity(estimate.selector_count)?;
         budget.charge_selector_ast_bytes(estimate.selector_ast_bytes)?;
         budget.charge_declaration_storage(estimate.declaration_storage_bytes)?;
-        let stylesheet = simplecss::StyleSheet::parse(stylesheet_text);
+        let stylesheet = css::parse(stylesheet_text);
         budget.charge_selectors(stylesheet.rules.len())?;
         total_rules = total_rules
             .checked_add(stylesheet.rules.len())
@@ -2872,7 +2883,7 @@ fn expand_font_shorthands(
     )?;
     let sheet;
     let declarations = if stylesheet {
-        sheet = simplecss::StyleSheet::parse(source);
+        sheet = css::parse(source);
         sheet
             .rules
             .iter()
@@ -3660,10 +3671,7 @@ fn freeze_svg_stylesheet_selectors(
     let mut stylesheet = simplecss::StyleSheet::new();
     for node in &style_nodes {
         if let Some(text) = node.text() {
-            stylesheet.parse_more(text);
-            // The geometry of a rule is read later from the text that this
-            // writes, so it has to be written whole.
-            filter_source::read_geometry_blocks_again(&mut stylesheet, text);
+            css::parse_more(&mut stylesheet, text);
         }
     }
     // Without a rule SimpleCSS applies there is nothing to freeze. Report it
