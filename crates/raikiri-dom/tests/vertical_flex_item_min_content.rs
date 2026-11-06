@@ -598,7 +598,8 @@ const UNCHANGED_ROWS: &[Row] = &[
 ];
 
 /// The rows where a column container takes the main size of a vertical item from its flex
-/// basis: `content`, `max-content` and `fit-content` ignore a `min-content` height, `auto` keeps it.
+/// basis: `content`, `max-content` and `fit-content` ignore a `min-content` height, `auto` keeps it,
+/// and so does a basis of `0%` (`flex: 1`), which Chromium resolves to zero for such an item.
 const COLUMN_BASIS_ROWS: &[Row] = &[
     (
         r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content">xxxx xxxx xx</div></div>"#,
@@ -743,6 +744,18 @@ const COLUMN_BASIS_ROWS: &[Row] = &[
     (
         r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 0">xxxx xxxx xx</div></div>"#,
         "c:0,0,800,40 a:0,0,30,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:1">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:1 1 0%">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 0%">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
     ),
 ];
 
