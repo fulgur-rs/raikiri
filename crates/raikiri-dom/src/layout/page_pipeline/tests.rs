@@ -17291,6 +17291,7 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     let mut breaks = AvoidedBreaks::default();
     let headers = HeaderRepeats::default();
     let mut trailing = TrailingFlexChildren::default();
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     // How the 60px box `node_id` at 80 moves when `fit` places it on the
     // page from 0 to 100.
     let mut measure =
@@ -17304,7 +17305,7 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
                 named_flex_context: None,
                 ifc_root: None,
             };
-            breaks.measure(&doc, &cascade, &candidate, fit, &headers, &mut trailing)
+            breaks.measure(&session, &cascade, &candidate, fit, &headers, &mut trailing)
         };
     let fit = BoxFit {
         effective_y: 80.0,
