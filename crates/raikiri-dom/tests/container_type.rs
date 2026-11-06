@@ -200,3 +200,22 @@ fn container_type_keeps_inline_block_baselines() {
     );
     assert_eq!(contained, normal);
 }
+
+#[test]
+fn container_type_keeps_column_spans_inside_its_formatting_context() {
+    let body = "<div style='width:100px;columns:2;column-gap:0'><div id=w style='CONTAINER'><div id=c style='column-span:all;height:10px'></div></div></div>";
+    let expected = boxes(&body.replace("CONTAINER", "display:flow-root"));
+    assert_eq!(
+        expected,
+        vec![
+            ("w".to_owned(), [8.0, 8.0, 50.0, 5.0]),
+            ("w".to_owned(), [58.0, 8.0, 50.0, 5.0]),
+            ("c".to_owned(), [8.0, 8.0, 50.0, 5.0]),
+            ("c".to_owned(), [58.0, 8.0, 50.0, 5.0]),
+        ]
+    );
+    assert_eq!(
+        boxes(&body.replace("CONTAINER", "container-type:inline-size")),
+        expected
+    );
+}

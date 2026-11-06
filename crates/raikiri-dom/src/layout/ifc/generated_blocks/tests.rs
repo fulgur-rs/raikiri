@@ -1400,3 +1400,40 @@ fn comparisons_need_a_definite_basis_and_vertical_widths_separate_margins() {
     assert!(block("width:20px").separates_margins(100.0, true));
     assert!(!block("width:0;height:0").separates_margins(100.0, true));
 }
+
+#[test]
+fn container_type_generated_block_starts_an_independent_float_context() {
+    assert_eq!(
+        block_after_float("block", "width:40px;container-type:normal", TEN_PX),
+        (vec![(30.0, 0.0)], rect(0.0, 0.0, 40.0, 40.0))
+    );
+    for kind in ["inline-size", "size"] {
+        assert_eq!(
+            block_after_float(
+                "block",
+                &format!("width:40px;height:10px;container-type:{kind}"),
+                TEN_PX
+            ),
+            (vec![(0.0, 20.0)], rect(20.0, 0.0, 40.0, 10.0)),
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn container_type_generated_empty_block_does_not_collapse_through_its_margins() {
+    for kind in ["normal", "inline-size", "size"] {
+        let (_, blocks) = placed(
+            &format!("div::after {{content:'';display:block;margin:5px;container-type:{kind}}}"),
+            TEN_PX,
+            "A",
+        );
+        if kind == "normal" {
+            assert!(blocks.is_empty());
+        } else {
+            assert_eq!(blocks.len(), 1, "{kind}");
+            assert_eq!(blocks[0].border_box.y, 15.0);
+            assert_eq!(blocks[0].border_box.height, 0.0);
+        }
+    }
+}

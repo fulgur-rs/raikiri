@@ -364,3 +364,28 @@ fn what_the_root_took_is_put_back_over_its_current_values() {
     assert_eq!(all[html].display, DisplayValue::None);
     assert_eq!(all[html].cssom_writing_mode, WritingMode::HorizontalTb);
 }
+
+#[test]
+fn container_type_on_html_or_body_stops_principal_flow_propagation() {
+    for kind in ["size", "inline-size"] {
+        for on_html in [false, true] {
+            let containment = format!("container-type:{kind}");
+            let body = format!(
+                "writing-mode:vertical-rl;direction:rtl;text-orientation:upright;{}",
+                if on_html { "" } else { &containment }
+            );
+            let Page { html, result, .. } =
+                page(on_html.then_some(containment.as_str()), Some(&body));
+            assert_eq!(
+                result.principal_element_index(),
+                html,
+                "{kind}, html={on_html}"
+            );
+            assert_eq!(
+                flow(&result.computed[html]),
+                flow(&result.cssom_computed(html))
+            );
+            assert_eq!(result.computed[html].direction, Direction::Ltr);
+        }
+    }
+}
