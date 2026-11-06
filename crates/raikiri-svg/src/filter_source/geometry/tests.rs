@@ -242,33 +242,24 @@ fn a_value_that_is_not_one_of_the_property_is_invalid() {
 #[test]
 fn a_value_that_is_not_computed_here_is_opaque() {
     for (property, value) in [
-        ("width", "calc(10px + 20px)"),
         ("width", "var(--w)"),
-        ("width", "min(10px, 20px)"),
-        ("width", "CALC(1px + 2px)"),
-        ("width", "-webkit-calc(1px + 2px)"),
-        ("width", "clamp(1px, 2px, 3px)"),
         ("width", "2px var(--x)"),
         ("width", "env(safe-area-inset-left)"),
         ("width", "attr(data-w px)"),
-        ("r", "calc(sqrt(4) * 1px)"),
         ("width", "calc(garbage var(--x))"),
         ("width", "min(1px, var(--y))"),
-        // A math function that a browser reads, with the types that fit.
-        ("width", "calc(30px * 1px / 1px)"),
-        ("height", "round(up, 21px, 10px)"),
+        // A math function that a browser reads, but that depends on where it
+        // is used, or on a value that is not a number.
+        ("width", "calc(10px + 20%)"),
+        ("height", "round(up, 21%, 10px)"),
         ("rx", "clamp(none, 3px, 4%)"),
         ("cy", "calc(-infinity * 1px)"),
+        ("cx", "calc(1em + 2px)"),
+        ("x", "min(1px, 1vw)"),
+        ("width", "calc(1px / 0)"),
         // A sizing function, which is not looked into.
         ("width", "calc-size(auto, size)"),
         ("height", "CALC-SIZE(30px, size)"),
-        // A number that a function gives is a length to the position and the
-        // radii, but not to a size.
-        ("x", "calc(40)"),
-        ("y", "min(40, 50)"),
-        ("cx", "calc(20 + 20)"),
-        ("r", "abs(40)"),
-        ("rx", "calc(sign(5) * 40)"),
         ("width", "2rem"),
         ("width", "10vw"),
         ("width", "1Q"),
@@ -296,6 +287,43 @@ fn a_value_that_is_not_computed_here_is_opaque() {
         ("d", "path('M0 \\31 ')"),
     ] {
         assert_eq!(parse(property, value), OPAQUE, "{property}: {value}");
+    }
+}
+
+#[test]
+fn a_math_function_of_values_that_need_nothing_else_is_worked_out() {
+    for (property, value, text) in [
+        ("width", "calc(10px + 20px)", "30"),
+        ("width", "min(10px, 20px)", "10"),
+        ("width", "CALC(1px + 2px)", "3"),
+        ("width", "-webkit-calc(1px + 2px)", "3"),
+        ("width", "clamp(1px, 2px, 3px)", "2"),
+        ("r", "calc(sqrt(4) * 1px)", "2"),
+        ("width", "calc(30px * 1px / 1px)", "30"),
+        ("height", "round(up, 21px, 10px)", "30"),
+        ("width", "calc(1in)", "96"),
+        ("width", "calc(1pc + 1pt)", "17.333334"),
+        // A number that a function gives is a length to the position and the
+        // radii, but not to a size.
+        ("x", "calc(40)", "40"),
+        ("y", "min(40, 50)", "40"),
+        ("cx", "calc(20 + 20)", "40"),
+        ("r", "abs(40)", "40"),
+        ("rx", "calc(sign(5) * 40)", "40"),
+        // A position may be below zero.
+        ("x", "calc(-5px)", "-5"),
+        ("cy", "calc(0px - 1.5px)", "-1.5"),
+        // A browser clamps a size or a radius that comes to less than zero.
+        ("width", "calc(-5px)", "0"),
+        ("height", "calc(1px - 2px)", "0"),
+        ("r", "calc(-5px)", "0"),
+        ("rx", "min(-1px, 3px)", "0"),
+    ] {
+        assert_eq!(
+            parse(property, value),
+            attribute(text),
+            "{property}: {value}"
+        );
     }
 }
 
@@ -489,16 +517,16 @@ fn an_invalid_declaration_does_not_take_part() {
 fn an_opaque_declaration_hides_the_ones_below_it() {
     let rect = properties("rect");
     assert_eq!(
-        winners("width:10px;width:calc(1px + 2px)", rect),
+        winners("width:10px;width:calc(1px + 2%)", rect),
         [("width", Declared::Opaque)]
     );
     // And a valid one above takes its place.
     assert_eq!(
-        attributes(&winners("width:calc(1px + 2px);width:10px", rect)),
+        attributes(&winners("width:calc(1px + 2%);width:10px", rect)),
         [("width".to_owned(), "10px".to_owned())]
     );
     assert_eq!(
-        winners("width:calc(1px + 2px)!important;width:10px", rect),
+        winners("width:calc(1px + 2%)!important;width:10px", rect),
         [("width", Declared::Opaque)]
     );
 }
