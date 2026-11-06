@@ -51,7 +51,7 @@ fn before_text(value: i32, content: &str) -> String {
     before_text_with("", value, content)
 }
 
-/// [`before_text`] with the style rules `style` added.
+/// `before_text` with the style rules `style` added.
 fn before_text_with(style: &str, value: i32, content: &str) -> String {
     generated_text(
         &format!("{style} #t {{ counter-reset: c {value} }} #t::before {{ content: {content} }}"),
