@@ -13872,3 +13872,88 @@ fn a_width_attribute_of_the_svg_root_is_not_exported() {
         ComputedLengthPercentageOrAuto::Px(50.0)
     );
 }
+
+#[test]
+fn svg_shape_size_rollback_exports_the_selected_hint_or_initial_value() {
+    for (css, expected) in [
+        ("rect{width:revert-layer!important}", "5px"),
+        ("rect{width:revert!important}", "auto"),
+        ("rect{all:revert-layer!important}", "5px"),
+        ("rect{all:revert!important}", "auto"),
+    ] {
+        let properties = svg_rect_properties(css, &[("width", "5")], Some("width:20"));
+        assert_eq!(
+            exported(&properties, PropertyKey::Width),
+            Some((false, Some(expected.into()))),
+            "{css}"
+        );
+    }
+    assert_eq!(
+        exported(
+            &svg_rect_properties("", &[("width", "5")], None),
+            PropertyKey::Width
+        ),
+        None
+    );
+    // A losing rollback must not materialize a replacement for inline sizing.
+    assert_eq!(
+        exported(
+            &svg_rect_properties(
+                "rect{all:revert}",
+                &[("width", "5")],
+                Some("width:20!important")
+            ),
+            PropertyKey::Width
+        ),
+        None
+    );
+}
+
+#[test]
+fn variable_svg_size_hints_export_their_substitution_in_css_attribute_context() {
+    for (variable, expected) in [("5px", "5px"), ("5", "auto"), ("-5px", "auto")] {
+        let properties = svg_rect_properties(
+            &format!("rect{{--n:{variable}}}"),
+            &[("width", "var(--n)")],
+            None,
+        );
+        assert_eq!(
+            exported(&properties, PropertyKey::Width),
+            Some((false, Some(expected.into()))),
+            "{variable}"
+        );
+    }
+}
+
+#[test]
+fn svg_shape_dimension_hints_are_limited_to_rectangles_and_images() {
+    use crate::resolve::ComputedLengthPercentageOrAuto as Dimension;
+    for tag in [
+        "rect",
+        "image",
+        "g",
+        "use",
+        "circle",
+        "foreignObject",
+        "symbol",
+    ] {
+        let mut doc = TestDoc::new();
+        let node = doc.push_element_with_namespace(
+            0,
+            tag,
+            "http://www.w3.org/2000/svg",
+            &[("width", "5"), ("height", "6")],
+        );
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let expected = if matches!(tag, "rect" | "image") {
+            Dimension::Px(5.0)
+        } else {
+            Dimension::Auto
+        };
+        assert_eq!(result.computed[node].width, expected, "{tag}");
+    }
+    let mut doc = TestDoc::new();
+    let node = doc.push_element_with_attrs(0, "rect", None, &[("width", "5")]);
+    let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert_eq!(result.computed[node].width, Dimension::Auto);
+}

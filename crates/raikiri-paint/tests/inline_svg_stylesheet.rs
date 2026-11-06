@@ -940,6 +940,108 @@ fn unitless_inline_svg_sizes_beat_page_rules() {
 }
 
 #[test]
+fn rollback_of_inline_svg_sizes_restores_the_presentation_attributes() {
+    for inline in [
+        "width:20px;height:10px",
+        "width:20;height:10",
+        "--w:20;--h:10;width:var(--w);height:var(--h)",
+    ] {
+        for rule in [
+            "@layer rollback{#t{width:revert-layer!important;height:revert-layer!important}}",
+            "#t{width:revert-layer!important;height:revert-layer!important}",
+        ] {
+            assert_both_svg_paths_paint_like(
+                &format!(
+                    "<style>{rule}</style><svg width=40 height=30><rect id=t width=5 height=6 style='{inline}' fill=blue /></svg>"
+                ),
+                "<svg width=40 height=30><rect width=5 height=6 fill=blue /></svg>",
+            );
+        }
+    }
+}
+
+#[test]
+fn svg_size_rollback_preserves_the_selected_boundary() {
+    for property in [
+        "width:KEYWORD!important;height:KEYWORD!important",
+        "all:KEYWORD!important",
+    ] {
+        for (keyword, attributes, width, height) in [
+            ("revert-layer", "width=5 height=6", 5, 6),
+            ("revert-layer", "width='25%' height='50%'", 10, 15),
+            ("revert-layer", "width='.5em' height='.6em'", 5, 6),
+            ("revert-layer", "", 0, 0),
+            ("revert", "width=5 height=6", 0, 0),
+            ("revert", "", 0, 0),
+        ] {
+            let declarations = property.replace("KEYWORD", keyword);
+            let body = format!(
+                "<style>@layer rollback{{#t{{{declarations}}}}}</style><svg width=40 height=30><rect id=t {attributes} style='width:20;height:10' fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+            );
+            let reference = format!(
+                "<svg width=40 height=30><rect width={width} height={height} fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+            );
+            assert_paints_like(&body, &reference);
+            // The public helper supplies a 50x50 viewport, so retain relative
+            // lengths when comparing that path with its native SVG source.
+            let reference = if attributes.contains('%') {
+                format!(
+                    "<svg width=40 height=30><rect {attributes} fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+                )
+            } else {
+                reference
+            };
+            assert_both_svg_paths_paint_like(&body, &reference);
+        }
+    }
+}
+
+#[test]
+fn svg_size_rollback_keeps_lower_css_and_independent_axes() {
+    for (css, inline, width, height) in [
+        (
+            "@layer low,rollback;@layer low{#t{width:7px!important;height:8px!important}}@layer rollback{#t{all:revert-layer!important}}",
+            "width:20;height:10",
+            7,
+            8,
+        ),
+        (
+            "#t{all:revert-layer}",
+            "width:20!important;height:10!important",
+            20,
+            10,
+        ),
+        (
+            "#t{width:revert-layer!important}",
+            "width:20;height:10",
+            5,
+            10,
+        ),
+        (
+            "#t{height:revert-layer!important}",
+            "width:20;height:10",
+            20,
+            6,
+        ),
+        (
+            "@layer low,rollback;@layer low{#t{width:revert!important;height:revert!important}}@layer rollback{#t{all:revert-layer!important}}",
+            "width:20;height:10",
+            0,
+            0,
+        ),
+    ] {
+        assert_both_svg_paths_paint_like(
+            &format!(
+                "<style>{css}</style><svg width=40 height=30><rect id=t width=5 height=6 style='{inline}' fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+            ),
+            &format!(
+                "<svg width=40 height=30><rect width={width} height={height} fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+            ),
+        );
+    }
+}
+
+#[test]
 fn unitless_inline_svg_variables_reach_both_renderers() {
     assert_both_svg_paths_paint_like(
         "<style>rect{width:30px;height:25px;--w:20;--h:10}</style><svg width=40 height=30><rect style='width:var(--w);height:var(--h)' fill=blue /></svg>",

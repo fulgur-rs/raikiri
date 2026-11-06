@@ -1497,7 +1497,25 @@ pub(crate) fn apply_winners(
         flow_winner_value(candidates, key, idx, &mut deferred_resolver)
             .map(|value| resolve_defaulting_value(value, inherited))
     });
-    pick_winners(candidates, winners, flow);
+    let all_size_rollback = pick_winners(candidates, winners, flow);
+    if let Some(collector) = svg_properties.as_mut() {
+        for key in [
+            crate::property::PropertyKey::Width,
+            crate::property::PropertyKey::Height,
+        ] {
+            if all_size_rollback.changed(key)
+                && winners.get(key as usize).is_none_or(Option::is_none)
+                && svg_property_is_collected(key, collector.painting_only)
+            {
+                collector.properties.push(SvgStyleProperty {
+                    property: key,
+                    inherited: false,
+                    expression: Some("auto".to_owned()),
+                    inherited_from: None,
+                });
+            }
+        }
+    }
     let mut white_space_applied = WhiteSpaceApplied::default();
     let radius_winners = BorderRadiusWinners::read(winners);
     let initial_radius = specified.border_radius;
@@ -1681,13 +1699,17 @@ pub(crate) fn apply_winners(
                             PropertyValue::Deferred(deferred)
                                 if references_variable(&deferred.value))
                 });
+            let source_size_hint = winner_key.is_svg_shape_size()
+                && winner.rank
+                    == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
+                && !all_size_rollback.changed(winner_key)
+                && !matches!(candidates.value(winner.idx),
+                    PropertyValue::Deferred(deferred) if references_variable(&deferred.value));
             if let Some(collector) = svg_properties.as_mut()
                 && svg_property_is_collected(winner_key, collector.painting_only)
                 && !winning_paint_hint
                 && !inline_size
-                && !(winner_key.is_svg_shape_size()
-                    && winner.rank
-                        == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false))
+                && !source_size_hint
             {
                 collector.properties.push(SvgStyleProperty {
                     property: winner_key,
@@ -1699,12 +1721,9 @@ pub(crate) fn apply_winners(
                             if color.key == crate::property::PropertyKey::Color
                                 && svg_color_is_current_color(&color.source))
                         || (value.is_none() && svg_property_is_inherited(winner_key)),
-                    // Invalid substitution still wins the cascade. Its initial
-                    // size must replace the authored presentation attribute.
-                    expression: if value.is_none()
-                        && winner_key.is_svg_shape_size()
-                        && supplier.is_some()
-                    {
+                    // Invalid substitution or rollback without a survivor uses
+                    // the initial size instead of reviving authored SVG sizes.
+                    expression: if value.is_none() && winner_key.is_svg_shape_size() {
                         Some("auto".to_owned())
                     } else {
                         value.as_ref().and_then(svg_property_expression)
