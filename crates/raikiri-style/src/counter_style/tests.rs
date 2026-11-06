@@ -1302,3 +1302,16 @@ fn representation_finds_a_fallback_by_the_name_the_caller_maps_it_to() {
         CounterRepresentation::Text("R".into())
     );
 }
+
+#[test]
+fn representation_of_an_oversized_pad_ends_at_the_undefined_fallback() {
+    // The pad would make the text longer than the byte budget, so the style
+    // hands the value to its fallback, which the registry does not define.
+    let registry = CounterStyleRegistry::from_source(
+        r#"@counter-style padded { system: cyclic; symbols: "*"; pad: 100000 "0"; fallback: lower-roman; }"#,
+    );
+    assert_eq!(
+        representation(&registry, "padded", 1),
+        CounterRepresentation::Undefined(SmolStr::new("lower-roman"))
+    );
+}

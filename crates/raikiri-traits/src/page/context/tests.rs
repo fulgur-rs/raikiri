@@ -445,6 +445,27 @@ mod apply_directive_tests {
     }
 
     #[test]
+    fn string_set_shows_an_absent_counter_as_zero_in_an_author_style() {
+        let mut ctx = PageContext::default();
+        ctx.set_counter_styles(Arc::new(CounterStyleRegistry::from_source(
+            "@counter-style x { system: numeric; symbols: 'o' 'i' 'ii'; }",
+        )));
+        let title = Symbol::new("title");
+        ctx.apply_directive(&GcpmDirective::StringSet {
+            name: title.clone(),
+            source: ContentSource::new(vec![ContentValueItem::Counters {
+                name: Symbol::new("missing"),
+                separator: ".".into(),
+                style: CounterStyle::Named("x".into()),
+            }]),
+        });
+        assert_eq!(
+            ctx.string_state(&title).and_then(NamedStringState::running),
+            Some("o")
+        );
+    }
+
+    #[test]
     fn string_set_without_author_styles_shows_an_unknown_style_in_decimal() {
         let mut ctx = PageContext::default();
         let chapter = Symbol::new("chapter");
