@@ -1314,7 +1314,7 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// that can only show decimal treats `None` from this function as the CSS
 /// decimal fallback, while a successful result is rendered as the custom
 /// style's representation; one that can show the predefined styles uses
-/// [`resolve_counter_representation`], which also names the style a fallback
+/// `resolve_counter_representation`, which also names the style a fallback
 /// chain ends at. Prefix/suffix application for a default `::marker` stays at
 /// that consumer boundary because these descriptors do not apply to
 /// `counter()` / `counters()` themselves.
@@ -1331,8 +1331,8 @@ pub fn resolve_custom_counter(
 }
 
 /// How the `generate a counter` algorithm ends for one counter value: the
-/// outcome of [`resolve_counter_representation`], which tells apart the ways
-/// [`resolve_custom_counter`] reports `None`.
+/// outcome of `resolve_counter_representation`, which tells apart the ways
+/// `resolve_custom_counter` reports `None`.
 #[doc(hidden)]
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1353,10 +1353,10 @@ pub enum CounterRepresentation {
     Loop,
 }
 
-/// Resolve `name` against `registry` like [`resolve_custom_counter`], but
+/// Resolve `name` against `registry` like `resolve_custom_counter`, but
 /// report where the algorithm ends when it leaves the registry: the name of
 /// the style it reaches that the registry does not define, which
-/// [`resolve_custom_counter`] leaves to the caller as a bare `None`.
+/// `resolve_custom_counter` leaves to the caller as a bare `None`.
 ///
 /// This is the function for a caller that can show the predefined styles of
 /// CSS Counter Styles 3: an author style such as `fallback: lower-roman`

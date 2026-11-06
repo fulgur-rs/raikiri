@@ -589,7 +589,7 @@ fn parse_fragment(url: &str) -> Option<&str> {
 /// "Complex Predefined Counter Styles"
 /// <https://www.w3.org/TR/css-counter-styles-3/#complex-predefined-counters>,
 /// `disclosure-open` / `disclosure-closed` included (see
-/// [`format_named_counter`]). Landed in two passes: `decimal-leading-zero`, `lower-roman` /
+/// `format_named_counter`). Landed in two passes: `decimal-leading-zero`, `lower-roman` /
 /// `upper-roman`, `lower-alpha` / `upper-alpha` (+ the `lower-latin` /
 /// `upper-latin` aliases §6 defines with identical symbol tables), `disc` /
 /// `circle` / `square` in an earlier pass; the remainder — §6.1 Numeric,
@@ -611,13 +611,13 @@ fn parse_fragment(url: &str) -> Option<&str> {
 ///    all. Step 1 applies verbatim; decimal is spec-correct here.
 /// 2. **A custom `@counter-style` rule** — a valid `<custom-ident>` per
 ///    spec, but this function has no registry to resolve it against.
-///    [`format_counter_with_styles`] looks an author `@counter-style` up
+///    `format_counter_with_styles` looks an author `@counter-style` up
 ///    first and calls this function only for a name the author did not
 ///    define, or for the name a `fallback` chain of author styles ends at; a
 ///    caller with no registry gets decimal for such a name.
 ///
 /// **Visibility**: `pub`, hidden from the documentation and re-exported as
-/// `page::format_predefined_counter`. [`format_counter_with_styles`] uses it
+/// `page::format_predefined_counter`. `format_counter_with_styles` uses it
 /// after it has looked for an author `@counter-style` of the same name, and
 /// the sibling `page::context` module for `string-set` text resolution when
 /// it has no such rules.
@@ -703,14 +703,13 @@ pub fn format_author_counter(
 
 /// `value` in the counter style `style`: an author `@counter-style` of
 /// `registry` first, since it can redefine a predefined name, then the
-/// predefined styles of CSS Counter Styles 3 ([`format_counter`]), else
+/// predefined styles of CSS Counter Styles 3 (`format_counter`), else
 /// decimal.
 ///
 /// `registry` is the cascade's `counter_styles`. `raikiri-dom` formats
-/// `counter()`, `counters()` and markers with it, and
-/// [`PageContext`](super::PageContext) and [`TargetRegistry`] format
-/// `string-set` and `target-counter()` with the registry they are given
-/// through their `set_counter_styles`.
+/// `counter()`, `counters()` and markers with it, and `PageContext` and
+/// `TargetRegistry` format `string-set` and `target-counter()` with the
+/// registry they are given through their `set_counter_styles`.
 #[doc(hidden)]
 pub fn format_counter_with_styles(
     value: i32,
