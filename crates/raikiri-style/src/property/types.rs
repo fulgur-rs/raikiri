@@ -8189,6 +8189,69 @@ impl PropertyKey {
         }
     }
 
+    /// The SVG 2 geometry properties that no box property stands for (`x`,
+    /// `y`, `cx`, `cy`, `r`, `rx`, `ry` and `d`), each with its CSS name and
+    /// its initial value as an SVG renderer reads it. None is inherited. Each
+    /// is held as validated text by [`PropertyValue::SvgX`] and its siblings,
+    /// and read only by the inline SVG export, which writes it for the
+    /// shapes that take the property. `width` and `height` of a shape are the
+    /// box properties, so [`Self::is_svg_shape_size`] names them.
+    pub const SVG_GEOMETRY: [(PropertyKey, &'static str, &'static str); 8] = [
+        (PropertyKey::SvgX, "x", "0"),
+        (PropertyKey::SvgY, "y", "0"),
+        (PropertyKey::SvgCx, "cx", "0"),
+        (PropertyKey::SvgCy, "cy", "0"),
+        (PropertyKey::SvgR, "r", "0"),
+        (PropertyKey::SvgRx, "rx", "auto"),
+        (PropertyKey::SvgRy, "ry", "auto"),
+        (PropertyKey::SvgD, "d", "none"),
+    ];
+
+    /// The name and initial value of `self` among [`Self::SVG_GEOMETRY`];
+    /// `None` for any other key.
+    const fn svg_geometry_entry(self) -> Option<(&'static str, &'static str)> {
+        let mut index = 0;
+        while index < Self::SVG_GEOMETRY.len() {
+            let (key, name, initial) = Self::SVG_GEOMETRY[index];
+            if key as usize == self as usize {
+                return Some((name, initial));
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// Whether `self` is one of the SVG 2 geometry properties of
+    /// [`Self::SVG_GEOMETRY`], which the host cascade resolves for inline SVG
+    /// only.
+    pub const fn is_svg_geometry(self) -> bool {
+        self.svg_geometry_entry().is_some()
+    }
+
+    /// Whether `self` is `width` or `height`, which size a `rect` and an
+    /// `image` of an inline SVG as well as they size a box.
+    pub const fn is_svg_shape_size(self) -> bool {
+        matches!(self, PropertyKey::Width | PropertyKey::Height)
+    }
+
+    /// The CSS name of an SVG geometry property of [`Self::SVG_GEOMETRY`];
+    /// `None` for any other key.
+    pub const fn svg_geometry_name(self) -> Option<&'static str> {
+        match self.svg_geometry_entry() {
+            Some((name, _)) => Some(name),
+            None => None,
+        }
+    }
+
+    /// The initial value of an SVG geometry property, as an SVG renderer reads
+    /// it; `None` for any other key.
+    pub const fn svg_geometry_initial(self) -> Option<&'static str> {
+        match self.svg_geometry_entry() {
+            Some((_, initial)) => Some(initial),
+            None => None,
+        }
+    }
+
     /// Whether the cascade resolves a CSS-wide keyword on `self` from the
     /// parent's computed value or the initial value, so the parser keeps the
     /// keyword instead of dropping the declaration.
@@ -8312,6 +8375,7 @@ impl DeferredValue {
                 | PropertyKey::TextShadow
         ) && !self.key.takes_cascade_css_wide_keyword()
             && !self.key.is_svg_presentation()
+            && !self.key.is_svg_geometry()
         {
             return None;
         }
@@ -12244,6 +12308,29 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] expands it into
     /// [`Self::ContainIntrinsicWidth`] and [`Self::ContainIntrinsicHeight`].
     ContainIntrinsicSize(ContainIntrinsicSizeShorthand),
+    /// `x` — **non-inherited**, initial `0` (SVG 2 Geometry). The text is the
+    /// number or length an SVG renderer resolves; same shape as
+    /// [`PropertyValue::Fill`]. Only the inline SVG export reads it, for the
+    /// shapes that take the property (see [`PropertyKey::SVG_GEOMETRY`]).
+    SvgX(Box<str>),
+    /// `y` — same shape as [`PropertyValue::SvgX`].
+    SvgY(Box<str>),
+    /// `cx` — same shape as [`PropertyValue::SvgX`].
+    SvgCx(Box<str>),
+    /// `cy` — same shape as [`PropertyValue::SvgX`].
+    SvgCy(Box<str>),
+    /// `r` — **non-inherited**, initial `0`. The text is a non-negative number
+    /// or length; same shape as [`PropertyValue::SvgX`].
+    SvgR(Box<str>),
+    /// `rx: auto | <length-percentage>` — **non-inherited**, initial `auto`;
+    /// same shape as [`PropertyValue::SvgX`].
+    SvgRx(Box<str>),
+    /// `ry` — same shape as [`PropertyValue::SvgRx`].
+    SvgRy(Box<str>),
+    /// `d: none | path(<string>)` — **non-inherited**, initial `none`. The
+    /// text is `none` or `path()` of the quoted path data, which is not
+    /// checked here; same shape as [`PropertyValue::SvgX`].
+    SvgD(Box<str>),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12897,6 +12984,17 @@ pub enum PropertyKey {
     ContainIntrinsicWidth,
     ContainIntrinsicHeight,
     ContainIntrinsicSize,
+    // SVG 2 geometry properties, carried as validated text by
+    // `PropertyValue::SvgX` and its siblings; appended to preserve existing
+    // key slots. `width` and `height` are the box properties.
+    SvgX,
+    SvgY,
+    SvgCx,
+    SvgCy,
+    SvgR,
+    SvgRx,
+    SvgRy,
+    SvgD,
 }
 
 impl PropertyValue {
@@ -12916,6 +13014,22 @@ impl PropertyValue {
             PropertyKey::StrokeMiterlimit => PropertyValue::StrokeMiterlimit(text),
             PropertyKey::StrokeDasharray => PropertyValue::StrokeDasharray(text),
             PropertyKey::StrokeDashoffset => PropertyValue::StrokeDashoffset(text),
+            _ => return None,
+        })
+    }
+
+    /// The value of the SVG geometry property `key` holding `text`; `None` for
+    /// any other key.
+    pub(crate) fn svg_geometry(key: PropertyKey, text: Box<str>) -> Option<Self> {
+        Some(match key {
+            PropertyKey::SvgX => PropertyValue::SvgX(text),
+            PropertyKey::SvgY => PropertyValue::SvgY(text),
+            PropertyKey::SvgCx => PropertyValue::SvgCx(text),
+            PropertyKey::SvgCy => PropertyValue::SvgCy(text),
+            PropertyKey::SvgR => PropertyValue::SvgR(text),
+            PropertyKey::SvgRx => PropertyValue::SvgRx(text),
+            PropertyKey::SvgRy => PropertyValue::SvgRy(text),
+            PropertyKey::SvgD => PropertyValue::SvgD(text),
             _ => return None,
         })
     }
@@ -13064,6 +13178,14 @@ impl PropertyValue {
             PropertyValue::ContainIntrinsicWidth(_) => PropertyKey::ContainIntrinsicWidth,
             PropertyValue::ContainIntrinsicHeight(_) => PropertyKey::ContainIntrinsicHeight,
             PropertyValue::ContainIntrinsicSize(_) => PropertyKey::ContainIntrinsicSize,
+            PropertyValue::SvgX(_) => PropertyKey::SvgX,
+            PropertyValue::SvgY(_) => PropertyKey::SvgY,
+            PropertyValue::SvgCx(_) => PropertyKey::SvgCx,
+            PropertyValue::SvgCy(_) => PropertyKey::SvgCy,
+            PropertyValue::SvgR(_) => PropertyKey::SvgR,
+            PropertyValue::SvgRx(_) => PropertyKey::SvgRx,
+            PropertyValue::SvgRy(_) => PropertyKey::SvgRy,
+            PropertyValue::SvgD(_) => PropertyKey::SvgD,
             PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
             PropertyValue::TextAutospace(_) => PropertyKey::TextAutospace,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
@@ -14373,6 +14495,14 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "stroke-miterlimit" => PropertyKey::StrokeMiterlimit,
         "stroke-dasharray" => PropertyKey::StrokeDasharray,
         "stroke-dashoffset" => PropertyKey::StrokeDashoffset,
+        "x" => PropertyKey::SvgX,
+        "y" => PropertyKey::SvgY,
+        "cx" => PropertyKey::SvgCx,
+        "cy" => PropertyKey::SvgCy,
+        "r" => PropertyKey::SvgR,
+        "rx" => PropertyKey::SvgRx,
+        "ry" => PropertyKey::SvgRy,
+        "d" => PropertyKey::SvgD,
         "aspect-ratio" => PropertyKey::AspectRatio,
         _ => return None,
     })

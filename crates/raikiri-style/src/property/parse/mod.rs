@@ -133,7 +133,8 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::TextShadow
         )
     ) || key.is_some_and(PropertyKey::takes_cascade_css_wide_keyword)
-        || key.is_some_and(PropertyKey::is_svg_presentation);
+        || key.is_some_and(PropertyKey::is_svg_presentation)
+        || key.is_some_and(PropertyKey::is_svg_geometry);
     if takes_css_wide_keyword
         && let Ok(keyword) = input.try_parse(|parser| {
             let keyword = parse_css_wide_keyword_res(parser)?;
@@ -1440,6 +1441,11 @@ pub(crate) fn parse_property_grammar(
         }
         "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset" => {
             svg::parse_svg_presentation(property_key_for_name(normalized_name)?, input)
+        }
+        // SVG 2 geometry properties of the shapes of an inline SVG: see
+        // `PropertyKey::SVG_GEOMETRY`.
+        "x" | "y" | "cx" | "cy" | "r" | "rx" | "ry" | "d" => {
+            svg::parse_svg_geometry(property_key_for_name(normalized_name)?, input)
         }
         // CSS Compositing and Blending Level 1 §3.4.2
         // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:

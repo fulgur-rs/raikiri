@@ -230,6 +230,65 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
 }
 
 #[test]
+fn descendant_declarations_carry_the_geometry_of_a_shape_as_declared() {
+    let geometry = [
+        (PropertyKey::SvgX, "x", "1px"),
+        (PropertyKey::SvgY, "y", "2%"),
+        (PropertyKey::SvgCx, "cx", "3em"),
+        (PropertyKey::SvgCy, "cy", "-4px"),
+        (PropertyKey::SvgR, "r", "5px"),
+        (PropertyKey::SvgRx, "rx", "auto"),
+        (PropertyKey::SvgRy, "ry", "6pt"),
+        (PropertyKey::SvgD, "d", "path(\"M0 0\")"),
+        (PropertyKey::Width, "width", "20px"),
+        (PropertyKey::Height, "height", "auto"),
+    ];
+    for (property, name, value) in geometry {
+        let declared = [SvgStyleProperty::new(
+            property,
+            false,
+            Some(value.into()),
+            None,
+        )];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(
+                &ComputedValues::initial(),
+                &declared,
+                &[],
+                false,
+                &mut budget
+            )
+            .unwrap(),
+            format!("{name}:{value}!important;")
+        );
+        // The text and a copy of it count against the budget, as they do for
+        // a painting property.
+        assert_eq!(budget, 1024 - 128 - 128 - 2 * value.len());
+
+        // A geometry property is not inherited, so a literal `inherit`
+        // declares nothing; and a declaration without text has nothing to
+        // export either.
+        for (inherited, expression) in [(true, None), (true, Some(value.into())), (false, None)] {
+            let skipped = [SvgStyleProperty::new(property, inherited, expression, None)];
+            let mut budget = 1024;
+            assert_eq!(
+                node_declarations(
+                    &ComputedValues::initial(),
+                    &skipped,
+                    &[],
+                    false,
+                    &mut budget
+                )
+                .unwrap(),
+                "",
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
 fn relative_presentation_attributes_resolve_against_the_declaring_font_size() {
     let attributes = [
         SvgStyleProperty::new(PropertyKey::StrokeWidth, false, Some("2em".into()), None),

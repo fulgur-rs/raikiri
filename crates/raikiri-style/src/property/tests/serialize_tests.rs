@@ -1020,6 +1020,14 @@ fn svg_presentation_values_serialize_to_their_validated_text() {
         ("stroke-miterlimit", "2.50", "2.5"),
         ("stroke-dasharray", "4px, 2 50%", "4px 2 50%"),
         ("stroke-dashoffset", "-1EM", "-1em"),
+        ("x", "-1EM", "-1em"),
+        ("y", "50%", "50%"),
+        ("cx", "3PX", "3px"),
+        ("cy", "0", "0"),
+        ("r", "2.50PT", "2.5pt"),
+        ("rx", "AUTO", "auto"),
+        ("ry", "4px", "4px"),
+        ("d", "PATH('M0 0')", "path(\"M0 0\")"),
     ] {
         let mut input = cssparser::ParserInput::new(source);
         let mut parser = cssparser::Parser::new(&mut input);

@@ -4710,7 +4710,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 196;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 204;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -5475,6 +5475,14 @@ property_key_samples! {
     StrokeMiterlimit => PropertyValue::StrokeMiterlimit("2".into()),
     StrokeDasharray => PropertyValue::StrokeDasharray("4 2".into()),
     StrokeDashoffset => PropertyValue::StrokeDashoffset("1em".into()),
+    SvgX => PropertyValue::SvgX("1em".into()),
+    SvgY => PropertyValue::SvgY("2px".into()),
+    SvgCx => PropertyValue::SvgCx("3px".into()),
+    SvgCy => PropertyValue::SvgCy("4%".into()),
+    SvgR => PropertyValue::SvgR("5px".into()),
+    SvgRx => PropertyValue::SvgRx("auto".into()),
+    SvgRy => PropertyValue::SvgRy("6px".into()),
+    SvgD => PropertyValue::SvgD("path(\"M0 0\")".into()),
     ColumnSpan => PropertyValue::ColumnSpan(crate::property::ColumnSpanValue::All),
     AspectRatio => PropertyValue::AspectRatio(crate::property::AspectRatioValue::AUTO),
     BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
@@ -5965,6 +5973,14 @@ property_value_variant_registry! {
     StrokeMiterlimit,
     StrokeDasharray,
     StrokeDashoffset,
+    SvgX,
+    SvgY,
+    SvgCx,
+    SvgCy,
+    SvgR,
+    SvgRx,
+    SvgRy,
+    SvgD,
     ColumnSpan,
     AspectRatio,
     BorderImageSource,
@@ -6391,6 +6407,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::StrokeMiterlimit(_)
             | PropertyValue::StrokeDasharray(_)
             | PropertyValue::StrokeDashoffset(_)
+            | PropertyValue::SvgX(_)
+            | PropertyValue::SvgY(_)
+            | PropertyValue::SvgCx(_)
+            | PropertyValue::SvgCy(_)
+            | PropertyValue::SvgR(_)
+            | PropertyValue::SvgRx(_)
+            | PropertyValue::SvgRy(_)
+            | PropertyValue::SvgD(_)
             | PropertyValue::ColumnSpan(_)
             | PropertyValue::AspectRatio(_)
             | PropertyValue::ColumnRuleStyle(_)

@@ -678,3 +678,255 @@ fn a_roots_current_color_fill_is_not_replaced_by_an_html_ancestors_fill() {
         "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
     );
 }
+
+#[test]
+fn a_stylesheet_size_gives_a_rect_its_width_and_height() {
+    assert_paints_like(
+        "<style>rect{width:20px;height:20px}</style><svg width=30 height=30><rect/></svg>",
+        "<svg width=30 height=30><rect width=20 height=20 /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:20px;height:20px}</style><svg width=30 height=30><rect width=5 height=5 /></svg>",
+        "<svg width=30 height=30><rect width=20 height=20 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_position_moves_a_rect_and_a_use() {
+    assert_paints_like(
+        "<style>rect{x:10px;y:5px}</style><svg width=30 height=30><rect width=10 height=10 /></svg>",
+        "<svg width=30 height=30><rect x=10 y=5 width=10 height=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>use{x:15px;y:5px}</style><svg width=30 height=30><defs><rect id=r width=10 height=10 /></defs><use href='#r' /></svg>",
+        "<svg width=30 height=30><defs><rect id=r width=10 height=10 /></defs><use href='#r' x=15 y=5 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_gives_a_circle_and_an_ellipse_their_center_and_radii() {
+    assert_paints_like(
+        "<style>circle{cx:15px;cy:15px;r:10px}</style><svg width=30 height=30><circle /></svg>",
+        "<svg width=30 height=30><circle cx=15 cy=15 r=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>ellipse{cx:15px;cy:15px;rx:12px;ry:8px}</style><svg width=30 height=30><ellipse /></svg>",
+        "<svg width=30 height=30><ellipse cx=15 cy=15 rx=12 ry=8 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_rounds_the_corners_of_a_rect() {
+    assert_paints_like(
+        "<style>rect{rx:8px;ry:8px}</style><svg width=30 height=30><rect width=30 height=30 /></svg>",
+        "<svg width=30 height=30><rect width=30 height=30 rx=8 ry=8 /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{rx:auto;ry:6px}</style><svg width=30 height=30><rect width=30 height=30 rx=1 /></svg>",
+        "<svg width=30 height=30><rect width=30 height=30 ry=6 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_path_replaces_the_data_of_a_path() {
+    assert_paints_like(
+        "<style>path{d:path(\"M5 5h20v20h-20z\")}</style><svg width=30 height=30><path /></svg>",
+        "<svg width=30 height=30><path d='M5 5h20v20h-20z' /></svg>",
+    );
+    assert_paints_like(
+        "<style>.n{d:none}</style><svg width=30 height=30><path class=n d='M0 0h30v30h-30z' fill=red /><rect x=10 width=10 height=30 fill=blue /></svg>",
+        "<svg width=30 height=30><rect x=10 width=10 height=30 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_geometry_in_percentages_and_ems_follows_the_svg() {
+    assert_paints_like(
+        "<style>rect{width:50%;height:50%;x:25%}</style><svg width=40 height=40><rect/></svg>",
+        "<svg width=40 height=40><rect x=10 width=20 height=20 /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:2em;height:1em}</style><svg width=30 height=30 style='font-size:10px'><rect/></svg>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+}
+
+#[test]
+fn stylesheet_geometry_follows_the_cascade() {
+    assert_paints_like(
+        "<style>rect{width:10px}.a{width:20px}</style><svg width=30 height=30><rect class=a width=40 height=10 /></svg>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:10px}</style><svg width=30 height=30><rect style='width:20px' height=10 /></svg>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:10px !important}</style><svg width=30 height=30><rect style='width:20px' height=10 /></svg>",
+        "<svg width=30 height=30><rect width=10 height=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>.card rect{width:20px;height:20px}</style><div class=card><svg width=30 height=30><rect /></svg></div>",
+        "<svg width=30 height=30><rect width=20 height=20 /></svg>",
+    );
+}
+
+#[test]
+fn the_later_of_a_page_rule_and_an_svg_style_rule_wins_a_width() {
+    assert_paints_like(
+        "<style>rect{width:10px}</style><svg width=30 height=30><style>rect{width:20px}</style><rect height=10 /></svg>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+    assert_paints_like(
+        "<svg width=30 height=30><style>rect{width:10px}</style><rect height=10 /></svg><style>rect{width:20px}</style>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_geometry_that_resets_a_size_leaves_nothing_to_draw() {
+    for rule in [".i{width:initial}", ".i{width:0}", ".i{all:unset}"] {
+        assert_paints_like(
+            &format!(
+                "<style>{rule}</style><svg width=30 height=30><rect class=i width=30 height=30 fill=red /><circle cx=20 cy=20 r=5 fill=blue /></svg>"
+            ),
+            "<svg width=30 height=30><circle cx=20 cy=20 r=5 fill=blue /></svg>",
+        );
+    }
+}
+
+#[test]
+fn a_stylesheet_geometry_that_does_not_apply_to_an_element_changes_nothing() {
+    assert_paints_like(
+        "<style>circle{width:40px;height:40px;x:20px;rx:9px}g{r:20px}svg svg{width:10px}</style><svg width=30 height=30><g><circle cx=10 cy=10 r=5 /></g><svg width=20 height=20><rect width=20 height=20 /></svg></svg>",
+        "<svg width=30 height=30><g><circle cx=10 cy=10 r=5 /></g><svg width=20 height=20><rect width=20 height=20 /></svg></svg>",
+    );
+}
+
+#[test]
+fn an_invalid_stylesheet_geometry_declaration_leaves_the_attribute_alone() {
+    assert_paints_like(
+        "<style>rect{width:bogus;height:-5px}</style><svg width=30 height=30><rect width=20 height=10 /></svg>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>circle{r:-5px}</style><svg width=30 height=30><circle cx=15 cy=15 r=10 /></svg>",
+        "<svg width=30 height=30><circle cx=15 cy=15 r=10 /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:20px;width:bogus}</style><svg width=30 height=30><rect height=10 /></svg>",
+        "<svg width=30 height=30><rect width=20 height=10 /></svg>",
+    );
+}
+
+#[test]
+fn a_shape_size_that_inherits_takes_the_computed_size_of_its_parent() {
+    // The size of the `svg` element, written as attributes.
+    assert_paints_like(
+        "<style>rect{width:inherit;height:inherit}</style><svg width=30 height=30><rect width=5 height=5 fill=blue /></svg>",
+        "<svg width=30 height=30><rect width=30 height=30 fill=blue /></svg>",
+    );
+    // A group that a rule gives a width.
+    assert_paints_like(
+        "<style>g{width:12px}rect{width:inherit}</style><svg width=30 height=30><g><rect width=5 height=10 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><rect width=12 height=10 fill=blue /></g></svg>",
+    );
+    // A group has no size, which is `auto`, and a rect of that width is not
+    // drawn.
+    assert_paints_like(
+        "<style>rect{width:inherit}</style><svg width=30 height=30><g><rect width=5 height=5 fill=red /></g><circle cx=20 cy=20 r=5 fill=blue /></svg>",
+        "<svg width=30 height=30><circle cx=20 cy=20 r=5 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_geometry_that_inherits_takes_the_value_of_its_parent() {
+    // A rule that gives the parent a value, in one or in two levels.
+    assert_paints_like(
+        "<style>g{x:7px}rect{x:inherit}</style><svg width=30 height=30><g><rect x=1 width=10 height=10 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><rect x=7 width=10 height=10 fill=blue /></g></svg>",
+    );
+    assert_paints_like(
+        "<style>g{x:7px}g g,rect{x:inherit}</style><svg width=30 height=30><g><g><rect x=1 width=10 height=10 fill=blue /></g></g></svg>",
+        "<svg width=30 height=30><g><g><rect x=7 width=10 height=10 fill=blue /></g></g></svg>",
+    );
+    assert_paints_like(
+        "<style>g{r:8px}circle{r:inherit}</style><svg width=30 height=30><g><circle cx=15 cy=15 r=3 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><circle cx=15 cy=15 r=8 fill=blue /></g></svg>",
+    );
+    // The `svg` element, by a rule or by its attributes.
+    assert_paints_like(
+        "<style>svg{x:4px}rect{x:inherit}</style><svg width=30 height=30><rect x=1 width=10 height=10 fill=blue /></svg>",
+        "<svg width=30 height=30><rect x=4 width=10 height=10 fill=blue /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><svg x=5 width=25 height=25><rect x=1 width=10 height=10 fill=blue /></svg></svg>",
+        "<svg width=30 height=30><svg x=5 width=25 height=25><rect x=5 width=10 height=10 fill=blue /></svg></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><svg x=2mm width=25 height=25><rect x=1 width=10 height=10 fill=blue /></svg></svg>",
+        "<svg width=30 height=30><svg x=2mm width=25 height=25><rect x=2mm width=10 height=10 fill=blue /></svg></svg>",
+    );
+    // A parent that has nothing gives the initial value.
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><g><rect x=9 width=10 height=10 fill=blue /></g></svg>",
+        "<svg width=30 height=30><g><rect x=0 width=10 height=10 fill=blue /></g></svg>",
+    );
+}
+
+#[test]
+fn a_path_whose_data_has_an_error_does_not_take_part_in_the_cascade() {
+    assert_paints_like(
+        "<style>path{d:path('M0 0h20v20h-20z');d:path('not a path')}</style><svg width=30 height=30><path fill=blue /></svg>",
+        "<svg width=30 height=30><path d='M0 0h20v20h-20z' fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_geometry_that_inherits_in_an_instantiated_shape_is_left_to_its_attribute() {
+    // Each `use` element is another parent of the shape it instantiates, and
+    // the declarations of the shape serve every instance.
+    let drawn = "<svg width=30 height=30><defs><rect id=t x=4 width=10 height=10 fill=blue /></defs><use href='#t' /></svg>";
+    assert_paints_like(
+        "<style>rect{x:inherit}</style><svg width=30 height=30><defs><rect id=t x=4 width=10 height=10 fill=blue /></defs><use href='#t' /></svg>",
+        drawn,
+    );
+}
+
+#[test]
+fn a_geometry_that_inherits_a_font_relative_length_keeps_the_font_size_of_the_parent() {
+    // The inherited value is the computed length of the parent, not the text
+    // read again at the font size of the shape.
+    assert_paints_like(
+        "<style>g{x:1em;font-size:20px}rect{x:inherit;font-size:10px}</style><svg width=40 height=30><g><rect x=1 width=10 height=10 fill=blue /></g></svg>",
+        "<svg width=40 height=30><g><rect x=20 width=10 height=10 fill=blue /></g></svg>",
+    );
+    assert_paints_like(
+        "<style>g{x:1em;font-size:20px}g g{x:inherit;font-size:5px}rect{x:inherit;font-size:10px}</style><svg width=40 height=30><g><g><rect x=1 width=10 height=10 fill=blue /></g></g></svg>",
+        "<svg width=40 height=30><g><g><rect x=20 width=10 height=10 fill=blue /></g></g></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{x:inherit;font-size:10px}</style><svg width=60 height=30><svg x=1em y=0 width=30 height=25 style='font-size:20px'><rect x=1 width=10 height=10 fill=blue /></svg></svg>",
+        "<svg width=60 height=30><svg x=20 y=0 width=30 height=25 style='font-size:20px'><rect x=20 width=10 height=10 fill=blue /></svg></svg>",
+    );
+}
+
+#[test]
+fn a_size_in_the_style_attribute_is_read_by_the_svg_renderer_not_the_cascade() {
+    // A number without a unit is a length in the `style` attribute of an SVG
+    // element, so the last declaration is the one that counts.
+    assert_paints_like(
+        "<svg width=40 height=30><rect height=10 style='width:10px;width:20' fill=blue /></svg>",
+        "<svg width=40 height=30><rect height=10 width=20 fill=blue /></svg>",
+    );
+    // The attribute beats a rule that is not important, and an important rule
+    // beats the attribute.
+    assert_paints_like(
+        "<style>rect{width:30px}</style><svg width=40 height=30><rect height=10 style='width:10px;width:20' fill=blue /></svg>",
+        "<svg width=40 height=30><rect height=10 width=20 fill=blue /></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{width:30px !important}</style><svg width=40 height=30><rect height=10 style='width:10px;width:20' fill=blue /></svg>",
+        "<svg width=40 height=30><rect height=10 width=30 fill=blue /></svg>",
+    );
+}

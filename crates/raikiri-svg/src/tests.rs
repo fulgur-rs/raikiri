@@ -2815,6 +2815,11 @@ fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
         ],
         vec![super::SvgElementStyle {
             element_index: 1,
+            declarations: "margin:10px",
+        }],
+        // A geometry property is a property of a shape, not of the root.
+        vec![super::SvgElementStyle {
+            element_index: 0,
             declarations: "width:10px",
         }],
         vec![super::SvgElementStyle {
@@ -2837,6 +2842,137 @@ fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
         ),
         Err(SvgError::ExternalReference)
     ));
+}
+
+/// The `style` attribute, and all the attributes, of the first element `tag` of
+/// the source that `source_with_descendant_styles` prepares.
+fn prepared_element(
+    source: &str,
+    styles: &[super::SvgElementStyle<'_>],
+    tag: &str,
+) -> (Option<String>, Vec<(String, String)>) {
+    let prepared = source_with_descendant_styles(source.as_bytes(), styles).unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let element = xml
+        .descendants()
+        .find(|node| node.has_tag_name(tag))
+        .unwrap();
+    (
+        element.attribute("style").map(str::to_owned),
+        element
+            .attributes()
+            .map(|attribute| (attribute.name().to_owned(), attribute.value().to_owned()))
+            .collect(),
+    )
+}
+
+#[test]
+fn descendant_geometry_replaces_the_attribute_of_the_same_name() {
+    let (style, attributes) = prepared_element(
+        &format!("<svg xmlns='{SVG_NAMESPACE}'><rect width='5' height='6' x='1'/></svg>"),
+        &[super::SvgElementStyle {
+            element_index: 1,
+            declarations: "width:20px!important;height:auto!important;",
+        }],
+        "rect",
+    );
+    let style = style.unwrap();
+    assert!(style.contains("width:20px!important"), "{style}");
+    assert!(style.contains("height:auto!important"), "{style}");
+    // What the declarations leave out stays.
+    assert_eq!(
+        attributes
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["x", "style"]
+    );
+}
+
+#[test]
+fn descendant_geometry_that_the_element_does_not_take_is_left_out() {
+    let (style, _) = prepared_element(
+        &format!("<svg xmlns='{SVG_NAMESPACE}'><circle r='5'/></svg>"),
+        &[super::SvgElementStyle {
+            element_index: 1,
+            declarations: "width:10px!important;r:7px!important;rx:3px!important;",
+        }],
+        "circle",
+    );
+    assert_eq!(style.as_deref(), Some("r:7px!important;"));
+    // An element that takes none, or that is not an SVG element, gets none.
+    for source in [
+        format!("<svg xmlns='{SVG_NAMESPACE}'><g/></svg>"),
+        format!("<svg xmlns='{SVG_NAMESPACE}'><g xmlns='http://www.w3.org/1999/xhtml'/></svg>"),
+    ] {
+        let (style, _) = prepared_element(
+            &source,
+            &[super::SvgElementStyle {
+                element_index: 1,
+                declarations: "width:10px!important;opacity:.5!important;",
+            }],
+            "g",
+        );
+        assert_eq!(style.as_deref(), Some("opacity:.5!important;"), "{source}");
+    }
+}
+
+#[test]
+fn descendant_geometry_that_a_browser_would_drop_is_left_out() {
+    // A browser drops a declaration it cannot read, and then draws what the
+    // attribute says.
+    for (tag, attribute, declarations) in [
+        ("rect", "width='5'", "width:-1px!important;"),
+        ("rect", "width='5'", "width:bogus!important;"),
+        ("circle", "r='5'", "r:-2px!important;"),
+        ("path", "d='M0 0h5'", "d:path('M0 0 q')!important;"),
+        ("path", "d='M0 0h5'", "d:5px!important;"),
+    ] {
+        let (style, attributes) = prepared_element(
+            &format!("<svg xmlns='{SVG_NAMESPACE}'><{tag} {attribute}/></svg>"),
+            &[super::SvgElementStyle {
+                element_index: 1,
+                declarations,
+            }],
+            tag,
+        );
+        assert_eq!(style.as_deref().unwrap_or_default(), "", "{declarations}");
+        assert_eq!(
+            attributes.len(),
+            1 + usize::from(style.is_some()),
+            "{declarations}"
+        );
+    }
+}
+
+#[test]
+fn descendant_geometry_draws_the_shape() {
+    let prepared = source_with_descendant_styles(
+        format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><rect width='1' height='1'/></svg>"
+        )
+        .as_bytes(),
+        &[super::SvgElementStyle {
+            element_index: 1,
+            declarations: "width:10px!important;height:10px!important;",
+        }],
+    )
+    .unwrap();
+    let rgba = SvgDocument::parse(prepared.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap()
+        .rgba;
+    let pixel = |x: usize, y: usize| &rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(5, 5), &[0, 0, 0, 255]);
+    assert_eq!(pixel(15, 5), &[0, 0, 0, 0]);
 }
 
 #[test]
@@ -3134,7 +3270,7 @@ fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_r
     };
     for root_style in [SvgRootStyle::default(), transparent, hidden] {
         assert!(matches!(
-            rasterize(root_style, "width:10px!important"),
+            rasterize(root_style, "margin:10px!important"),
             Err(SvgError::InvalidDocument(_))
         ));
     }

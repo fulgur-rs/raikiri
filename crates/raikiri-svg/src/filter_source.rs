@@ -42,6 +42,22 @@ const ADDED_NO_FILTER: &str = " style=\"filter:none!important\"";
 /// A change to the source: the text that takes the place of a range.
 type Edit = (Range<usize>, Cow<'static, str>);
 
+/// The geometry properties that apply to the SVG element `tag` as CSS.
+pub(crate) fn geometry_properties(tag: &str) -> &'static [&'static str] {
+    geometry::properties(tag)
+}
+
+/// Whether `name` is a geometry property.
+pub(crate) fn is_geometry_property(name: &str) -> bool {
+    geometry::is_property(name)
+}
+
+/// Whether the declaration `declaration` is a valid value of a geometry
+/// property, which is one a browser keeps.
+pub(crate) fn is_valid_geometry_declaration(declaration: &str) -> bool {
+    geometry::is_valid_declaration(declaration)
+}
+
 /// `source` with the geometry that CSS gives to a shape written into its
 /// attributes, with the filters of the shapes that are not rendered turned
 /// off, and with a zero `divisor` of an `feConvolveMatrix` turned into the

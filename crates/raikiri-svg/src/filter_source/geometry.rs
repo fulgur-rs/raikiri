@@ -75,6 +75,27 @@ pub(super) fn declared_bytes(declarations: &[simplecss::Declaration<'_>], mask: 
         })
 }
 
+/// Whether `name` is a geometry property, whatever the case of its name.
+pub(super) fn is_property(name: &str) -> bool {
+    PROPERTIES
+        .iter()
+        .any(|property| name.eq_ignore_ascii_case(property))
+}
+
+/// Whether `declaration`, which is one declaration with its `!important` if it
+/// has one, is a valid value of a geometry property. A declaration that is not
+/// one is dropped by a browser, which then draws what the attribute says.
+pub(super) fn is_valid_declaration(declaration: &str) -> bool {
+    let declarations = style_declarations(declaration);
+    let [declaration] = declarations.as_slice() else {
+        return false;
+    };
+    PROPERTIES
+        .iter()
+        .find(|property| declaration.name.eq_ignore_ascii_case(property))
+        .is_some_and(|property| matches!(parse(property, declaration.value), Parsed::Value(_)))
+}
+
 /// The geometry properties, which are also the names of attributes that a
 /// selector may test and a rewrite would change.
 pub(super) fn all() -> &'static [&'static str] {

@@ -34,6 +34,14 @@ fn svg_export_properties_accept_css_wide_defaulting() {
         "stroke-miterlimit",
         "stroke-dasharray",
         "stroke-dashoffset",
+        "x",
+        "y",
+        "cx",
+        "cy",
+        "r",
+        "rx",
+        "ry",
+        "d",
     ] {
         for keyword in [
             "inherit",

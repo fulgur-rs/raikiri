@@ -13660,3 +13660,213 @@ fn inherited_comparisons_keep_absolute_font_terms_and_defer_percentages() {
     assert_eq!(expression(own).resolve(10.0), 10.5);
     assert_eq!(expression(own).resolve(1000.0), 30.0);
 }
+
+#[test]
+fn svg_geometry_properties_export_their_validated_text() {
+    let properties = svg_rect_properties(
+        "rect { x: 1PX; y: 2%; cx: 3px; cy: 4em; r: 5px; rx: AUTO; ry: 6px; \
+         d: PATH('M0 0h5'); width: 20PX; height: 50% }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key);
+    for (key, expected) in [
+        (PropertyKey::SvgX, "1px"),
+        (PropertyKey::SvgY, "2%"),
+        (PropertyKey::SvgCx, "3px"),
+        (PropertyKey::SvgCy, "4em"),
+        (PropertyKey::SvgR, "5px"),
+        (PropertyKey::SvgRx, "auto"),
+        (PropertyKey::SvgRy, "6px"),
+        (PropertyKey::SvgD, "path(\"M0 0h5\")"),
+        (PropertyKey::Width, "20px"),
+        (PropertyKey::Height, "50%"),
+    ] {
+        assert_eq!(text(key), Some((false, Some(expected.into()))), "{key:?}");
+    }
+}
+
+#[test]
+fn svg_geometry_follows_the_cascade_order() {
+    let width = |css: &str, attributes: &[(&str, &str)], inline_style: Option<&str>| {
+        exported(
+            &svg_rect_properties(css, attributes, inline_style),
+            PropertyKey::SvgX,
+        )
+        .and_then(|(_, text)| text)
+    };
+    assert_eq!(
+        width(
+            "rect { x: 1px } #r { x: 2px } rect { x: 3px }",
+            &[("id", "r")],
+            None
+        ),
+        Some("2px".into())
+    );
+    assert_eq!(
+        width(
+            "rect { x: 1px !important } #r { x: 2px }",
+            &[("id", "r")],
+            None
+        ),
+        Some("1px".into())
+    );
+    assert_eq!(
+        width("rect { x: 1px }", &[], Some("x: 4px")),
+        Some("4px".into())
+    );
+    // An invalid declaration is dropped, so the earlier one stands.
+    assert_eq!(
+        width("rect { x: 1px; x: bogus; x: 2rem }", &[], None),
+        Some("1px".into())
+    );
+    // A geometry attribute is not a declaration: nothing is exported.
+    assert_eq!(width("", &[("x", "7")], None), None);
+}
+
+#[test]
+fn svg_geometry_with_path_data_that_has_an_error_does_not_take_part() {
+    let properties = svg_rect_properties(
+        "rect { d: path('M0 0h5'); d: path('not a path') }",
+        &[],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::SvgD),
+        Some((false, Some("path(\"M0 0h5\")".into())))
+    );
+}
+
+#[test]
+fn a_shape_size_that_the_style_attribute_wins_is_left_to_the_svg_source() {
+    let size = |css: &str, inline_style: Option<&str>| {
+        exported(
+            &svg_rect_properties(css, &[], inline_style),
+            PropertyKey::Width,
+        )
+    };
+    // The attribute wins a rule that is not important, so the source says it.
+    assert_eq!(size("rect { width: 30px }", Some("width: 10px")), None);
+    assert_eq!(size("", Some("width: 10px; width: 20")), None);
+    // An important rule wins the attribute, and a rule wins when the
+    // attribute has no size.
+    assert_eq!(
+        size("rect { width: 30px !important }", Some("width: 10px")),
+        Some((false, Some("30px".into())))
+    );
+    assert_eq!(
+        size("rect { width: 30px }", Some("height: 10px")),
+        Some((false, Some("30px".into())))
+    );
+    // The other geometry is read in the same way from every source.
+    assert_eq!(
+        exported(
+            &svg_rect_properties("rect { x: 3px }", &[], Some("x: 4px")),
+            PropertyKey::SvgX
+        ),
+        Some((false, Some("4px".into())))
+    );
+}
+
+#[test]
+fn an_inherited_shape_size_is_exported_as_the_computed_size_of_the_parent() {
+    let properties = svg_rect_in(
+        "g { width: 12px } rect { width: inherit; height: inherit }",
+        Some(&[]),
+        &[],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::Width),
+        Some((false, Some("12px".into())))
+    );
+    // The group has no height, so its computed height is `auto`.
+    assert_eq!(
+        exported(&properties, PropertyKey::Height),
+        Some((false, Some("auto".into())))
+    );
+}
+
+#[test]
+fn svg_geometry_keywords_reset_to_the_initial_value() {
+    let properties = svg_rect_properties(
+        "rect { x: initial; y: unset; cx: inherit; rx: initial; ry: unset; r: initial; \
+         d: initial; width: initial; height: unset }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key);
+    for (key, expected) in [
+        (PropertyKey::SvgX, "0"),
+        (PropertyKey::SvgY, "0"),
+        (PropertyKey::SvgRx, "auto"),
+        (PropertyKey::SvgRy, "auto"),
+        (PropertyKey::SvgR, "0"),
+        (PropertyKey::SvgD, "none"),
+        (PropertyKey::Width, "auto"),
+        (PropertyKey::Height, "auto"),
+    ] {
+        assert_eq!(text(key), Some((false, Some(expected.into()))), "{key:?}");
+    }
+    // The renderer is left to inherit: a shape's geometry is not inherited.
+    assert_eq!(
+        text(PropertyKey::SvgCx),
+        Some((true, Some("inherit".into())))
+    );
+}
+
+#[test]
+fn svg_shape_sizes_in_units_an_svg_renderer_does_not_read_are_exported_without_text() {
+    let properties = svg_rect_properties("rect { width: 2rem; height: min-content }", &[], None);
+    assert_eq!(
+        exported(&properties, PropertyKey::Width),
+        Some((false, None))
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::Height),
+        Some((false, None))
+    );
+}
+
+#[test]
+fn only_svg_elements_export_their_geometry() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "div, svg { x: 1px; width: 5px } svg { fill: blue }");
+    let div = doc.push_element(0, "div", None);
+    let svg = doc.push_element_with_namespace(div, "svg", "http://www.w3.org/2000/svg", &[]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    // The HTML element passes its painting properties to the SVG, not its
+    // geometry.
+    let html = result.svg_style_properties(StyleNodeId(div as u64));
+    assert!(html.is_empty(), "{html:?}");
+    let root = result.svg_style_properties(StyleNodeId(svg as u64));
+    assert_eq!(
+        exported(root, PropertyKey::SvgX).map(|(_, t)| t),
+        Some(Some("1px".into()))
+    );
+}
+
+#[test]
+fn a_width_attribute_of_the_svg_root_is_not_exported() {
+    let mut doc = TestDoc::new();
+    let svg = doc.push_element_with_namespace(
+        0,
+        "svg",
+        "http://www.w3.org/2000/svg",
+        &[("width", "50"), ("height", "20")],
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    assert!(
+        result
+            .svg_style_properties(StyleNodeId(svg as u64))
+            .is_empty()
+    );
+    // It still sizes the root's box.
+    assert_eq!(
+        result.computed[svg].width,
+        ComputedLengthPercentageOrAuto::Px(50.0)
+    );
+}
