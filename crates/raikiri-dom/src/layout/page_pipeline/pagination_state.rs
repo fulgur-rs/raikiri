@@ -573,6 +573,7 @@ impl PaginationState {
             height: candidate.height,
             first_line_shift: 0.0,
         };
+        self.push_oversized_edge_holder(document, env, candidate, entry, &mut text)?;
         let blocks = LineBlocks::find(
             document,
             env,
@@ -629,6 +630,65 @@ impl PaginationState {
             candidate.context.deferred_named_break_after(),
         );
 
+        Ok(())
+    }
+
+    /// Move a single-item holder before its paragraph's oversized own edges.
+    fn push_oversized_edge_holder(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        text: &mut TextPosition,
+    ) -> Result<(), Halt> {
+        if entry.uses_positioned_coordinates
+            || candidate.context.is_out_of_flow_descendant()
+            || document.context.pagination_on_transposed_axes
+        {
+            return Ok(());
+        }
+        let Some((paragraph, _)) = candidate.ifc_root else {
+            return Ok(());
+        };
+        let layout = &document.nodes[paragraph].layout;
+        if (layout.padding.top + layout.border.top <= 0.0
+            && layout.padding.bottom + layout.border.bottom <= 0.0)
+            || !self.checked_paragraphs.oversized_edges.insert(paragraph)
+        {
+            return Ok(());
+        }
+        let Some(holder) =
+            super::oversized_edges::holder(document, env.cascade, paragraph, env.body_id)
+        else {
+            return Ok(());
+        };
+        let top = current_abs_y(document, holder);
+        let page = env.page_origins.page_index_in_flow(top).unwrap_or(0);
+        let start = env.page_origins.origin(page);
+        let step = env.page_origins.step_at(page);
+        let layout = &document.nodes[paragraph].layout;
+        let oversized = layout.padding.top + layout.border.top >= step
+            || layout.padding.bottom + layout.border.bottom >= step;
+        if !oversized || top <= start + 0.001 {
+            return Ok(());
+        }
+        let next = page.saturating_add(1);
+        reach_page(env.control, next)?;
+        let (delta, consumed) = move_line_block(
+            document,
+            env.cascade,
+            env.body_id,
+            holder,
+            false,
+            top,
+            env.page_origins.origin(next),
+            start,
+            &mut self.subtree_shifts,
+            entry.page_before_candidate,
+            &mut self.float_gaps,
+        );
+        self.note_line_block_move(text, holder, delta, consumed, next);
         Ok(())
     }
 
