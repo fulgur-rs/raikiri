@@ -3729,10 +3729,12 @@ pub(crate) fn solid_outline(
 /// Paint the outline of a box that a page break cuts where the cut is: a bar
 /// along the edge of the page area, inside it, as Chromium does (the ring of
 /// the box there would lie in the page margin). The bar starts `outline-offset`
-/// from the edge, is as thick as the outline, and runs between the two side
-/// segments of the ring, which the page area clips and leaves in place: the
-/// box's width from `abs_x`, plus the offset on both sides. `top` and `bottom`
-/// are the edges of the page area where the box goes on.
+/// from the edge, is as thick as the outline, and runs between the inner edges
+/// of the two side segments of the ring, which the page area clips and leaves
+/// in place: the box's width from `abs_x`, plus the offset on both sides, so
+/// the bar does not paint over the side segments (a translucent outline would
+/// show the overlap). `top` and `bottom` are the edges of the page area where
+/// the box goes on.
 pub(crate) fn paint_outline_break_bars(
     scene: &mut impl PaintScene,
     (abs_x, width): (f32, f32),
@@ -3747,10 +3749,12 @@ pub(crate) fn paint_outline_break_bars(
     // it out of the page area.
     let gap = f64::from(offset.max(0.0));
     let thickness = f64::from(*outline_width);
-    let (x0, x1) = (
-        f64::from(abs_x) - gap,
-        f64::from(abs_x) + f64::from(width) + gap,
-    );
+    // The inner edges of the side segments: the offset itself, not `gap`, so
+    // that a negative offset (the ring reaches into the box) also stops the bar
+    // at the side segments. A box narrower than twice that leaves an empty bar.
+    let offset = f64::from(*offset);
+    let left = f64::from(abs_x) - offset;
+    let right = (f64::from(abs_x) + f64::from(width) + offset).max(left);
     let color = Color::from_rgba8(color.r, color.g, color.b, color.a);
     for (near, far) in [
         top.map(|edge| (edge + gap, edge + gap + thickness)),
@@ -3764,7 +3768,7 @@ pub(crate) fn paint_outline_break_bars(
             kurbo::Affine::IDENTITY,
             color,
             None,
-            &Rect::new(x0, near, x1, far),
+            &Rect::new(left, near, right, far),
         );
     }
 }

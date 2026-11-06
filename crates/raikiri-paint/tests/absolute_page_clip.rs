@@ -281,3 +281,35 @@ fn an_outline_with_a_negative_offset_follows_the_page_breaks() {
     );
     assert_ne!(pixel(&pixels, 20, 45), BLUE, "the bottom margin");
 }
+
+#[test]
+fn the_break_bars_of_a_translucent_outline_do_not_overlap_its_side_segments() {
+    // A negative offset puts the side segments (x 14 to 18 and x 32 to 36)
+    // partly under the ends of the bar at the bottom of the page area (y 36 to
+    // 40). Where the bar meets a side segment the pixel has the color of the
+    // side segment alone, not that of two layers.
+    let pixels = raster_page(
+        "<div style='position:absolute;top:0;left:6px;width:18px;outline:4px solid rgba(0,0,255,0.5);outline-offset:-2px'>\
+         <div style='height:80px'></div></div>",
+        0,
+    );
+    let side = pixel(&pixels, 15, 25);
+    assert_ne!(side, [255, 255, 255], "the left ring is painted");
+    assert_eq!(pixel(&pixels, 15, 38), side, "the left end of the bar");
+    assert_eq!(pixel(&pixels, 17, 38), side, "inside the left segment");
+    assert_eq!(pixel(&pixels, 33, 38), side, "inside the right segment");
+    assert_eq!(pixel(&pixels, 20, 38), side, "the middle of the bar");
+}
+
+#[test]
+fn a_box_narrower_than_its_negative_outline_offset_has_no_break_bars() {
+    // The box is 2px wide with an offset of -2px: the two side segments of the
+    // ring (4px thick) cover the box and the bar between them is empty.
+    let pixels = raster_page(
+        "<div style='position:absolute;top:0;left:20px;width:2px;outline:4px solid blue;outline-offset:-2px'>\
+         <div style='height:80px'></div></div>",
+        0,
+    );
+    assert_eq!(pixel(&pixels, 31, 38), BLUE, "the right segment");
+    assert_ne!(pixel(&pixels, 41, 38), BLUE, "nothing past the segments");
+}
