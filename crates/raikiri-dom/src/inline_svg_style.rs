@@ -339,7 +339,9 @@ fn inherited_geometry(
             .find(|declared| declared.property == key)
         {
             Some(declared) if declared.inherited => node = parent,
-            Some(declared) => return declared.expression.clone(),
+            Some(declared) => {
+                return at_font_size_of(cascade, parent, key, declared.expression.clone()?);
+            }
             None => {
                 let name = key.svg_geometry_name()?;
                 let element = document.get_node(parent)?;
@@ -348,17 +350,35 @@ fn inherited_geometry(
                     && matches!(name, "x" | "y"))
                 .then(|| element.attribute(name))
                 .flatten();
-                return Some(match attribute {
+                let text = match attribute {
                     // An attribute takes a number where CSS takes a length.
                     Some(text) if text.trim().parse::<f32>().is_ok() => {
                         format!("{}px", text.trim())
                     }
                     Some(text) => text.trim().to_owned(),
                     None => key.svg_geometry_initial()?.to_owned(),
-                });
+                };
+                return at_font_size_of(cascade, parent, key, text);
             }
         }
     }
+}
+
+/// `text`, which the element `declarer` gave to the geometry property `key`,
+/// with a length in `em` or `ex` taken at the font size of `declarer`. What is
+/// inherited is the computed length, which is not the one that the font size of
+/// the inheriting shape would make. `None` when the length cannot be read.
+fn at_font_size_of(
+    cascade: &CascadeResult,
+    declarer: usize,
+    key: PropertyKey,
+    text: String,
+) -> Option<String> {
+    if key == PropertyKey::SvgD || !is_font_relative(&text) {
+        return Some(text);
+    }
+    let font_size = cascade.computed.get(declarer)?.font_size.0;
+    resolve_relative_svg_length(&text, font_size).map(|(length, _)| length)
 }
 
 /// `properties` of an element in the subtree that a `use` element

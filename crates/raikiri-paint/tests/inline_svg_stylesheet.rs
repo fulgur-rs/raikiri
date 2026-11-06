@@ -892,3 +892,21 @@ fn a_geometry_that_inherits_in_an_instantiated_shape_is_left_to_its_attribute() 
         drawn,
     );
 }
+
+#[test]
+fn a_geometry_that_inherits_a_font_relative_length_keeps_the_font_size_of_the_parent() {
+    // The inherited value is the computed length of the parent, not the text
+    // read again at the font size of the shape.
+    assert_paints_like(
+        "<style>g{x:1em;font-size:20px}rect{x:inherit;font-size:10px}</style><svg width=40 height=30><g><rect x=1 width=10 height=10 fill=blue /></g></svg>",
+        "<svg width=40 height=30><g><rect x=20 width=10 height=10 fill=blue /></g></svg>",
+    );
+    assert_paints_like(
+        "<style>g{x:1em;font-size:20px}g g{x:inherit;font-size:5px}rect{x:inherit;font-size:10px}</style><svg width=40 height=30><g><g><rect x=1 width=10 height=10 fill=blue /></g></g></svg>",
+        "<svg width=40 height=30><g><g><rect x=20 width=10 height=10 fill=blue /></g></g></svg>",
+    );
+    assert_paints_like(
+        "<style>rect{x:inherit;font-size:10px}</style><svg width=60 height=30><svg x=1em y=0 width=30 height=25 style='font-size:20px'><rect x=1 width=10 height=10 fill=blue /></svg></svg>",
+        "<svg width=60 height=30><svg x=20 y=0 width=30 height=25 style='font-size:20px'><rect x=20 width=10 height=10 fill=blue /></svg></svg>",
+    );
+}
