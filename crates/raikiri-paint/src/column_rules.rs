@@ -45,7 +45,7 @@ pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
 }
 
 /// Two bars at the edges of the rule, a third of its width each, the way
-/// Chromium divides a `double` border (see `bevel::third`).
+/// Chromium divides a `double` border (see [`crate::bevel::third`]).
 fn paint_double(scene: &mut impl PaintScene, bounds: Rect, rule: ColumnRule) {
     let Rect { x0, y0, x1, y1 } = bounds;
     let bar = bevel::third(x1 - x0);
