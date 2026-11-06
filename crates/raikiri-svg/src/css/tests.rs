@@ -65,3 +65,19 @@ fn backend_expansion_stops_before_copying_shared_long_values() {
         matches!(backend_source(&source), Err(crate::SvgError::InvalidDocument(message)) if message.contains("resource limit"))
     );
 }
+
+#[test]
+fn backend_expansion_rechecks_selector_capacity_and_matching_work() {
+    for (declarations, elements) in [(4_097, 1), (1_000, 20_000)] {
+        let source = format!(
+            "<svg><style>.missing rect{{broken;{}}}</style>{}</svg>",
+            "fill:red;".repeat(declarations),
+            "<rect/>".repeat(elements)
+        );
+        let xml = roxmltree::Document::parse(&source).unwrap();
+        crate::preflight_initial_svg_selectors(&xml).unwrap();
+        assert!(
+            matches!(backend_source(&source), Err(crate::SvgError::InvalidDocument(message)) if message.contains("selector matching resource limit"))
+        );
+    }
+}

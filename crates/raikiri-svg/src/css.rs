@@ -324,7 +324,13 @@ pub(crate) fn backend_source(source: &str) -> Result<std::borrow::Cow<'_, str>, 
     if edits.is_empty() {
         Ok(std::borrow::Cow::Borrowed(source))
     } else {
-        crate::apply_selector_edits(source, edits, &mut budget).map(std::borrow::Cow::Owned)
+        let source = crate::apply_selector_edits(source, edits, &mut budget)?;
+        let xml = roxmltree::Document::parse(&source)
+            .map_err(|error| crate::SvgError::InvalidDocument(error.to_string()))?; // cov:ignore: Defensive error mapping; edits replace only validated XML text with escaped CSS.
+        // Each recovered declaration becomes a backend rule. Recheck its
+        // selector storage and matching work against the expanded document.
+        crate::preflight_initial_svg_selectors(&xml)?;
+        Ok(std::borrow::Cow::Owned(source))
     }
 }
 
