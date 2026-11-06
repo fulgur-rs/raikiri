@@ -73,19 +73,19 @@ impl LineClips {
                 .shift(source, page.content_origin_y)
             {
                 let Some(shift) = shift else { continue };
-                clip.y += shift - page.content_origin_y;
+                clip.rect.y += shift - page.content_origin_y;
                 repeat = true;
             }
             let (dx, dy) = page.flow_shift(repeat);
-            clip.x += page.content_box.x + dx;
-            clip.y += page.content_box.y + dy;
+            clip.rect.x += page.content_box.x + dx;
+            clip.rect.y += page.content_box.y + dy;
             for &index in &indices {
                 line_clips.clips.insert(
                     TextLineId {
                         root: NodeId::new(root.node as u64),
                         index,
                     },
-                    PaintClip::new(clip),
+                    clip,
                 );
             }
         }

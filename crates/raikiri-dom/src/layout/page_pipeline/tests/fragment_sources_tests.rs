@@ -208,7 +208,9 @@ fn the_content_box_and_clip_of_a_fragment_follow_its_page() {
     let mut pages = three_pages();
     let clipped = PageFragmentSource {
         content_insets: Some(PageFragmentInsets::new(2.0, 3.0, 4.0, 5.0)),
-        fragment_clip: Some(PaintRect::new(1.0, 60.0, 8.0, 80.0)),
+        fragment_clip: Some(raikiri_traits::PaintClip::new(PaintRect::new(
+            1.0, 60.0, 8.0, 80.0,
+        ))),
         fragmentainer: 3,
         overflow_chain: Some(7),
         own_overflow_source: Some(9),
@@ -225,7 +227,7 @@ fn the_content_box_and_clip_of_a_fragment_follow_its_page() {
     );
     let clip = item.fragment_clip.unwrap();
     assert_eq!(
-        (clip.x, clip.y, clip.width, clip.height),
+        (clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height),
         (1.0, -40.0, 8.0, 80.0)
     );
     assert_eq!(
@@ -520,5 +522,46 @@ fn repeated_or_nonintersecting_sources_do_not_inspect_line_centers() {
         LINE_CENTER_EVALUATIONS.with(|value| value.set(0));
         place(&mut pages, &[text]);
         assert_eq!(LINE_CENTER_EVALUATIONS.with(std::cell::Cell::get), 0);
+    }
+}
+
+#[test]
+fn open_clip_axes_follow_each_conversion_between_layout_and_flow() {
+    let horizontal = FlowAxis::X {
+        right_to_left: false,
+        width: 100.0,
+        page_width: 100.0,
+    };
+    for (input_axis, output_axis, expected) in [
+        (horizontal, FlowAxis::Y, (true, false)),
+        (FlowAxis::Y, horizontal, (true, false)),
+        (horizontal, horizontal, (false, true)),
+    ] {
+        let mut pages = pages_with_ranges(&[Some((0.0, 100.0))]);
+        pages[0].flow_axis = output_axis;
+        let mut clip = raikiri_traits::PaintClip::new(PaintRect::new(1.0, 2.0, 8.0, 30.0));
+        clip.clip_x = false;
+        let clipped = PageFragmentSource {
+            fragment_clip: Some(clip),
+            ..source(10.0, 20.0)
+        };
+        let control = PageLayoutControl::new(None);
+        let mut work = ProjectionWork::new(&control, usize::MAX);
+        place_sources(
+            &Document::new(),
+            &[clipped],
+            &mut pages,
+            input_axis,
+            &mut work,
+        )
+        .unwrap();
+        let result = pages[0].items[0].fragment_clip.unwrap();
+        assert_eq!((result.clip_x, result.clip_y), expected);
+        let expected_rect = if expected.0 {
+            PaintRect::new(2.0, 1.0, 30.0, 8.0)
+        } else {
+            clip.rect
+        };
+        assert_eq!(result.rect, expected_rect);
     }
 }

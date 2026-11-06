@@ -240,12 +240,15 @@ fn set_committed_column_fragments(doc: &mut Document, root: usize) {
                     width: 40.0,
                     height: 40.0,
                 },
-                fragmentainer_clip: Some(FragmentRect {
-                    x: column as f32 * 60.0,
-                    y: 0.0,
-                    width: 40.0,
-                    height: 20.0,
-                }),
+                fragmentainer_clip: Some(
+                    FragmentRect {
+                        x: column as f32 * 60.0,
+                        y: 0.0,
+                        width: 40.0,
+                        height: 20.0,
+                    }
+                    .into(),
+                ),
                 fragment_index: column,
                 fragment_count: 2,
                 line_start: Some(column * 2),
@@ -323,12 +326,15 @@ fn column_break_clips_intersect_the_explicit_ancestor_clip() {
                 width: 100.0,
                 height: 40.0,
             },
-            fragmentainer_clip: Some(FragmentRect {
-                x: 0.0,
-                y: 0.0,
-                width: 100.0,
-                height: 15.0,
-            }),
+            fragmentainer_clip: Some(
+                FragmentRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 15.0,
+                }
+                .into(),
+            ),
             fragment_index: 0,
             fragment_count: 1,
             line_start: None,
@@ -14770,11 +14776,14 @@ fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
             width: 10.0,
             height,
         },
-        fragmentainer_clip: clip_height.map(|height| crate::fragment::FragmentRect {
-            x: 0.0,
-            y: 0.0,
-            width: 10.0,
-            height,
+        fragmentainer_clip: clip_height.map(|height| {
+            crate::fragment::FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height,
+            }
+            .into()
         }),
         fragment_index: 0,
         fragment_count: 1,
@@ -14792,6 +14801,17 @@ fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
     assert_eq!(
         fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false, |_| 0.0),
         150.0
+    );
+    // An open block axis does not cap the deepest fragment at its placeholder.
+    let mut open_fragments = fragments;
+    open_fragments[0]
+        .fragmentainer_clip
+        .as_mut()
+        .unwrap()
+        .clip_y = false;
+    assert_eq!(
+        fragment_tree_end(&open_fragments, &children, &[0], 100.0, |_| false, |_| 0.0),
+        520.0
     );
     // Without the outer clip, the deepest fragment paints to its own end.
     let fragments = [fragment(None, 0.0, 300.0, None), fragments[1], fragments[2]];
@@ -14818,11 +14838,14 @@ fn fragment_tree_end_moves_fragments_by_the_offset_the_painter_adds() {
                 width: 10.0,
                 height,
             },
-            fragmentainer_clip: clip_height.map(|height| crate::fragment::FragmentRect {
-                x: 0.0,
-                y: 0.0,
-                width: 10.0,
-                height,
+            fragmentainer_clip: clip_height.map(|height| {
+                crate::fragment::FragmentRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height,
+                }
+                .into()
             }),
             fragment_index: 0,
             fragment_count: 1,

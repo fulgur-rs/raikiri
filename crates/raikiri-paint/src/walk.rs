@@ -4611,15 +4611,66 @@ fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBloc
 fn page_bounds_in_scene(transform: Affine, page_box: &PageBox) -> Rect {
     let determinant = transform.determinant();
     if determinant.is_finite() && determinant != 0.0 {
-        transform.inverse().transform_rect_bbox(Rect::new(
+        let inverse = transform.inverse();
+        let bounds = inverse.transform_rect_bbox(Rect::new(
             0.0,
             0.0,
-            page_box.width as f64,
-            page_box.height as f64,
-        ))
-    } else {
-        Rect::ZERO
+            f64::from(page_box.width),
+            f64::from(page_box.height),
+        ));
+        if inverse.as_coeffs().iter().all(|value| value.is_finite())
+            && [bounds.x0, bounds.y0, bounds.x1, bounds.y1]
+                .into_iter()
+                .all(f64::is_finite)
+        {
+            return bounds;
+        }
     }
+    Rect::ZERO
+}
+
+/// Materialize a square fragment clip only after its scene transform is known.
+/// The page bounds every axis, keeping emitted paths finite for vector output.
+fn fragment_clip_bounds(
+    clip: raikiri_traits::PaintClip,
+    origin: (f32, f32),
+    transform: Affine,
+    page_box: &PageBox,
+) -> Rect {
+    let page = page_bounds_in_scene(transform, page_box);
+    let axis = |start: f32, offset: f32, size: f32, closed: bool, low: f64, high: f64| {
+        if !closed {
+            return Some((low, high));
+        }
+        let start = f64::from(start) + f64::from(offset);
+        let end = start + f64::from(size.max(0.0));
+        if !start.is_finite() || !size.is_finite() || !end.is_finite() {
+            return None;
+        }
+        let start = start.clamp(low, high);
+        Some((start, end.clamp(start, high)))
+    };
+    let Some((x0, x1)) = axis(
+        clip.rect.x,
+        origin.0,
+        clip.rect.width,
+        clip.clip_x,
+        page.x0,
+        page.x1,
+    ) else {
+        return Rect::ZERO;
+    };
+    let Some((y0, y1)) = axis(
+        clip.rect.y,
+        origin.1,
+        clip.rect.height,
+        clip.clip_y,
+        page.y0,
+        page.y1,
+    ) else {
+        return Rect::ZERO;
+    };
+    Rect::new(x0, y0, x1, y1)
 }
 
 fn push_overflow_clip(

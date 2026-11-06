@@ -8687,3 +8687,5 @@ fn centered_cells_use_used_border_insets_for_background_clipping_and_origin() {
     assert_eq!(pixel(20, 5), &[0, 255, 0]);
     assert_eq!(pixel(20, 6), &[255, 255, 255]);
 }
+
+mod fragment_clip_tests;

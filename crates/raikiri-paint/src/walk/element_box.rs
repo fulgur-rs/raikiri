@@ -6,12 +6,13 @@ use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
     OpenBlockEdges, box_intersects_page, element_transform, fixed_position_px,
-    generated_flow_height, page_bounds_in_scene, paintable_border_radius, snap_column_clip_outward,
-    transform_translation, translation_only, used_padding_for_paint, vertical_align_shift_px,
+    fragment_clip_bounds, generated_flow_height, page_bounds_in_scene, paintable_border_radius,
+    snap_column_clip_outward, transform_translation, translation_only, used_padding_for_paint,
+    vertical_align_shift_px,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
-use raikiri_dom::{Document, FragmentRect, Node};
+use raikiri_dom::{Document, Node};
 use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{BorderStyle, PositionValue};
 use raikiri_style::{
@@ -32,7 +33,7 @@ pub(super) struct BoxInputs {
     pub(super) transform_y: f32,
     pub(super) fragment_clip_height: Option<f32>,
     pub(super) fragment_id: Option<usize>,
-    pub(super) fragment_clip: Option<FragmentRect>,
+    pub(super) fragment_clip: Option<raikiri_traits::PaintClip>,
     pub(super) is_fragment_visit: bool,
     pub(super) inside_fixed: bool,
     pub(super) inside_fixed_containing_block: bool,
@@ -601,12 +602,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         }
         if let Some(clip) = fragment_clip {
             let clip = snap_column_clip_outward(
-                Rect::new(
-                    (paint_x + clip.x) as f64,
-                    (paint_y + clip.y) as f64,
-                    (paint_x + clip.x + clip.width) as f64,
-                    (paint_y + clip.y + clip.height) as f64,
-                ),
+                fragment_clip_bounds(clip, (paint_x, paint_y), scene.transform, &self.page_box),
                 image_cache.device_grid(scene.transform),
                 open_edges,
             );

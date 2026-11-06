@@ -817,28 +817,28 @@ pub(super) fn fill_rows(
     }
 }
 
-/// How far, in px, the clip of a paginated fragment reaches past the edges of
-/// its column along the inline axis, and past the block edges where its
-/// paragraph begins or ends. Fragmentation cuts along the block axis between
-/// the fragments of a paragraph only, so what a fragment paints past the
-/// sides of its column, such as overflowing text and its shadows, outlines
-/// and ink, stays visible; this is far wider than any page.
-const CLIP_REACH: f32 = 1.0e5;
+/// The existing finite allowance beyond the outer block edges of a
+/// paragraph. The inline axis is represented separately and has no limit.
+const BLOCK_INK_REACH: f32 = 1.0e5;
 
-/// The clip that cuts the piece `rect` of a paragraph to its column of block
-/// size `height`, whose top is at the block offset `context.origin_y`, and
-/// leaves the inline axis open.
+/// The column's block cut with an unbounded inline axis.
 pub(super) fn column_window(
     rect: crate::fragment::FragmentRect,
     context: FragmentationContext,
     height: f32,
-) -> crate::fragment::FragmentRect {
-    crate::fragment::FragmentRect {
-        x: rect.x - CLIP_REACH,
+) -> raikiri_traits::PaintClip {
+    inline_open_clip(crate::fragment::FragmentRect {
+        x: rect.x,
         y: context.origin_y,
-        width: rect.width + 2.0 * CLIP_REACH,
+        width: rect.width,
         height,
-    }
+    })
+}
+
+fn inline_open_clip(rect: crate::fragment::FragmentRect) -> raikiri_traits::PaintClip {
+    let mut clip: raikiri_traits::PaintClip = rect.into();
+    clip.clip_x = false;
+    clip
 }
 
 pub(super) struct PagedFragment {
@@ -849,7 +849,7 @@ pub(super) struct PagedFragment {
     pub(super) rect: crate::fragment::FragmentRect,
     /// The cut of the column, or `None` for a fragment that holds its whole
     /// paragraph, which has no neighbour to keep out.
-    pub(super) clip: Option<crate::fragment::FragmentRect>,
+    pub(super) clip: Option<raikiri_traits::PaintClip>,
 }
 
 pub(super) struct PagedGroup {
@@ -1009,21 +1009,21 @@ pub(super) fn paginate(
                     clip: (range.line_start > 0 || range.line_end < paragraph.extents.len()).then(
                         || {
                             let top = if range.line_start == 0 {
-                                group_y - CLIP_REACH
+                                group_y - BLOCK_INK_REACH
                             } else {
                                 group_y
                             };
                             let bottom = if range.line_end >= paragraph.extents.len() {
-                                group_y + height + CLIP_REACH
+                                group_y + height + BLOCK_INK_REACH
                             } else {
                                 group_y + height
                             };
-                            crate::fragment::FragmentRect {
-                                x: x - CLIP_REACH,
+                            inline_open_clip(crate::fragment::FragmentRect {
+                                x,
                                 y: top,
-                                width: context.column_width + 2.0 * CLIP_REACH,
+                                width: context.column_width,
                                 height: bottom - top,
-                            }
+                            })
                         },
                     ),
                 });

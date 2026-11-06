@@ -1211,9 +1211,9 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
     let item_clip = item_fragment
         .fragmentainer_clip
         .expect("flex item fragment clip");
-    assert!((item_clip.x - context.column_offset_x(3)).abs() < 0.01);
-    assert!((item_clip.width - context.column_width).abs() < 0.01);
-    assert!((item_clip.height - 160.0).abs() < 0.01);
+    assert!((item_clip.rect.x - context.column_offset_x(3)).abs() < 0.01);
+    assert!((item_clip.rect.width - context.column_width).abs() < 0.01);
+    assert!((item_clip.rect.height - 160.0).abs() < 0.01);
     let tall_fragment = doc
         .fragment_tree
         .fragments
@@ -1235,9 +1235,9 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
     let clip = float_fragments[0]
         .fragmentainer_clip
         .expect("float fragment clip");
-    assert!(clip.x.abs() < 0.01);
-    assert!((clip.width - context.column_width).abs() < 0.01);
-    assert!((clip.height - 160.0).abs() < 0.01);
+    assert!(clip.rect.x.abs() < 0.01);
+    assert!((clip.rect.width - context.column_width).abs() < 0.01);
+    assert!((clip.rect.height - 160.0).abs() < 0.01);
     assert!(float_fragments.iter().enumerate().all(|(index, fragment)| {
         fragment.fragment_index == index && fragment.fragment_count == float_fragments.len()
     }));
@@ -1321,7 +1321,7 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
         .expect("last float fragment");
     let last_clip = last_float.fragmentainer_clip.expect("last float clip");
     assert!(
-        last_float.fragmentainer as f32 * 0.001 + last_clip.height >= 32.0,
+        last_float.fragmentainer as f32 * 0.001 + last_clip.rect.height >= 32.0,
         "the final float fragment must paint the remaining height"
     );
     let mut parent = last_float.parent;
@@ -1329,7 +1329,7 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
         let ancestor = &doc.fragment_tree.fragments[parent_id];
         if let Some(clip) = ancestor.fragmentainer_clip {
             assert!(
-                clip.height >= last_clip.height,
+                clip.rect.height >= last_clip.rect.height,
                 "ancestor clips must include the float overflow"
             );
         }
@@ -1462,21 +1462,24 @@ fn reused_fragment_clip_expands_to_later_child_overflow() {
             width: 100.0,
             height: 1.0,
         },
-        fragmentainer_clip: Some(crate::fragment::FragmentRect {
-            x: 0.0,
-            y: 0.0,
-            width: 100.0,
-            height: 1.0,
-        }),
+        fragmentainer_clip: Some(
+            crate::fragment::FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 1.0,
+            }
+            .into(),
+        ),
         fragment_index: 0,
         fragment_count: 1,
         line_start: None,
         line_end: None,
     };
     extend_fragment_clip(&mut fragment, 2.0);
-    assert_eq!(fragment.fragmentainer_clip.expect("clip").height, 2.0);
+    assert_eq!(fragment.fragmentainer_clip.expect("clip").rect.height, 2.0);
     extend_fragment_clip(&mut fragment, 0.5);
-    assert_eq!(fragment.fragmentainer_clip.expect("clip").height, 2.0);
+    assert_eq!(fragment.fragmentainer_clip.expect("clip").rect.height, 2.0);
 }
 
 #[test]
@@ -2193,7 +2196,7 @@ fn the_clip_of_a_sliced_flex_container_admits_what_reaches_past_it_inline() {
                 let clip = fragment
                     .fragmentainer_clip
                     .expect("a sliced box is clipped");
-                (clip.x - fragment.rect.x, clip.width)
+                (clip.rect.x - fragment.rect.x, clip.rect.width)
             })
             .collect::<Vec<_>>()
     };
@@ -3660,7 +3663,7 @@ fn an_absolute_box_in_a_sliced_block_stays_in_its_column() {
             (
                 fragment.fragmentainer,
                 parent.rect.y + fragment.rect.y,
-                parent.rect.y + clip.y,
+                parent.rect.y + clip.rect.y,
             )
         })
         .collect();
@@ -4695,6 +4698,15 @@ fn fragment_clips(doc: &Document, node: usize) -> Vec<crate::fragment::FragmentR
         .iter()
         .filter(|fragment| fragment.node_id == node)
         .filter_map(|fragment| fragment.fragmentainer_clip)
+        .map(|clip| {
+            assert!(clip.clip_x && clip.clip_y);
+            crate::fragment::FragmentRect {
+                x: clip.rect.x,
+                y: clip.rect.y,
+                width: clip.rect.width,
+                height: clip.rect.height,
+            }
+        })
         .collect()
 }
 
@@ -4879,7 +4891,7 @@ fn a_cut_containing_block_holds_absolute_pieces_in_the_columns_after_its_own() {
     let clip = doc.fragment_tree.fragments[block_pieces[1].unwrap()]
         .fragmentainer_clip
         .unwrap();
-    assert_eq!((clip.x, clip.width), (100.0, 200.0));
+    assert_eq!((clip.rect.x, clip.rect.width), (100.0, 200.0));
 }
 
 #[test]
@@ -6575,7 +6587,7 @@ fn paragraph_pieces(
                 fragment.rect.height,
                 fragment
                     .fragmentainer_clip
-                    .map(|clip| (clip.y, clip.height)),
+                    .map(|clip| (clip.rect.y, clip.rect.height)),
             )
         })
         .collect();
@@ -6893,7 +6905,7 @@ fn atomic_inlines_follow_the_piece_of_a_padded_paragraph_to_the_next_column() {
                 fragment.rect.y,
                 fragment
                     .fragmentainer_clip
-                    .map(|clip| (clip.y, clip.height)),
+                    .map(|clip| (clip.rect.y, clip.rect.height)),
             )
         })
         .collect();
@@ -6923,6 +6935,14 @@ fn a_piece_that_goes_on_covers_the_gap_under_its_last_line_and_its_edge_below_th
         "padding-bottom:3px;border-bottom:2px solid;background:green",
         8,
     );
+    let clips = doc
+        .layout_fragments()
+        .iter()
+        .filter(|fragment| fragment.node_id == paragraph)
+        .filter_map(|fragment| fragment.fragmentainer_clip)
+        .collect::<Vec<_>>();
+    assert_eq!(clips.len(), 2);
+    assert!(clips.iter().all(|clip| !clip.clip_x && clip.clip_y));
     let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
     assert_eq!(ranges, [(0, 5, 0), (5, 8, 1)]);
     assert_eq!(

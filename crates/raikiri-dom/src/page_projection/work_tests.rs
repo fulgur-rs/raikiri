@@ -250,7 +250,7 @@ fn multicol_event_clip_queries_do_not_scan_every_line_in_every_column() {
                     parent: None,
                     fragmentainer: column,
                     rect,
-                    fragmentainer_clip: Some(rect),
+                    fragmentainer_clip: Some(rect.into()),
                     fragment_index: column,
                     fragment_count: count,
                     line_start: Some(column),
