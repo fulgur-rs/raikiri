@@ -257,9 +257,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             height + 2.0 * outset,
         );
         // The page cut of the box, where the page area clips the ring.
-        let cut = self
-            .page_cut(element)
-            .filter(|cut| page_area_clip(ring, cut.area, true).is_some());
+        let cut = self.page_cut(element).filter(|cut| {
+            width > 0.0 && height > 0.0 && page_area_clip(ring, cut.area, true).is_some()
+        });
         let clip = cut.and_then(|cut| page_area_clip(ring, cut.area, true));
         if let Some(clip) = clip {
             self.scene
@@ -280,7 +280,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if let Some(cut) = cut {
             paint_outline_break_bars(
                 scene,
-                (x, width),
+                (x, y, width, height),
                 &solid,
                 (
                     cut.from_before.then_some(cut.area.y0),

@@ -313,3 +313,52 @@ fn a_box_narrower_than_its_negative_outline_offset_has_no_break_bars() {
     assert_eq!(pixel(&pixels, 31, 38), BLUE, "the right segment");
     assert_ne!(pixel(&pixels, 41, 38), BLUE, "nothing past the segments");
 }
+
+/// A translucent outline: where two of its parts overlap, the pixel is darker.
+const TRANSLUCENT: &str = "outline:4px solid rgba(0,0,255,0.5)";
+
+#[test]
+fn the_top_bar_of_a_short_last_slice_does_not_overlap_the_bottom_ring() {
+    // The box (y 10 to 71) ends 1px into page 2: its bottom ring (rows 11 to
+    // 14) lies under the bar along the top of the page area (rows 10 to 13).
+    let body = format!(
+        "<div style='position:absolute;top:0;left:6px;width:18px;{TRANSLUCENT}'>\
+         <div style='height:61px'></div></div>"
+    );
+    let pixels = raster_page(&body, 2);
+    let single = pixel(&pixels, 25, 14);
+    assert_ne!(single, [255, 255, 255], "the bottom ring is painted");
+    for y in [10, 11, 12, 13] {
+        assert_eq!(pixel(&pixels, 25, y), single, "row {y} has one layer");
+    }
+}
+
+#[test]
+fn the_bottom_bar_of_a_short_first_slice_does_not_overlap_the_top_ring() {
+    // The box starts at y 38, 2px above the bottom of the page area: its top
+    // ring (rows 34 to 37) lies over the bar along the bottom (rows 36 to 39).
+    let body = format!(
+        "<div style='position:absolute;top:28px;left:6px;width:18px;{TRANSLUCENT}'>\
+         <div style='height:80px'></div></div>"
+    );
+    let pixels = raster_page(&body, 0);
+    let single = pixel(&pixels, 25, 34);
+    assert_ne!(single, [255, 255, 255], "the top ring is painted");
+    for y in [35, 36, 37, 38, 39] {
+        assert_eq!(pixel(&pixels, 25, y), single, "row {y} has one layer");
+    }
+}
+
+#[test]
+fn the_two_bars_of_a_page_area_thinner_than_the_outline_do_not_overlap() {
+    // A 20px outline: the bar along the top of the 30px page area (rows 10 to
+    // 29) and the bar along the bottom (rows 20 to 39) meet over rows 20 to 29.
+    let body = "<div style='position:absolute;top:0;left:22px;width:6px;outline:20px solid rgba(0,0,255,0.5)'>\
+                <div style='height:80px'></div></div>";
+    let pixels = raster_page(body, 1);
+    let single = pixel(&pixels, 35, 12);
+    assert_ne!(single, [255, 255, 255], "the top bar is painted");
+    for y in [15, 22, 25, 29, 32, 38] {
+        assert_eq!(pixel(&pixels, 35, y), single, "row {y} has one layer");
+    }
+}

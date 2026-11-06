@@ -3731,13 +3731,17 @@ pub(crate) fn solid_outline(
 /// the box there would lie in the page margin). The bar starts `outline-offset`
 /// from the edge, is as thick as the outline, and runs between the inner edges
 /// of the two side segments of the ring, which the page area clips and leaves
-/// in place: the box's width from `abs_x`, plus the offset on both sides, so
-/// the bar does not paint over the side segments (a translucent outline would
-/// show the overlap). `top` and `bottom` are the edges of the page area where
-/// the box goes on.
+/// in place: the box's width from `x`, plus the offset on both sides.
+/// `top` and `bottom` are the edges of the page area where the box goes on.
+///
+/// A translucent outline is painted once: its bars leave out what the
+/// horizontal segments of the ring (painted by [`paint_element_outline`]) and
+/// the other bar already cover, which would show as a darker overlap. An opaque
+/// outline paints whole bars, as splitting them would only add seams at
+/// fractional edges.
 pub(crate) fn paint_outline_break_bars(
     scene: &mut impl PaintScene,
-    (abs_x, width): (f32, f32),
+    (x, y, width, height): (f32, f32, f32, f32),
     SolidOutline {
         width: outline_width,
         offset,
@@ -3753,24 +3757,54 @@ pub(crate) fn paint_outline_break_bars(
     // that a negative offset (the ring reaches into the box) also stops the bar
     // at the side segments. A box narrower than twice that leaves an empty bar.
     let offset = f64::from(*offset);
-    let left = f64::from(abs_x) - offset;
-    let right = (f64::from(abs_x) + f64::from(width) + offset).max(left);
+    let left = f64::from(x) - offset;
+    let right = (f64::from(x) + f64::from(width) + offset).max(left);
+    let (box_top, box_bottom) = (f64::from(y), f64::from(y) + f64::from(height));
+    // The vertical extents that the outline paints across the bars' width: the
+    // top and the bottom segment of the ring.
+    let mut painted = vec![
+        (box_top - offset - thickness, box_top - offset),
+        (box_bottom + offset, box_bottom + offset + thickness),
+    ];
+    let translucent = color.a < u8::MAX;
     let color = Color::from_rgba8(color.r, color.g, color.b, color.a);
-    for (near, far) in [
+    for bar in [
         top.map(|edge| (edge + gap, edge + gap + thickness)),
         bottom.map(|edge| (edge - gap - thickness, edge - gap)),
     ]
     .into_iter()
     .flatten()
     {
-        scene.fill(
-            Fill::NonZero,
-            kurbo::Affine::IDENTITY,
-            color,
-            None,
-            &Rect::new(left, near, right, far),
-        );
+        let pieces = if translucent {
+            subtract_extents(bar, &painted)
+        } else {
+            vec![bar]
+        };
+        for (near, far) in pieces {
+            scene.fill(
+                Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                color,
+                None,
+                &Rect::new(left, near, right, far),
+            );
+        }
+        painted.push(bar);
     }
+}
+
+/// The parts of the vertical extent `bar` (`near`, `far`) that lie outside
+/// every extent of `painted`.
+fn subtract_extents(bar: (f64, f64), painted: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut pieces = vec![bar];
+    for &(from, to) in painted {
+        pieces = pieces
+            .into_iter()
+            .flat_map(|(near, far)| [(near, far.min(from)), (near.max(to), far)])
+            .filter(|(near, far)| far > near)
+            .collect();
+    }
+    pieces
 }
 
 /// Paint a basic solid element outline without changing layout geometry.
