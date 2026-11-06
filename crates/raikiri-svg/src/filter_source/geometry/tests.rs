@@ -911,3 +911,31 @@ fn a_rule_without_declarations_has_no_block_to_read() {
     read_blocks_again(&mut rules, "rect{width:20px}");
     assert!(rules[0].declarations.is_empty());
 }
+
+#[test]
+fn a_declaration_is_valid_when_it_is_one_value_of_a_geometry_property() {
+    for valid in [
+        "width:20px",
+        "WIDTH : 2em !important",
+        "r:5",
+        "d:path('M0 0h5')",
+        "rx:auto",
+    ] {
+        assert!(is_valid_declaration(valid), "{valid}");
+    }
+    for invalid in [
+        // A value that a browser drops.
+        "width:-1px",
+        "width:bogus",
+        "d:path('M0 0 q')",
+        "r:auto",
+        // Not one declaration: none, or several.
+        "width:",
+        "",
+        "width:1px;height:2px",
+        // Not a geometry property.
+        "opacity:1",
+    ] {
+        assert!(!is_valid_declaration(invalid), "{invalid}");
+    }
+}

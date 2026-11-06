@@ -1669,9 +1669,11 @@ pub(crate) fn apply_winners(
                 });
             }
             if let Some(collector) = svg_properties.as_mut()
-                && svg_property_is_exported(winner_key)
-                && (!collector.painting_only || winner_key.is_svg_presentation())
+                && svg_property_is_collected(winner_key, collector.painting_only)
                 && !winning_paint_hint
+                && !(winner_key.is_svg_shape_size()
+                    && winner.rank
+                        == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false))
             {
                 collector.properties.push(SvgStyleProperty {
                     property: winner_key,
@@ -1860,6 +1862,18 @@ fn svg_property_is_exported(key: crate::property::PropertyKey) -> bool {
             key,
             Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility | Display | Opacity
         )
+}
+
+/// Whether the winner for `key` of an element is listed for the inline SVG
+/// export. `painting_only` is set for an element that is not an SVG element: a
+/// descendant SVG inherits just the painting properties from it. The
+/// geometry of a shape is read from the SVG elements themselves.
+fn svg_property_is_collected(key: crate::property::PropertyKey, painting_only: bool) -> bool {
+    if painting_only {
+        key.is_svg_presentation()
+    } else {
+        svg_property_is_exported(key) || key.is_svg_geometry() || key.is_svg_shape_size()
+    }
 }
 
 fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
@@ -2051,6 +2065,15 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         | PropertyValue::StrokeMiterlimit(text)
         | PropertyValue::StrokeDasharray(text)
         | PropertyValue::StrokeDashoffset(text) => Some(text.to_string()),
+        PropertyValue::SvgX(text)
+        | PropertyValue::SvgY(text)
+        | PropertyValue::SvgCx(text)
+        | PropertyValue::SvgCy(text)
+        | PropertyValue::SvgR(text)
+        | PropertyValue::SvgRx(text)
+        | PropertyValue::SvgRy(text)
+        | PropertyValue::SvgD(text) => Some(text.to_string()),
+        PropertyValue::Width(size) | PropertyValue::Height(size) => svg_shape_size_text(size),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
         PropertyValue::FontWeight(FontWeightValue::Lighter) => Some("lighter".into()),
         // `<absolute-size>` keywords keep their computed px size. SVG
@@ -2061,6 +2084,28 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // reused under a different generic family keeps the size of the
         // family where it is defined.
         PropertyValue::FontSizeKeyword(_) => None,
+        _ => None,
+    }
+}
+
+/// The `width` or `height` of an SVG shape as an SVG renderer reads it: `auto`
+/// or a length in a unit it resolves. `None` for any other size, which a
+/// shape does not take.
+fn svg_shape_size_text(size: &crate::property::LengthOrAuto) -> Option<String> {
+    use crate::property::{Length, LengthOrAuto};
+    match size {
+        LengthOrAuto::Auto => Some("auto".to_owned()),
+        LengthOrAuto::Length(
+            length @ (Length::Px(_)
+            | Length::Em(_)
+            | Length::Ex(_)
+            | Length::Percent(_)
+            | Length::Pt(_)
+            | Length::Pc(_)
+            | Length::Cm(_)
+            | Length::Mm(_)
+            | Length::In(_)),
+        ) => Some(crate::property::serialize_length(length)),
         _ => None,
     }
 }
@@ -2893,6 +2938,19 @@ pub(crate) fn resolve_defaulting_value(
                 };
                 return text
                     .and_then(|text| PropertyValue::svg_presentation(key, text.into()))
+                    .unwrap_or(value);
+            }
+            // The geometry of a shape is not inherited, so `unset` is `initial`.
+            // An `inherit` is exported as the keyword, which the SVG export
+            // does not write.
+            key if key.is_svg_geometry() => {
+                let text = if keyword == CssWideKeyword::Inherit {
+                    Some("inherit")
+                } else {
+                    key.svg_geometry_initial()
+                };
+                return text
+                    .and_then(|text| PropertyValue::svg_geometry(key, text.into()))
                     .unwrap_or(value);
             }
             crate::property::PropertyKey::VerticalAlign => {
@@ -3786,6 +3844,14 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::StrokeMiterlimit(_)
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_)
+        | PropertyValue::SvgX(_)
+        | PropertyValue::SvgY(_)
+        | PropertyValue::SvgCx(_)
+        | PropertyValue::SvgCy(_)
+        | PropertyValue::SvgR(_)
+        | PropertyValue::SvgRx(_)
+        | PropertyValue::SvgRy(_)
+        | PropertyValue::SvgD(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::AspectRatio(_)
         | PropertyValue::Columns(_)
@@ -4391,7 +4457,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::StrokeLinejoin(_)
         | PropertyValue::StrokeMiterlimit(_)
         | PropertyValue::StrokeDasharray(_)
-        | PropertyValue::StrokeDashoffset(_) => {}
+        | PropertyValue::StrokeDashoffset(_)
+        | PropertyValue::SvgX(_)
+        | PropertyValue::SvgY(_)
+        | PropertyValue::SvgCx(_)
+        | PropertyValue::SvgCy(_)
+        | PropertyValue::SvgR(_)
+        | PropertyValue::SvgRx(_)
+        | PropertyValue::SvgRy(_)
+        | PropertyValue::SvgD(_) => {}
         PropertyValue::ColumnSpan(value) => target.column_span = value,
         PropertyValue::AspectRatio(value) => target.aspect_ratio = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,

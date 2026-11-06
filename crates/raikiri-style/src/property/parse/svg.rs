@@ -39,6 +39,61 @@ pub(super) fn parse_svg_presentation(
     PropertyValue::svg_presentation(key, text.into_boxed_str())
 }
 
+/// Parses the value of an SVG geometry property (`x`, `y`, `cx`, `cy`, `r`,
+/// `rx`, `ry` and `d`). `None` for any other key and for an invalid value.
+///
+/// A position is a length or percentage and a radius is not negative. `rx` and
+/// `ry` also take `auto`. `d` takes `none` or `path()` of one string; the path
+/// data in it is left to the SVG renderer, which draws what it can read.
+pub(super) fn parse_svg_geometry(
+    key: PropertyKey,
+    input: &mut Parser<'_, '_>,
+) -> Option<PropertyValue> {
+    let text = match key {
+        PropertyKey::SvgX | PropertyKey::SvgY | PropertyKey::SvgCx | PropertyKey::SvgCy => {
+            parse_svg_length(input, true)?
+        }
+        PropertyKey::SvgR => parse_svg_length(input, false)?,
+        PropertyKey::SvgRx | PropertyKey::SvgRy => {
+            match optional(input, |input| {
+                input.expect_ident_matching("auto").ok()?;
+                Some(())
+            }) {
+                Some(()) => ends_declaration(input).then(|| "auto".to_owned())?,
+                None => parse_svg_length(input, false)?,
+            }
+        }
+        PropertyKey::SvgD => parse_svg_path(input)?,
+        _ => return None,
+    };
+    PropertyValue::svg_geometry(key, text.into_boxed_str())
+}
+
+/// `none | path(<string>)`, the string quoted again so that it can be read
+/// back whatever it holds.
+fn parse_svg_path(input: &mut Parser<'_, '_>) -> Option<String> {
+    if input
+        .try_parse(|input| input.expect_ident_matching("none"))
+        .is_ok()
+    {
+        return ends_declaration(input).then(|| "none".to_owned());
+    }
+    let data = input.expect_function_matching("path").ok().and_then(|()| {
+        input
+            .parse_nested_block(|input| {
+                let data = input.expect_string()?.to_string();
+                input.expect_exhausted()?;
+                Ok::<_, ParseError<'_, ()>>(data)
+            })
+            .ok()
+    })?;
+    let mut text = String::from("path(");
+    // Writing to a `String` cannot fail.
+    let _ = cssparser::serialize_string(&data, &mut text);
+    text.push(')');
+    ends_declaration(input).then_some(text)
+}
+
 /// `<paint>` (SVG 2 §13.1): `none | <color> | <url> [none | <color>]? |
 /// context-fill | context-stroke`. A `<url>` must name an element of the same
 /// document (`#id`); a color that refers to `currentcolor` inside a function

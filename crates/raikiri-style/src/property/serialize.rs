@@ -68,7 +68,15 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::StrokeLinejoin(text)
         | PropertyValue::StrokeMiterlimit(text)
         | PropertyValue::StrokeDasharray(text)
-        | PropertyValue::StrokeDashoffset(text) => Some(text.to_string()),
+        | PropertyValue::StrokeDashoffset(text)
+        | PropertyValue::SvgX(text)
+        | PropertyValue::SvgY(text)
+        | PropertyValue::SvgCx(text)
+        | PropertyValue::SvgCy(text)
+        | PropertyValue::SvgR(text)
+        | PropertyValue::SvgRx(text)
+        | PropertyValue::SvgRy(text)
+        | PropertyValue::SvgD(text) => Some(text.to_string()),
         PropertyValue::FontSizeKeyword(keyword) => Some(keyword.as_css_str().to_owned()),
         PropertyValue::FontSizeCalc(calc) => Some(serialize_length_percentage_or_calc(
             &LengthPercentageOrCalc::RelativeCalc(*calc),

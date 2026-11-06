@@ -566,6 +566,14 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | StrokeMiterlimit
         | StrokeDasharray
         | StrokeDashoffset
+        | SvgX
+        | SvgY
+        | SvgCx
+        | SvgCy
+        | SvgR
+        | SvgRx
+        | SvgRy
+        | SvgD
         | ColumnSpan
         | AspectRatio
         | ColumnRuleWidth
@@ -1092,6 +1100,14 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::StrokeMiterlimit(_)
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_)
+        | PropertyValue::SvgX(_)
+        | PropertyValue::SvgY(_)
+        | PropertyValue::SvgCx(_)
+        | PropertyValue::SvgCy(_)
+        | PropertyValue::SvgR(_)
+        | PropertyValue::SvgRx(_)
+        | PropertyValue::SvgRy(_)
+        | PropertyValue::SvgD(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::AspectRatio(_)
         | PropertyValue::ColumnRuleWidth(_)

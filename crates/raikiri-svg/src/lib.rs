@@ -3269,7 +3269,15 @@ fn with_element_style_overrides(
     budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
-    let element_count = xml.descendants().filter(|node| node.is_element()).count();
+    let tags: Vec<_> = xml
+        .descendants()
+        .filter(|node| node.is_element())
+        .map(|node| {
+            let name = node.tag_name();
+            (name.namespace() == Some(SVG_NAMESPACE)).then(|| name.name())
+        })
+        .collect();
+    let element_count = tags.len();
     SelectorFreezeBudget::consume(&mut budget.checks, element_count)?;
     let mut overrides = BTreeMap::new();
     let mut scopes = BTreeMap::<String, (String, BTreeSet<usize>, bool)>::new();
@@ -3295,6 +3303,13 @@ fn with_element_style_overrides(
             budget_exceeded: &exceeded,
         };
         let mut keys = BTreeSet::new();
+        // The geometry properties that the element takes as CSS: the others are
+        // left out, as a browser applies them to nothing.
+        let shape_properties = tags[element.element_index]
+            .map(filter_source::geometry_properties)
+            .unwrap_or_default();
+        let mut kept = String::new();
+        let mut left_out = false;
         for declaration in cssparser::RuleBodyParser::new(&mut parser, &mut declaration_parser) {
             let declaration = declaration.map_err(|_| {
                 if exceeded.get() {
@@ -3303,11 +3318,23 @@ fn with_element_style_overrides(
                     SvgError::InvalidDocument("invalid SVG descendant declaration".into())
                 }
             })?;
+            let geometry = filter_source::is_geometry_property(&declaration.name);
             let Some(property) = PAINTING_PROPERTIES
                 .iter()
                 .chain(OTHER_PROPERTIES)
                 .find(|property| declaration.name.eq_ignore_ascii_case(property))
+                .or_else(|| {
+                    shape_properties
+                        .iter()
+                        .find(|property| declaration.name.eq_ignore_ascii_case(property))
+                })
             else {
+                if geometry && element.element_index != 0 {
+                    // A property of another shape, or a value the SVG reader
+                    // would drop: the attribute keeps what it says.
+                    left_out = true;
+                    continue;
+                }
                 return Err(SvgError::InvalidDocument(
                     "unsupported SVG descendant property".into(),
                 ));
@@ -3317,10 +3344,21 @@ fn with_element_style_overrides(
                     "unsupported SVG root property".into(),
                 ));
             }
+            if geometry && !filter_source::is_valid_geometry_declaration(&declaration.raw) {
+                left_out = true;
+                continue;
+            }
+            kept.push_str(&declaration.raw);
+            kept.push(';');
             keys.insert((*property).to_owned());
         }
+        let declarations = if left_out {
+            kept
+        } else {
+            element.declarations.to_owned()
+        };
         if overrides
-            .insert(element.element_index, (element, keys.clone()))
+            .insert(element.element_index, (declarations, keys.clone()))
             .is_some()
         {
             return Err(SvgError::InvalidDocument(
@@ -3377,7 +3415,7 @@ fn with_element_style_overrides(
     {
         SelectorFreezeBudget::consume(&mut budget.checks, scopes.len().saturating_add(1))?;
         let mut inserted = String::new();
-        if let Some((element, keys)) = overrides.get(&index) {
+        if let Some((declarations, keys)) = overrides.get(&index) {
             let properties: Vec<_> = keys.iter().map(String::as_str).collect();
             budget.bytes(properties.len() * std::mem::size_of::<&str>())?;
             let existing = node.attribute("style").unwrap_or_default();
@@ -3385,10 +3423,10 @@ fn with_element_style_overrides(
                 existing
                     .len()
                     .saturating_mul(8)
-                    .saturating_add(element.declarations.len()),
+                    .saturating_add(declarations.len()),
             )?;
             let retained = strip_inline_style_properties(existing, &properties);
-            let style = append_inline_declarations(&retained, element.declarations);
+            let style = append_inline_declarations(&retained, declarations);
             budget.bytes(xml_attribute_escape_allocation_bytes(&style)?)?;
             let escaped = escape_xml_attribute(&style);
             for attribute in node.attributes().filter(|attribute| {

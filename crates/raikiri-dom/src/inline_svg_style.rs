@@ -444,8 +444,17 @@ fn declared<'a>(
         PropertyKey::FontStyle => "font-style",
         PropertyKey::FontWeight => "font-weight",
         key if key.is_svg_presentation() => svg_presentation_name(key),
+        // The geometry of a shape is written only when a declaration gives it
+        // a value: it is not inherited, and nothing computed stands for it.
+        PropertyKey::Width => "width",
+        PropertyKey::Height => "height",
+        key if key.is_svg_geometry() => key.svg_geometry_name().unwrap_or_default(),
         _ => return None,
     };
+    let geometry = property.property.is_svg_geometry() || property.property.is_svg_shape_size();
+    if geometry && property.inherited {
+        return None;
+    }
     if property.inherited {
         // SVG renderers such as usvg copy an ancestor's raw `font-size`
         // for `inherit` and apply it again, compounding a relative size.
@@ -543,7 +552,11 @@ fn write_node_declarations(
             style.font_family.iter().fold(128usize, |size, name| {
                 size.saturating_add(name.as_str().len().saturating_mul(8))
             })
-        } else if property.property.is_svg_presentation() && !property.inherited {
+        } else if (property.property.is_svg_presentation()
+            || property.property.is_svg_geometry()
+            || property.property.is_svg_shape_size())
+            && !property.inherited
+        {
             // The declared text is cloned and then copied into the
             // declaration, so a long `url(#...)` paint reaching many elements
             // counts twice per element.

@@ -245,3 +245,119 @@ fn only_the_presentation_keys_parse() {
     assert!(parse_svg_presentation(PropertyKey::Opacity, &mut parser).is_none());
     assert!(PropertyValue::svg_presentation(PropertyKey::Opacity, "1".into()).is_none());
 }
+
+fn parse_geometry(name: &str, text: &str) -> Option<String> {
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let key = property_key_for_name(name)?;
+    let value = parse_svg_geometry(key, &mut parser)?;
+    parser.expect_exhausted().ok()?;
+    assert_eq!(value.key(), key);
+    match value {
+        PropertyValue::SvgX(text)
+        | PropertyValue::SvgY(text)
+        | PropertyValue::SvgCx(text)
+        | PropertyValue::SvgCy(text)
+        | PropertyValue::SvgR(text)
+        | PropertyValue::SvgRx(text)
+        | PropertyValue::SvgRy(text)
+        | PropertyValue::SvgD(text) => Some(text.into()),
+        other => panic!("unexpected value {other:?}"),
+    }
+}
+
+#[test]
+fn a_position_is_a_length_a_percentage_or_a_number() {
+    for name in ["x", "y", "cx", "cy"] {
+        assert_eq!(
+            parse_geometry(name, "3px").as_deref(),
+            Some("3px"),
+            "{name}"
+        );
+        assert_eq!(parse_geometry(name, "-1.50EM").as_deref(), Some("-1.5em"));
+        assert_eq!(parse_geometry(name, "25%").as_deref(), Some("25%"));
+        assert_eq!(parse_geometry(name, "0").as_deref(), Some("0"));
+        assert_eq!(parse_geometry(name, "7").as_deref(), Some("7"));
+        assert_eq!(parse_geometry(name, "2vw"), None);
+        assert_eq!(parse_geometry(name, "calc(1px + 2px)"), None);
+        assert_eq!(parse_geometry(name, "auto"), None);
+        assert_eq!(parse_geometry(name, "1px 2px"), None);
+    }
+}
+
+#[test]
+fn a_radius_is_not_negative_and_rx_and_ry_take_auto() {
+    assert_eq!(parse_geometry("r", "5px").as_deref(), Some("5px"));
+    assert_eq!(parse_geometry("r", "-5px"), None);
+    assert_eq!(parse_geometry("r", "auto"), None);
+    for name in ["rx", "ry"] {
+        assert_eq!(parse_geometry(name, "AUTO").as_deref(), Some("auto"));
+        assert_eq!(parse_geometry(name, "4pt").as_deref(), Some("4pt"));
+        assert_eq!(parse_geometry(name, "-4px"), None);
+        assert_eq!(parse_geometry(name, "auto 4px"), None);
+        assert_eq!(parse_geometry(name, "none"), None);
+    }
+}
+
+#[test]
+fn a_path_is_none_or_a_quoted_string_of_data() {
+    assert_eq!(parse_geometry("d", "none").as_deref(), Some("none"));
+    assert_eq!(parse_geometry("d", "NONE").as_deref(), Some("none"));
+    assert_eq!(
+        parse_geometry("d", "path('M0 0h5')").as_deref(),
+        Some("path(\"M0 0h5\")")
+    );
+    assert_eq!(
+        parse_geometry("d", "PATH(\"M0 0\")").as_deref(),
+        Some("path(\"M0 0\")")
+    );
+    // The data is not read here; the SVG renderer reads it.
+    assert_eq!(
+        parse_geometry("d", "path('not a path')").as_deref(),
+        Some("path(\"not a path\")")
+    );
+    for source in [
+        "path()",
+        "path(1)",
+        "path('a', 'b')",
+        "path(evenodd, 'M0 0')",
+        "path('M0 0') none",
+        "none path('M0 0')",
+        "M0 0",
+        "url(#p)",
+        "5px",
+    ] {
+        assert_eq!(parse_geometry("d", source), None, "{source}");
+    }
+}
+
+#[test]
+fn the_geometry_keys_have_names_initial_values_and_a_value_each() {
+    for (key, name, initial) in PropertyKey::SVG_GEOMETRY {
+        assert_eq!(property_key_for_name(name), Some(key), "{name}");
+        assert!(key.is_svg_geometry());
+        assert!(!key.is_svg_presentation());
+        assert_eq!(key.svg_geometry_name(), Some(name));
+        assert_eq!(key.svg_geometry_initial(), Some(initial));
+        assert!(crate::property::is_supported_property_name(name), "{name}");
+        // The initial value is a value the property accepts.
+        assert!(parse_geometry(name, initial).is_some(), "{name}: {initial}");
+        let value = PropertyValue::svg_geometry(key, initial.into());
+        assert_eq!(value.map(|value| value.key()), Some(key), "{name}");
+    }
+    assert!(PropertyKey::Width.is_svg_shape_size());
+    assert!(PropertyKey::Height.is_svg_shape_size());
+    assert!(!PropertyKey::Width.is_svg_geometry());
+    assert!(!PropertyKey::Fill.is_svg_geometry());
+    assert!(!PropertyKey::Fill.is_svg_shape_size());
+    assert_eq!(PropertyKey::Fill.svg_geometry_name(), None);
+    assert_eq!(PropertyKey::Fill.svg_geometry_initial(), None);
+}
+
+#[test]
+fn only_the_geometry_keys_parse_as_geometry() {
+    let mut input = ParserInput::new("1px");
+    let mut parser = Parser::new(&mut input);
+    assert!(parse_svg_geometry(PropertyKey::Width, &mut parser).is_none());
+    assert!(PropertyValue::svg_geometry(PropertyKey::Width, "1px".into()).is_none());
+}
