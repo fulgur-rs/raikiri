@@ -312,7 +312,7 @@ impl<'a, 'input: 'a> GraphBuilder<'a, 'input> {
             .descendants()
             .filter(|node| node.has_tag_name("style") && svg_style_has_css_type(*node))
             .filter_map(|node| node.text())
-            .flat_map(|text| simplecss::StyleSheet::parse(text).rules)
+            .flat_map(|text| crate::css::parse(text).rules)
             .filter_map(|rule| {
                 rules_set_paint |= rule.declarations.iter().any(|declaration| {
                     matches!(
