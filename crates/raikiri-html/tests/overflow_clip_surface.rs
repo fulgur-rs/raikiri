@@ -263,6 +263,39 @@ fn an_overflow_clip_margin_keeps_the_pages_of_the_content_it_reveals() {
 }
 
 #[test]
+fn an_overflow_clip_margin_has_no_effect_while_the_other_axis_is_visible() {
+    // Chromium puts the overflow clip edge at the padding box when only one
+    // axis clips, whatever `overflow-clip-margin` says: 1 page for a 60px box
+    // with a 60px margin around 30 lines, 2 for a 150px one.
+    for overflow in [
+        "overflow-y:clip",
+        "overflow-y:clip;overflow-x:visible",
+        "overflow:visible clip",
+    ] {
+        for margin in [
+            "overflow-clip-margin:100px",
+            "overflow-clip-margin:border-box 100px",
+            "overflow-clip-margin:content-box 20px",
+        ] {
+            let result = spilling_lines(&format!(
+                "{overflow};{margin};height:80px;border-bottom:5px solid"
+            ));
+            let edge = clip(&result, 0, "clip").unwrap();
+            assert_eq!(result.page_count(), 1, "{overflow};{margin}");
+            assert!(edge.clip_y && !edge.clip_x, "{overflow};{margin}");
+            assert_eq!(
+                (edge.rect.y, edge.rect.height),
+                (0.0, 80.0),
+                "{overflow};{margin}"
+            );
+        }
+    }
+    // The margin reaches the clip once both axes clip.
+    let result = spilling_lines("overflow:clip;overflow-clip-margin:content-box 100px");
+    assert_eq!(result.page_count(), 2);
+}
+
+#[test]
 fn a_paragraph_running_over_a_clip_edge_adds_no_page() {
     let words = "x ".repeat(60);
     let result = laid_out(
@@ -919,6 +952,35 @@ fn vertical_boxes_without_a_block_axis_clip_still_add_pages() {
                 vertical_clip_pages(writing_mode, overflow, "paragraph"),
                 4,
                 "{writing_mode} {overflow} paragraph"
+            );
+        }
+    }
+}
+
+#[test]
+fn vertical_boxes_take_an_overflow_clip_margin_only_when_both_axes_clip() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        assert_eq!(
+            vertical_clip_pages(
+                writing_mode,
+                "overflow:clip;overflow-clip-margin:100px",
+                "lines"
+            ),
+            2,
+            "{writing_mode} both axes clip"
+        );
+        for overflow in [
+            "overflow-x:clip;overflow-y:visible",
+            "overflow:clip visible",
+        ] {
+            assert_eq!(
+                vertical_clip_pages(
+                    writing_mode,
+                    &format!("{overflow};overflow-clip-margin:100px"),
+                    "lines"
+                ),
+                1,
+                "{writing_mode} {overflow}"
             );
         }
     }

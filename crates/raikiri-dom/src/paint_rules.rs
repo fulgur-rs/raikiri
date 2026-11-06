@@ -276,11 +276,12 @@ pub(crate) struct OverflowClipGeometry {
 
 impl OverflowClipGeometry {
     /// An `overflow: clip` axis clips at the overflow clip edge: the box and
-    /// outset that `overflow-clip-margin` names (CSS Overflow 4 §3.2). A
-    /// scroll container axis clips at the padding box, or at a `padding-box` or
-    /// `content-box` edge that lies inside it. On a `replaced`
-    /// element every non-`visible` axis is used as `clip` (CSS Overflow 4
-    /// §3.1), and an omitted box is the content box.
+    /// outset that `overflow-clip-margin` names (CSS Overflow 4 §3.2), unless
+    /// the other axis is `visible`, which leaves the clip at the padding box
+    /// (Chromium ignores the margin then). A scroll container axis clips at
+    /// the padding box, or at a `padding-box` or `content-box` edge that lies
+    /// inside it. On a `replaced` element every non-`visible` axis is used as
+    /// `clip` (CSS Overflow 4 §3.1), and an omitted box is the content box.
     pub(crate) fn new(
         cv: &ComputedValues,
         border_box: PaintRect,
@@ -434,6 +435,16 @@ fn resolve_overflow_clip_edges(
         }
     };
     let overflow = OverflowXY::new(used(overflow.x), used(overflow.y));
+    // On a box that is not replaced, `overflow-clip-margin` takes effect only
+    // when both axes clip: with one axis `visible` the clip edge stays at the
+    // padding box whatever the margin says, as in Chromium.
+    let margin = if !replaced
+        && (overflow.x == OverflowValue::Visible || overflow.y == OverflowValue::Visible)
+    {
+        ComputedOverflowClipMargin::INITIAL
+    } else {
+        margin
+    };
     // An omitted box is the content box on a replaced element and the
     // padding box otherwise (CSS Overflow 4 §3.2).
     let visual_box = margin.visual_box.unwrap_or(if replaced {
