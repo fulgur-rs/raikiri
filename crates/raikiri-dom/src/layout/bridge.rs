@@ -243,6 +243,16 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].column_span_all =
             cv.column_span == raikiri_style::property::ColumnSpanValue::All;
         doc.set_box_properties(idx, cv.display, cv.position.clone());
+        // Size query containers establish an independent formatting context,
+        // without the containing-block and overflow effects of layout containment.
+        if cv.container_type != raikiri_style::property::ContainerType::Normal
+            && matches!(
+                doc.nodes[idx].display(),
+                DisplayValue::Block | DisplayValue::ListItem | DisplayValue::InlineBlock
+            )
+        {
+            doc.nodes[idx].flags.insert(NodeFlags::ROOTS_BLOCK_CONTEXT);
+        }
         // Table engine inputs — no taffy::Style counterpart (taffy 0.15
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;

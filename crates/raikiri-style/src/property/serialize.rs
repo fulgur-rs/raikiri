@@ -55,6 +55,7 @@ fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
 #[doc(hidden)]
 pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     match value {
+        PropertyValue::ContainerType(kind) => Some(kind.as_css_str().to_owned()),
         PropertyValue::ContextualColor(color) => serialize_one_color(color.source.as_ref()),
         PropertyValue::All(keyword) => Some(keyword.as_css_str().to_owned()),
         PropertyValue::Fill(text)

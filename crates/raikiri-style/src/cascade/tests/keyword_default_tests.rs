@@ -152,6 +152,7 @@ pub(super) const CASES: &[(&str, bool, &[&str])] = &[
     ("object-fit", false, &["cover", "contain", "none"]),
     ("isolation", false, &["isolate", "isolate", "auto"]),
     ("contain", false, &["layout", "paint", "strict"]),
+    ("container-type", false, &["size", "inline-size", "normal"]),
     (
         "will-change",
         false,

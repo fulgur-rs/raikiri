@@ -217,6 +217,7 @@ keyword_defaults! {
     ObjectFit, false => PropertyValue::ObjectFit(dup(&source.object_fit));
     Isolation, false => PropertyValue::Isolation(dup(&source.isolation));
     Contain, false => PropertyValue::Contain(dup(&source.contain));
+    ContainerType, false => PropertyValue::ContainerType(dup(&source.container_type));
     WillChange, false => PropertyValue::WillChange(dup(&source.will_change));
     MixBlendMode, false => PropertyValue::MixBlendMode(dup(&source.mix_blend_mode));
     MaskImage, false => PropertyValue::MaskImage(dup(&source.mask_image));

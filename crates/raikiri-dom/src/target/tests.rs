@@ -1017,3 +1017,21 @@ pub(super) fn record_counter_name_work(kind: usize) {
         work.set(counts);
     });
 }
+
+#[test]
+fn container_type_style_containment_scopes_quote_depth() {
+    use raikiri_style::PseudoElem::Before;
+    for (kind, expected) in [("normal", 0), ("inline-size", 1), ("size", 1)] {
+        let mut doc = styled_document(&format!(
+            "div::before,span::before,i::before{{content:open-quote}}span::after{{content:close-quote close-quote}}span{{container-type:{kind}}}"
+        ));
+        let outer = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+        let scoped = doc.append_element(Some(outer), "span", None::<&str>);
+        let probe = doc.append_element(Some(outer), "i", None::<&str>);
+        doc.mark_in_document_flags();
+        let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let snapshots = counter_snapshots(&doc, &cr).unwrap();
+        assert_eq!(snapshots.quote_depth(scoped, Before), 1, "{kind}");
+        assert_eq!(snapshots.quote_depth(probe, Before), expected, "{kind}");
+    }
+}

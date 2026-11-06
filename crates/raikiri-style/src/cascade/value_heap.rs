@@ -195,6 +195,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         box_decoration_break: _,
         mix_blend_mode: _,
         contain: _,
+        container_type: _,
         will_change: _,
         mask_image,
         clip_path,

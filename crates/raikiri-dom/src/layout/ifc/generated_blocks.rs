@@ -1003,7 +1003,7 @@ pub(crate) fn close(
 /// Whether a block-level box styled by `cv` establishes an independent
 /// formatting context: any display other than a plain block or list item, a
 /// scroll container, a multi-column container, or layout or paint
-/// containment.
+/// containment, or a size query container.
 fn establishes_formatting_context(cv: &ComputedValues) -> bool {
     let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
     !matches!(cv.display, DisplayValue::Block | DisplayValue::ListItem)
@@ -1013,6 +1013,7 @@ fn establishes_formatting_context(cv: &ComputedValues) -> bool {
         || !matches!(cv.column_width, ComputedColumnWidth::Auto)
         || cv.contain.contains(Contain::LAYOUT)
         || cv.contain.contains(Contain::PAINT)
+        || cv.container_type != raikiri_style::property::ContainerType::Normal
 }
 
 #[cfg(test)]

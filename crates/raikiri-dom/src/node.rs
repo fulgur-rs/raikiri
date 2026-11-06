@@ -78,9 +78,9 @@ bitflags::bitflags! {
         const HIDDEN_BY_TEXT_OVERFLOW = 1 << 7;
         /// The document element, whose principal box establishes a BFC.
         const IS_ROOT_ELEMENT = 1 << 8;
-        /// A block-level HTML `fieldset`, which roots its own block formatting
-        /// context whatever its style says. Set by
-        /// [`Node::set_box_properties`] from the display it captures.
+        /// A box that roots its own block formatting context. Set for a
+        /// block-level HTML `fieldset` by [`Node::set_box_properties`], and
+        /// for a size query container by the style bridge.
         const ROOTS_BLOCK_CONTEXT = 1 << 9;
         /// The table is laying this cell out at its final physical size on
         /// vertical axes. Measurement passes retain the horizontal table path.
@@ -1383,10 +1383,10 @@ impl Node {
         self.tag_name() == Some("fieldset") && self.namespace_uri().is_none()
     }
 
-    /// Whether this is a block-level HTML `fieldset`, which roots its own block
-    /// formatting context (HTML Standard §15.5.12): it keeps clear of floats,
-    /// holds its floats and does not collapse its margins with those of its
-    /// children.
+    /// Whether this box roots a block formatting context, as a block-level
+    /// HTML `fieldset` (HTML Standard §15.5.12) or a size query container:
+    /// it keeps clear of floats, holds its floats and does not collapse its
+    /// margins with those of its children.
     #[inline]
     pub(crate) fn roots_block_context(&self) -> bool {
         self.flags.contains(NodeFlags::ROOTS_BLOCK_CONTEXT)

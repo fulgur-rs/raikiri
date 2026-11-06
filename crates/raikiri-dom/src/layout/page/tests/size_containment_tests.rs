@@ -17,6 +17,10 @@ fn document_with(css: &str) -> (Document, CascadeResult, usize) {
 fn active_full_size_containment_agrees_before_and_after_layout_metadata_exists() {
     for (css, expected) in [
         ("display:block;contain:size", true),
+        ("display:block;container-type:size", true),
+        ("display:block;container-type:inline-size", false),
+        ("display:contents;container-type:size", false),
+        ("display:inline;container-type:size", false),
         ("display:block;contain:strict", true),
         ("display:block;contain:content", false),
         ("display:block;contain:layout", false),
@@ -99,5 +103,40 @@ fn a_selected_cascade_does_not_inherit_retained_parent_blockification() {
         crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("selected bridge");
         let after = size_contained_for_pagination(BoxTree::for_layout(&doc), item);
         assert_eq!((before, after), (expected, expected), "{old} to {selected}");
+    }
+}
+
+#[test]
+fn container_type_context_resets_when_styles_are_bridged_again() {
+    use raikiri_layout_style::values::Display;
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let node = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.append_element(
+        Some(node),
+        "div",
+        Some("display:block;float:left;width:30px;height:40px"),
+    );
+    doc.mark_in_document_flags();
+    for (kind, context, layout_display, height) in [
+        ("normal", false, Display::Block, 0.0),
+        ("inline-size", true, Display::FlowRoot, 40.0),
+        ("size", true, Display::FlowRoot, 0.0),
+        ("normal", false, Display::Block, 0.0),
+    ] {
+        doc.set_element_inline_style(
+            node,
+            Some(format!("display:block;width:100px;container-type:{kind}").into()),
+        );
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        crate::layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).unwrap();
+        assert_eq!(
+            doc.nodes[node].layout.size.height, height,
+            "{kind} float height"
+        );
+        assert_eq!(doc.nodes[node].roots_block_context(), context, "{kind}");
+        assert_eq!(doc.nodes[node].layout_display(), layout_display, "{kind}");
+        assert_eq!(doc.nodes[node].display(), DisplayValue::Block);
     }
 }

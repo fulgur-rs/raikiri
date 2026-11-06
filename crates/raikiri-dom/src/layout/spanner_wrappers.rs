@@ -187,7 +187,7 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
         && node.break_before == BreakBetween::Auto
         && node.break_after == BreakBetween::Auto
         && node.break_inside == raikiri_style::property::BreakInside::Auto
-        && cv.contain == raikiri_style::property::Contain::NONE
+        && cv.effective_containment() == raikiri_style::property::Contain::NONE
         && cv.isolation == raikiri_style::property::Isolation::Auto
         && cv.z_index == raikiri_style::property::ZIndexValue::Auto
         && !node.used_writing_mode.is_vertical()

@@ -39,11 +39,13 @@ pub fn is_supported_property_name(name: &str) -> bool {
 }
 
 /// Supported properties whose definition says "Animation type: not
-/// animatable": `contain` (CSS Containment 2), `direction`, `text-combine-upright`,
+/// animatable": `contain` (CSS Containment 2), `container-type` (CSS Conditional
+/// Rules 5), `direction`, `text-combine-upright`,
 /// `text-orientation`, `unicode-bidi` and `writing-mode` (CSS Writing Modes 4),
 /// and `will-change` (CSS Will Change 1). Sorted for binary search.
 const NOT_ANIMATABLE_PROPERTY_NAMES: &[&str] = &[
     "contain",
+    "container-type",
     "direction",
     "text-combine-upright",
     "text-orientation",
@@ -1517,6 +1519,8 @@ pub(crate) fn parse_property_grammar(
         "mix-blend-mode" => parse_mix_blend_mode(input).map(PropertyValue::MixBlendMode),
         // CSS Containment 2 §2 <https://www.w3.org/TR/css-contain-2/#contain-property>.
         "contain" => parse_contain(input).map(PropertyValue::Contain),
+        "container-type" => ContainerType::from_css_ident(input.expect_ident().ok()?)
+            .map(PropertyValue::ContainerType),
         // CSS Will Change 1 §3 <https://www.w3.org/TR/css-will-change-1/#will-change>.
         "will-change" => parse_will_change(input).map(PropertyValue::WillChange),
         // CSS Masking Level 1 §7.1 <https://www.w3.org/TR/css-masking-1/#the-mask-image>.
