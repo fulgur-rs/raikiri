@@ -597,6 +597,155 @@ const UNCHANGED_ROWS: &[Row] = &[
     ),
 ];
 
+/// The rows where a column container takes the main size of a vertical item from its flex
+/// basis: `content`, `max-content` and `fit-content` ignore a `min-content` height, `auto` keeps it.
+const COLUMN_BASIS_ROWS: &[Row] = &[
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 auto">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:max-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:1 1 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 fit-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 0">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 auto">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:max-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:1 1 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,300",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 fit-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 0">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 auto">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:max-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:1 1 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,300",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 fit-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;flex-wrap:wrap;height:300px"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 0">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,300 a:0,0,800,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,30,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,10,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,10,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,30,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 auto">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,30,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:max-content;flex:0 0 min-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,30,40",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:1 1 max-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,10,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 fit-content">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,120 a:0,0,10,120",
+    ),
+    (
+        r#"<div id=c style="display:flex;flex-direction:column;align-items:flex-start"><div id=a style="writing-mode:vertical-rl;height:min-content;flex:0 0 0">xxxx xxxx xx</div></div>"#,
+        "c:0,0,800,40 a:0,0,30,40",
+    ),
+];
+
 #[test]
 fn a_min_content_inline_size_breaks_the_lines_of_a_vertical_flex_item_at_the_longest_word() {
     assert_rows(MIN_CONTENT_ROWS);
@@ -605,4 +754,9 @@ fn a_min_content_inline_size_breaks_the_lines_of_a_vertical_flex_item_at_the_lon
 #[test]
 fn the_other_keywords_and_the_other_containers_keep_their_boxes() {
     assert_rows(UNCHANGED_ROWS);
+}
+
+#[test]
+fn a_column_container_measures_a_vertical_item_by_its_flex_basis_and_not_its_min_content_height() {
+    assert_rows(COLUMN_BASIS_ROWS);
 }

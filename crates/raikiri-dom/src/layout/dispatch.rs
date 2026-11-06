@@ -1618,6 +1618,20 @@ fn flex_item_height_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &La
         && !tree.container_is_vertical(idx)
 }
 
+/// Whether the flex item `idx` of a column container is measured for its flex
+/// base size without its `height`: a flex basis of `content`, `max-content` or
+/// `fit-content` takes the place of the main size property, so the item is
+/// sized at its longest line whatever height it states.
+fn flex_basis_ignores_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.flex_main_axis_is_width(idx) == Some(false)
+        && matches!(
+            tree.physical_style(idx).flex_basis().expand(),
+            ExpandedDimension::Content
+                | ExpandedDimension::MaxContent
+                | ExpandedDimension::FitContent
+        )
+}
+
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
 fn compute_ifc_root(
@@ -1682,6 +1696,7 @@ fn compute_ifc_root(
             .as_ref()
             .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
         && tree.retained_height_keyword(idx) == Some(raikiri_style::ContentSizeKeyword::MinContent)
+        && !flex_basis_ignores_height(tree, idx)
     {
         inputs.available_space.height = AvailableSpace::MinContent;
     }
