@@ -11,7 +11,7 @@
 //! tells what each of its geometry attributes has to say. The rewrite that
 //! writes that into the source lives in the parent module.
 
-mod math;
+pub(super) mod math;
 
 use std::str::FromStr;
 
@@ -153,8 +153,9 @@ pub(super) enum Declared {
     /// The text that the attribute of the property takes instead of its own.
     Attribute(String),
     /// A value that is valid and wins the cascade, but that this does not
-    /// compute: `calc()`, `var()`, `inherit`, a unit that `usvg` does not
-    /// know. The attribute is left as it is.
+    /// compute: a math function of a percentage or of a unit that depends on
+    /// where it is used, `var()`, `inherit`, a unit that `usvg` does not know.
+    /// The attribute is left as it is.
     Opaque,
 }
 
@@ -282,10 +283,19 @@ fn length(property: &str, value: &str) -> Parsed {
                 Parsed::Value(Declared::Opaque)
             }
         }
-        Err(_) if math::is_length(value, takes_number_math(property)) => {
-            Parsed::Value(Declared::Opaque)
-        }
-        Err(_) => Parsed::Invalid,
+        Err(_) => match math::length(value, takes_number_math(property)) {
+            // A size that comes to less than nothing is nothing, and a radius
+            // too: a browser keeps the declaration and clamps the length.
+            Some(math::Length::Pixels(pixels)) => Parsed::Value(Declared::Attribute(
+                math::pixels_text(if is_non_negative(property) {
+                    pixels.max(0.0)
+                } else {
+                    pixels
+                }),
+            )),
+            Some(math::Length::Unresolved) => Parsed::Value(Declared::Opaque),
+            None => Parsed::Invalid,
+        },
     }
 }
 

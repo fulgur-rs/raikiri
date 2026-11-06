@@ -11,6 +11,10 @@
 //!   the like), which takes the place of the attribute of the same name, but
 //!   `usvg` only reads the attribute. The declaration that wins the cascade is
 //!   written into the attribute.
+//! - A length can be a math function (`calc(2 * 3px)`, `min(5, 7)`), in an
+//!   attribute as in a declaration, which `usvg` does not read. What the
+//!   function comes to is written into the attribute, for the ones that come
+//!   to the same length wherever they are used.
 //!
 //! All are mended in the XML before `usvg` reads it: the parsed tree no
 //! longer tells an empty `g`, whose filter does draw, from a shape that was
@@ -21,8 +25,9 @@
 mod geometry;
 
 use crate::{MAX_INITIAL_PARSE_XML_NODES, SVG_NAMESPACE, XLINK_NAMESPACE};
-use geometry::Declared;
+use geometry::{Declared, math};
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::str::FromStr;
 
@@ -42,6 +47,31 @@ const ADDED_NO_FILTER: &str = " style=\"filter:none!important\"";
 /// A change to the source: the text that takes the place of a range.
 type Edit = (Range<usize>, Cow<'static, str>);
 
+/// The attributes that hold a length and that a browser reads as a CSS value,
+/// so that a math function is valid in them: the geometry properties but `d`,
+/// the end points and the focal point of a gradient or a line, and the width
+/// and the dash offset of a stroke.
+const LENGTH_ATTRIBUTES: [&str; 18] = [
+    "x",
+    "y",
+    "width",
+    "height",
+    "cx",
+    "cy",
+    "r",
+    "rx",
+    "ry",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "fx",
+    "fy",
+    "fr",
+    "stroke-width",
+    "stroke-dashoffset",
+];
+
 /// The geometry properties that apply to the SVG element `tag` as CSS.
 pub(crate) fn geometry_properties(tag: &str) -> &'static [&'static str] {
     geometry::properties(tag)
@@ -59,19 +89,20 @@ pub(crate) fn is_valid_geometry_declaration(declaration: &str) -> bool {
 }
 
 /// `source` with the geometry that CSS gives to a shape written into its
-/// attributes, with the filters of the shapes that are not rendered turned
-/// off, and with a zero `divisor` of an `feConvolveMatrix` turned into the
-/// default.
+/// attributes, with the lengths that are math functions worked out, with the
+/// filters of the shapes that are not rendered turned off, and with a zero
+/// `divisor` of an `feConvolveMatrix` turned into the default.
 ///
 /// The source is returned as it is when nothing in it needs one of these, or
 /// when it is not XML that this reads, which `usvg` then reports.
 pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
-    // The filter cases need a filter element, and the geometry cases need a
-    // declaration of a geometry property, so a document with neither is not
-    // read.
+    // The filter cases need a filter element, the geometry cases need a
+    // declaration of a geometry property, and the lengths need a math function,
+    // so a document with none of them is not read.
     let filters = source.contains("<filter") || source.contains(":filter");
     let styled_geometry = geometry::may_declare(source);
-    if !filters && !styled_geometry {
+    let calculated = math::may_hold(source);
+    if !filters && !styled_geometry && !calculated {
         return Cow::Borrowed(source);
     }
     let Ok(xml) = roxmltree::Document::parse_with_options(
@@ -90,7 +121,8 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     // What a selector tests is left as it is: the edits below change the
     // `style`, `divisor` and geometry attributes, and with them what such a
     // selector matches.
-    let (mut tests_style, mut tests_divisor, mut tests_geometry) = (false, false, false);
+    let (mut tests_style, mut tests_divisor, mut tests_geometry, mut tests_length) =
+        (false, false, false, false);
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
         if node
             .attribute("type")
@@ -103,6 +135,9 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
                 tests_geometry |= geometry::all()
                     .iter()
                     .any(|property| tests_attribute(css, property));
+                tests_length |= LENGTH_ATTRIBUTES
+                    .iter()
+                    .any(|attribute| tests_attribute(css, attribute));
             }
         }
     }
@@ -203,10 +238,58 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
             edits.push(turn_filter_off(source, node));
         }
     }
+    if calculated && !tests_length {
+        calculate_lengths(&xml, &mut edits);
+    }
     if edits.is_empty() {
         Cow::Borrowed(source)
     } else {
         Cow::Owned(apply(source, edits))
+    }
+}
+
+/// Adds to `edits` the ones that write what a math function comes to into the
+/// length attributes that hold one, except for the attributes that an edit
+/// already sets: a declaration of CSS takes the place of its attribute.
+///
+/// A function that comes to a length by itself is written as a number, which
+/// is a number of pixels to `usvg`. One of a percentage or of a unit that
+/// depends on where it is used is left as it is.
+///
+/// Each edit takes the place of a value the parse already holds, with a number
+/// that is no longer than a few dozen bytes, so what they add is in proportion
+/// to the attributes of the document, which the limits on its size bound.
+fn calculate_lengths(xml: &roxmltree::Document<'_>, edits: &mut Vec<Edit>) {
+    let set: HashSet<usize> = edits.iter().map(|(range, _)| range.start).collect();
+    for node in xml.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().namespace() == Some(SVG_NAMESPACE)
+            // The coordinates of a light source are numbers, which a browser
+            // does not read a function for.
+            && !matches!(node.tag_name().name(), "fePointLight" | "feSpotLight")
+    }) {
+        for attribute in node.attributes() {
+            if attribute.namespace().is_some()
+                || !LENGTH_ATTRIBUTES.contains(&attribute.name())
+                || set.contains(&attribute.range_value().start)
+            {
+                continue;
+            }
+            if let Some(math::Length::Pixels(pixels)) = math::length(attribute.value(), true) {
+                // A browser keeps the width of a stroke that comes to less than
+                // nothing at nothing, where a plain number below zero is not
+                // one, and the other lengths read it as they read the number.
+                let pixels = if attribute.name() == "stroke-width" {
+                    pixels.max(0.0)
+                } else {
+                    pixels
+                };
+                edits.push((
+                    attribute.range_value(),
+                    Cow::Owned(math::pixels_text(pixels)),
+                ));
+            }
+        }
     }
 }
 
@@ -347,7 +430,14 @@ enum Dimension {
 impl Dimension {
     /// The dimension that `text` is the value of.
     fn of(text: &str) -> Self {
-        svgtypes::Length::from_str(text).map_or(Self::Auto, |length| Self::Length(length.number))
+        match svgtypes::Length::from_str(text) {
+            Ok(length) => Self::Length(length.number),
+            Err(_) => match math::length(text, true) {
+                Some(math::Length::Pixels(pixels)) => Self::Length(f64::from(pixels)),
+                Some(math::Length::Unresolved) => Self::Opaque,
+                None => Self::Auto,
+            },
+        }
     }
 
     /// Whether the dimension leaves something to render: it is above zero, or

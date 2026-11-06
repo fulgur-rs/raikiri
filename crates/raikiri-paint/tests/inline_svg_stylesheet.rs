@@ -1128,3 +1128,106 @@ fn unitless_inline_svg_invalid_variables_do_not_revive_presentation_sizes() {
         );
     }
 }
+
+#[test]
+fn native_svg_geometry_attributes_that_are_math_functions_paint_as_their_value() {
+    for (calculated, plain) in [
+        (
+            "<rect width=\"calc(5)\" height=\"calc(6)\" fill=blue /><circle cx=35 cy=20 r=2 fill=red />",
+            "<rect width=5 height=6 fill=blue /><circle cx=35 cy=20 r=2 fill=red />",
+        ),
+        (
+            "<rect width=\"calc(5px)\" height=\"min(6px, 9px)\" fill=blue />",
+            "<rect width=5 height=6 fill=blue />",
+        ),
+        (
+            "<rect x=\"calc(1px + 2px)\" y=\"max(1, 2)\" width=\"calc(2 * 3px)\" height=\"clamp(1px, 8px, 6px)\" fill=blue />",
+            "<rect x=3 y=2 width=6 height=6 fill=blue />",
+        ),
+        (
+            "<rect width=20 height=20 rx=\"calc(2px + 2px)\" ry=\"calc(4)\" fill=blue />",
+            "<rect width=20 height=20 rx=4 ry=4 fill=blue />",
+        ),
+        (
+            "<circle cx=\"calc(30px + 5px)\" cy=\"min(20, 25)\" r=\"calc(1px * 2)\" fill=red />",
+            "<circle cx=35 cy=20 r=2 fill=red />",
+        ),
+        (
+            "<ellipse cx=\"calc(20px)\" cy=\"calc(15px)\" rx=\"round(up, 7.5px, 5px)\" ry=\"calc(sqrt(25) * 1px)\" fill=red />",
+            "<ellipse cx=20 cy=15 rx=10 ry=5 fill=red />",
+        ),
+        (
+            "<line x1=\"calc(2px)\" y1=\"calc(2px)\" x2=\"max(20px, 30px)\" y2=\"calc(4px * 5)\" stroke=blue stroke-width=\"calc(1px + 2px)\" />",
+            "<line x1=2 y1=2 x2=30 y2=20 stroke=blue stroke-width=3 />",
+        ),
+        (
+            "<line x1=2 y1=2 x2=30 y2=2 stroke=blue stroke-width=2 stroke-dasharray=\"4 4\" stroke-dashoffset=\"calc(1px + 1px)\" />",
+            "<line x1=2 y1=2 x2=30 y2=2 stroke=blue stroke-width=2 stroke-dasharray=\"4 4\" stroke-dashoffset=2 />",
+        ),
+        (
+            "<svg x=\"calc(10px)\" y=\"calc(5px)\" width=\"calc(10px)\" height=\"calc(10px)\"><rect width=20 height=20 fill=blue /></svg>",
+            "<svg x=10 y=5 width=10 height=10><rect width=20 height=20 fill=blue /></svg>",
+        ),
+        (
+            "<defs><linearGradient id=g gradientUnits=userSpaceOnUse x1=\"calc(0px)\" x2=\"calc(10px * 4)\" y1=0 y2=0><stop offset=0 stop-color=red /><stop offset=1 stop-color=blue /></linearGradient></defs><rect width=40 height=30 fill=url(#g) />",
+            "<defs><linearGradient id=g gradientUnits=userSpaceOnUse x1=0 x2=40 y1=0 y2=0><stop offset=0 stop-color=red /><stop offset=1 stop-color=blue /></linearGradient></defs><rect width=40 height=30 fill=url(#g) />",
+        ),
+        (
+            "<style>rect{width:calc(5px);height:calc(6px)}</style><rect fill=blue />",
+            "<rect width=5 height=6 fill=blue />",
+        ),
+        (
+            "<rect style=\"width:calc(5px);height:min(6px, 8px)\" fill=blue />",
+            "<rect width=5 height=6 fill=blue />",
+        ),
+        // The declaration takes the place of the attribute.
+        (
+            "<rect width=\"calc(9px)\" height=\"calc(9px)\" style=\"width:calc(2px + 3px)\" fill=blue />",
+            "<rect width=5 height=9 fill=blue />",
+        ),
+    ] {
+        assert_both_svg_paths_paint_like(
+            &format!("<svg width=40 height=30>{calculated}</svg>"),
+            &format!("<svg width=40 height=30>{plain}</svg>"),
+        );
+    }
+}
+
+#[test]
+fn native_svg_root_size_that_is_a_math_function_paints_as_its_value() {
+    assert_both_svg_paths_paint_like(
+        "<svg width=\"calc(40px)\" height=\"calc(30px)\"><rect width=5 height=6 fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>",
+        "<svg width=40 height=30><rect width=5 height=6 fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>",
+    );
+}
+
+#[test]
+fn native_svg_geometry_that_a_page_stylesheet_gives_as_math_functions_paints_as_its_value() {
+    for (rule, body, plain) in [
+        (
+            "rect{width:calc(5px);height:calc(6px)}",
+            "<rect fill=blue />",
+            "<rect width=5 height=6 fill=blue />",
+        ),
+        (
+            "rect{x:calc(1px + 2px);y:calc(2px)}",
+            "<rect width=5 height=6 fill=blue />",
+            "<rect x=3 y=2 width=5 height=6 fill=blue />",
+        ),
+        (
+            "circle{r:calc(2px)}",
+            "<circle cx=35 cy=20 fill=red />",
+            "<circle cx=35 cy=20 r=2 fill=red />",
+        ),
+        (
+            "circle{r:min(2px, 5px)}",
+            "<circle cx=35 cy=20 fill=red />",
+            "<circle cx=35 cy=20 r=2 fill=red />",
+        ),
+    ] {
+        assert_both_svg_paths_paint_like(
+            &format!("<style>{rule}</style><svg width=40 height=30>{body}</svg>"),
+            &format!("<svg width=40 height=30>{plain}</svg>"),
+        );
+    }
+}

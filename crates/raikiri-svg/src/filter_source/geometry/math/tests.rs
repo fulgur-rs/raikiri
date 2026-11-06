@@ -439,3 +439,239 @@ fn a_token_is_told_by_its_first_characters() {
     );
     assert_eq!(kinds("1\u{2192}"), [(Kind::Other, false)]);
 }
+
+// What Chromium makes of each text as the width of a `rect`: the number of
+// pixels, to the single precision that it keeps.
+const WORKED_OUT: &[(&str, f32)] = &[
+    ("calc(5)", 5.0),
+    ("calc(5px)", 5.0),
+    ("calc(2 * 3px)", 6.0),
+    ("calc(1in)", 96.0),
+    ("calc(1cm)", 37.795277),
+    ("calc(1mm)", 3.7795277),
+    ("calc(1Q)", 0.9448819),
+    ("calc(1pt)", 1.3333334),
+    ("calc(1pc)", 16.0),
+    ("calc(10px / 4)", 2.5),
+    ("calc(10px + 5px * 2)", 20.0),
+    ("calc((10px + 5px) * 2)", 30.0),
+    ("calc(-5px + 20px)", 15.0),
+    ("calc(1e1px)", 10.0),
+    ("calc(.5px)", 0.5),
+    ("calc(+5px)", 5.0),
+    ("min(5px, 3px)", 3.0),
+    ("max(5px, 3px, 9px)", 9.0),
+    ("clamp(1px, 5px, 3px)", 3.0),
+    ("clamp(10px, 5px, 30px)", 10.0),
+    ("clamp(none, 5px, 3px)", 3.0),
+    ("clamp(1px, 5px, none)", 5.0),
+    ("clamp(10px, 5px, 3px)", 10.0),
+    ("round(2.6px, 1px)", 3.0),
+    ("round(2.5px, 1px)", 3.0),
+    ("round(-2.5px, 1px)", -2.0),
+    ("round(up, 2.1px, 1px)", 3.0),
+    ("round(down, 2.9px, 1px)", 2.0),
+    ("round(to-zero, -2.9px, 1px)", -2.0),
+    ("round(nearest, 7px, 4px)", 8.0),
+    ("round(up, 7px, 4px)", 8.0),
+    ("round(2.6)", 3.0),
+    ("round(up, 2.1)", 3.0),
+    ("round(up, 5.5px, -2px)", 6.0),
+    ("round(down, 5.5px, -2px)", 4.0),
+    ("mod(7px, 3px)", 1.0),
+    ("mod(-7px, 3px)", 2.0),
+    ("mod(7px, -3px)", -2.0),
+    ("rem(7px, 3px)", 1.0),
+    ("rem(-7px, 3px)", -1.0),
+    ("rem(7px, -3px)", 1.0),
+    ("abs(-5px)", 5.0),
+    ("calc(sign(-3px) * 4px)", -4.0),
+    ("calc(sign(0) * 4px)", 0.0),
+    ("calc(sin(90deg) * 10px)", 10.0),
+    ("calc(cos(0) * 10px)", 10.0),
+    ("calc(tan(45deg) * 10px)", 10.0),
+    ("calc(sin(1) * 10px)", 8.41471),
+    ("calc(asin(1) / 1deg * 1px)", 90.0),
+    ("calc(acos(0.5) / 1deg * 1px)", 60.0),
+    ("calc(atan(1) / 1deg * 1px)", 45.0),
+    ("calc(atan2(1px, 1px) / 1deg * 1px)", 45.0),
+    ("calc(atan2(-1px, -1px) / 1deg * 1px)", -135.0),
+    ("calc(sqrt(16) * 1px)", 4.0),
+    ("calc(pow(2, 3) * 1px)", 8.0),
+    ("calc(exp(0) * 1px)", 1.0),
+    ("calc(log(100, 10) * 1px)", 2.0),
+    ("calc(log(e) * 1px)", 1.0),
+    ("calc(hypot(3px, 4px))", 5.0),
+    ("calc(pi * 1px)", std::f32::consts::PI),
+    ("calc(e * 1px)", std::f32::consts::E),
+    ("calc(1turn / 1deg * 1px)", 360.0),
+    ("calc(1rad / 1deg * 1px)", 57.29578),
+    ("calc(100grad / 1deg * 1px)", 90.0),
+    ("calc(10px * 3)", 30.0),
+    ("calc(10px / 3)", 3.3333333),
+    ("calc(1px * 1px / 1px)", 1.0),
+    ("calc(2 * (3 + 4) * 1px)", 14.0),
+    ("calc(1px - -1px)", 2.0),
+    ("calc(calc(1px + 2px) * 2)", 6.0),
+    ("min(1px, 2px, max(3px, 4px))", 1.0),
+    ("-webkit-calc(5px)", 5.0),
+    ("CALC(5px)", 5.0),
+    ("calc(5px/ 2)", 2.5),
+    ("min(5, 3)", 3.0),
+    ("max(1, 2)", 2.0),
+    ("calc(2 * 3)", 6.0),
+    ("round(2.5)", 3.0),
+    ("calc(1.5)", 1.5),
+    ("calc(1e-7px)", 1e-7),
+    ("calc(1e10px)", 1e10),
+    ("calc(0px * -1)", 0.0),
+    ("calc(100px / 3)", 33.333332),
+    ("calc(1px * 1000000 * 1000000)", 1e12),
+    ("calc(2.5px * 2.5)", 6.25),
+];
+
+#[test]
+fn a_math_function_comes_to_what_a_browser_makes_of_it() {
+    for (value, expected) in WORKED_OUT {
+        let Some(Length::Pixels(pixels)) = length(value, true) else {
+            panic!("{value:?} is not worked out");
+        };
+        assert!(
+            (pixels - expected).abs() <= expected.abs() * 1e-6,
+            "{value:?}: {pixels} against {expected}"
+        );
+    }
+}
+
+#[test]
+fn the_sign_of_the_step_of_round_does_not_matter() {
+    for (value, expected) in [
+        ("round(up, 5.5px, 2px)", 6.0),
+        ("round(up, 5.5px, -2px)", 6.0),
+        ("round(down, 5.5px, -2px)", 4.0),
+        ("round(to-zero, -5.5px, -2px)", -4.0),
+        ("round(nearest, 5px, -2px)", 6.0),
+        // The quotient just under one half is rounded down, and one half up.
+        ("round(0.49999999999999994px, 1px)", 0.0),
+        ("round(nearest, 0.5px, 1px)", 1.0),
+        ("round(nearest, -0.5px, 1px)", 0.0),
+        ("round(nearest, 1.5px, 1px)", 2.0),
+    ] {
+        assert_eq!(
+            length(value, true),
+            Some(Length::Pixels(expected)),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn a_length_that_depends_on_where_it_is_used_has_no_value() {
+    for value in [
+        "calc(50%)",
+        "calc(10px + 20%)",
+        "calc(1em)",
+        "calc(2rem + 1px)",
+        "calc(1vw)",
+        "min(1px, 50%)",
+        "max(1px, 1dvh)",
+        "clamp(1px, 2em, 3px)",
+        "clamp(1em, 2px, 3px)",
+        "clamp(1px, 2px, 3%)",
+        "round(up, 1em, 1px)",
+        "round(up, 1px, 1em)",
+        "abs(1em)",
+        "calc(2 * 1ch)",
+        // The units that are worked out in no case here.
+        "calc(2s / 1s * 3px)",
+        "calc(2hz / 1hz * 3px)",
+        "calc(2dppx / 1dppx * 3px)",
+        // Nor a number that is not finite, which a browser clamps.
+        "calc(1px / 0)",
+        "calc(0 * 1px / 0)",
+        "calc(sqrt(-1) * 1px)",
+        "calc(1px * infinity)",
+        "calc(-infinity * 1px)",
+        "calc(nan * 1px)",
+        "calc(1px * 1e300 * 1e300)",
+        "mod(1px, 0px)",
+        "rem(1px, 0px)",
+        "round(1px, 0px)",
+        // Or one that a single precision number cannot hold.
+        "calc(1px * 1e300)",
+    ] {
+        assert_eq!(length(value, true), Some(Length::Unresolved), "{value}");
+    }
+}
+
+#[test]
+fn the_type_of_a_term_is_checked_whether_or_not_it_has_a_value() {
+    for value in [
+        "calc(1em + 1)",
+        "calc(50% + 1deg)",
+        "min(1em, 1deg)",
+        "clamp(1em, 2px, 3deg)",
+        "round(up, 1em, 1deg)",
+        "calc(2s * 3px)",
+    ] {
+        assert_eq!(length(value, true), None, "{value}");
+    }
+}
+
+#[test]
+fn a_number_is_a_length_only_where_it_is_asked_for() {
+    assert_eq!(length("calc(4)", true), Some(Length::Pixels(4.0)));
+    assert_eq!(length("calc(4)", false), None);
+    assert_eq!(length("calc(4px)", false), Some(Length::Pixels(4.0)));
+    // An angle, a time and the like are not lengths.
+    assert_eq!(length("calc(4deg)", true), None);
+    assert_eq!(length("calc(4s)", true), None);
+}
+
+#[test]
+fn the_pixels_of_an_attribute_are_a_short_number() {
+    for (pixels, text) in [
+        (0.0, "0"),
+        (-0.0, "0"),
+        (5.0, "5"),
+        (-5.0, "-5"),
+        (1.5, "1.5"),
+        (17.333334, "17.333334"),
+        (0.000_001, "0.000001"),
+        (999_999_000.0, "999999000"),
+        (1e9, "1e9"),
+        (-2.5e9, "-2.5e9"),
+        (1e-7, "1e-7"),
+        (f32::MAX, "3.4028235e38"),
+    ] {
+        assert_eq!(pixels_text(pixels), text);
+    }
+}
+
+#[test]
+fn a_source_may_hold_a_math_function_where_a_name_of_one_has_a_parenthesis() {
+    for source in [
+        "<rect width=\"calc(1px)\"/>",
+        "<rect width=\"CALC(1px)\"/>",
+        "<rect width=\"-webkit-calc(1px)\"/>",
+        "<rect width=\"min(1,2)\" height=\" max(1,2)\"/>",
+        "<rect width=\"sin(1) \"/>",
+        "<rect transform=\"translate(1)\" width=\"clamp(1,2,3)\"/>",
+        // A character reference may spell the parenthesis.
+        "<rect width=\"calc&#40;1px)\"/>",
+    ] {
+        assert!(may_hold(source), "{source}");
+    }
+    for source in [
+        "",
+        "<rect width=\"5\"/>",
+        "<rect transform=\"translate(1) rotate(2)\" fill=\"url(#a)\"/>",
+        "<rect fill=\"rgb(1,2,3)\" width=\"(1)\"/>",
+        "<rect width=\"-calc(1)\"/>",
+        "<rect width=\"xmin(1)\"/>",
+        "<rect width=\"calc (1)\"/>",
+        "<style>calc{fill:red}</style>",
+    ] {
+        assert!(!may_hold(source), "{source}");
+    }
+}

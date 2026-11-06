@@ -689,15 +689,15 @@ fn the_declaration_that_the_cascade_picks_is_the_one_written() {
     // Nothing is written for a declaration that cannot be told, nor for one
     // that is not valid and has nothing below it.
     for body in [
-        "<rect width=\"5\" style=\"width:calc(1px + 2px)\"/>",
+        "<rect width=\"5\" style=\"width:calc(1px + 2%)\"/>",
         "<rect width=\"5\" style=\"width:var(--w)\"/>",
         "<rect width=\"5\" style=\"width:inherit\"/>",
         "<rect width=\"5\" style=\"width:2rem\"/>",
         "<rect width=\"5\" style=\"width:abc\"/>",
         "<rect width=\"5\" style=\"width:-5px\"/>",
-        "<style>rect{width:calc(1px + 2px)}</style><rect width=\"5\"/>",
+        "<style>rect{width:calc(1px + 2%)}</style><rect width=\"5\"/>",
         // The one that is told is under one that cannot be.
-        "<style>rect{width:30px}</style><rect width=\"5\" style=\"width:calc(1px + 2px)\"/>",
+        "<style>rect{width:30px}</style><rect width=\"5\" style=\"width:calc(1px + 2%)\"/>",
     ] {
         assert!(
             matches!(like_browsers(&plain(body)), Cow::Borrowed(_)),
@@ -1239,10 +1239,13 @@ fn a_math_function_with_an_error_does_not_hide_the_declaration_below_it() {
         ("width:20px;width:min(1px, 2deg)", Some("20px")),
         ("width:20px;width:calc(1px) calc(2px)", Some("20px")),
         ("width:20px;width:-moz-calc(1px)", Some("20px")),
-        // A function that a browser reads wins, and the attribute is left.
-        ("width:20px;width:calc(1px + 2px)", None),
-        ("width:20px;width:min(30px, 40px)", None),
-        ("width:20px;width:calc(30px * 2px / 1px)", None),
+        // A function that a browser reads wins, and is worked out.
+        ("width:20px;width:calc(1px + 2px)", Some("3")),
+        ("width:20px;width:min(30px, 40px)", Some("30")),
+        ("width:20px;width:calc(30px * 2px / 1px)", Some("60")),
+        // And one that cannot be worked out here wins as well, and the
+        // attribute is left.
+        ("width:20px;width:calc(1px + 2%)", None),
         ("width:20px;width:calc(garbage var(--w))", None),
     ] {
         let body = format!("<rect width=\"50\" height=\"10\" style=\"{style}\"/>");
@@ -1256,7 +1259,10 @@ fn a_math_function_with_an_error_does_not_hide_the_declaration_below_it() {
     }
     // A number that a function gives is a length to a position, not to a size.
     let body = "<rect x=\"5\" width=\"50\" height=\"10\" style=\"x:20px;x:calc(40)\"/>";
-    assert_eq!(geometry_of(body), plain(body));
+    assert_eq!(
+        geometry_of(body),
+        plain("<rect x=\"40\" width=\"50\" height=\"10\" style=\"x:20px;x:calc(40)\"/>")
+    );
     let body = "<rect x=\"5\" width=\"50\" height=\"10\" style=\"x:20px;x:calc(1px + 39)\"/>";
     assert_eq!(
         geometry_of(body),
@@ -1272,14 +1278,13 @@ fn a_math_function_with_an_error_does_not_hide_the_declaration_below_it() {
 
 #[test]
 fn a_nested_function_does_not_hide_the_declarations_after_it() {
-    // The declaration below the function wins, and the function is a value
-    // that is not computed here.
+    // The declaration below the function wins, and the function is worked out.
     assert_eq!(
         geometry_of(
             "<rect y=\"10\" width=\"50\" height=\"10\" style=\"width:0;x:calc(min(1px, 2px));width:20px\"/>"
         ),
         plain(
-            "<rect y=\"10\" width=\"20px\" height=\"10\" style=\"width:0;x:calc(min(1px, 2px));width:20px\"/>"
+            "<rect x=\"1\" y=\"10\" width=\"20px\" height=\"10\" style=\"width:0;x:calc(min(1px, 2px));width:20px\"/>"
         )
     );
     assert_eq!(
@@ -1287,7 +1292,7 @@ fn a_nested_function_does_not_hide_the_declarations_after_it() {
             "<rect width=\"50\" height=\"10\" style=\"width:calc(min(1px,2px) + 20px);height:30px\"/>"
         ),
         plain(
-            "<rect width=\"50\" height=\"30px\" style=\"width:calc(min(1px,2px) + 20px);height:30px\"/>"
+            "<rect width=\"21\" height=\"30px\" style=\"width:calc(min(1px,2px) + 20px);height:30px\"/>"
         )
     );
     // A function that is not closed takes the declarations after it, as a
@@ -1303,7 +1308,7 @@ fn a_nested_function_in_a_rule_does_not_hide_the_declarations_after_it() {
             "<style>rect{width:0;x:calc(min(1px, 2px));width:20px}</style><rect y=\"10\" width=\"50\" height=\"10\"/>"
         ),
         plain(
-            "<style>rect{width:0;x:calc(min(1px, 2px));width:20px}</style><rect y=\"10\" width=\"20px\" height=\"10\"/>"
+            "<style>rect{width:0;x:calc(min(1px, 2px));width:20px}</style><rect x=\"1\" y=\"10\" width=\"20px\" height=\"10\"/>"
         )
     );
     // The mark of the rule, in any case, which beats the `style` attribute.
@@ -1315,4 +1320,234 @@ fn a_nested_function_in_a_rule_does_not_hide_the_declarations_after_it() {
             "<style>rect{width:30px !IMPORTANT;height:20px}</style><rect width=\"30px\" height=\"20px\" style=\"width:10px\"/>"
         )
     );
+}
+
+#[test]
+fn the_length_attributes_that_are_math_functions_are_worked_out() {
+    for (attribute, pixels) in [
+        ("x=\"calc(1px + 2px)\"", "x=\"3\""),
+        ("y=\"min(5, 7)\"", "y=\"5\""),
+        ("width=\"calc(5)\"", "width=\"5\""),
+        ("height=\"CALC(2 * 3px)\"", "height=\"6\""),
+        ("cx=\"max(1px, 2px)\"", "cx=\"2\""),
+        ("cy=\"calc(1in)\"", "cy=\"96\""),
+        ("r=\"clamp(1px, 5px, 3px)\"", "r=\"3\""),
+        ("rx=\"-webkit-calc(4px)\"", "rx=\"4\""),
+        ("ry=\"calc(-4px)\"", "ry=\"-4\""),
+        ("x1=\"calc(1pt)\"", "x1=\"1.3333334\""),
+        ("y1=\"abs(-2px)\"", "y1=\"2\""),
+        ("x2=\"calc(1px * 1e10)\"", "x2=\"1e10\""),
+        ("y2=\"calc(1px / 1e7)\"", "y2=\"1e-7\""),
+        ("fx=\"round(2.5)\"", "fx=\"3\""),
+        ("fy=\"calc(0px)\"", "fy=\"0\""),
+        ("fr=\"calc(sqrt(4))\"", "fr=\"2\""),
+        ("stroke-width=\"calc(2px)\"", "stroke-width=\"2\""),
+        (
+            "stroke-dashoffset=\"calc(2 + 3)\"",
+            "stroke-dashoffset=\"5\"",
+        ),
+        // The white space around the function is no part of the value, and a
+        // character reference spells a parenthesis.
+        ("width=\" calc(5px)\n\"", "width=\"5\""),
+        ("width=\"calc&#40;5px)\"", "width=\"5\""),
+        ("width='calc(5px)'", "width='5'"),
+    ] {
+        assert_eq!(
+            geometry_of(&format!("<rect {attribute} fill=\"red\"/>")),
+            plain(&format!("<rect {pixels} fill=\"red\"/>")),
+            "{attribute}"
+        );
+    }
+}
+
+#[test]
+fn the_length_attributes_of_every_svg_element_are_worked_out() {
+    assert_eq!(
+        geometry_of(
+            "<svg x=\"calc(1px)\" y=\"calc(2px)\" width=\"calc(3px)\" height=\"calc(4px)\">\
+             <use href=\"#a\" x=\"calc(5px)\" width=\"calc(6px)\"/>\
+             <text x=\"calc(7px)\" y=\"calc(8px)\">a</text>\
+             <line x1=\"calc(1px)\" y2=\"calc(2px)\"/>\
+             <image width=\"calc(9px)\" height=\"min(1, 2)\"/>\
+             <foreignObject width=\"calc(1px)\"/>\
+             <linearGradient x2=\"calc(1px)\"/>\
+             <radialGradient r=\"calc(1px)\"/>\
+             <pattern width=\"calc(2px)\"/>\
+             <feOffset x=\"calc(3px)\"/></svg>"
+        ),
+        plain(
+            "<svg x=\"1\" y=\"2\" width=\"3\" height=\"4\">\
+             <use href=\"#a\" x=\"5\" width=\"6\"/>\
+             <text x=\"7\" y=\"8\">a</text>\
+             <line x1=\"1\" y2=\"2\"/>\
+             <image width=\"9\" height=\"1\"/>\
+             <foreignObject width=\"1\"/>\
+             <linearGradient x2=\"1\"/>\
+             <radialGradient r=\"1\"/>\
+             <pattern width=\"2\"/>\
+             <feOffset x=\"3\"/></svg>"
+        )
+    );
+    // The elements with a prefix are read as well.
+    assert_eq!(
+        like_browsers(
+            "<s:svg xmlns:s=\"http://www.w3.org/2000/svg\"><s:rect width=\"calc(2px)\"/></s:svg>"
+        ),
+        "<s:svg xmlns:s=\"http://www.w3.org/2000/svg\"><s:rect width=\"2\"/></s:svg>"
+    );
+}
+
+#[test]
+fn a_length_that_a_math_function_does_not_settle_is_left_as_it_is() {
+    for body in [
+        // It depends on where it is used.
+        "<rect width=\"calc(50% + 5px)\" height=\"calc(1em)\"/>",
+        "<rect x=\"min(1px, 1vw)\"/>",
+        // It is not valid.
+        "<rect width=\"calc(5px) junk\" height=\"calc(1px + 2)\"/>",
+        "<rect width=\"calc(\" x=\"calc(1px / 0)\"/>",
+        "<rect width=\"bogus(5px)\" x=\"5px calc(1px)\"/>",
+        // It is not a length.
+        "<rect width=\"calc(5deg)\"/>",
+        // Or not one of these attributes: a browser reads math in other places,
+        // and these are not looked into.
+        "<rect opacity=\"calc(0.5)\" rx=\"5\" transform=\"translate(calc(1px))\"/>",
+        "<rect fill=\"rgb(1,2,3)\" stroke=\"url(#a)\" data-width=\"calc(5px)\"/>",
+        // A list of lengths.
+        "<text x=\"calc(1px) calc(2px)\" dx=\"calc(1px)\">a</text>",
+        // Not an element of SVG, nor an attribute of the element's own.
+        "<foo:rect xmlns:foo=\"urn:foo\" width=\"calc(5px)\"/>",
+        "<rect xmlns:foo=\"urn:foo\" foo:width=\"calc(5px)\"/>",
+    ] {
+        assert!(
+            matches!(like_browsers(&plain(body)), Cow::Borrowed(_)),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_selector_that_tests_a_length_attribute_keeps_the_attribute_as_it_is() {
+    for (selector, attribute) in [
+        ("rect[width]", "width"),
+        ("[stroke-width='calc(2px)']", "stroke-width"),
+        ("circle[ r ]", "r"),
+        ("line[x1^=calc]", "x1"),
+    ] {
+        let body =
+            format!("<style>{selector}{{fill:red}}</style><rect {attribute}=\"calc(5px)\"/>");
+        assert!(
+            matches!(like_browsers(&plain(&body)), Cow::Borrowed(_)),
+            "{body}"
+        );
+    }
+    // And a selector of another attribute leaves them to be worked out.
+    assert_eq!(
+        geometry_of("<style>rect[fill]{fill:red}</style><rect width=\"calc(5px)\"/>"),
+        plain("<style>rect[fill]{fill:red}</style><rect width=\"5\"/>")
+    );
+}
+
+#[test]
+fn a_declaration_takes_the_place_of_the_attribute_that_it_is_worked_out_for() {
+    // The attribute that a declaration sets is written once, with the winner.
+    assert_eq!(
+        geometry_of(
+            "<style>rect{width:30px}</style><rect width=\"calc(5px)\" height=\"calc(6px)\"/>"
+        ),
+        plain("<style>rect{width:30px}</style><rect width=\"30px\" height=\"6\"/>")
+    );
+    assert_eq!(
+        geometry_of("<rect width=\"calc(5px)\" style=\"width:calc(1px + 2px)\"/>"),
+        plain("<rect width=\"3\" style=\"width:calc(1px + 2px)\"/>")
+    );
+    // A declaration that cannot be worked out leaves the attribute as it
+    // stands, worked out like any other.
+    assert_eq!(
+        geometry_of("<rect width=\"calc(5px)\" style=\"width:calc(1px + 2%)\"/>"),
+        plain("<rect width=\"5\" style=\"width:calc(1px + 2%)\"/>")
+    );
+}
+
+#[test]
+fn a_shape_that_a_math_function_gives_something_to_render_keeps_its_filter() {
+    for element in [
+        "<rect width=\"calc(5px)\" height=\"calc(5)\" filter=\"url(#f)\"/>",
+        "<circle r=\"min(3px, 4px)\" filter=\"url(#f)\"/>",
+        "<ellipse rx=\"calc(2px)\" ry=\"calc(3px)\" filter=\"url(#f)\"/>",
+        "<image href=\"a.png\" width=\"calc(2px)\" height=\"calc(3px)\" filter=\"url(#f)\"/>",
+        // It depends on where it is used, and may be anything.
+        "<rect width=\"calc(50%)\" height=\"calc(1em)\" filter=\"url(#f)\"/>",
+    ] {
+        let rewritten = rewritten(element);
+        assert!(!rewritten.contains("filter:none"), "{rewritten}");
+    }
+    // The ones that come to zero have nothing to render.
+    for shape in [
+        "<rect width=\"calc(0px)\" height=\"10\"",
+        "<rect width=\"10\" height=\"min(0, 1)\"",
+        "<circle r=\"calc(1px - 1px)\"",
+        "<ellipse rx=\"calc(0)\" ry=\"20\"",
+        "<image href=\"a.png\" width=\"calc(0px)\" height=\"10\"",
+    ] {
+        let element = format!("{shape} filter=\"url(#f)\"/>");
+        let rewritten = rewritten(&element);
+        assert!(rewritten.contains("filter:none"), "{rewritten}");
+    }
+}
+
+#[test]
+fn many_lengths_that_are_math_functions_are_written_in_one_pass() {
+    let rects = "<rect width=\"calc(1px + 1px)\" height=\"calc(2px)\"/>".repeat(1000);
+    let expected = "<rect width=\"2\" height=\"2\"/>".repeat(1000);
+    assert_eq!(geometry_of(&rects), plain(&expected));
+}
+
+#[test]
+fn the_width_of_a_stroke_that_a_math_function_gives_is_not_below_zero() {
+    for (attribute, written) in [
+        ("stroke-width=\"calc(-2px)\"", "stroke-width=\"0\""),
+        ("stroke-width=\"min(-2, 3)\"", "stroke-width=\"0\""),
+        ("stroke-width=\"calc(2px - 3px)\"", "stroke-width=\"0\""),
+        // The lengths that a browser reads below zero as it reads the number.
+        (
+            "stroke-dashoffset=\"calc(-2px)\"",
+            "stroke-dashoffset=\"-2\"",
+        ),
+        ("rx=\"calc(-4px)\"", "rx=\"-4\""),
+        ("r=\"calc(-5px)\"", "r=\"-5\""),
+    ] {
+        assert_eq!(
+            geometry_of(&format!("<line {attribute}/>")),
+            plain(&format!("<line {written}/>")),
+            "{attribute}"
+        );
+    }
+}
+
+#[test]
+fn the_coordinates_of_a_light_source_are_numbers_and_are_left_alone() {
+    let body = "<filter id=\"f\"><feSpecularLighting>\
+                <fePointLight x=\"calc(3px)\" y=\"calc(3)\" z=\"calc(1)\"/>\
+                <feSpotLight x=\"calc(3px)\" pointsAtX=\"calc(1)\"/>\
+                </feSpecularLighting></filter>";
+    assert!(matches!(like_browsers(&plain(body)), Cow::Borrowed(_)));
+    // The lengths of a filter primitive next to them are worked out.
+    assert_eq!(
+        geometry_of(
+            "<filter x=\"calc(1px)\"><feFlood x=\"calc(2px)\"/><fePointLight x=\"calc(3px)\"/></filter>"
+        ),
+        plain("<filter x=\"1\"><feFlood x=\"2\"/><fePointLight x=\"calc(3px)\"/></filter>")
+    );
+}
+
+#[test]
+fn every_geometry_property_but_the_path_is_a_length_attribute() {
+    for property in super::geometry::all() {
+        assert_eq!(
+            super::LENGTH_ATTRIBUTES.contains(property),
+            *property != "d",
+            "{property}"
+        );
+    }
 }
