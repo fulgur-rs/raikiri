@@ -9102,7 +9102,6 @@ fn container_moves_whole(
 /// of an avoided final group can represent the whole group. Rowspans,
 /// anonymous cells, unsupported captions and unsupported wrapping flex
 /// containers keep their existing fragmentation paths.
-
 fn container_item_tail(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
