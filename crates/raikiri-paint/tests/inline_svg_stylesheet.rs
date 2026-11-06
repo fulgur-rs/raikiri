@@ -947,6 +947,62 @@ fn unitless_inline_svg_variables_reach_both_renderers() {
     );
 }
 
+#[test]
+fn unitless_inline_svg_variable_prefixes_wait_for_substitution() {
+    for (style, size) in [
+        (
+            "--empty: ;width:20 var(--empty);height:10 var(--empty)",
+            (20, 10),
+        ),
+        (
+            "--tail:10px;width:20 var(--tail);height:10 var(--tail)",
+            (0, 0),
+        ),
+        ("width:20 var(--missing);height:10 var(--missing)", (0, 0)),
+    ] {
+        assert_both_svg_paths_paint_like(
+            &format!(
+                "<style>#t{{width:30px;height:25px}}</style><svg width=40 height=30><rect id=t width=5 height=6 style='{style}' fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+            ),
+            &format!(
+                "<svg width=40 height=30><rect width={} height={} fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>",
+                size.0, size.1
+            ),
+        );
+    }
+}
+
+#[test]
+fn unitless_inline_svg_variable_sizes_use_the_winning_declaration() {
+    for (style, rule, size) in [
+        (
+            "width:var(--w);height:var(--h)",
+            "width:30px!important;height:25px!important",
+            (30, 25),
+        ),
+        (
+            "width:var(--w)!important;height:var(--h)!important",
+            "width:30px!important;height:25px!important",
+            (20, 10),
+        ),
+        (
+            "width:10px;width:var(--w);height:5px;height:var(--h)",
+            "width:30px;height:25px",
+            (20, 10),
+        ),
+    ] {
+        assert_both_svg_paths_paint_like(
+            &format!(
+                "<style>rect{{{rule}}}</style><svg width=40 height=30><rect width=5 height=6 style='--w:20;--h:10;{style}' fill=blue /></svg>"
+            ),
+            &format!(
+                "<svg width=40 height=30><rect width={} height={} fill=blue /></svg>",
+                size.0, size.1
+            ),
+        );
+    }
+}
+
 #[track_caller]
 fn assert_both_svg_paths_paint_like(body: &str, reference: &str) {
     assert_paints_like(body, reference);

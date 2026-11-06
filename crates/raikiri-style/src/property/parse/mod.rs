@@ -79,12 +79,15 @@ pub(crate) fn parse_value_in_context(
     input: &mut Parser<'_, '_>,
     context: DeclarationContext,
 ) -> Option<PropertyValue> {
-    if context == DeclarationContext::SvgStyleAttribute
-        && let Some(value) = parse_svg_style_size(name, input)
-    {
-        return Some(value);
-    }
-    let mut value = parse_value(name, input)?;
+    let start = input.state();
+    let mut value = parse_value(name, input).or_else(|| {
+        if context == DeclarationContext::SvgStyleAttribute {
+            input.reset(&start);
+            parse_svg_style_size(name, input)
+        } else {
+            None
+        }
+    })?;
     if let PropertyValue::Deferred(deferred) = &mut value
         && deferred.key.is_svg_shape_size()
     {

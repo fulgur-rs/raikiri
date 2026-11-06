@@ -192,6 +192,30 @@ fn svg_unitless_sizes_stabilize_numbers_before_saturating() {
 }
 
 #[test]
+fn svg_unitless_number_prefixes_wait_for_variable_substitution() {
+    for (source, expected) in [
+        (
+            "--tail:10px;width:20 var(--tail);height:10 var(--tail)",
+            (Dimension::Auto, Dimension::Auto),
+        ),
+        (
+            "width:20 var(--missing);height:10 var(--missing)",
+            (Dimension::Auto, Dimension::Auto),
+        ),
+        (
+            "--empty: ;width:20 var(--empty);height:10 var(--empty)",
+            (Dimension::Px(20.0), Dimension::Px(10.0)),
+        ),
+    ] {
+        assert_eq!(
+            svg_sizes(source, "rect{width:30px;height:40px}", "rect"),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn svg_unitless_sizes_leave_stylesheets_and_other_properties_strict() {
     assert_eq!(
         svg_sizes("--n:20", "rect{width:var(--n);height:var(--n)}", "rect"),
