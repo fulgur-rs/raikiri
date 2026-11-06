@@ -5624,8 +5624,10 @@ impl AvoidedBreaks {
         // The last row of a table moves to the next page with the edges that
         // close the table when they do not fit after it.
         let item_tail = item_tail_move(candidate, fit);
-        let page =
-            page || (item_tail && document.nodes[node_id].display() == DisplayValue::TableCaption);
+        let page = page
+            || (item_tail
+                && !candidate.context.is_table_row()
+                && !candidate.context.is_flex_item());
         let row_group = self.row_groups.get(&node_id).copied();
         // An avoided tail group may split after moving to a shorter page.
         // Its first row and the repeated groups must fit, not the whole group.
@@ -9088,8 +9090,8 @@ fn container_moves_whole(
 
 /// The last item of the flex container `node_id` that stacks its items in a
 /// column, or the visual last row or unbreakable bottom caption of the table
-/// `node_id`, when the page breaks
-/// between its items or rows rather than moving the container whole (see
+/// `node_id`, or a final block inside its breakable column item. The page breaks
+/// between its boxes rather than moving the container whole (see
 /// [`container_moves_whole`]) and that item or row is a box the page cannot
 /// break inside.
 ///
@@ -9131,17 +9133,31 @@ fn container_item_tail(
                 .collect();
             let (&last, before) = items.split_last()?;
             let item = &document.nodes[last];
-            (item.kind() == NodeKind::Element
-                && matches!(item.position(), PositionValue::Static)
-                && !item.used_writing_mode.is_vertical()
-                && breaks_only_around(document, cascade, last, has_named_pages)
-                && !break_between_is_avoided(
+            if item.kind() != NodeKind::Element
+                || !matches!(item.position(), PositionValue::Static)
+                || item.used_writing_mode.is_vertical()
+            {
+                return None;
+            }
+            let whole = avoids_page_break_inside(cascade.computed[last].break_inside)
+                || matches!(
+                    document.block_axis(last).height().expand(),
+                    ExpandedDimension::Length(_)
+                )
+                || breaks_only_around(document, cascade, last, has_named_pages);
+            if whole {
+                return (!break_between_is_avoided(
                     document,
                     cascade,
                     &before[before.len().saturating_sub(1)..],
                     &[last],
                 ))
-            .then_some((last, None))
+                .then_some((last, None));
+            }
+            (computed.flex_direction == FlexDirectionValue::Column)
+                .then(|| inner_column_item_tail(document, cascade, last, has_named_pages))
+                .flatten()
+                .map(|tail| (tail, None))
         }
         _ => {
             // A cell that spans rows ties the rows it spans together, and the
@@ -9287,6 +9303,66 @@ fn paragraph_lines_keep_together(
             lines.block_line_starts.is_empty()
                 && lines_keep_together(lines.lines.len(), computed.orphans, computed.widows)
         })
+}
+
+/// The innermost final block of a breakable column item whose surrounding
+/// plain blocks can grow with it. Only this selected path gains a page
+/// candidate; other flex descendants keep their existing placement rules.
+/// Clipped boxes and vertical margins retain their existing path.
+fn inner_column_item_tail(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    item: usize,
+    has_named_pages: bool,
+) -> Option<usize> {
+    let mut current = item;
+    let mut whole = false;
+    loop {
+        let node = &document.nodes[current];
+        if !is_plain_block_box(document, current)
+            || !matches!(node.position(), PositionValue::Static)
+            || node.used_writing_mode.is_vertical()
+            || node.layout.margin.top != 0.0
+            || node.layout.margin.bottom != 0.0
+            || node.has_before_or_after_content
+            || cascade.computed[current].overflow.y
+                != raikiri_style::property::OverflowValue::Visible
+        {
+            return None;
+        }
+        if whole
+            || avoids_page_break_inside(cascade.computed[current].break_inside)
+            || (node.is_ifc_root()
+                && breaks_only_around(document, cascade, current, has_named_pages))
+        {
+            return Some(current);
+        }
+        if !height_follows_content(document, current) || !moves_later_siblings(document, current) {
+            return None;
+        }
+        let mut boxes = Vec::new();
+        for child in document.children_through_contents(current) {
+            if is_floating_box_for_pagination(document, cascade, child) {
+                return None;
+            }
+            let start = boxes.len();
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            boxes[start..].reverse();
+        }
+        let (&last, before) = boxes.split_last()?;
+        if break_between_is_avoided(
+            document,
+            cascade,
+            &before[before.len().saturating_sub(1)..],
+            &[last],
+        ) {
+            return None;
+        }
+        // A single-child chain is traversed once; asking whether each
+        // wrapper's entire subtree is unbreakable would rescan it quadratically.
+        whole = !before.is_empty() && breaks_only_around(document, cascade, last, has_named_pages);
+        current = last;
+    }
 }
 
 /// Whether the page cannot break inside the block `node_id` at a better place
