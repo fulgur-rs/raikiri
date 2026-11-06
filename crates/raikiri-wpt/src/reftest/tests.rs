@@ -1,4 +1,5 @@
 use super::*;
+mod named_string_tests;
 mod xhtml_tests;
 
 #[test]

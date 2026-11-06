@@ -12,6 +12,7 @@ mod empty_clip_tests;
 mod gradient_tests;
 mod image_sharing_tests;
 mod marker_image_line_tests;
+mod page_named_string_tests;
 
 /// The conic gradient a computed `background-image` holds.
 fn conic_of(
@@ -955,7 +956,8 @@ fn paint_margin_boxes_of_first_page(
     page_box: PageBox,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    let margin_boxes = layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None);
+    let margin_boxes =
+        layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None, None);
     paint_page_margin_boxes(
         &crate::walk::ImageBrushCache::default(),
         scene,

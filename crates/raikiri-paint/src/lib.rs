@@ -204,6 +204,7 @@ pub fn paint_single_page_with_origin_and_page_context(
         f32::NAN,
         None,
         &[],
+        None,
     )
 }
 
@@ -241,6 +242,7 @@ pub fn paint_single_page_with_origin_and_page_context_named(
         f32::NAN,
         None,
         &[],
+        None,
     )
 }
 
@@ -281,6 +283,7 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         None,
         &[],
+        None,
     )
 }
 
@@ -319,6 +322,7 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         Some(pixel_source),
         &[],
+        None,
     )
 }
 
@@ -352,6 +356,7 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         None,
         custom_highlights,
+        None,
     )
 }
 
@@ -386,6 +391,51 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         Some(pixel_source),
         custom_highlights,
+        None,
+    )
+}
+
+/// Paint one named page using shared, page-aware margin values.
+///
+/// Build `margin_values` with [`raikiri_dom::MarginBoxNamedValues::with_page_index`]
+/// from the actual projected documents for the entire page sequence. Use a
+/// separate value table for each document/cascade pair, sharing only its index.
+/// This handles width-changing continuations and avoids rebuilding placement
+/// for every page. The older entry points infer placement from their one
+/// document (or its unfragmented single-page geometry); they cannot reconstruct
+/// pages laid out in other continuation documents and rescan placement per call.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_margin_values(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<&str>,
+    fixed_page_width: f32,
+    pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
+    custom_highlights: &[TextHighlightRange],
+    margin_values: &raikiri_dom::MarginBoxNamedValues,
+) -> Result<(), raikiri_traits::RenderError> {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        Some(active_page_name),
+        fixed_page_width,
+        pixel_source,
+        custom_highlights,
+        Some(margin_values),
     )
 }
 
@@ -404,6 +454,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     fixed_page_width: f32,
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     custom_highlights: &[TextHighlightRange],
+    margin_values: Option<&raikiri_dom::MarginBoxNamedValues>,
 ) -> Result<(), raikiri_traits::RenderError> {
     debug_assert_cascade_matches_document(document, cascade);
     if root_generates_no_box(cascade) {
@@ -424,6 +475,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
         page_count,
         page_is_left,
         paired_page_increment,
+        margin_values,
     );
     let (behind, in_front) = walk::split_margin_boxes_by_layer(&margin_boxes);
     layers.paint_behind_document(scene, &image_cache, &mut warnings, behind, root.as_ref());
@@ -605,7 +657,7 @@ pub fn paint_single_page_with_images_and_warnings(
     // The margin boxes are laid out for page 0 of 1 and layered as in
     // `paint_single_page_with_origin_and_page_context_impl`.
     let margin_boxes =
-        walk::layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None);
+        walk::layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None, None);
     let (behind, in_front) = walk::split_margin_boxes_by_layer(&margin_boxes);
     layers.paint_behind_document(scene, &image_cache, &mut warnings, behind, root.as_ref());
     if let Some(transform) = root_content_transform(root.as_ref()) {
