@@ -408,3 +408,54 @@ fn a_last_baseline_static_position_in_a_block_leaves_the_other_axis_alone() {
     );
     assert_eq!((left, top), (0.0, 10.0));
 }
+
+#[test]
+fn an_overflowing_flex_item_keeps_its_cross_size() {
+    for mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+        for (container, y) in [
+            ("height:80px;align-items:flex-end", -90.0),
+            ("height:80px;align-items:center", -45.0),
+            ("height:80px;align-items:flex-start", 0.0),
+            ("height:80px;align-items:stretch", 0.0),
+            ("height:80px;align-items:flex-end;flex-wrap:wrap", 0.0),
+            ("min-height:80px;align-items:flex-end", 0.0),
+        ] {
+            for sibling in [false, true] {
+                for text in ["", "x"] {
+                    let mut item = 0;
+                    let fixture = block_fixture(
+                        &format!("display:flex;width:100px;{container}"),
+                        |doc, root| {
+                            if sibling {
+                                doc.append_element(
+                                    Some(root),
+                                    "div",
+                                    Some("display:block;width:10px;height:50px"),
+                                );
+                            }
+                            item = doc.append_element(
+                                Some(root),
+                                "div",
+                                Some(&format!(
+                                    "display:block;writing-mode:{mode};width:10px;height:170px"
+                                )),
+                            );
+                            doc.append_text(item, text);
+                        },
+                    );
+                    let root = fixture.root;
+                    let mut doc = fixture.doc;
+                    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600())
+                        .expect("layout");
+                    let (root_x, root_y, _, _) = absolute_rect(&doc, root);
+                    let (x, top, width, height) = absolute_rect(&doc, item);
+                    assert_eq!(
+                        (x - root_x, top - root_y, width, height),
+                        (if sibling { 10.0 } else { 0.0 }, y, 10.0, 170.0),
+                        "{mode} | {container} | sibling={sibling} | {text}"
+                    );
+                }
+            }
+        }
+    }
+}
