@@ -21,12 +21,16 @@ fn fragment(node: usize, parent: Option<usize>, clip: Option<FragmentRect>) -> L
             width: 100.0,
             height: 100.0,
         },
-        fragmentainer_clip: clip,
+        fragmentainer_clip: clip.map(Into::into),
         fragment_index: 0,
         fragment_count: 1,
         line_start: None,
         line_end: None,
     }
+}
+
+fn paint_clip(x: f32, y: f32, width: f32, height: f32) -> raikiri_traits::PaintClip {
+    raikiri_traits::PaintClip::new(PaintRect::new(x, y, width, height))
 }
 
 fn clip_rect(x: f32, y: f32, width: f32, height: f32) -> Option<FragmentRect> {
@@ -42,7 +46,7 @@ fn clip_rect(x: f32, y: f32, width: f32, height: f32) -> Option<FragmentRect> {
 fn a_fragment_without_a_clip_is_clipped_like_the_fragments_around_it() {
     let plain = fragment(1, None, None);
     assert_eq!(fragment_clip(&plain, (50.0, 70.0), None), None);
-    let outer = PaintRect::new(1.0, 2.0, 3.0, 4.0);
+    let outer = paint_clip(1.0, 2.0, 3.0, 4.0);
     assert_eq!(
         fragment_clip(&plain, (50.0, 70.0), Some(outer)),
         Some(outer)
@@ -56,24 +60,24 @@ fn the_clip_of_a_fragment_moves_with_the_origin_the_fragment_is_placed_at() {
     let clipped = fragment(1, None, clip_rect(10.0, 20.0, 60.0, 40.0));
     assert_eq!(
         fragment_clip(&clipped, (50.0, 70.0), None),
-        Some(PaintRect::new(50.0, 70.0, 60.0, 40.0))
+        Some(paint_clip(50.0, 70.0, 60.0, 40.0))
     );
 }
 
 #[test]
 fn the_clip_of_a_fragment_is_cut_to_the_clip_around_it() {
     let clipped = fragment(1, None, clip_rect(10.0, 20.0, 60.0, 40.0));
-    let outer = PaintRect::new(60.0, 0.0, 100.0, 90.0);
+    let outer = paint_clip(60.0, 0.0, 100.0, 90.0);
     // (50, 70) to (110, 110) cut to x from 60 and y up to 90.
     assert_eq!(
         fragment_clip(&clipped, (50.0, 70.0), Some(outer)),
-        Some(PaintRect::new(60.0, 70.0, 50.0, 20.0))
+        Some(paint_clip(60.0, 70.0, 50.0, 20.0))
     );
     // Clips that do not meet leave nothing, not a negative extent.
-    let apart = PaintRect::new(500.0, 500.0, 10.0, 10.0);
+    let apart = paint_clip(500.0, 500.0, 10.0, 10.0);
     assert_eq!(
         fragment_clip(&clipped, (50.0, 70.0), Some(apart)),
-        Some(PaintRect::new(500.0, 500.0, 0.0, 0.0))
+        Some(paint_clip(500.0, 500.0, 0.0, 0.0))
     );
 }
 
@@ -156,7 +160,7 @@ fn text_source() -> PageFragmentSource {
         line_start_offset: 0,
         is_repeat: true,
         fragmentainer: 0,
-        fragment_clip: Some(PaintRect::new(0.0, 0.0, 5.0, 5.0)),
+        fragment_clip: Some(paint_clip(0.0, 0.0, 5.0, 5.0)),
         overflow_chain: Some(1),
         own_overflow_source: Some(2),
     }
@@ -479,4 +483,56 @@ fn the_text_of_a_table_is_a_paragraph_of_the_anonymous_cell_that_holds_it() {
     // The cell is placed in the table, which gives the box of its own text.
     assert_eq!((root.x, root.y), (x + location.x, y + location.y));
     assert!(walked.paragraph_cache.contains_key(&cell));
+}
+
+#[test]
+fn fragment_clip_intersection_preserves_each_closed_axis() {
+    for inner_x in [false, true] {
+        for inner_y in [false, true] {
+            for outer_x in [false, true] {
+                for outer_y in [false, true] {
+                    let mut inner = fragment(1, None, clip_rect(10.0, 20.0, 60.0, 40.0));
+                    let clip = inner.fragmentainer_clip.as_mut().unwrap();
+                    clip.clip_x = inner_x;
+                    clip.clip_y = inner_y;
+                    let mut outer = paint_clip(60.0, 0.0, 100.0, 90.0);
+                    outer.clip_x = outer_x;
+                    outer.clip_y = outer_y;
+                    let result = fragment_clip(&inner, (50.0, 70.0), Some(outer)).unwrap();
+                    assert_eq!(
+                        (result.clip_x, result.clip_y),
+                        (inner_x || outer_x, inner_y || outer_y)
+                    );
+                    if result.clip_x {
+                        let expected = match (inner_x, outer_x) {
+                            (true, true) => (60.0, 50.0),
+                            (true, false) => (50.0, 60.0),
+                            _ => (60.0, 100.0),
+                        };
+                        assert_eq!((result.rect.x, result.rect.width), expected);
+                    }
+                    if result.clip_y {
+                        let expected = match (inner_y, outer_y) {
+                            (true, true) => (70.0, 20.0),
+                            (true, false) => (70.0, 40.0),
+                            _ => (0.0, 90.0),
+                        };
+                        assert_eq!((result.rect.y, result.rect.height), expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_open_axis_does_not_reopen_an_empty_closed_axis() {
+    let mut inner = fragment(1, None, clip_rect(0.0, 20.0, 0.0, 40.0));
+    inner.fragmentainer_clip.as_mut().unwrap().clip_y = false;
+    let mut outer = paint_clip(500.0, 0.0, 10.0, 90.0);
+    outer.clip_y = false;
+    let result = fragment_clip(&inner, (10.0, 20.0), Some(outer)).unwrap();
+    assert!(result.clip_x);
+    assert!(!result.clip_y);
+    assert_eq!(result.rect.width, 0.0);
 }

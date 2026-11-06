@@ -434,12 +434,15 @@ pub(super) fn layout(
                     width: source.size.width,
                     height: (bottom - y).max(0.0),
                 },
-                fragmentainer_clip: Some(FragmentRect {
-                    x: clip_x - parent_position.x,
-                    y: origin.y - parent_position.y,
-                    width: clip_right - clip_left,
-                    height: height.max(piece.bottom),
-                }),
+                fragmentainer_clip: Some(
+                    FragmentRect {
+                        x: clip_x - parent_position.x,
+                        y: origin.y - parent_position.y,
+                        width: clip_right - clip_left,
+                        height: height.max(piece.bottom),
+                    }
+                    .into(),
+                ),
                 fragment_index: order,
                 fragment_count: pieces.len(),
                 line_start: (id == leaf).then_some(piece.start),

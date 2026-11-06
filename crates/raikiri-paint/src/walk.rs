@@ -1766,10 +1766,39 @@ pub(crate) fn layout_page_margin_boxes(
     page_count: u32,
     page_is_left: bool,
     paired_page_increment: Option<i32>,
+    values: Option<&raikiri_dom::MarginBoxNamedValues>,
 ) -> Vec<raikiri_dom::MarginBox> {
+    if cascade.page.margin_boxes().is_empty()
+        || raikiri_dom::page_margins_for_page(&cascade.page, page_box).is_zero()
+    {
+        return Vec::new();
+    }
+    let fallback;
+    let values = if let Some(values) = values {
+        values
+    } else {
+        let index = if page_count == 1 && document.page_fragments(0).next().is_none() {
+            raikiri_dom::RunningIndex::build_single_page(document, cascade)
+        } else {
+            raikiri_dom::RunningIndex::build(
+                document,
+                cascade,
+                (0..page_count).map(|page| (document, page)),
+            )
+        };
+        fallback = raikiri_dom::MarginBoxNamedValues::with_page_index(std::sync::Arc::new(index));
+        &fallback
+    };
     let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
         .with_paired_page_increment(paired_page_increment);
-    raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
+    raikiri_dom::page_margin_boxes_with_values(
+        document,
+        cascade,
+        &cascade.page,
+        page_box,
+        context,
+        values,
+    )
 }
 
 /// Split margin boxes in drawing order into the ones that go behind the
@@ -4567,6 +4596,9 @@ impl OpenBlockEdges {
 /// transform that rotates or skews, has no grid (`None`) and keeps the clip
 /// exact.
 fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBlockEdges) -> Rect {
+    if clip.width() <= 0.0 || clip.height() <= 0.0 {
+        return clip;
+    }
     let Some(grid) = grid.filter(|grid| {
         grid.scale_x.is_finite() && grid.scale_x != 0.0 && grid.offset_x.is_finite()
     }) else {
@@ -4611,15 +4643,66 @@ fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBloc
 fn page_bounds_in_scene(transform: Affine, page_box: &PageBox) -> Rect {
     let determinant = transform.determinant();
     if determinant.is_finite() && determinant != 0.0 {
-        transform.inverse().transform_rect_bbox(Rect::new(
+        let inverse = transform.inverse();
+        let bounds = inverse.transform_rect_bbox(Rect::new(
             0.0,
             0.0,
-            page_box.width as f64,
-            page_box.height as f64,
-        ))
-    } else {
-        Rect::ZERO
+            f64::from(page_box.width),
+            f64::from(page_box.height),
+        ));
+        if inverse.as_coeffs().iter().all(|value| value.is_finite())
+            && [bounds.x0, bounds.y0, bounds.x1, bounds.y1]
+                .into_iter()
+                .all(f64::is_finite)
+        {
+            return bounds;
+        }
     }
+    Rect::ZERO
+}
+
+/// Materialize a square fragment clip only after its scene transform is known.
+/// The page bounds every axis, keeping emitted paths finite for vector output.
+fn fragment_clip_bounds(
+    clip: raikiri_traits::PaintClip,
+    origin: (f32, f32),
+    transform: Affine,
+    page_box: &PageBox,
+) -> Rect {
+    let page = page_bounds_in_scene(transform, page_box);
+    let axis = |start: f32, offset: f32, size: f32, closed: bool, low: f64, high: f64| {
+        if !closed {
+            return Some((low, high));
+        }
+        let start = f64::from(start) + f64::from(offset);
+        let end = start + f64::from(size.max(0.0));
+        if !start.is_finite() || !size.is_finite() || !end.is_finite() {
+            return None;
+        }
+        let start = start.clamp(low, high);
+        Some((start, end.clamp(start, high)))
+    };
+    let Some((x0, x1)) = axis(
+        clip.rect.x,
+        origin.0,
+        clip.rect.width,
+        clip.clip_x,
+        page.x0,
+        page.x1,
+    ) else {
+        return Rect::ZERO;
+    };
+    let Some((y0, y1)) = axis(
+        clip.rect.y,
+        origin.1,
+        clip.rect.height,
+        clip.clip_y,
+        page.y0,
+        page.y1,
+    ) else {
+        return Rect::ZERO;
+    };
+    Rect::new(x0, y0, x1, y1)
 }
 
 fn push_overflow_clip(

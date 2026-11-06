@@ -320,8 +320,8 @@ fn an_invalid_resolved_flex_basis_delegates_without_a_measurement_override() {
     use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
     use raikiri_style::ComputedLengthPercentageOrAuto as L;
     let (mut doc, container, item) = super::column_cross_size_tests::column_document(
-        "display:inline-flex;flex-direction:column",
-        "display:block;flex:0 0 120px;max-height:80px",
+        "display:flex;flex-direction:column;writing-mode:vertical-rl",
+        "display:block;flex:0 0 120px;max-width:80px",
         "x",
     );
     with_ahem(&mut doc);
@@ -406,14 +406,14 @@ fn an_unresolved_minimum_keeps_every_siblings_original_flex_basis() {
     use crate::layout::test_support::{cascaded, with_ahem};
     use raikiri_layout_style::values::Dimension;
     let (mut doc, container, first) = super::column_cross_size_tests::column_document(
-        "display:inline-flex;flex-direction:column",
-        "display:block;flex:0 0 120px;max-height:80px",
+        "display:flex;flex-direction:column;writing-mode:vertical-rl",
+        "display:block;flex:0 0 120px;max-width:80px",
         "x",
     );
     doc.append_element(
         Some(container),
         "div",
-        Some("display:block;flex:0 0 40px;min-height:50%"),
+        Some("display:block;flex:0 0 40px;min-width:50%"),
     );
     doc.mark_in_document_flags();
     with_ahem(&mut doc);

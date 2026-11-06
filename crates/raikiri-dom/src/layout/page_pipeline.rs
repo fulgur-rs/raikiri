@@ -468,7 +468,11 @@ fn fragment_tree_end(
         let clip_end = fragments[index]
             .fragmentainer_clip
             .map_or(inherited_clip_end, |clip| {
-                inherited_clip_end.min(parent_origin + clip.y + clip.height)
+                if clip.clip_y {
+                    inherited_clip_end.min(parent_origin + clip.rect.y + clip.rect.height)
+                } else {
+                    inherited_clip_end
+                }
             });
         let bottom = (origin + rect.height).min(clip_end);
         if rect.height > 0.0 && bottom.is_finite() {

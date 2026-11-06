@@ -67,13 +67,10 @@ impl<'a> Fragment<'a> {
 
     /// Explicit column clip at this placement's physical page origin.
     pub(crate) fn fragmentainer_clip(&self) -> Option<PaintClip> {
-        self.item.fragment_clip.map(|rect| {
-            PaintClip::new(PaintRect::new(
-                rect.x + self.origin.0,
-                rect.y + self.origin.1,
-                rect.width,
-                rect.height,
-            ))
+        self.item.fragment_clip.map(|mut clip| {
+            clip.rect.x += self.origin.0;
+            clip.rect.y += self.origin.1;
+            clip
         })
     }
 

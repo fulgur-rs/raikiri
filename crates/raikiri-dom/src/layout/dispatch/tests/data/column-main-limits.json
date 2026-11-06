@@ -2424,7 +2424,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Unresolved main minimum",
         "rectangles": {
@@ -2438,7 +2438,7 @@
             0.0,
             0.0,
             10.0,
-            120.0
+            80.0
           ]
         }
       }
@@ -2743,7 +2743,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Unresolved main minimum",
         "rectangles": {
@@ -2837,7 +2837,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Cyclic main percentage margins without independently stated cross size",
         "rectangles": {
@@ -2851,7 +2851,7 @@
             0.0,
             0.0,
             10.0,
-            120.5999984741211
+            80.5999984741211
           ]
         }
       }
@@ -2881,7 +2881,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Cyclic main percentage margins without independently stated cross size",
         "rectangles": {
@@ -2895,7 +2895,7 @@
             0.0,
             0.0,
             20.0,
-            100.0
+            90.5999984741211
           ]
         }
       }
@@ -2950,7 +2950,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Cyclic main percentage margins without independently stated cross size",
         "rectangles": {
@@ -2994,7 +2994,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Cyclic main percentage margins without independently stated cross size",
         "rectangles": {
@@ -3138,7 +3138,7 @@
         ]
       },
       "preserved_baseline": {
-        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "revision": "a9418d823",
         "issue": "RAIKIRI-1488",
         "reason": "Authored percentage cross cannot resolve against the original parent basis",
         "rectangles": {
@@ -3182,5 +3182,5 @@
     },
     "ahem_sha256": "b719ecb31c5b21fc573c03f6421c74ac63c271a5a3ff841e34f9705fb94b8448"
   },
-  "preserved_baselines_note": "Seven explicitly excluded legacy cases retain immutable b09 rectangles; their loaded-Ahem Chromium rectangles remain separately recorded and are not claimed to match."
+  "preserved_baselines_note": "Seven explicitly excluded legacy cases retain immutable a9418d823 main rectangles; their loaded-Ahem Chromium rectangles remain separately recorded and are not claimed to match."
 }

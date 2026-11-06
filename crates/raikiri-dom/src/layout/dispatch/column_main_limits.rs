@@ -19,6 +19,16 @@ pub(super) fn layout(
     main_is_definite: bool,
     algorithm: impl Fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
+    // Choose one main-size correction before any probe changes the item styles.
+    let fallback = |tree: &mut LayoutSession<'_>| {
+        super::intrinsic_scopes::with_hypothetical_column_height(
+            tree,
+            node_id,
+            inputs,
+            main_is_definite,
+            |tree, inputs| algorithm(tree, node_id, inputs),
+        )
+    };
     let idx = usize::from(node_id);
     let vertical = super::block_right_to_left(tree, idx).is_some();
     let main_axis = if vertical {
@@ -41,7 +51,7 @@ pub(super) fn layout(
             && inputs.axis != main_axis
             && inputs.axis != RequestedAxis::Both)
     {
-        return algorithm(tree, node_id, inputs);
+        return fallback(tree);
     }
     let needs_probe = tree
         .child_ids(node_id)
@@ -56,7 +66,7 @@ pub(super) fn layout(
             Some(needs_probe || bounded < basis)
         });
     if needs_probe != Some(true) {
-        return algorithm(tree, node_id, inputs);
+        return fallback(tree);
     }
 
     let gap = style.gap().height;

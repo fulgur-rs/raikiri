@@ -321,6 +321,150 @@ pub(super) fn with_orthogonal_percentage_flex_bases<R>(
     })
 }
 
+/// Lay out the column flex container `node_id` with the height it gets from
+/// its items' hypothetical main sizes, when its own height is open and some
+/// item has a flex base size that is a length.
+///
+/// A browser finds the height of such a container as the sum of the
+/// hypothetical main sizes of its items: the flex base size, kept within the
+/// minimum and maximum height of the item (the automatic minimum height where
+/// it states none). Taffy takes the max-content contribution of the item
+/// instead, which is the content height of an item whose automatic minimum is
+/// below it (a scroll container, an item with `min-height: 0`, a box of the
+/// other writing direction), and which a `max-height` below the flex base
+/// size does not bound. A flex factor then lets the container grow past the
+/// sum as well.
+///
+/// Each such item is therefore made rigid while the container finds its
+/// height: no flex factor, and a flex base size bounded by its `max-height`,
+/// which gives Taffy the hypothetical size as the contribution. Items whose
+/// flex base size is their content are left alone; their contribution is the
+/// hypothetical size already.
+///
+/// With no `min-height` or `max-height` on the container the sum is the height,
+/// and nothing is left to flex, so the rigid items are laid out as they are.
+/// Otherwise, and where a negative margin could make the sum fall below the
+/// zero the height cannot go under, the height the rigid items found is given
+/// to the container, which lays the items out at their own flex factors
+/// within it.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#algo-main-container>
+pub(super) fn with_hypothetical_column_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    main_size_is_definite: bool,
+    layout: impl Fn(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    use super::vertical_oof::used_writing_mode;
+    let idx = usize::from(node_id);
+    let container = tree.physical_style(idx);
+    if main_size_is_definite
+        || container.flex_direction_is_row()
+        || container.flex_wraps()
+        || inputs.known_dimensions.height.is_some()
+        || (inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
+        || used_writing_mode(tree, idx).is_vertical()
+    {
+        return layout(tree, inputs);
+    }
+    let items = tree
+        .child_ids(node_id)
+        .map(usize::from)
+        .filter(|&item| {
+            tree.nodes[item].layout_position() != Position::Absolute
+                && tree.physical_style(item).box_generation_mode() != BoxGenerationMode::None
+        })
+        .collect::<Vec<_>>();
+    // A negative margin can make the sum of the outer sizes negative. The
+    // container stops at a height of zero then, and the free space left is
+    // what a growing item fills. A margin that is a percentage or a `calc()`
+    // is checked for its smallest and its largest value.
+    let negative_margin = items.iter().any(|&item| {
+        let margin = tree.physical_style(item).margin();
+        [margin.top, margin.bottom].into_iter().any(|side| {
+            [0.0, 1.0e9]
+                .into_iter()
+                .any(|width| side.resolve(Some(width)).is_some_and(|value| value < 0.0))
+        })
+    });
+    // A percentage `min-height` or `max-height` of the container refers to the
+    // height of its containing block, and has no effect where that is open.
+    let containing_height = inputs.parent_size.height;
+    let bounded = negative_margin
+        || container
+            .max_size()
+            .height
+            .maybe_resolve(containing_height)
+            .is_some()
+        || container
+            .min_size()
+            .height
+            .maybe_resolve(containing_height)
+            .is_some_and(|min| min > 0.0);
+    let rigid = items
+        .into_iter()
+        .filter_map(|item| {
+            let style = tree.physical_style(item);
+            let basis = crate::layout::resolve_dimension(style.flex_basis(), None)
+                .filter(|basis| basis.is_finite())?;
+            let bounded_basis = style
+                .max_size()
+                .height
+                .maybe_resolve(None::<f32>)
+                .map_or(basis, |max| basis.min(max));
+            let key = tree.nodes.box_key(item).expect("flex item box key");
+            let entries = vec![
+                (key, O::flex_grow(0.0)),
+                (key, O::flex_shrink(0.0)),
+                (
+                    key,
+                    O::length(P::FlexBasis, L::Px(bounded_basis), true)
+                        .expect("physical flex basis"),
+                ),
+            ];
+            Some((item, entries))
+        })
+        .collect::<Vec<_>>();
+    if rigid.is_empty() {
+        return layout(tree, inputs);
+    }
+    let run = |tree: &mut LayoutSession<'_>, rigid: Vec<_>, inputs: LayoutInput| {
+        let count = rigid.len();
+        with_saved_probe_caches(tree, count, |tree, saved| {
+            for (item, entries) in rigid {
+                let mut cache = tree.take_layout_cache(item);
+                if inputs.run_mode == RunMode::PerformLayout {
+                    // A different final layout replaces descendant geometry,
+                    // so the old final entry can no longer stand for it.
+                    cache.forget_final_layout();
+                }
+                saved.push((item, cache));
+                tree.push_local_overrides(entries);
+            }
+            layout(tree, inputs)
+        })
+    };
+    if inputs.run_mode == RunMode::ComputeSize || !bounded {
+        return run(tree, rigid, inputs);
+    }
+    let height = run(
+        tree,
+        rigid,
+        LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            axis: RequestedAxis::Vertical,
+            ..inputs
+        },
+    )
+    .size
+    .height;
+    let mut inputs = inputs;
+    inputs.known_dimensions.height = Some(height);
+    inputs.known_dimensions_are_definite.height = false;
+    layout(tree, inputs)
+}
+
 /// Run `probe`, which measures the content height of the flex container
 /// `node_id` to raise the height its aspect ratio gives it, while the items the
 /// container stretches add only their `min-height` to that measure (see

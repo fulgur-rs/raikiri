@@ -36,12 +36,15 @@ fn source_fragments() -> (Document, usize, usize, usize) {
                 width: 40.0,
                 height: 20.0,
             },
-            fragmentainer_clip: Some(FragmentRect {
-                x: 0.0,
-                y: 20.0,
-                width: 40.0,
-                height: 40.0,
-            }),
+            fragmentainer_clip: Some(
+                FragmentRect {
+                    x: 0.0,
+                    y: 20.0,
+                    width: 40.0,
+                    height: 40.0,
+                }
+                .into(),
+            ),
             fragment_index: 0,
             fragment_count: 1,
             line_start: Some(0),
@@ -74,12 +77,15 @@ fn a_fallback_child_shift_moves_its_column_clip_with_the_source_box() {
     );
     assert_eq!(
         source.fragmentainer_clip,
-        Some(FragmentRect {
-            x: 0.0,
-            y: 30.0,
-            width: 40.0,
-            height: 40.0
-        })
+        Some(
+            FragmentRect {
+                x: 0.0,
+                y: 30.0,
+                width: 40.0,
+                height: 40.0
+            }
+            .into()
+        )
     );
     assert_eq!(tree.fragment_tree.fragments[0].rect.y, 0.0);
     assert_eq!(tree.nodes[child].layout.location.y, 10.0);

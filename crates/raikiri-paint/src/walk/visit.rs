@@ -4,7 +4,7 @@
 use super::frames::{PaintFrame, VisitFrame};
 use super::paint_walk::PaintWalk;
 use anyrender::PaintScene;
-use raikiri_dom::{FragmentRect, Node};
+use raikiri_dom::Node;
 use raikiri_traits::NodeKind;
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
@@ -121,11 +121,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 (node.layout().location.x, node.layout().location.y),
                 (fragment_origin_x, fragment_origin_y),
             );
-            let fragment_clip = fragment.fragmentainer_clip.map(|clip| FragmentRect {
-                x: clip.x - fragment.rect.x,
-                y: clip.y - fragment.rect.y,
-                width: clip.width,
-                height: clip.height,
+            let fragment_clip = fragment.fragmentainer_clip.map(|mut clip| {
+                clip.rect.x -= fragment.rect.x;
+                clip.rect.y -= fragment.rect.y;
+                clip
             });
             self.stack.push(PaintFrame::Visit(VisitFrame {
                 node_id,

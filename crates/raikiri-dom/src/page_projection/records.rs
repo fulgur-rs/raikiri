@@ -337,7 +337,7 @@ pub(crate) struct ProjectedTextRoot {
     /// Restrict this placement to its committed column, when reached through a fragment.
     pub(crate) fragmentainer: Option<usize>,
     /// Intersection of explicit fragment clips in shared flow coordinates.
-    pub(crate) fragment_clip: Option<raikiri_traits::PaintRect>,
+    pub(crate) fragment_clip: Option<raikiri_traits::PaintClip>,
     /// Placement-specific overflow ancestors, including this paragraph's local clip.
     pub(crate) overflow_chain: Option<usize>,
 }
@@ -442,7 +442,7 @@ pub(crate) struct PageFragmentItem {
     /// Column index local to the owning multicolumn context; zero outside columns.
     pub(crate) fragmentainer: u32,
     /// Explicit fragment clip relative to this page's content origin.
-    pub(crate) fragment_clip: Option<PageFragmentRect>,
+    pub(crate) fragment_clip: Option<raikiri_traits::PaintClip>,
     /// Placement-specific overflow ancestors of this box or text placement.
     pub(crate) overflow_chain: Option<usize>,
     /// This element placement's own overflow source, separate from its ancestors.
