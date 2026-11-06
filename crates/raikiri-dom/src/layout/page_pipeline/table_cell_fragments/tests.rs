@@ -37,7 +37,11 @@ impl Fixture {
         }
     }
 
-    fn qualified(mut self) -> bool {
+    fn qualified(self) -> bool {
+        self.qualified_on_axes(false)
+    }
+
+    fn qualified_on_axes(mut self, transposed: bool) -> bool {
         self.doc.mark_in_document_flags();
         let cascade =
             raikiri_style::cascade(&self.doc, &raikiri_style::build_rule_tree(&self.doc)).unwrap();
@@ -47,7 +51,8 @@ impl Fixture {
             crate::layout::test_support::page_box_800x600(),
         )
         .unwrap();
-        let session = crate::layout::context::LayoutSession::resumed(&mut self.doc, &cascade);
+        let mut session = crate::layout::context::LayoutSession::resumed(&mut self.doc, &cascade);
+        session.context.pagination_on_transposed_axes = transposed;
         fitting(&session, &cascade, self.row, 160.0, 100.0, 200.0).is_some()
     }
 }
@@ -197,4 +202,9 @@ fn generated_cell_content_keeps_the_existing_path() {
         );
         assert!(!fixture.qualified(), "::{pseudo}");
     }
+}
+
+#[test]
+fn transposed_pagination_keeps_the_existing_path() {
+    assert!(!Fixture::new().qualified_on_axes(true));
 }
