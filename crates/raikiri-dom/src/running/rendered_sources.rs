@@ -32,7 +32,7 @@ pub(super) fn excluded_contents(document: &Document, cascade: &CascadeResult) ->
     // conservatively when retained layout data contains a before/after source.
     // This does not add missing projected entries or infer their page range.
     let mut generated = HashSet::new();
-    for node in &document.nodes {
+    for node in document.nodes.layout_nodes() {
         let Some(root) = node.ifc.as_ref() else {
             continue;
         };

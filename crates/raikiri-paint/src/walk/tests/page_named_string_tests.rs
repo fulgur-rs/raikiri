@@ -318,21 +318,22 @@ fn contents_named_strings_single_paint_matches_literal() {
     }
 }
 
+fn glyph_count(body: &str) -> usize {
+    let (document, cascade, page, _) = fixture(body, "'V:'", false);
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin(&mut scene, &document, &cascade, page, 0.0).unwrap();
+    scene
+        .commands
+        .iter()
+        .map(|command| match command {
+            RenderCommand::GlyphRun(run) => run.glyphs.len(),
+            _ => 0,
+        })
+        .sum()
+}
+
 #[test]
 fn contents_named_strings_preserve_painted_pseudo_overlays() {
-    fn glyph_count(body: &str) -> usize {
-        let (document, cascade, page, _) = fixture(body, "'V:'", false);
-        let mut scene = Scene::new();
-        crate::paint_single_page_with_origin(&mut scene, &document, &cascade, page, 0.0).unwrap();
-        scene
-            .commands
-            .iter()
-            .map(|command| match command {
-                RenderCommand::GlyphRun(run) => run.glyphs.len(),
-                _ => 0,
-            })
-            .sum()
-    }
     let mut observed = Vec::new();
     for pseudo in ["before", "after"] {
         for placement in ["float:left", "position:absolute", "position:fixed"] {
@@ -368,6 +369,32 @@ fn contents_named_strings_absent_overlay_does_not_precede_heading() {
                     "{pseudo} {placement} {content}"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_preserve_anonymous_table_cell_generated_content() {
+    for display in ["table", "table-row"] {
+        for pseudo in ["before", "after"] {
+            let body = format!(
+                "<body><style>.c::{pseudo}{{content:'X'}}</style><div style='display:{display}'><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></div></body>"
+            );
+            let control = body.replace("content:'X'", "content:none");
+            assert!(
+                glyph_count(&body) > glyph_count(&control),
+                "{display}::{pseudo}"
+            );
+            assert_eq!(
+                texts(&body, "string(title,start)", false),
+                [""],
+                "{display}::{pseudo}"
+            );
+            assert_eq!(
+                texts(&control, "string(title,start)", false),
+                ["A1"],
+                "empty {display}::{pseudo}"
+            );
         }
     }
 }

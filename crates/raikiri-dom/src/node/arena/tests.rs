@@ -72,3 +72,13 @@ fn a_layout_pass_reaches_every_node_and_keys_are_fixed_when_cells_are_set() {
     assert_eq!(arena.anonymous_cell_key(0), 2);
     assert_eq!(arena.box_key(2), Some(BoxKey::AnonymousCell(0)));
 }
+
+#[test]
+fn retained_layout_iteration_includes_anonymous_boxes_and_page_root() {
+    let mut arena = arena();
+    arena.set_anonymous_tables(vec![element("table")]);
+    arena.set_initial_containing_block(element("root"));
+    let tags: Vec<_> = arena.layout_nodes().filter_map(Node::tag_name).collect();
+    assert_eq!(tags, ["a", "b", "table", "cell", "root"]);
+    assert_eq!(arena.iter().count(), 2);
+}
