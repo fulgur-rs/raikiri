@@ -487,10 +487,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn page_cut(&self, element: &ElementBox<'w>) -> Option<PageCut> {
         let ElementBox {
             cv,
+            node_id,
             inside_fixed,
             fixed_in_viewport,
             paint_y,
             paint_height,
+            child_transform_y,
             ..
         } = *element;
         let PageGeometry {
@@ -507,13 +509,33 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         {
             return None;
         }
+        let from_before = page_top > 0.0 && f64::from(paint_y) < area.y0 - 0.01;
+        let after = f64::from(paint_y + paint_height) > area.y1 + 0.01;
         // A relatively positioned box lies where its offset puts it, not
-        // where a break cut it.
-        let broken = matches!(cv.position, PositionValue::Static | PositionValue::Absolute);
+        // where a break cut it, and neither does a box that a transform or the
+        // relative offset of an ancestor moved. Only a box that crosses an
+        // edge of the page area needs the check.
+        let broken = (from_before || after)
+            && match cv.position {
+                PositionValue::Absolute => true,
+                PositionValue::Static => {
+                    child_transform_y == 0.0 && !self.moved_by_relative_ancestor(node_id)
+                }
+                _ => false,
+            };
         Some(PageCut {
             area,
-            from_before: broken && page_top > 0.0 && f64::from(paint_y) < area.y0 - 0.01,
-            after: broken && f64::from(paint_y + paint_height) > area.y1 + 0.01,
+            from_before: broken && from_before,
+            after: broken && after,
+        })
+    }
+
+    /// Whether a relative offset of an ancestor of the node `node_id` moves
+    /// it vertically.
+    fn moved_by_relative_ancestor(&self, node_id: usize) -> bool {
+        self.document.ancestors(node_id).any(|ancestor| {
+            let cv = &self.cascade.computed[ancestor];
+            raikiri_dom::used_relative_offset(self.document, self.cascade, cv, ancestor).1 != 0.0
         })
     }
 

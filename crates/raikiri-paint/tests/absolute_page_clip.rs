@@ -362,3 +362,24 @@ fn the_two_bars_of_a_page_area_thinner_than_the_outline_do_not_overlap() {
         assert_eq!(pixel(&pixels, 35, y), single, "row {y} has one layer");
     }
 }
+
+#[test]
+fn a_box_that_a_relative_ancestor_or_a_transform_moves_across_the_page_area_has_no_break_bars() {
+    // The outlined box is moved down to y 35 to 45, across the bottom of the
+    // page area (y 40), without a page break cutting it.
+    for wrapper in ["position:relative;top:25px", "transform:translateY(25px)"] {
+        let body = format!(
+            "<div style='{wrapper}'>\
+             <div style='margin-left:6px;width:18px;height:10px;outline:4px solid blue'></div></div>"
+        );
+        let pixels = raster_page(&body, 0);
+        assert_eq!(pixel(&pixels, 20, 32), BLUE, "{wrapper}: the top ring");
+        assert_eq!(pixel(&pixels, 13, 37), BLUE, "{wrapper}: the left ring");
+        assert_ne!(
+            pixel(&pixels, 20, 37),
+            BLUE,
+            "{wrapper}: no bar along the page area edge"
+        );
+        assert_ne!(pixel(&pixels, 13, 43), BLUE, "{wrapper}: the bottom margin");
+    }
+}
