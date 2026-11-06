@@ -179,3 +179,19 @@ fn builtin_print_named_strings_projection_preserves_generated_marker_and_column_
         assert!(actual.pages[index].rgba == expected.pages[index].rgba);
     }
 }
+
+#[test]
+fn builtin_print_named_strings_without_margin_boxes_keep_the_body_unchanged() {
+    let render = |assignment: &str| {
+        let html = format!(
+            "<!doctype html><style>@page{{size:300px 200px;margin:40px}}body{{margin:0;font:10px/10px monospace}}h2{{margin:0;{assignment}}}</style><h2>ALPHA</h2><h2 style='break-before:page'>BETA</h2>"
+        );
+        render_raikiri_pages(&html, 800, 600).unwrap()
+    };
+    let actual = render("string-set:title content(text)");
+    let expected = render("");
+    assert_eq!(actual.pages.len(), 2);
+    for (actual, expected) in actual.pages.iter().zip(&expected.pages) {
+        assert!(actual.rgba == expected.rgba);
+    }
+}

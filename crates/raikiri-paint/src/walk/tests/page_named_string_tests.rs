@@ -105,14 +105,37 @@ impl raikiri_traits::ImagePixelSource for EmptyPixels {
     }
 }
 
-fn legacy_margin_glyphs(rule: &str, images: bool) -> Vec<String> {
+#[derive(Clone, Copy)]
+enum LegacyRoute {
+    Plain,
+    Images,
+    NamedImagesAndHighlights,
+}
+
+fn legacy_margin_glyphs(rule: &str, route: LegacyRoute) -> Vec<String> {
     let (document, cascade, page, _) = fixture("<p>before</p><h2>A1</h2><h2>A2</h2>", rule, false);
     let mut scene = Scene::new();
-    if images {
-        crate::paint_single_page_with_images(&mut scene, &document, &cascade, page, &EmptyPixels)
+    match route {
+        LegacyRoute::Images => {
+            crate::paint_single_page_with_images(
+                &mut scene,
+                &document,
+                &cascade,
+                page,
+                &EmptyPixels,
+            )
             .unwrap();
-    } else {
-        crate::paint_single_page_with_origin(&mut scene, &document, &cascade, page, 0.0).unwrap();
+        }
+        LegacyRoute::Plain => {
+            crate::paint_single_page_with_origin(&mut scene, &document, &cascade, page, 0.0)
+                .unwrap();
+        }
+        LegacyRoute::NamedImagesAndHighlights => {
+            crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
+                &mut scene, &document, &cascade, page, 0.0, 0, 1, false, None,
+                None, f32::NAN, &EmptyPixels, &[],
+            ).unwrap();
+        }
     }
     scene
         .commands
@@ -128,7 +151,11 @@ fn legacy_margin_glyphs(rule: &str, images: bool) -> Vec<String> {
 
 #[test]
 fn builtin_margin_named_strings_reach_legacy_image_and_plain_painters() {
-    for images in [false, true] {
+    for route in [
+        LegacyRoute::Plain,
+        LegacyRoute::Images,
+        LegacyRoute::NamedImagesAndHighlights,
+    ] {
         for (mode, expected) in [
             ("first", "A1"),
             ("start", ""),
@@ -136,8 +163,8 @@ fn builtin_margin_named_strings_reach_legacy_image_and_plain_painters() {
             ("first-except", ""),
         ] {
             assert_eq!(
-                legacy_margin_glyphs(&format!("'V:' string(title,{mode})"), images),
-                legacy_margin_glyphs(&format!("'V:{expected}'"), images)
+                legacy_margin_glyphs(&format!("'V:' string(title,{mode})"), route),
+                legacy_margin_glyphs(&format!("'V:{expected}'"), route)
             );
         }
     }
@@ -145,8 +172,14 @@ fn builtin_margin_named_strings_reach_legacy_image_and_plain_painters() {
 
 #[test]
 fn builtin_margin_named_strings_start_ignores_leading_html_whitespace() {
-    assert_eq!(
-        texts("\n   <h2>A1</h2><h2>A2</h2>", "string(title,start)", false),
-        ["A1"]
-    );
+    for prefix in ["\n   ", "\t", ""] {
+        let body = format!("<body>{prefix}<h2>A1</h2><h2>A2</h2></body>");
+        for paged in [true, false] {
+            assert_eq!(
+                texts(&body, "string(title,start)", paged),
+                ["A1"],
+                "paged={paged}, prefix={prefix:?}"
+            );
+        }
+    }
 }

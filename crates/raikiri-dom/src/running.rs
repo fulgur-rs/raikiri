@@ -127,6 +127,11 @@ impl RunningIndex {
             .scene_geometry()
             .records()
             .iter()
+            // Match the projected sources: collapsed whitespace is not content.
+            .filter(|record| match &document.nodes[record.node()].data {
+                NodeData::Text(text) => !text.text_content.as_str().trim().is_empty(),
+                _ => true,
+            })
             .map(|record| (record.node(), (0, 0)))
             .collect();
         Self::from_rendered_pages(document, cascade, &rendered_pages)
