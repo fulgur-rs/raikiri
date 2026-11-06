@@ -1168,11 +1168,17 @@ fn print_declaration<T>(block: &str, name: &str, parse: impl Fn(&str) -> Option<
 /// One `@page` rule: the page names in its selector and its block contents.
 struct PageRule<'a> {
     names: Vec<String>,
+    /// Whether the prelude has no selector at all, which makes the rule apply
+    /// to every page. A bare pseudo-class such as `:first` is a selector.
+    unqualified: bool,
+    /// Where `block` starts in the scanned text, right after the `{`.
+    block_start: usize,
     block: &'a str,
 }
 
-/// Every `@page` rule in `input`, including those nested in other blocks,
-/// in source order. Comments and strings are skipped by the tokenizer.
+/// Every `@page` rule in `input` and in the `@media`, `@supports` and `@layer`
+/// rules around it, in source order. Comments and strings are skipped by the
+/// tokenizer.
 fn page_rules(input: &str) -> Vec<PageRule<'_>> {
     let mut rules = Vec::new();
     let mut source = cssparser::ParserInput::new(input);
@@ -1221,6 +1227,8 @@ struct PageScan {
     empty_selector: bool,
     /// Whether the prelude is a comma-separated list.
     list: bool,
+    /// Whether the `@page` prelude has no token yet.
+    empty_prelude: bool,
 }
 
 impl PageScan {
@@ -1231,6 +1239,7 @@ impl PageScan {
             after_colon: false,
             empty_selector: true,
             list: false,
+            empty_prelude: true,
         }
     }
 
@@ -1251,6 +1260,7 @@ impl PageScan {
             .eq_ignore_ascii_case("page")
             .then(|| (Vec::new(), true));
         self.empty_selector = true;
+        self.empty_prelude = true;
         self.list = false;
         self.group = ["media", "supports", "layer"]
             .iter()
@@ -1274,15 +1284,24 @@ impl PageScan {
             // A list may not end with an empty selector, and a
             // colon needs its pseudo-class name.
             valid &= !(self.after_colon || self.list && self.empty_selector);
-            let block = input.parse_nested_block(|input| {
+            let unqualified = self.empty_prelude;
+            let (block_start, block) = input.parse_nested_block(|input| {
                 let start = input.position();
                 while input.next().is_ok() {}
-                Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
+                Ok::<_, cssparser::ParseError<'i, ()>>((
+                    start.byte_index(),
+                    input.slice_from(start),
+                ))
             })?;
             // As in the cascade, a rule with an invalid selector
             // is dropped.
             if valid {
-                rules.push(PageRule { names, block });
+                rules.push(PageRule {
+                    names,
+                    unqualified,
+                    block_start,
+                    block,
+                });
             }
         } else if std::mem::take(&mut self.group) && depth < 256 {
             input.parse_nested_block(|input| collect_page_rules(input, rules, depth + 1))?;
@@ -1299,6 +1318,7 @@ impl PageScan {
         let Some((names, valid)) = &mut self.page else {
             return;
         };
+        self.empty_prelude = false;
         let starts_selector = self.empty_selector;
         if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
             self.empty_selector = false;
@@ -1513,113 +1533,6 @@ fn block_page_name<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> O
         .flatten()
 }
 
-fn css_block_end(input: &str, open: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    let mut depth = 0_u32;
-    let mut quote = None;
-    let mut index = open;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = (index + 2).min(bytes.len());
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if byte == b'"' || byte == b'\'' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            index += 2;
-            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
-                index += 1;
-            }
-            index = (index + 2).min(bytes.len());
-            continue;
-        }
-        match byte {
-            b'{' => depth += 1,
-            b'}' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-fn top_level_css_block_end(input: &str, open: usize, close: usize) -> usize {
-    let bytes = input.as_bytes();
-    let mut depth = 0_u32;
-    let mut quote = None;
-    let mut index = open + 1;
-    while index < close {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = (index + 2).min(close);
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if byte == b'"' || byte == b'\'' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            index += 2;
-            while index + 1 < close && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
-                index += 1;
-            }
-            index = (index + 2).min(close);
-            continue;
-        }
-        match byte {
-            b'{' => {
-                if depth == 0 {
-                    return index;
-                }
-                depth += 1;
-            }
-            b'}' if depth > 0 => depth -= 1,
-            _ => {}
-        }
-        index += 1;
-    }
-    close
-}
-
-fn strip_css_comments(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(start) = rest.find("/*") {
-        output.push_str(&rest[..start]);
-        let after_start = &rest[start + 2..];
-        let Some(end) = after_start.find("*/") else {
-            return output;
-        };
-        rest = &after_start[end + 2..];
-    }
-    output.push_str(rest);
-    output
-}
-
 /// One `@page` rule that [`scan_page_rules`] found.
 #[derive(Debug)]
 struct PageRuleEdges {
@@ -1628,10 +1541,10 @@ struct PageRuleEdges {
     /// Whether the rule has no page selector, which makes it apply to every
     /// page.
     unqualified: bool,
-    /// Whether the top-level declarations set the top, right, bottom and left
-    /// margin.
+    /// Whether the declarations of the block, not those of its margin boxes,
+    /// set the top, right, bottom and left margin.
     margins: [bool; 4],
-    /// Whether the top-level declarations set a border.
+    /// Whether the declarations of the block set a border.
     border: bool,
 }
 
@@ -1664,86 +1577,127 @@ fn inject_default_page_margin(input: &str) -> String {
     output
 }
 
-/// Find the `@page` rules of `input`, in source order. The scan stops at an
-/// `@page` rule whose block does not close.
+/// Find the `@page` rules of `input`, in source order, as the cascade sees
+/// them: a rule inside a comment or a string is not one, and a rule whose
+/// selector is invalid is dropped. A block that does not close runs to the end
+/// of `input`.
 fn scan_page_rules(input: &str) -> Vec<PageRuleEdges> {
-    let lower = input.to_ascii_lowercase();
-    let mut page_rules = Vec::new();
-    let mut search = 0;
-    while let Some(relative) = lower[search..].find("@page") {
-        let page_start = search + relative;
-        let after_name = page_start + "@page".len();
-        if !is_page_keyword(lower.as_bytes(), page_start, after_name) {
-            search = after_name;
-            continue;
-        }
-        let Some(open_rel) = lower[page_start..].find('{') else {
-            break;
-        };
-        let open = page_start + open_rel;
-        let Some(close) = css_block_end(input, open) else {
-            break;
-        };
-        let top_level_end = top_level_css_block_end(input, open, close);
-        let (margins, border) = authored_page_edges(&input[open + 1..top_level_end]);
-        // A selector-less @page rule is the only rule that can establish the
-        // low-specificity baseline for all page contexts.  Strip comments so
-        // that a formatting comment between `@page` and `{` does not make a
-        // default rule look like a named or pseudo page.
-        let selector = strip_css_comments(&input[after_name..open]);
-        let selector = selector.trim();
-        page_rules.push(PageRuleEdges {
-            block_start: open + 1,
-            unqualified: selector.is_empty(),
-            margins,
-            border,
-        });
-        search = close + 1;
-    }
-    page_rules
+    page_rules(input)
+        .into_iter()
+        .map(|rule| {
+            let (margins, border) = authored_page_edges(rule.block);
+            PageRuleEdges {
+                block_start: rule.block_start,
+                // A selector-less @page rule is the only rule that can
+                // establish the low-specificity baseline for all page
+                // contexts.
+                unqualified: rule.unqualified,
+                margins,
+                border,
+            }
+        })
+        .collect()
 }
 
-/// Whether the `@page` at `page_start..after_name` is the whole at-keyword,
-/// not part of a longer identifier on either side.
-fn is_page_keyword(lower: &[u8], page_start: usize, after_name: usize) -> bool {
-    let before_ok = page_start == 0
-        || !lower[page_start - 1].is_ascii_alphanumeric()
-            && lower[page_start - 1] != b'-'
-            && lower[page_start - 1] != b'_';
-    let after_ok = lower
-        .get(after_name)
-        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
-    before_ok && after_ok
+/// The declarations of an `@page` block, read by name only.
+struct PageEdgeDeclarations {
+    margins: [bool; 4],
+    border: bool,
+}
+
+impl<'i> cssparser::DeclarationParser<'i> for PageEdgeDeclarations {
+    type Declaration = ();
+    type Error = ();
+
+    fn parse_value<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut cssparser::Parser<'i, 't>,
+        _declaration_start: &cssparser::ParserState,
+    ) -> Result<(), cssparser::ParseError<'i, ()>> {
+        match name.to_ascii_lowercase().as_str() {
+            "margin" => self.margins = [true; 4],
+            "margin-top" => self.margins[0] = true,
+            "margin-right" => self.margins[1] = true,
+            "margin-bottom" => self.margins[2] = true,
+            "margin-left" => self.margins[3] = true,
+            name if sets_border(name) => self.border = true,
+            _ => {}
+        }
+        // The value does not matter, only that the declaration is there.
+        while input.next_including_whitespace_and_comments().is_ok() {}
+        Ok(())
+    }
+}
+
+impl<'i> cssparser::AtRuleParser<'i> for PageEdgeDeclarations {
+    type Prelude = ();
+    type AtRule = ();
+    type Error = ();
+}
+
+impl<'i> cssparser::QualifiedRuleParser<'i> for PageEdgeDeclarations {
+    type Prelude = ();
+    type QualifiedRule = ();
+    type Error = ();
+}
+
+impl<'i> cssparser::RuleBodyItemParser<'i, (), ()> for PageEdgeDeclarations {
+    fn parse_declarations(&self) -> bool {
+        true
+    }
+
+    fn parse_qualified(&self) -> bool {
+        false
+    }
 }
 
 /// Which margin sides (top, right, bottom, left) and whether a border the
-/// declarations of an `@page` block set.
-fn authored_page_edges(top_level: &str) -> ([bool; 4], bool) {
-    let mut margins = [false; 4];
-    let mut border = false;
-    for declaration in top_level.split(';') {
-        let Some((key, _)) = declaration.split_once(':') else {
-            continue;
-        };
-        let key = key
-            .rsplit("*/")
-            .next()
-            .unwrap_or(key)
-            .trim()
-            .to_ascii_lowercase();
-        match key.as_str() {
-            "margin" => margins = [true; 4],
-            "margin-top" => margins[0] = true,
-            "margin-right" => margins[1] = true,
-            "margin-bottom" => margins[2] = true,
-            "margin-left" => margins[3] = true,
-            "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
-            | "border-width" | "border-style" | "border-color" => border = true,
-            _ if key.starts_with("border-") => border = true,
-            _ => {}
-        }
-    }
-    (margins, border)
+/// declarations of an `@page` block set. The margin boxes nested in the block
+/// have declarations of their own, which do not count, and the declarations
+/// after a margin box do.
+fn authored_page_edges(block: &str) -> ([bool; 4], bool) {
+    let mut input = cssparser::ParserInput::new(block);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut declarations = PageEdgeDeclarations {
+        margins: [false; 4],
+        border: false,
+    };
+    for _ in cssparser::RuleBodyParser::new(&mut parser, &mut declarations) {}
+    (declarations.margins, declarations.border)
+}
+
+/// Whether the property `name` (lowercase) sets part of a border: `border`,
+/// a side, a part (`width`, `style`, `color`) or both, in the physical and the
+/// flow-relative spellings. `border-radius`, `border-image` and the table
+/// properties are not part of it.
+fn sets_border(name: &str) -> bool {
+    const SIDES: [&str; 10] = [
+        "top",
+        "right",
+        "bottom",
+        "left",
+        "block",
+        "block-start",
+        "block-end",
+        "inline",
+        "inline-start",
+        "inline-end",
+    ];
+    const PARTS: [&str; 3] = ["width", "style", "color"];
+    let Some(rest) = name.strip_prefix("border") else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('-') else {
+        return rest.is_empty();
+    };
+    PARTS.contains(&rest)
+        || SIDES.contains(&rest)
+        || SIDES.iter().any(|side| {
+            rest.strip_prefix(side)
+                .and_then(|part| part.strip_prefix('-'))
+                .is_some_and(|part| PARTS.contains(&part))
+        })
 }
 
 /// The declarations to insert, and where, so that pages get the default
