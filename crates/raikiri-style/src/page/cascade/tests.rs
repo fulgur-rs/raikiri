@@ -5382,6 +5382,7 @@ property_key_samples! {
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
     // CSS Containment 2 §2 / CSS Will Change 1 §3 — non-initial.
     Contain => PropertyValue::Contain(crate::property::Contain::CONTENT),
+    ContainerType => PropertyValue::ContainerType(crate::property::ContainerType::Size),
     WillChange => PropertyValue::WillChange(crate::property::WillChange::TRANSFORM),
     // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
     MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".into())),
@@ -5929,6 +5930,7 @@ property_value_variant_registry! {
     MixBlendMode,
     BoxDecorationBreak,
     Contain,
+    ContainerType,
     WillChange,
     MaskImage,
     ClipPath,
@@ -6798,6 +6800,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MixBlendMode(_)
             | PropertyValue::BoxDecorationBreak(_)
             | PropertyValue::Contain(_)
+            | PropertyValue::ContainerType(_)
             | PropertyValue::WillChange(_)
 
             // `clip-path` (§5.1) — no embedded length at all (no

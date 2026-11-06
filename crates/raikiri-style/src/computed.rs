@@ -17,22 +17,22 @@ use crate::property::{
     BackgroundRepeat, BackgroundRepeatKeyword, BorderCollapseValue, BorderColor,
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle,
     BoxDecorationBreak, BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue,
-    ClipPath, ColumnCountValue, ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue,
-    ContentComponent, ContentList, CounterResetValue, CssColor, Direction, DisplayValue,
-    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind,
-    FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
-    FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
-    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
-    FontVariationSettings, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, RubyPosition,
-    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
-    TextCombineUpright, TextDecorationColor, TextDecorationLine, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisStyle, TextEmphasisVEdge, TextGroupAlign, TextJustify, TextOrientation,
-    TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
-    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    ClipPath, ColumnCountValue, ColumnFillValue, ColumnSpanValue, Contain, ContainerType,
+    ContentAlignmentValue, ContentComponent, ContentList, CounterResetValue, CssColor, Direction,
+    DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
+    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens,
+    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
+    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextGroupAlign, TextJustify,
+    TextOrientation, TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition,
+    TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
     WhiteSpaceCollapse, WillChange, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
     empty_content_list, empty_counter_entries, empty_counter_reset_entries, empty_filter_list,
     empty_quotes_entries, empty_string_set_entries, initial_font_family,
@@ -1984,6 +1984,8 @@ pub struct ComputedValues {
     /// Containment 2 §2 <https://www.w3.org/TR/css-contain-2/#contain-property>).
     /// Identity pass-through from `SpecifiedValues::contain`.
     pub contain: Contain,
+    /// Non-inherited `container-type`, initially [`ContainerType::Normal`].
+    pub container_type: ContainerType,
     /// `will-change`. **non-inherited**, initial: [`WillChange::AUTO`] (CSS
     /// Will Change 1 §3 <https://www.w3.org/TR/css-will-change-1/#will-change>).
     /// Identity pass-through from `SpecifiedValues::will_change`.
@@ -2130,6 +2132,18 @@ pub struct ComputedValues {
 }
 
 impl ComputedValues {
+    /// Authored containment combined with the containment required by the
+    /// size-query container type (CSS Conditional Rules 5 §5.1).
+    /// This leaves the computed value of `contain` available for inheritance.
+    pub fn effective_containment(&self) -> Contain {
+        let required = match self.container_type {
+            ContainerType::Normal => Contain::NONE,
+            ContainerType::Size => Contain::STYLE.union(Contain::SIZE),
+            ContainerType::InlineSize => Contain::STYLE.union(Contain::INLINE_SIZE),
+        };
+        self.contain.union(required)
+    }
+
     /// This element's `lh` basis: its line height as an absolute length,
     /// with `normal` taken from [`Self::normal_line_height`]. `None` when
     /// `normal` was not measured.
@@ -2502,6 +2516,7 @@ impl ComputedValues {
             mix_blend_mode: MixBlendMode::Normal,
             // CSS Containment 2 §2: initial contain is `none`.
             contain: Contain::NONE,
+            container_type: ContainerType::Normal,
             // CSS Will Change 1 §3: initial will-change is `auto`.
             will_change: WillChange::AUTO,
             // CSS Masking 1 §7.1: initial mask-image is `none`.

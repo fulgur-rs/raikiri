@@ -9839,6 +9839,29 @@ css_keywords!(BoxDecorationBreak {
     Clone => "clone",
 });
 
+/// The size-query containment requested by `container-type`.
+///
+/// CSS Conditional Rules 5 §5.1. This subset supports `normal`, `size` and
+/// `inline-size`; scroll-state containers and container queries are not supported.
+/// <https://www.w3.org/TR/css-conditional-5/#container-type>
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ContainerType {
+    /// No size-query containment, the initial value.
+    #[default]
+    Normal,
+    /// Style and size containment in both axes, with an independent formatting context.
+    Size,
+    /// Style and size containment in the element's inline axis, with an independent formatting context.
+    InlineSize,
+}
+
+css_keywords!(ContainerType {
+    Normal => "normal",
+    Size => "size",
+    InlineSize => "inline-size",
+});
+
 /// Specified and computed value of `contain`.
 ///
 /// CSS Containment 2 §2 "Strong Containment: the contain property"
@@ -11973,6 +11996,8 @@ pub enum PropertyValue {
     /// Containment 2 §2; see [`Contain`]). Appended as a new 1:1 disjoint
     /// field under the placement rule in [`PropertyKey`].
     Contain(Contain),
+    /// Non-inherited `container-type`, initially [`ContainerType::Normal`].
+    ContainerType(ContainerType),
     /// `will-change` — **non-inherited**, initial: [`WillChange::AUTO`]
     /// (CSS Will Change 1 §3; see [`WillChange`]). Appended as a new 1:1
     /// disjoint field under the placement rule in [`PropertyKey`].
@@ -13003,6 +13028,8 @@ pub enum PropertyKey {
     SvgRx,
     SvgRy,
     SvgD,
+    // Independent container type; appended to preserve existing winner slots.
+    ContainerType,
 }
 
 impl PropertyValue {
@@ -13308,6 +13335,7 @@ impl PropertyValue {
             PropertyValue::BoxDecorationBreak(_) => PropertyKey::BoxDecorationBreak,
             PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
             PropertyValue::Contain(_) => PropertyKey::Contain,
+            PropertyValue::ContainerType(_) => PropertyKey::ContainerType,
             PropertyValue::WillChange(_) => PropertyKey::WillChange,
             PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
             PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
@@ -14485,6 +14513,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "box-decoration-break" => PropertyKey::BoxDecorationBreak,
         "mix-blend-mode" => PropertyKey::MixBlendMode,
         "contain" => PropertyKey::Contain,
+        "container-type" => PropertyKey::ContainerType,
         "will-change" => PropertyKey::WillChange,
         "mask-image" => PropertyKey::MaskImage,
         "clip-path" => PropertyKey::ClipPath,

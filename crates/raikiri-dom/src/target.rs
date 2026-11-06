@@ -821,7 +821,8 @@ fn content_has_quotes(cv: &raikiri_style::ComputedValues) -> bool {
 /// or closed.
 fn scopes_quote_depth(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     cascade.computed.get(idx).is_some_and(|cv| {
-        cv.contain.contains(raikiri_style::property::Contain::STYLE)
+        cv.effective_containment()
+            .contains(raikiri_style::property::Contain::STYLE)
             && doc.counter_display(idx, cv.display) != DisplayValue::Contents
     })
 }

@@ -12318,6 +12318,7 @@ fn holds_floats_by_style(
         || document.nodes[node_id].layout_position() == Position::Absolute
         || scrolls_overflow(document, computed, node_id)
         || document.nodes[node_id].multicol.is_some()
+        || document.nodes[node_id].roots_block_context()
         || establishes_containment_context(computed)
 }
 
