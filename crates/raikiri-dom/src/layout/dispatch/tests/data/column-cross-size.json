@@ -1,0 +1,745 @@
+{
+  "chromium": "152.0.7977.82 Arch Linux",
+  "settings": {
+    "viewport": [
+      800,
+      600
+    ],
+    "window_size": [
+      800,
+      743
+    ],
+    "device_scale_factor": 1,
+    "body": "margin:0;width:800px;font:10px/10px Ahem",
+    "div": "box-sizing:border-box",
+    "font": "crates/raikiri-dom/tests/data/text-autospace/Ahem.ttf",
+    "measurement": "DOMRect after document.fonts.ready, each case rendered alone at the body origin",
+    "scope": "Single-line column flex containers, normal white-space, orthogonal paragraph items. Separate baseline mismatches involving white-space:nowrap automatic main minima and wrapping containers are outside this fixture.",
+    "reproduce": "Embed Ahem as a data-URL @font-face; apply the recorded body/div styles; render container div with one item div and its text; wait for document.fonts.ready and measure both DOMRects.",
+    "main_limit_controls": "Assert item sizes and container cross sizes only. Container main sizes and dependent item positions remain baseline mismatches recorded in RAIKIRI-1487. Full DOMRects are retained as observations, not claimed to match."
+  },
+  "cases": [
+    {
+      "name": "inline-column-vertical-rl-60",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "inline-column-vertical-rl-120",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 120px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        120
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        120
+      ]
+    },
+    {
+      "name": "inline-column-vertical-lr-60",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-lr;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "inline-column-vertical-lr-120",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-lr;flex:0 0 120px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        120
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        120
+      ]
+    },
+    {
+      "name": "vertical-column-vertical-rl-80",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-column-vertical-rl-160",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 160px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        160,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        160,
+        10
+      ]
+    },
+    {
+      "name": "vertical-column-vertical-lr-80",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-lr",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-column-vertical-lr-160",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-lr",
+      "item": "writing-mode:horizontal-tb;flex:0 0 160px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        160,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        160,
+        10
+      ]
+    },
+    {
+      "name": "horizontal-stated-main",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;height:100px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-main-max",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-main-min",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;min-height:50px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-cross-min",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;min-width:25px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        25,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        25,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-cross-max",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;max-width:5px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        5,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        5,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-definite-cross",
+      "container": "display:inline-flex;flex-direction:column;width:30px",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        30,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        30,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-definite-main",
+      "container": "display:inline-flex;flex-direction:column;height:200px",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        200
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-align-start",
+      "container": "display:inline-flex;flex-direction:column;align-items:flex-start",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-edges",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;padding:3px;border:2px solid",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        20,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        20,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-percentage-padding",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px;padding:10%",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "vertical-stated-main",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;width:100px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-main-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;max-width:80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-main-min",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;min-width:50px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-cross-min",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;min-height:25px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        25
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        25
+      ]
+    },
+    {
+      "name": "vertical-cross-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;max-height:5px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        5
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        5
+      ]
+    },
+    {
+      "name": "vertical-definite-cross",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:30px",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        30
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        30
+      ]
+    },
+    {
+      "name": "vertical-definite-main",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        200,
+        10
+      ],
+      "item_rect": [
+        120,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-align-start",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;align-items:flex-start",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;padding:3px;border:2px solid",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        20
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        20
+      ]
+    },
+    {
+      "name": "vertical-percentage-padding",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px;padding:10%",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "horizontal-fixed-cross-5-start",
+      "container": "display:inline-flex;flex-direction:column;width:5px;align-items:flex-start",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        5,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-fixed-cross-30-start",
+      "container": "display:inline-flex;flex-direction:column;width:30px;align-items:flex-start",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        30,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-fixed-cross-100-start",
+      "container": "display:inline-flex;flex-direction:column;width:100px;align-items:flex-start",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        100,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "horizontal-container-min-cross",
+      "container": "display:inline-flex;flex-direction:column;min-width:30px;align-items:flex-start",
+      "item": "writing-mode:vertical-rl;flex:0 0 60px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        30,
+        60
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        60
+      ]
+    },
+    {
+      "name": "vertical-fixed-cross-5-start",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:5px;align-items:flex-start",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        5
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-fixed-cross-30-start",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:30px;align-items:flex-start",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        30
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-fixed-cross-100-start",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:100px;align-items:flex-start",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        100
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-container-min-cross",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;min-height:30px;align-items:flex-start",
+      "item": "writing-mode:horizontal-tb;flex:0 0 80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        30
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    }
+  ],
+  "main_limit_controls": [
+    {
+      "name": "inline-column-vertical-rl-60-active-main-max",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        80
+      ]
+    },
+    {
+      "name": "inline-column-vertical-lr-60-active-main-max",
+      "container": "display:inline-flex;flex-direction:column",
+      "item": "writing-mode:vertical-lr;flex:0 0 120px;max-height:80px",
+      "text": "xxxx xxxx xx",
+      "container_rect": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "item_rect": [
+        0,
+        0,
+        10,
+        80
+      ]
+    },
+    {
+      "name": "vertical-column-vertical-rl-80-active-main-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl",
+      "item": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    },
+    {
+      "name": "vertical-column-vertical-lr-80-active-main-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-lr",
+      "item": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px",
+      "text": "xxxx xxxx xxxx",
+      "container_rect": [
+        0,
+        0,
+        80,
+        10
+      ],
+      "item_rect": [
+        0,
+        0,
+        80,
+        10
+      ]
+    }
+  ]
+}
