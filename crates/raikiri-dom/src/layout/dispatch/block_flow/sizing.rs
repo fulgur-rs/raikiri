@@ -253,6 +253,18 @@ impl Metrics {
             .maybe_apply_aspect_ratio(style.aspect_ratio)
             .maybe_add(ratio_edges)
             .maybe_clamp(min, limit);
+        // Ratio transfer and its bounds can lower a side below its edges.
+        // Apply that geometric floor last, leaving non-finite values for the
+        // existing sanitizer and its diagnostics.
+        let preferred = preferred.zip_map(padding_border.sum_axes(), |size, floor| {
+            size.map(|size| {
+                if size.is_finite() && size < floor {
+                    floor
+                } else {
+                    size
+                }
+            })
+        });
         // An axis is ratio-dependent when its size is not authored or imposed
         // but follows from the other axis through the preferred aspect ratio.
         let ratio_width =

@@ -288,7 +288,7 @@ fn item_metrics(
     inputs: LayoutInput,
 ) -> Metrics {
     let main_is_width = tree.flex_main_axis_is_width(usize::from(node));
-    let metrics = Metrics::resolve_flexed(
+    let mut metrics = Metrics::resolve_flexed(
         style,
         width_stands_in,
         content_box_ratio,
@@ -298,6 +298,11 @@ fn item_metrics(
             height: main_is_width == Some(false),
         },
     );
+    // A cyclic percentage width is auto for this grid contribution, so its
+    // ratio-derived preferred width keeps the ordinary min-content floor.
+    metrics.ratio_width |=
+        super::grid_cyclic_ratio_content_minimum(tree, usize::from(node), style, inputs)
+            && metrics.preferred.width.is_some();
     let known = inputs.known_dimensions;
     // Only a box with a ratio takes a size from the other axis, and a stretch
     // hint is the one size known while the other is not.

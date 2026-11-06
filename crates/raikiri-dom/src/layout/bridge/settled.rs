@@ -502,6 +502,18 @@ pub(super) fn stretches_on_both_grid_axes(
     if !settled[idx].has_aspect_ratio || doc.nodes[idx].layout_position() == Position::Absolute {
         return false;
     }
+    // A percentage width can be cyclic while an intrinsic column is sized.
+    // Fixed rows do not make that width definite, so keep its ratio for the
+    // contribution even though both sizes may resolve in the final area.
+    let percentage_width = match &cv.width {
+        ComputedLengthPercentageOrAuto::Percent(_) => true,
+        ComputedLengthPercentageOrAuto::Calc(value) => value.percent != 0.0,
+        ComputedLengthPercentageOrAuto::Math(value) => value.has_percentage(),
+        _ => false,
+    };
+    if percentage_width {
+        return false;
+    }
     let Some(parent) = doc.taffy_parent_of(idx) else {
         return false;
     };
