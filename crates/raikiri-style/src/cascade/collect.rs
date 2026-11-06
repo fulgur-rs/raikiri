@@ -14,9 +14,10 @@ use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
 use crate::property::{
-    Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue, TextOrientation, WritingMode,
+    DeclarationContext, Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue,
+    TextOrientation, WritingMode,
 };
-use crate::rule::{Declaration, parse_declaration_block_within};
+use crate::rule::{Declaration, parse_declaration_block_in_context};
 
 use super::candidate::{
     CandidateSink, ElementCandidates, ElementInput, Precedence, SharedDeclarations, pseudo_slot,
@@ -112,7 +113,7 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
 /// cascade hold; see [`DeclarationBlockCache`].
 pub(crate) const STORED_BLOCK_BUDGET: usize = 8 << 20;
 
-/// Parsed `style`-attribute blocks for one cascade, keyed by source text.
+/// Parsed `style`-attribute blocks for one cascade, keyed by grammar and source text.
 ///
 /// Generated documents often repeat the same inline style on many elements;
 /// storing each repeated string's declarations avoids re-tokenizing it per
@@ -125,14 +126,14 @@ pub(crate) const STORED_BLOCK_BUDGET: usize = 8 << 20;
 /// hash but always confirm the full source text before reuse, so a hash
 /// collision falls back to a fresh parse. Consumer property registrations
 /// are fixed for the rule tree the cascade runs against, so the parse result
-/// is a function of the source text alone.
+/// is a function of the source text and its declaration context.
 ///
 /// The stored blocks stay for the whole cascade, so they may hold at most a
 /// budget of bytes, counted by their sources' lengths and their declarations'
 /// inline size; past it, a repeated source is parsed for each element like a
 /// first sight. Elements then share less, and every result stays the same.
 struct DeclarationBlockCache {
-    entries: HashMap<u64, DeclarationBlockEntry>,
+    entries: HashMap<(DeclarationContext, u64), DeclarationBlockEntry>,
     /// The stored blocks, at the positions cached handles name.
     blocks: Vec<Box<[Declaration]>>,
     /// The bytes the stored blocks hold.
@@ -187,19 +188,30 @@ impl DeclarationBlockCache {
         rule_tree: &RuleTree,
         room: usize,
     ) -> Result<DeclarationBlock, CascadeError> {
+        self.declarations_in_context(source, rule_tree, room, DeclarationContext::Css)
+    }
+
+    fn declarations_in_context(
+        &mut self,
+        source: &str,
+        rule_tree: &RuleTree,
+        room: usize,
+        context: DeclarationContext,
+    ) -> Result<DeclarationBlock, CascadeError> {
         let parse = || {
             let mut input = ParserInput::new(source);
             let mut parser = Parser::new(&mut input);
-            parse_declaration_block_within(
+            parse_declaration_block_in_context(
                 &mut parser,
                 rule_tree.consumer_property_registrations(),
                 room,
+                context,
             )
         };
         let fresh = || parse().map_or_else(DeclarationBlock::PastRoom, DeclarationBlock::Fresh);
         let mut hasher = DefaultHasher::new();
         source.hash(&mut hasher);
-        match self.entries.entry(hasher.finish()) {
+        match self.entries.entry((context, hasher.finish())) {
             Entry::Vacant(vacant) => {
                 vacant.insert(DeclarationBlockEntry::SeenOnce);
                 Ok(fresh())
@@ -782,9 +794,17 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         }
         // inline style, parsed only as far as the element has room
         if let Some(source) = elem.inline_style_source() {
-            let block = self
-                .block_cache
-                .declarations(source, self.rule_tree, sink.room())?;
+            let context = if elem.namespace_uri() == Some("http://www.w3.org/2000/svg") {
+                DeclarationContext::SvgStyleAttribute
+            } else {
+                DeclarationContext::Css
+            };
+            let block = self.block_cache.declarations_in_context(
+                source,
+                self.rule_tree,
+                sink.room(),
+                context,
+            )?;
             self.block_cache.push(&mut sink, block, |decl| {
                 Precedence::new(
                     Origin::Author,

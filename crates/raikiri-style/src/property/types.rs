@@ -8038,9 +8038,17 @@ pub struct CustomProperty {
     pub(crate) value: SmolStr,
 }
 
+/// The grammar used by the declaration that consumes a value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum DeclarationContext {
+    Css,
+    SvgStyleAttribute,
+}
+
 /// A known property whose value must wait for computed-value substitution.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeferredValue {
+    pub(crate) context: DeclarationContext,
     pub(crate) property: SmolStr,
     pub(crate) value: SmolStr,
     pub(crate) key: PropertyKey,

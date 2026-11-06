@@ -9,6 +9,8 @@ use crate::rule::parse_declaration_block_with_consumer_properties;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
+mod svg_unitless_tests;
+
 #[test]
 fn inline_style_beats_type_selector() {
     let cv = cascade_doc("p { color: red }", "p", Some("color: blue"));
@@ -763,7 +765,9 @@ fn declaration_block_cache_stores_a_source_on_its_second_sight() {
         DeclarationBlock::Fresh(expected.clone())
     );
     assert!(matches!(
-        cache.entries.get(&source_hash(source)),
+        cache
+            .entries
+            .get(&(DeclarationContext::Css, source_hash(source))),
         Some(DeclarationBlockEntry::SeenOnce)
     ));
     for _ in 0..2 {
@@ -783,7 +787,7 @@ fn declaration_block_cache_never_reuses_a_colliding_source() {
     let mut cache = DeclarationBlockCache::default();
     cache.blocks.push(Box::default());
     cache.entries.insert(
-        source_hash("color: red"),
+        (DeclarationContext::Css, source_hash("color: red")),
         DeclarationBlockEntry::Parsed("color: blue".into(), 0),
     );
     let parsed = cache

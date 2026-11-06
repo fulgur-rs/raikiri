@@ -117,6 +117,7 @@ impl ResolvedValue {
             Self::Parsed(value) => project_deferred_value(value, deferred.key),
             Self::Calc(value) => calc_length_percentage_value(deferred.key, value),
             Self::RadiusKeyword(keyword) => Some(PropertyValue::Deferred(DeferredValue {
+                context: crate::property::DeclarationContext::Css,
                 property: radius_corner_property(deferred.key)?.into(),
                 value: keyword.as_css_str().into(),
                 key: deferred.key,
@@ -126,6 +127,15 @@ impl ResolvedValue {
 }
 
 fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Option<ResolvedValue> {
+    if deferred.context == crate::property::DeclarationContext::SvgStyleAttribute {
+        let mut input = ParserInput::new(substituted);
+        let mut parser = Parser::new(&mut input);
+        if let Some(value) = crate::property::parse_svg_style_size(&deferred.property, &mut parser)
+            && parser.expect_exhausted().is_ok()
+        {
+            return Some(ResolvedValue::Parsed(value));
+        }
+    }
     if matches!(
         deferred.property.as_str(),
         "width"
@@ -947,6 +957,7 @@ pub(crate) fn project_deferred_value(
                     _ => "border-image-repeat",
                 };
                 PropertyValue::Deferred(DeferredValue {
+                    context: crate::property::DeclarationContext::Css,
                     key,
                     property: property.into(),
                     value: kw.as_css_str().into(),

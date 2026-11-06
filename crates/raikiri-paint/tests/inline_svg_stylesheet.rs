@@ -930,3 +930,43 @@ fn a_size_in_the_style_attribute_is_read_by_the_svg_renderer_not_the_cascade() {
         "<svg width=40 height=30><rect height=10 width=30 fill=blue /></svg>",
     );
 }
+
+#[test]
+fn unitless_inline_svg_sizes_beat_page_rules() {
+    assert_both_svg_paths_paint_like(
+        "<style>rect{width:30px;height:25px}</style><svg width=40 height=30><rect style='width:20;height:10' fill=blue /></svg>",
+        "<svg width=40 height=30><rect width=20 height=10 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn unitless_inline_svg_variables_reach_both_renderers() {
+    assert_both_svg_paths_paint_like(
+        "<style>rect{width:30px;height:25px;--w:20;--h:10}</style><svg width=40 height=30><rect style='width:var(--w);height:var(--h)' fill=blue /></svg>",
+        "<svg width=40 height=30><rect width=20 height=10 fill=blue /></svg>",
+    );
+}
+
+#[track_caller]
+fn assert_both_svg_paths_paint_like(body: &str, reference: &str) {
+    assert_paints_like(body, reference);
+    let expected = public_svg_raster(reference);
+    assert_ne!(differences(&expected, &public_svg_raster("<svg />")), 0);
+    assert_eq!(
+        differences(&public_svg_raster(body), &expected),
+        0,
+        "{body}"
+    );
+}
+
+#[test]
+fn unitless_inline_svg_invalid_variables_do_not_revive_presentation_sizes() {
+    for value in ["-20", "20 junk", "calc(20)"] {
+        assert_both_svg_paths_paint_like(
+            &format!(
+                "<style>#t{{width:30px;height:25px}}</style><svg width=40 height=30><rect id=t width=5 height=6 style='--n:{value};width:var(--n);height:var(--n)' fill=blue /><circle cx=35 cy=20 r=2 fill=red /></svg>"
+            ),
+            "<svg width=40 height=30><circle cx=35 cy=20 r=2 fill=red /></svg>",
+        );
+    }
+}

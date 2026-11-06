@@ -125,6 +125,7 @@ fn inherit_markers_and_deferred_values_move_to_every_side() {
     }
     let deferred = |property: &'static str, key| {
         PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: SmolStr::new_static(property),
             value: "inherit".into(),
             key,
@@ -335,6 +336,7 @@ fn deferred_intrinsic_sizes_move_to_the_mapped_longhand() {
     let flow = FlowMapping::new(WritingMode::VerticalLr, Direction::Ltr);
     let deferred = |property: &'static str, key| {
         PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: SmolStr::new_static(property),
             value: "var(--x)".into(),
             key,
@@ -375,6 +377,7 @@ fn deferred_inset_values_move_to_every_side() {
     let flow = FlowMapping::HORIZONTAL;
     let deferred = |property: &'static str, key| {
         PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: SmolStr::new_static(property),
             value: "var(--x)".into(),
             key,

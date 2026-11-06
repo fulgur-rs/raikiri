@@ -659,6 +659,7 @@ fn every_longhand_of_a_shorthand_case_resolves_the_keyword() {
             // A shorthand the cascade keeps whole expands a keyword into
             // longhands named by the expansion itself.
             KeyClass::Retained => crate::rule::retained_keyword_longhands(&DeferredValue {
+                context: crate::property::DeclarationContext::Css,
                 property: name.into(),
                 value: "inherit".into(),
                 key,
@@ -670,6 +671,7 @@ fn every_longhand_of_a_shorthand_case_resolves_the_keyword() {
         for (longhand, longhand_name) in longhands {
             assert_eq!(property_key_for_name(longhand_name), Some(longhand));
             let marker = PropertyValue::Deferred(DeferredValue {
+                context: crate::property::DeclarationContext::Css,
                 property: longhand_name.into(),
                 value: "inherit".into(),
                 key: longhand,
