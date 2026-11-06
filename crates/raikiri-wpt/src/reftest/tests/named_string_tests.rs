@@ -195,3 +195,46 @@ fn builtin_print_named_strings_without_margin_boxes_keep_the_body_unchanged() {
         assert!(actual.rgba == expected.rgba);
     }
 }
+
+#[test]
+fn contents_named_strings_builtin_print_width_continuation() {
+    let body = "<body><span style='display:contents'></span><h2>A1</h2><section style='page:narrow'><span style='display:contents'></span><h2>B1</h2><h2>B2</h2><p style='break-before:page'>tail</p></section></body>";
+    let extra = "@page narrow{size:180px 200px}";
+    for images in [false, true] {
+        let actual = render(
+            body,
+            [
+                "'F:' string(title,first)",
+                "'S:' string(title,start)",
+                "'L:' string(title,last)",
+                "'X:' string(title,first-except)",
+            ],
+            extra,
+            images,
+        );
+        assert_eq!(
+            actual
+                .pages
+                .iter()
+                .map(|page| page.width)
+                .collect::<Vec<_>>(),
+            [300, 180, 180]
+        );
+        for (index, values) in [
+            ["F:A1", "S:A1", "L:A1", "X:"],
+            ["F:B1", "S:B1", "L:B2", "X:"],
+            ["F:B2", "S:B2", "L:B2", "X:B2"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let literals = values.map(|text| format!("'{text}'"));
+            let expected = render(body, literals.each_ref().map(String::as_str), extra, images);
+            assert!(
+                margin_pixels(&actual.pages[index]) == margin_pixels(&expected.pages[index]),
+                "margin pixels differ page {index}"
+            );
+            assert!(body_pixels(&actual.pages[index]) == body_pixels(&expected.pages[index]));
+        }
+    }
+}

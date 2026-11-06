@@ -165,6 +165,15 @@ impl NodeArena {
         self.anonymous_base = self.source.len();
     }
 
+    /// Every source node and generated box retained by the current layout.
+    pub(crate) fn layout_nodes(&self) -> impl Iterator<Item = &Node> {
+        self.source
+            .iter()
+            .chain(&self.anonymous_tables)
+            .chain(&self.anonymous_cells)
+            .chain(self.initial_containing_block.as_deref())
+    }
+
     /// Every source node and generated box a layout pass may lay out.
     pub(crate) fn layout_nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
         self.source

@@ -113,7 +113,11 @@ enum LegacyRoute {
 }
 
 fn legacy_margin_glyphs(rule: &str, route: LegacyRoute) -> Vec<String> {
-    let (document, cascade, page, _) = fixture("<p>before</p><h2>A1</h2><h2>A2</h2>", rule, false);
+    legacy_margin_glyphs_for_body("<p>before</p><h2>A1</h2><h2>A2</h2>", rule, route)
+}
+
+fn legacy_margin_glyphs_for_body(body: &str, rule: &str, route: LegacyRoute) -> Vec<String> {
+    let (document, cascade, page, _) = fixture(body, rule, false);
     let mut scene = Scene::new();
     match route {
         LegacyRoute::Images => {
@@ -179,6 +183,217 @@ fn builtin_margin_named_strings_start_ignores_leading_html_whitespace() {
                 texts(&body, "string(title,start)", paged),
                 ["A1"],
                 "paged={paged}, prefix={prefix:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_empty_wrappers_do_not_precede_heading() {
+    for prefix in [
+        "<span style='display:contents'></span>",
+        "<span style='display:contents'><span style='display:contents'></span></span>",
+    ] {
+        for paged in [false, true] {
+            let body = format!("<body>{prefix}<h2>A1</h2><h2>A2</h2></body>");
+            assert_eq!(
+                texts(&body, "string(title,start)", paged),
+                ["A1"],
+                "paged={paged}, prefix={prefix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_preserve_real_content() {
+    for prefix in [
+        "<span style='display:contents'>before</span>",
+        "<div style='display:contents'><p>before</p></div>",
+        "<div style='width:0;height:0'></div>",
+    ] {
+        for paged in [false, true] {
+            let body = format!("<body>{prefix}<h2>A1</h2><h2>A2</h2></body>");
+            assert_eq!(
+                texts(&body, "string(title,start)", paged),
+                [""],
+                "paged={paged}, prefix={prefix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_preserve_single_page_generated_content() {
+    for pseudo in ["before", "after"] {
+        for declaration in [
+            "content:'text'",
+            "content:'';padding:5px",
+            "content:'';display:inline-block;width:10px;height:10px",
+            "content:'';display:block;padding:5px",
+        ] {
+            let body = format!(
+                "<body><style>.c::{pseudo}{{{declaration}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+            );
+            assert_eq!(
+                texts(&body, "string(title,start)", false),
+                [""],
+                "{pseudo}: {declaration}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_absent_pseudo_does_not_precede_heading() {
+    for pseudo in ["before", "after"] {
+        for declaration in ["content:none", "content:''", "content:'text';display:none"] {
+            for paged in [false, true] {
+                let body = format!(
+                    "<body><style>.c::{pseudo}{{{declaration}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+                );
+                assert_eq!(
+                    texts(&body, "string(title,start)", paged),
+                    ["A1"],
+                    "paged={paged}, {pseudo}: {declaration}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_carry_in_yields_to_next_page_heading() {
+    let body = "<body><h2>OLD</h2><section style='break-before:page'><span style='display:contents'></span><h2>NEW</h2><h2>LAST</h2></section><p style='break-before:page'>tail</p></body>";
+    for (mode, expected) in [
+        ("first", ["OLD", "NEW", "LAST"]),
+        ("start", ["OLD", "NEW", "LAST"]),
+        ("last", ["OLD", "LAST", "LAST"]),
+        ("first-except", ["", "", "LAST"]),
+    ] {
+        assert_eq!(
+            texts(body, &format!("string(title,{mode})"), true),
+            expected,
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn contents_named_strings_running_element_uses_next_real_page() {
+    let body = "<body><p>OLD</p><div id=r style='position:running(hdr)'>RUN</div><span style='display:contents'></span><p style='break-before:page'>NEXT</p></body>";
+    let (document, cascade, _, count) = fixture(body, "element(hdr)", true);
+    assert_eq!(count, 2);
+    let running = document
+        .preorder(document.root_index())
+        .find(|&node| document.element_attribute(node, "id") == Some("r"))
+        .unwrap();
+    let index = raikiri_dom::RunningIndex::build(
+        &document,
+        &cascade,
+        (0..count).map(|page| (&document, page)),
+    );
+    assert_eq!(
+        index.select("hdr", raikiri_style::property::StringFetchMode::First, 0),
+        None
+    );
+    assert_eq!(
+        index.select("hdr", raikiri_style::property::StringFetchMode::Start, 1),
+        Some(raikiri_traits::NodeId(running as u64))
+    );
+}
+
+#[test]
+fn contents_named_strings_single_paint_matches_literal() {
+    let body = "<body><span style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>";
+    for route in [
+        LegacyRoute::Plain,
+        LegacyRoute::Images,
+        LegacyRoute::NamedImagesAndHighlights,
+    ] {
+        assert_eq!(
+            legacy_margin_glyphs_for_body(body, "'V:' string(title,start)", route),
+            legacy_margin_glyphs_for_body(body, "'V:A1'", route)
+        );
+    }
+}
+
+fn glyph_count(body: &str) -> usize {
+    let (document, cascade, page, _) = fixture(body, "'V:'", false);
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin(&mut scene, &document, &cascade, page, 0.0).unwrap();
+    scene
+        .commands
+        .iter()
+        .map(|command| match command {
+            RenderCommand::GlyphRun(run) => run.glyphs.len(),
+            _ => 0,
+        })
+        .sum()
+}
+
+#[test]
+fn contents_named_strings_preserve_painted_pseudo_overlays() {
+    let mut observed = Vec::new();
+    for pseudo in ["before", "after"] {
+        for placement in ["float:left", "position:absolute", "position:fixed"] {
+            let body = format!(
+                "<body><style>.c::{pseudo}{{content:'X';{placement}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+            );
+            let control = body.replace("content:'X'", "content:none");
+            let painted = glyph_count(&body) > glyph_count(&control);
+            let header = texts(&body, "string(title,start)", false);
+            observed.push((pseudo, placement, painted, header));
+        }
+    }
+    println!("overlay observations: {observed:?}");
+    assert!(observed.iter().all(|(_, _, painted, _)| *painted));
+    assert!(
+        observed
+            .iter()
+            .all(|(_, _, _, header)| header == &[String::new()])
+    );
+}
+
+#[test]
+fn contents_named_strings_absent_overlay_does_not_precede_heading() {
+    for pseudo in ["before", "after"] {
+        for placement in ["float:left", "position:absolute", "position:fixed"] {
+            for content in ["content:none", "content:'X';display:none"] {
+                let body = format!(
+                    "<body><style>.c::{pseudo}{{{content};{placement}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+                );
+                assert_eq!(
+                    texts(&body, "string(title,start)", false),
+                    ["A1"],
+                    "{pseudo} {placement} {content}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_preserve_anonymous_table_cell_generated_content() {
+    for display in ["table", "table-row"] {
+        for pseudo in ["before", "after"] {
+            let body = format!(
+                "<body><style>.c::{pseudo}{{content:'X'}}</style><div style='display:{display}'><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></div></body>"
+            );
+            let control = body.replace("content:'X'", "content:none");
+            assert!(
+                glyph_count(&body) > glyph_count(&control),
+                "{display}::{pseudo}"
+            );
+            assert_eq!(
+                texts(&body, "string(title,start)", false),
+                [""],
+                "{display}::{pseudo}"
+            );
+            assert_eq!(
+                texts(&control, "string(title,start)", false),
+                ["A1"],
+                "empty {display}::{pseudo}"
             );
         }
     }

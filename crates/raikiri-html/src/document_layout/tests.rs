@@ -1,4 +1,5 @@
 use super::*;
+mod contents_named_string_tests;
 mod inline_svg_storage_tests;
 use raikiri_traits::{NodeId, NodeKind, PaintRect, PaintTransform};
 
