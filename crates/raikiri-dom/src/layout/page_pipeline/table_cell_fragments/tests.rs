@@ -140,6 +140,8 @@ fn avoidance_forced_breaks_positioned_offsets_and_clipped_cells_do_not_qualify()
             "break-before:page",
             "break-after:page",
             "position:relative;top:10px",
+            "position:absolute",
+            "position:fixed",
         ] {
             let mut fixture = Fixture::new();
             let (node, display) = match level {

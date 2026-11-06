@@ -63,7 +63,7 @@ pub(super) fn fitting(
     let mut owner = document.parent_of(row)?;
     let mut first = row;
     if document.nodes[owner].display() == DisplayValue::TableRowGroup {
-        if only_box(document, owner)? != row {
+        if only_box(document, owner) != Some(row) {
             return None;
         }
         first = owner;
