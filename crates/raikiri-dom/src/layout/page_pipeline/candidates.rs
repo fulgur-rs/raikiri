@@ -1539,6 +1539,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     0.0
                 };
+                let caption_tail_candidate = node.display() == DisplayValue::TableCaption
+                    && frame.item_tail.is_some_and(|tail| tail.item == node_id);
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
@@ -1557,6 +1559,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || first_grid_row.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
+                        || caption_tail_candidate
                         || flex_item_candidate
                         || is_rendered_leaf
                         || grid_item_candidate
@@ -1705,12 +1708,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         inherited: inherited_edges,
                     });
                 // The row groups of a table pass its last row on.
-                let child_item_tail =
-                    if document.nodes[node_id].display() == DisplayValue::TableRowGroup {
-                        frame.item_tail
-                    } else {
-                        item_tail
-                    };
+                let child_item_tail = if matches!(
+                    document.nodes[node_id].display(),
+                    DisplayValue::TableRowGroup
+                        | DisplayValue::TableHeaderGroup
+                        | DisplayValue::TableFooterGroup
+                ) {
+                    frame.item_tail
+                } else {
+                    item_tail
+                };
                 // For each child of a block container, its last in-flow box and
                 // whether it floats: they tell the box before each child, and
                 // the last box that the closing edges follow.

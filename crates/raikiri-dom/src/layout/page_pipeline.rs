@@ -4280,7 +4280,7 @@ fn paginate_flow(
     );
     collector.collect_flow(root_flow_offset)?;
     let (clip_edges, edges_breaks) = collector.into_outputs();
-    let table_headers = HeaderRepeats::prepare(
+    let mut table_headers = HeaderRepeats::prepare(
         document,
         cascade,
         roots.contents,
@@ -4295,6 +4295,25 @@ fn paginate_flow(
             )
         },
     );
+    if table_headers.headers.values().any(|group| group.footer) {
+        for candidate in &candidates {
+            let edges = candidate.context.item_tail_edges();
+            if edges <= 0.0 {
+                continue;
+            }
+            if let Some(owner) = table_headers.owner(candidate.node_id)
+                && let Some(footer) = table_headers.headers.get_mut(&owner)
+                && footer.footer
+            {
+                // An avoided group may be represented by its first row. Both
+                // ends include root_flow_offset; subtract the entire footer so
+                // its remaining rows are not counted as additional closing edges.
+                let tail_end = candidate.raw_y + candidate.height + edges;
+                let footer_end = footer.source_y + footer.height;
+                footer.closing_edges = footer.closing_edges.max((tail_end - footer_end).max(0.0));
+            }
+        }
+    }
     let avoided_breaks = AvoidedBreaks::collect(
         document,
         cascade,
@@ -5591,13 +5610,18 @@ impl AvoidedBreaks {
         // The last row of a table moves to the next page with the edges that
         // close the table when they do not fit after it.
         let item_tail = item_tail_move(candidate, fit);
+        let page =
+            page || (item_tail && document.nodes[node_id].display() == DisplayValue::TableCaption);
+        let tail_row_fits =
+            table_row_lead + height + repeated_header_height + repeated_footer_height
+                <= next_page_step + 0.001;
         let cell_text_fits = candidate.context.is_table_row()
             && table_cell_fragments::fitting(
                 document, cascade, node_id, flow_y, page_start, page_end,
             )
             .is_some();
         let table_row = candidate.context.is_table_row()
-            && (item_tail
+            && ((item_tail && tail_row_fits)
                 || (!cell_text_fits
                     && table_row_moves(
                         flow_y,
@@ -9120,12 +9144,31 @@ fn container_item_tail(
             if document.anonymous_table_cells(node_id).next().is_some() {
                 return None;
             }
-            // Each row with the group that holds it, if any.
-            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+            let mut captions = 0;
+            let mut bottom_caption = false;
             for child in elements(node_id) {
+                if document.nodes[child].display() == DisplayValue::TableCaption {
+                    captions += 1;
+                    bottom_caption |= cascade.computed[child].caption_side
+                        == raikiri_style::property::CaptionSideValue::Bottom;
+                }
+            }
+            // Table layout currently gives only the first caption geometry.
+            // Do not mistake it for the visual tail when another follows it.
+            if captions > 1 && bottom_caption {
+                return None;
+            }
+            // Each visual row or bottom caption, with its row group if any.
+            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+            for child in pagination_child_order(document, cascade, node_id)
+                .into_iter()
+                .filter(|&child| document.nodes[child].kind() == NodeKind::Element)
+            {
                 match document.nodes[child].display() {
                     DisplayValue::TableRow => rows.push((child, None)),
-                    DisplayValue::TableRowGroup => {
+                    DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup => {
                         if document.anonymous_table_cells(child).next().is_some() {
                             return None;
                         }
@@ -9134,9 +9177,20 @@ fn container_item_tail(
                         // last row to move.
                         rows.extend(elements(child).map(|row| (row, Some(child))));
                     }
-                    DisplayValue::TableCaption
+                    DisplayValue::TableCaption => {
                         if cascade.computed[child].caption_side
-                            == raikiri_style::property::CaptionSideValue::Top => {}
+                            == raikiri_style::property::CaptionSideValue::Bottom
+                        {
+                            let caption = &document.nodes[child];
+                            if !matches!(caption.position(), PositionValue::Static)
+                                || caption.used_writing_mode.is_vertical()
+                                || !breaks_only_around(document, cascade, child, has_named_pages)
+                            {
+                                return None;
+                            }
+                            rows.push((child, None));
+                        }
+                    }
                     _ => return None,
                 }
             }
@@ -10720,7 +10774,18 @@ fn place_table_footer(
     let mut page = page_origins.page_index_for_y(y + 0.001);
     let page_end = page_origins.origin(page) + page_origins.step_at(page);
     let next = page.saturating_add(1);
-    if y + footer.height > page_end + 0.001 && footer.height <= page_origins.step_at(next) + 0.001 {
+    let edges_move = footer.closing_edges > 0.0
+        && y + footer.height <= page_end + 0.001
+        && avoided_box_moves(
+            y,
+            0.0,
+            y + footer.height + footer.closing_edges,
+            page_origins.origin(page),
+            page_end,
+        );
+    if (y + footer.height > page_end + 0.001 || edges_move)
+        && footer.height <= page_origins.step_at(next) + 0.001
+    {
         page = next;
         y = page_origins.origin(page);
     }

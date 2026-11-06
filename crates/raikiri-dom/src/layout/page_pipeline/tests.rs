@@ -72,6 +72,7 @@ mod sibling_scan_tests;
 mod sibling_shift_tests;
 mod source_walk_tests;
 mod table_follow_tests;
+mod table_tail_tests;
 mod top_edge_tests;
 mod tree_order_tests;
 mod vertical_grid_tests;

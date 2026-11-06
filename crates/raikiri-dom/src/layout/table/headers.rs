@@ -3,8 +3,8 @@
 
 use crate::Document;
 use raikiri_style::{
-    CascadeResult,
-    property::{BreakBetween, DisplayValue, FloatValue, PositionValue},
+    CascadeResult, ComputedLengthPercentageOrAuto as Length,
+    property::{BreakBetween, BreakInside, DisplayValue, FloatValue, OverflowValue, PositionValue},
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -24,6 +24,9 @@ pub(crate) struct HeaderRepeat {
     pub(crate) last_row: Option<(u32, f32)>,
     /// For a footer, the flow shift when pagination reached its source.
     pub(crate) visit_shift: Option<f32>,
+    /// Closing edges after the source footer, excluding the footer's rows.
+    /// Copies on earlier pages do not reserve this space.
+    pub(crate) closing_edges: f32,
     /// The table's block start before pagination.
     pub(crate) table_source_y: f32,
     /// Page origin and header y per page index. Call
@@ -46,6 +49,7 @@ impl HeaderRepeat {
             footer,
             last_row: None,
             visit_shift: None,
+            closing_edges: 0.0,
             placements: BTreeMap::new(),
             by_origin: Vec::new(),
         }
@@ -73,7 +77,7 @@ pub(crate) struct HeaderRepeats {
 }
 
 impl HeaderRepeats {
-    /// Finds the tables among the children of `body` whose first header
+    /// Finds ordinary block-flow tables below `body` whose first header
     /// group, first footer group, or both, repeat on each page of the table.
     ///
     /// A body row is a row outside those groups, or a box of the table's
@@ -98,7 +102,7 @@ impl HeaderRepeats {
         // fragmentation, so a wide header on a long table cannot turn a
         // layout that succeeds without repetition into a limit failure.
         let mut copy_budget = document.fragment_tree.limit / 2;
-        for &table in &document.nodes[body].children {
+        for table in block_flow_tables(document, cascade, body) {
             let node = document.ifc_layout_node(table).unwrap();
             let cv = &cascade.computed[table];
             if node.is_display_none()
@@ -153,7 +157,27 @@ impl HeaderRepeats {
                     height.is_finite() && height > 0.0 && height <= page_height / 4.0
                 })
             };
-            let (header, footer) = (repeatable(header), repeatable(footer));
+            let header = repeatable(header);
+            let footer = repeatable(footer).filter(|&footer| {
+                // Keep existing direct-child behavior. A newly discovered
+                // multi-row footer that allows page breaks uses ordinary
+                // row candidates instead of moving its whole source group.
+                document.parent_of(table) == Some(body)
+                    || matches!(
+                        cascade.computed[footer].break_inside,
+                        BreakInside::Avoid | BreakInside::AvoidPage
+                    )
+                    || grid_rows
+                        .iter()
+                        .filter(|row| {
+                            document
+                                .inclusive_ancestors(row.marker)
+                                .any(|id| id == footer)
+                        })
+                        .take(2)
+                        .count()
+                        < 2
+            });
             if header.is_none() && footer.is_none() {
                 continue;
             }
@@ -576,3 +600,62 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
         }
     }
 }
+
+/// Table sources whose ancestor boxes follow the shared block flow when a
+/// repeated header adds room. Bounded or independently placed flows stop the
+/// search so their internal shifts cannot escape into their outer siblings.
+fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) -> Vec<usize> {
+    let mut tables = Vec::new();
+    let mut pending: Vec<_> = document.nodes[body]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        if node.is_display_none() {
+            continue;
+        }
+        if node.display() == DisplayValue::Table {
+            if document.parent_of(id) == Some(body)
+                || shares_growing_block_flow(document, cascade, id)
+            {
+                tables.push(id);
+            }
+            continue;
+        }
+        if node.display() == DisplayValue::Contents {
+            pending.extend(node.children.iter().rev().copied());
+            continue;
+        }
+        if !matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
+            || !shares_growing_block_flow(document, cascade, id)
+        {
+            continue;
+        }
+        pending.extend(node.children.iter().rev().copied());
+    }
+    tables
+}
+
+fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let node = &document.nodes[id];
+    let values = &cascade.computed[id];
+    !node.is_ifc_root()
+        && node.multicol.is_none()
+        && !node.size_containment.height
+        && !node.used_writing_mode.is_vertical()
+        && !values.cssom_writing_mode.is_vertical()
+        && values.position == PositionValue::Static
+        && values.float == FloatValue::None
+        && values.overflow.y == OverflowValue::Visible
+        && values.height == Length::Auto
+        && values.height_keyword.is_none()
+        && matches!(values.min_height, Length::Auto | Length::Px(0.0))
+        && values.max_height == Length::Auto
+        && values.aspect_ratio.preferred(None).is_none()
+}
+
+#[cfg(test)]
+mod tests;

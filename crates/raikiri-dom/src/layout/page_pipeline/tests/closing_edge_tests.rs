@@ -3027,7 +3027,7 @@ fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
     // the padding: Chromium sends the last item to the next page with it, and
     // the container stays where it is.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 12] = [
+    let shapes: [(&str, Shape); 13] = [
         ("flex column of two items", |doc, card| {
             let ids = flex_column_of(doc, card, 2, "");
             vec![ids[0], ids[1], ids[2]]
@@ -3108,6 +3108,15 @@ fn the_last_item_of_a_container_that_stacks_its_items_moves_with_the_edges() {
                 vec![ids[0], ids[1], ids[2]]
             },
         ),
+        ("table with a footer group", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let group = block(doc, table, "display:table-footer-group");
+            let foot = block(doc, group, "display:table-row");
+            block(doc, foot, "display:table-cell;padding:0;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table, row, foot]
+        }),
     ];
     for (label, build) in shapes {
         let (ys, height) = card_with_edges(30, build);
@@ -3180,7 +3189,7 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
     // the edges when nothing keeps the items together or makes the last one
     // something else than a box to move.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 16] = [
+    let shapes: [(&str, Shape); 15] = [
         ("avoided break before the last item", |doc, card| {
             let ids = flex_column_of(doc, card, 1, "");
             vec![
@@ -3262,15 +3271,6 @@ fn the_last_item_of_a_container_whose_break_is_not_a_better_one_keeps_its_place(
         ("column of a set height", |doc, card| {
             let ids = flex_column_of(doc, card, 2, "height:20px");
             vec![ids[0], ids[1], ids[2]]
-        }),
-        ("table with a footer group", |doc, card| {
-            let table = block(doc, card, "display:table;border-spacing:0");
-            let group = block(doc, table, "display:table-footer-group");
-            let foot = block(doc, group, "display:table-row");
-            block(doc, foot, "display:table-cell;padding:0;height:10px");
-            let row = block(doc, table, "display:table-row");
-            block(doc, row, "display:table-cell;padding:0;height:10px");
-            vec![table, row, foot]
         }),
         ("table with a caption below its rows", |doc, card| {
             let table = block(doc, card, "display:table;border-spacing:0");
