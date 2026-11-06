@@ -1,0 +1,1135 @@
+{
+  "browser": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/152.0.7977.82",
+    "revision": "@d04cdb24d67b081f6cf80200ffc5233f44b61109",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "jsVersion": "15.2.124.21"
+  },
+  "font": {
+    "path": "crates/raikiri-dom/tests/data/text-autospace/Ahem.ttf",
+    "sha256": "b719ecb31c5b21fc573c03f6421c74ac63c271a5a3ff841e34f9705fb94b8448",
+    "size_px": 8,
+    "line_height_px": 10,
+    "loading": "await fonts.load before printing; URL matches current case; loaded face/check/canvas advance verified per case",
+    "note": "DejaVu unavailable; bundled Ahem loaded explicitly. Fixed10px rows/captions unless CSS states otherwise."
+  },
+  "paper_px": [
+    200,
+    200
+  ],
+  "viewport_px": [
+    800,
+    600
+  ],
+  "device_scale_factor": 1,
+  "extraction": "pdftotext -bbox; points multiplied by4/3; word ink coordinates retained, distinct from line/box coordinates",
+  "cases": [
+    {
+      "name": "footer",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot><tr><td>f</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "header",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><thead><tr><td>h</td></tr></thead><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "caption",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><caption style=\"caption-side:bottom\">k</caption><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "k",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "footer-first",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><tfoot><tr><td>f</td></tr></tfoot><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "header-last",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><thead><tr><td>h</td></tr></thead></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "footer-caption",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot><tr><td>f</td></tr></tfoot><caption style=\"caption-side:bottom\">k</caption></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "k",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "header-caption",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><thead><tr><td>h</td></tr></thead><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><caption style=\"caption-side:bottom\">k</caption></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "k",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "existing_unresolved_difference": "Existing missing header repetition on caption-only continuation.",
+      "followup": "RAIKIRI-1494"
+    },
+    {
+      "name": "ignored-caption",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><caption style=\"caption-side:bottom\">k</caption><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><caption style=\"caption-side:bottom;height:100px\">IGNORED</caption></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "k",
+            "x": 23.999998666666666,
+            "y": 180.59999200000001
+          },
+          {
+            "text": "IGNORED",
+            "x": 0.0,
+            "y": 190.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 120.59999466666666
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "existing_unresolved_difference": "Existing first-caption-only layout differs from Chromium rendering both captions.",
+      "followup": "RAIKIRI-1495"
+    },
+    {
+      "name": "footer-fit",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:10px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot><tr><td>f</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "header-fit",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:10px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><thead><tr><td>h</td></tr></thead><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "caption-fit",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:10px\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><caption style=\"caption-side:bottom\">k</caption><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "k",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "footer-two",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:50px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot style=\"\"><tr><td>f</td></tr><tr><td>g</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 150.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "g",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "existing_unresolved_difference": "Existing missing UA default avoid differs from explicit computed Auto.",
+      "followup": "RAIKIRI-1496"
+    },
+    {
+      "name": "footer-two-auto",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:50px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot style=\"break-inside:auto\"><tr><td>f</td></tr><tr><td>g</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 150.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "g",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "footer-two-avoid",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:50px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot style=\"break-inside:avoid\"><tr><td>f</td></tr><tr><td>g</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 150.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "g",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "footer-two-fit",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:10px\"><div style=\"height:100px\">A</div><div style=\"height:50px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot style=\"break-inside:avoid\"><tr><td>f</td></tr><tr><td>g</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 150.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "g",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "nested-followers",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div><div><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><thead><tr><td>h</td></tr></thead><tbody><tr><td>c</td></tr><tr style=\"break-inside:avoid\"><td style=\"height:40px\">d</td></tr></tbody></table><div style=\"height:10px\">T</div></div></div></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 25.599998666666664
+          },
+          {
+            "text": "T",
+            "x": 0.0,
+            "y": 50.599997333333334
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 90.59999599999999
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "nested-tail",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div><div><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><table><thead><tr><td>h</td></tr></thead><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div></div></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "header-first-row",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:30px\"><div style=\"height:100px\">A</div><div style=\"height:95px\">B</div><table><thead><tr><td>h</td></tr></thead><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          }
+        ],
+        [
+          {
+            "text": "h",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 20.599998666666668
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 60.599997333333334
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    },
+    {
+      "name": "footer-at-top",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:collapse;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"padding-bottom:300px\"><div style=\"height:100px\">A</div><div style=\"height:80px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot><tr><td>f</td></tr></tfoot></table></div><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 180.59999200000001
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 190.59999200000001
+          }
+        ],
+        [
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 10.6
+          }
+        ],
+        [],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 100.59999599999999
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "existing_unresolved_difference": "Existing last body-row/footer reservation differs near a page edge.",
+      "followup": "RAIKIRI-1497"
+    },
+    {
+      "name": "direct-footer-two-auto",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}table{border-collapse:separate;padding-bottom:30px;border-spacing:0}td{padding:0;height:10px}caption{height:10px}thead,tfoot{font-weight:normal}",
+      "body": "<div style=\"height:100px\">A</div><div style=\"height:50px\">B</div><table><tbody><tr><td>c</td></tr><tr><td>d</td></tr></tbody><tfoot style=\"break-inside:auto\"><tr><td>f</td></tr><tr><td>g</td></tr></tfoot></table><div>Z</div>",
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "c",
+            "x": 0.0,
+            "y": 150.59999333333334
+          },
+          {
+            "text": "d",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "f",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "g",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ],
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      }
+    }
+  ]
+}

@@ -4280,11 +4280,35 @@ fn paginate_flow(
     );
     collector.collect_flow(root_flow_offset)?;
     let (clip_edges, edges_breaks) = collector.into_outputs();
-    let table_headers = HeaderRepeats::prepare(
+    let mut footer_tail_ends = HashMap::<usize, f32>::new();
+    for candidate in &candidates {
+        let edges = candidate.context.item_tail_edges();
+        if !candidate.context.is_table_row() || edges <= 0.0 {
+            continue;
+        }
+        let footer = document
+            .inclusive_ancestors(candidate.node_id)
+            .take_while(|&id| {
+                !matches!(
+                    document.nodes[id].display(),
+                    DisplayValue::Table | DisplayValue::InlineTable
+                )
+            })
+            .find(|&id| document.nodes[id].display() == DisplayValue::TableFooterGroup);
+        if let Some(footer) = footer {
+            let tail_end = candidate.raw_y + candidate.height + edges;
+            footer_tail_ends
+                .entry(footer)
+                .and_modify(|end| *end = end.max(tail_end))
+                .or_insert(tail_end);
+        }
+    }
+    let mut table_headers = HeaderRepeats::prepare(
         document,
         cascade,
         roots.contents,
         page_step,
+        &footer_tail_ends,
         |id| root_flow_offset + current_abs_y(document, id),
         |id| {
             super::page::is_monolithic_for_pagination_with_transposed_axes(
@@ -4295,6 +4319,15 @@ fn paginate_flow(
             )
         },
     );
+    for (owner, tail_end) in footer_tail_ends {
+        if let Some(footer) = table_headers.headers.get_mut(&owner) {
+            // An avoided group may be represented by its first row. Both
+            // ends include root_flow_offset; subtract the entire footer so
+            // its remaining rows are not counted as additional closing edges.
+            let footer_end = footer.source_y + footer.height;
+            footer.closing_edges = (tail_end - footer_end).max(0.0);
+        }
+    }
     let avoided_breaks = AvoidedBreaks::collect(
         document,
         cascade,
@@ -5591,13 +5624,20 @@ impl AvoidedBreaks {
         // The last row of a table moves to the next page with the edges that
         // close the table when they do not fit after it.
         let item_tail = item_tail_move(candidate, fit);
+        let page =
+            page || (item_tail && document.nodes[node_id].display() == DisplayValue::TableCaption);
+        let row_group = self.row_groups.get(&node_id).copied();
+        // An avoided tail group may split after moving to a shorter page.
+        // Its first row and the repeated groups must fit, not the whole group.
+        let tail_fits = table_row_lead + height + repeated_header_height + repeated_footer_height
+            <= next_page_step + 0.001;
         let cell_text_fits = candidate.context.is_table_row()
             && table_cell_fragments::fitting(
                 document, cascade, node_id, flow_y, page_start, page_end,
             )
             .is_some();
         let table_row = candidate.context.is_table_row()
-            && (item_tail
+            && ((item_tail && tail_fits)
                 || (!cell_text_fits
                     && table_row_moves(
                         flow_y,
@@ -5607,12 +5647,10 @@ impl AvoidedBreaks {
                         page_end,
                         next_page_step,
                     )));
-        let row_group_lead = self
-            .row_groups
-            .get(&node_id)
-            .copied()
+        let row_group_lead = row_group
             .filter(|&(end, _)| {
-                item_tail || row_group_moves(flow_y, end - raw_y, page_start, page_end)
+                (item_tail && tail_fits)
+                    || row_group_moves(flow_y, end - raw_y, page_start, page_end)
             })
             .map(|(_, lead)| lead);
         // A trailing flex item may extend into the containing flex box's
@@ -9049,17 +9087,19 @@ fn container_moves_whole(
 }
 
 /// The last item of the flex container `node_id` that stacks its items in a
-/// column, or the last row of the table `node_id`, when the page breaks
+/// column, or the visual last row or unbreakable bottom caption of the table
+/// `node_id`, when the page breaks
 /// between its items or rows rather than moving the container whole (see
 /// [`container_moves_whole`]) and that item or row is a box the page cannot
 /// break inside.
 ///
 /// The closing edges of the container, and of the blocks it ends, follow that
 /// box. Browsers send it to the next page with them when they do not fit after
-/// it, and the container stays where it is with the items before it. A table
-/// with a header or footer group, a caption below its rows or boxes that are
-/// no rows, and a flex container that wraps its items, are left to the rules
-/// for those.
+/// it, and the container stays where it is with the items before it. Header
+/// and footer groups follow the table's visual order; the first row of an
+/// avoided final group can represent the whole group. Rowspans, anonymous
+/// cells, unsupported captions and wrapping flex containers keep their
+/// existing fragmentation paths.
 fn container_item_tail(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9120,12 +9160,31 @@ fn container_item_tail(
             if document.anonymous_table_cells(node_id).next().is_some() {
                 return None;
             }
-            // Each row with the group that holds it, if any.
-            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+            let mut captions = 0;
+            let mut bottom_caption = false;
             for child in elements(node_id) {
+                if document.nodes[child].display() == DisplayValue::TableCaption {
+                    captions += 1;
+                    bottom_caption |= cascade.computed[child].caption_side
+                        == raikiri_style::property::CaptionSideValue::Bottom;
+                }
+            }
+            // Table layout currently gives only the first caption geometry.
+            // Do not mistake it for the visual tail when another follows it.
+            if captions > 1 && bottom_caption {
+                return None;
+            }
+            // Each visual row or bottom caption, with its row group if any.
+            let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+            for child in pagination_child_order(document, cascade, node_id)
+                .into_iter()
+                .filter(|&child| document.nodes[child].kind() == NodeKind::Element)
+            {
                 match document.nodes[child].display() {
                     DisplayValue::TableRow => rows.push((child, None)),
-                    DisplayValue::TableRowGroup => {
+                    DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup => {
                         if document.anonymous_table_cells(child).next().is_some() {
                             return None;
                         }
@@ -9134,9 +9193,20 @@ fn container_item_tail(
                         // last row to move.
                         rows.extend(elements(child).map(|row| (row, Some(child))));
                     }
-                    DisplayValue::TableCaption
+                    DisplayValue::TableCaption => {
                         if cascade.computed[child].caption_side
-                            == raikiri_style::property::CaptionSideValue::Top => {}
+                            == raikiri_style::property::CaptionSideValue::Bottom
+                        {
+                            let caption = &document.nodes[child];
+                            if !matches!(caption.position(), PositionValue::Static)
+                                || caption.used_writing_mode.is_vertical()
+                                || !breaks_only_around(document, cascade, child, has_named_pages)
+                            {
+                                return None;
+                            }
+                            rows.push((child, None));
+                        }
+                    }
                     _ => return None,
                 }
             }
@@ -10720,7 +10790,18 @@ fn place_table_footer(
     let mut page = page_origins.page_index_for_y(y + 0.001);
     let page_end = page_origins.origin(page) + page_origins.step_at(page);
     let next = page.saturating_add(1);
-    if y + footer.height > page_end + 0.001 && footer.height <= page_origins.step_at(next) + 0.001 {
+    let edges_move = footer.closing_edges > 0.0
+        && y + footer.height <= page_end + 0.001
+        && avoided_box_moves(
+            y,
+            0.0,
+            y + footer.height + footer.closing_edges,
+            page_origins.origin(page),
+            page_end,
+        );
+    if (y + footer.height > page_end + 0.001 || edges_move)
+        && footer.height <= page_origins.step_at(next) + 0.001
+    {
         page = next;
         y = page_origins.origin(page);
     }
