@@ -317,3 +317,57 @@ fn contents_named_strings_single_paint_matches_literal() {
         );
     }
 }
+
+#[test]
+fn contents_named_strings_preserve_painted_pseudo_overlays() {
+    fn glyph_count(body: &str) -> usize {
+        let (document, cascade, page, _) = fixture(body, "'V:'", false);
+        let mut scene = Scene::new();
+        crate::paint_single_page_with_origin(&mut scene, &document, &cascade, page, 0.0).unwrap();
+        scene
+            .commands
+            .iter()
+            .map(|command| match command {
+                RenderCommand::GlyphRun(run) => run.glyphs.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+    let mut observed = Vec::new();
+    for pseudo in ["before", "after"] {
+        for placement in ["float:left", "position:absolute", "position:fixed"] {
+            let body = format!(
+                "<body><style>.c::{pseudo}{{content:'X';{placement}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+            );
+            let control = body.replace("content:'X'", "content:none");
+            let painted = glyph_count(&body) > glyph_count(&control);
+            let header = texts(&body, "string(title,start)", false);
+            observed.push((pseudo, placement, painted, header));
+        }
+    }
+    println!("overlay observations: {observed:?}");
+    assert!(observed.iter().all(|(_, _, painted, _)| *painted));
+    assert!(
+        observed
+            .iter()
+            .all(|(_, _, _, header)| header == &[String::new()])
+    );
+}
+
+#[test]
+fn contents_named_strings_absent_overlay_does_not_precede_heading() {
+    for pseudo in ["before", "after"] {
+        for placement in ["float:left", "position:absolute", "position:fixed"] {
+            for content in ["content:none", "content:'X';display:none"] {
+                let body = format!(
+                    "<body><style>.c::{pseudo}{{{content};{placement}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+                );
+                assert_eq!(
+                    texts(&body, "string(title,start)", false),
+                    ["A1"],
+                    "{pseudo} {placement} {content}"
+                );
+            }
+        }
+    }
+}

@@ -2,7 +2,10 @@
 
 use std::collections::HashSet;
 
-use raikiri_style::{CascadeResult, PseudoElem, property::DisplayValue};
+use raikiri_style::{
+    CascadeResult, PseudoElem,
+    property::{ContentComponent, DisplayValue, FloatValue, PositionValue},
+};
 
 use crate::{Document, generated_content::generated_origin, node::NodeData};
 
@@ -53,6 +56,28 @@ pub(super) fn excluded_contents(document: &Document, cascade: &CascadeResult) ->
             {
                 generated.insert(owner);
             }
+        }
+    }
+    // Float and positioned pseudos are painted as overlays, outside the IFC
+    // inventory. Preserve their existing owner entry when content can generate
+    // an overlay; absence and display:none must not protect an empty wrapper.
+    for ((owner, pseudo), style) in &cascade.pseudo {
+        let owner = owner.0 as usize;
+        if excluded.contains(&owner)
+            && matches!(pseudo, PseudoElem::Before | PseudoElem::After)
+            && style.display != DisplayValue::None
+            && (style.float != FloatValue::None
+                || matches!(
+                    style.position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                ))
+            && !style.content.is_empty()
+            && !style
+                .content
+                .iter()
+                .any(|part| matches!(part, ContentComponent::None))
+        {
+            generated.insert(owner);
         }
     }
     excluded.retain(|owner| !generated.contains(owner));
