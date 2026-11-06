@@ -642,3 +642,129 @@ fn negative_margins_share_the_free_space_by_flex_grow() {
         ],
     );
 }
+
+/// A column container `id=c` with `style` and the items `items`, in a block
+/// of width 100px whose height is `height` (`auto` when it states none).
+fn in_block(height: &str, style: &str, items: &str) -> String {
+    let height = if height == "auto" {
+        String::new()
+    } else {
+        format!(";height:{height}")
+    };
+    format!(
+        "<div style=\"width:100px{height}\">{}</div>",
+        column(style, items)
+    )
+}
+
+#[test]
+fn a_percentage_maximum_height_shrinks_the_items() {
+    // The percentage refers to the 200px of the containing block.
+    let one = in_block(
+        "200px",
+        "max-height:50%",
+        &item("a", "flex:0 1 200px;min-height:0", ""),
+    );
+    assert_boxes(
+        &one,
+        &[
+            ("c", [0.0, 0.0, 100.0, 100.0]),
+            ("a", [0.0, 0.0, 100.0, 100.0]),
+        ],
+    );
+    let calc = in_block(
+        "200px",
+        "max-height:calc(50% - 10px)",
+        &item("a", "flex:0 1 200px;min-height:0", ""),
+    );
+    assert_boxes(
+        &calc,
+        &[
+            ("c", [0.0, 0.0, 100.0, 90.0]),
+            ("a", [0.0, 0.0, 100.0, 90.0]),
+        ],
+    );
+    let two = in_block(
+        "200px",
+        "max-height:50%",
+        &(item("a", "flex:0 1 150px;min-height:0", "")
+            + &item("b", "flex:0 1 50px;min-height:0", "")),
+    );
+    assert_boxes(
+        &two,
+        &[
+            ("c", [0.0, 0.0, 100.0, 100.0]),
+            ("a", [0.0, 0.0, 100.0, 75.0]),
+            ("b", [0.0, 75.0, 100.0, 25.0]),
+        ],
+    );
+    // A maximum above the items' height changes nothing.
+    let big = in_block(
+        "200px",
+        "max-height:90%",
+        &item("a", "flex:0 1 60px;min-height:0", ""),
+    );
+    assert_boxes(
+        &big,
+        &[
+            ("c", [0.0, 0.0, 100.0, 60.0]),
+            ("a", [0.0, 0.0, 100.0, 60.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_percentage_minimum_height_grows_the_items() {
+    let grow = in_block(
+        "200px",
+        "min-height:50%",
+        &item("a", "flex:1 1 20px;min-height:0", ""),
+    );
+    assert_boxes(
+        &grow,
+        &[
+            ("c", [0.0, 0.0, 100.0, 100.0]),
+            ("a", [0.0, 0.0, 100.0, 100.0]),
+        ],
+    );
+    let rigid = in_block(
+        "200px",
+        "min-height:50%",
+        &item("a", "flex:0 1 20px;min-height:0", ""),
+    );
+    assert_boxes(
+        &rigid,
+        &[
+            ("c", [0.0, 0.0, 100.0, 100.0]),
+            ("a", [0.0, 0.0, 100.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_percentage_bound_has_no_effect_in_a_block_of_open_height() {
+    let max = in_block(
+        "auto",
+        "max-height:50%",
+        &item("a", "flex:0 1 200px;min-height:0", ""),
+    );
+    assert_boxes(
+        &max,
+        &[
+            ("c", [0.0, 0.0, 100.0, 200.0]),
+            ("a", [0.0, 0.0, 100.0, 200.0]),
+        ],
+    );
+    let min = in_block(
+        "auto",
+        "min-height:50%",
+        &item("a", "flex:1 1 20px;min-height:0", ""),
+    );
+    assert_boxes(
+        &min,
+        &[
+            ("c", [0.0, 0.0, 100.0, 20.0]),
+            ("a", [0.0, 0.0, 100.0, 20.0]),
+        ],
+    );
+}

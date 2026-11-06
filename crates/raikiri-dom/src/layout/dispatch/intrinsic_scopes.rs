@@ -388,16 +388,19 @@ pub(super) fn with_hypothetical_column_height(
                 .any(|width| side.resolve(Some(width)).is_some_and(|value| value < 0.0))
         })
     });
+    // A percentage `min-height` or `max-height` of the container refers to the
+    // height of its containing block, and has no effect where that is open.
+    let containing_height = inputs.parent_size.height;
     let bounded = negative_margin
         || container
             .max_size()
             .height
-            .maybe_resolve(None::<f32>)
+            .maybe_resolve(containing_height)
             .is_some()
         || container
             .min_size()
             .height
-            .maybe_resolve(None::<f32>)
+            .maybe_resolve(containing_height)
             .is_some_and(|min| min > 0.0);
     let rigid = items
         .into_iter()
