@@ -86,6 +86,7 @@ pub(crate) enum OverrideKind<'a> {
     AspectRatio(Option<f32>),
     Overflow(Axis, OverflowValue),
     Clear(ClearValue),
+    FlexGrow(f32),
     FlexShrink(f32),
     AlignSelf(Option<crate::values::AlignSelf>),
     JustifySelf(Option<crate::values::AlignSelf>),
@@ -131,6 +132,10 @@ impl<'a> PropertyOverride<'a> {
     /// Override clearance for a fragmentation pass.
     pub const fn clear(value: ClearValue) -> Self {
         Self(OverrideKind::Clear(value))
+    }
+    /// Override flex grow during an intrinsic probe.
+    pub const fn flex_grow(value: f32) -> Self {
+        Self(OverrideKind::FlexGrow(value))
     }
     /// Override flex shrink during an intrinsic probe.
     pub const fn flex_shrink(value: f32) -> Self {
@@ -226,6 +231,7 @@ impl OwnedPropertyOverride {
             (Overflow(a, _), Overflow(b, _)) => a == b,
             (AspectRatio(_), AspectRatio(_))
             | (Clear(_), Clear(_))
+            | (FlexGrow(_), FlexGrow(_))
             | (FlexShrink(_), FlexShrink(_))
             | (AlignSelf(_), AlignSelf(_))
             | (JustifySelf(_), JustifySelf(_)) => true,
@@ -309,6 +315,12 @@ impl OwnedPropertyOverride {
     pub const fn overflow(axis: Axis, value: OverflowValue) -> Self {
         Self(OwnedOverrideKind::Inline(PropertyOverride::overflow(
             axis, value,
+        )))
+    }
+    /// Override flex grow during an intrinsic probe.
+    pub const fn flex_grow(value: f32) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::flex_grow(
+            value,
         )))
     }
     /// Override flex shrink during an intrinsic probe.

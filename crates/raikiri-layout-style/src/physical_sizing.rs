@@ -20,7 +20,9 @@ impl OwnedPropertyOverride {
                     | BorderBottom
                     | BorderLeft
             ),
-            OverrideKind::FlexShrink(_) | OverrideKind::AspectRatio(_) => true,
+            OverrideKind::FlexGrow(_)
+            | OverrideKind::FlexShrink(_)
+            | OverrideKind::AspectRatio(_) => true,
             _ => false,
         }
     }
@@ -99,9 +101,12 @@ impl OwnedPropertyOverride {
             OverrideKind::Length(LengthProperty::MaxHeight, value) => {
                 style.max_size.height = value.auto(false);
             }
-            // A box style holds no flex properties, so the parent's basis and
-            // shrink overrides are accepted and change nothing in this snapshot.
-            OverrideKind::FlexShrink(_) | OverrideKind::Length(LengthProperty::FlexBasis, _) => {}
+            // A box style holds no flex properties, so the parent's basis,
+            // grow and shrink overrides are accepted and change nothing in
+            // this snapshot.
+            OverrideKind::FlexGrow(_)
+            | OverrideKind::FlexShrink(_)
+            | OverrideKind::Length(LengthProperty::FlexBasis, _) => {}
             OverrideKind::Length(LengthProperty::BorderTop, value) => {
                 style.border.top = value.lp(crate::PercentBasis::Taffy);
             }
