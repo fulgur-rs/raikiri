@@ -8,6 +8,8 @@ struct WrapStyle<'a> {
     local: Option<(usize, &'a str)>,
     contents: bool,
     absolute: bool,
+    preface: bool,
+    forced_sibling: bool,
 }
 
 struct Wrapped {
@@ -24,6 +26,22 @@ fn wrapped(items: &[(u32, u32)], style: WrapStyle<'_>) -> Wrapped {
     let mut nodes = Vec::new();
     let mut absolute = None;
     let (doc, _) = paged_body_with_ifc(|doc, body| {
+        if style.preface {
+            let preface = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;height:10px;font:8px/10px Ahem"),
+            );
+            doc.append_text(preface, "P");
+        }
+        if style.forced_sibling {
+            let sibling = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;height:10px;break-before:page;font:8px/10px Ahem"),
+            );
+            doc.append_text(sibling, "Q");
+        }
         holder = doc.append_element(
             Some(body),
             "div",
@@ -374,4 +392,95 @@ fn forced_row_breaks_preserve_direct_and_contents_peers_without_moving_oof() {
         assert_eq!(page_flow_y(&r.doc, r.absolute.unwrap()), 80.0);
         assert_eq!(page_flow_y(&r.doc, r.after), 110.0);
     }
+}
+
+#[test]
+fn a_tail_after_an_earlier_page_break_moves_peers_in_the_current_space() {
+    for contents in [false, true] {
+        for forced_sibling in [false, true] {
+            let r = wrapped(
+                &[(60, 10), (60, 10), (40, 10)],
+                WrapStyle {
+                    outer: if forced_sibling {
+                        ""
+                    } else {
+                        "break-before:page"
+                    },
+                    flex: "position:relative",
+                    preface: true,
+                    forced_sibling,
+                    contents,
+                    absolute: true,
+                    ..Default::default()
+                },
+            );
+            let first = if forced_sibling { 180.0 } else { 170.0 };
+            assert_eq!(
+                r.items
+                    .iter()
+                    .map(|&id| page_flow_y(&r.doc, id))
+                    .collect::<Vec<_>>(),
+                [first, 200.0, 200.0]
+            );
+            assert_eq!(page_flow_y(&r.doc, r.after), 240.0);
+            assert_eq!(page_flow_y(&r.doc, r.absolute.unwrap()), first + 10.0);
+        }
+    }
+}
+
+#[test]
+fn shifted_lines_keep_both_tallest_representative_orders_together() {
+    for heights in [[20, 10], [10, 20]] {
+        let r = wrapped(
+            &[(60, 10), (40, 10), (40, heights[0]), (60, heights[1])],
+            WrapStyle {
+                outer: "break-before:page",
+                preface: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            r.items
+                .iter()
+                .map(|&id| page_flow_y(&r.doc, id))
+                .collect::<Vec<_>>(),
+            [170.0, 170.0, 200.0, 200.0]
+        );
+        assert_eq!(page_flow_y(&r.doc, r.after), 250.0);
+    }
+}
+
+#[test]
+fn captured_tail_members_do_not_move_an_old_line_that_reaches_their_former_y() {
+    let mut r = wrapped(
+        &[(60, 10), (60, 10), (40, 10)],
+        WrapStyle {
+            outer: "padding-bottom:0",
+            flex: "position:relative",
+            contents: true,
+            absolute: true,
+            ..Default::default()
+        },
+    );
+    let cascade = crate::layout::test_support::cascaded(&r.doc);
+    let mut tree = crate::layout::context::LayoutSession::resumed(&mut r.doc, &cascade);
+    let representative = r.items[2];
+    let before = current_abs_y(&tree, representative);
+    let peers = flex_line_peers(&tree, r.flex, representative, before);
+    assert_eq!(
+        peers.iter().map(|&(id, _)| id).collect::<Vec<_>>(),
+        [r.items[1]]
+    );
+    let parent_y = current_abs_y(&tree, r.flex);
+    materialize_y(&mut tree, r.flex, parent_y + 10.0);
+    let delta = current_abs_y(&tree, representative) - before;
+    place_flex_line_peers(&mut tree, &peers, delta);
+    assert_eq!(
+        r.items
+            .iter()
+            .map(|&id| current_abs_y(&tree, id))
+            .collect::<Vec<_>>(),
+        [80.0, 90.0, 90.0]
+    );
+    assert_eq!(current_abs_y(&tree, r.absolute.unwrap()), 90.0);
 }

@@ -1766,8 +1766,8 @@ impl PaginationState {
             lands_after_forced_break,
             overflow,
         );
-        let row_flex_parent = (forced_before
-            || (overflow.page && candidate.context.item_tail_edges() > 0.0))
+        let row_tail_move = overflow.page && candidate.context.item_tail_edges() > 0.0;
+        let row_flex_parent = (forced_before || row_tail_move)
             .then(|| row_flex_container(document, cascade, node_id))
             .flatten();
         if landing.is_finite() {
@@ -1781,6 +1781,15 @@ impl PaginationState {
                 );
                 self.queue_prefixes(consumed, target_page);
             }
+            // Capture tail membership before this transition changes positions;
+            // an earlier transition may already have shifted the whole parent.
+            let tail_line = row_flex_parent.filter(|_| row_tail_move).map(|parent| {
+                let before_y = current_abs_y(document, node_id);
+                (
+                    before_y,
+                    super::flex_line_peers(document, parent, node_id, before_y),
+                )
+            });
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -1799,7 +1808,10 @@ impl PaginationState {
             );
             // Forced breaks and closing-tail breaks belong to the whole
             // aligned flex line; the other lines keep their flow coordinates.
-            if let Some(parent_id) = row_flex_parent {
+            if let Some((before_y, peers)) = tail_line {
+                let delta = current_abs_y(document, node_id) - before_y;
+                super::place_flex_line_peers(document, &peers, delta);
+            } else if let Some(parent_id) = row_flex_parent {
                 move_flex_line_siblings(
                     document,
                     parent_id,

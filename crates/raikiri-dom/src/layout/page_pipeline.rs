@@ -12880,6 +12880,35 @@ fn row_flex_container(
     .then_some(parent)
 }
 
+/// The in-flow peers currently sharing `node_id`'s row at `y`, with their
+/// current coordinates. Capture membership before any transition moves it.
+fn flex_line_peers(
+    document: &Document,
+    parent_id: usize,
+    node_id: usize,
+    y: f32,
+) -> Vec<(usize, f32)> {
+    document
+        .children_through_contents(parent_id)
+        .into_iter()
+        .filter(|&id| {
+            id != node_id && is_in_flow_flex_child_for_pagination(document, parent_id, id)
+        })
+        .filter_map(|id| {
+            let before_y = current_abs_y(document, id);
+            ((before_y - y).abs() <= 0.001).then_some((id, before_y))
+        })
+        .collect()
+}
+
+/// Places captured peers from their saved positions, so an ancestor that
+/// already moved them does not cause the displacement to be added twice.
+fn place_flex_line_peers(document: &mut Document, peers: &[(usize, f32)], delta: f32) {
+    for &(id, before_y) in peers {
+        materialize_y(document, id, before_y + delta);
+    }
+}
+
 /// Moves the siblings of `node_id` in `parent_id` that start at its raw
 /// position `raw_y` down by `shift_delta`, taking them as the other items on
 /// its flex line. Every other sibling keeps its flow coordinates.
@@ -12890,18 +12919,8 @@ fn move_flex_line_siblings(
     raw_y: f32,
     shift_delta: f32,
 ) {
-    let siblings = document.children_through_contents(parent_id);
-    for sibling_id in siblings {
-        if sibling_id == node_id
-            || !is_in_flow_flex_child_for_pagination(document, parent_id, sibling_id)
-        {
-            continue;
-        }
-        let sibling_raw_y = current_abs_y(document, sibling_id);
-        if (sibling_raw_y - raw_y).abs() <= 0.001 {
-            materialize_y(document, sibling_id, sibling_raw_y + shift_delta);
-        }
-    }
+    let peers = flex_line_peers(document, parent_id, node_id, raw_y);
+    place_flex_line_peers(document, &peers, shift_delta);
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose
