@@ -100,7 +100,10 @@ fn eligible_box(
     cascade: &CascadeResult,
     node: usize,
 ) -> bool {
-    height_follows_content(document, node)
+    // Anonymous table boxes are created after cascading and have no computed
+    // entry. They retain their existing fragmentation path.
+    cascade.computed.get(node).is_some()
+        && height_follows_content(document, node)
         && matches!(document.nodes[node].position(), PositionValue::Static)
         && document.nodes[node].multicol.is_none()
         && !document.nodes[node].used_writing_mode.is_vertical()
