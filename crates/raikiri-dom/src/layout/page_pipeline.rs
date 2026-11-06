@@ -9088,20 +9088,20 @@ fn container_moves_whole(
     }
 }
 
-/// The last item of the flex container `node_id` that stacks its items in a
-/// column, or the visual last row or unbreakable bottom caption of the table
-/// `node_id`, or a final block inside its breakable column item. The page breaks
-/// between its boxes rather than moving the container whole (see
-/// [`container_moves_whole`]) and that item or row is a box the page cannot
-/// break inside.
+/// The box representing the final item of a column flex container, a final
+/// inner block of its breakable item, a final aligned row of a wrapping row
+/// flex container, or the visual last row or unbreakable bottom caption of
+/// the table `node_id`. The page breaks between these boxes rather than
+/// moving the container whole (see [`container_moves_whole`]).
 ///
 /// The closing edges of the container, and of the blocks it ends, follow that
 /// box. Browsers send it to the next page with them when they do not fit after
-/// it, and the container stays where it is with the items before it. Header
-/// and footer groups follow the table's visual order; the first row of an
-/// avoided final group can represent the whole group. Rowspans, anonymous
-/// cells, unsupported captions and wrapping flex containers keep their
-/// existing fragmentation paths.
+/// it, and the container stays where it is with the boxes before it. Other
+/// members of a selected wrapping row move with its tallest representative.
+/// Header and footer groups follow the table's visual order; the first row
+/// of an avoided final group can represent the whole group. Rowspans,
+/// anonymous cells, unsupported captions and unsupported wrapping flex
+/// containers keep their existing fragmentation paths.
 fn container_item_tail(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9120,6 +9120,12 @@ fn container_item_tail(
     match node.display() {
         DisplayValue::Flex => {
             let computed = &cascade.computed[node_id];
+            if computed.flex_direction == FlexDirectionValue::Row
+                && computed.flex_wrap == FlexWrapValue::Wrap
+            {
+                return wrapping_row_item_tail(document, cascade, node_id, has_named_pages)
+                    .map(|item| (item, None));
+            }
             if !matches!(
                 computed.flex_direction,
                 FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
@@ -9303,6 +9309,90 @@ fn paragraph_lines_keep_together(
             lines.block_line_starts.is_empty()
                 && lines_keep_together(lines.lines.len(), computed.orphans, computed.widows)
         })
+}
+
+/// A tallest member of the final aligned row of a wrapping row flex.
+/// Its height represents the entire row for page-fit and ancestor growth.
+fn wrapping_row_item_tail(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    container: usize,
+    has_named_pages: bool,
+) -> Option<usize> {
+    let aligned_at_start = |value| {
+        matches!(
+            value,
+            SelfAlignmentValue::Normal
+                | SelfAlignmentValue::Stretch
+                | SelfAlignmentValue::Start
+                | SelfAlignmentValue::FlexStart
+        )
+    };
+    let mut lines: Vec<(f32, f32, Vec<usize>)> = Vec::new();
+    for item in pagination_child_order(document, cascade, container)
+        .into_iter()
+        .filter(|&id| is_in_flow_flex_child_for_pagination(document, container, id))
+    {
+        let node = &document.nodes[item];
+        let values = &cascade.computed[item];
+        let aligned = (values.align_self == AlignSelfValue::Auto
+            && aligned_at_start(cascade.computed[container].align_items))
+            || matches!(values.align_self, AlignSelfValue::Value(value) if aligned_at_start(value));
+        let top = node.layout.location.y;
+        let bottom = top + node.layout.size.height;
+        if !is_plain_block_box(document, item)
+            || !matches!(node.position(), PositionValue::Static)
+            || node.size_containment.height
+            || !aligned
+            || node.layout.margin.top != 0.0
+            || node.layout.margin.bottom != 0.0
+            || !matches!(
+                values.min_height,
+                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
+            )
+            || values.max_height != ComputedLengthPercentageOrAuto::Auto
+            || !top.is_finite()
+            || !bottom.is_finite()
+            || bottom <= top
+        {
+            return None;
+        }
+        if let Some((line_top, line_bottom, members)) = lines.last_mut()
+            && (top - *line_top).abs() <= 0.001
+        {
+            *line_bottom = line_bottom.max(bottom);
+            members.push(item);
+        } else {
+            if lines
+                .last()
+                .is_some_and(|(_, bottom, _)| top < *bottom - 0.001)
+            {
+                return None;
+            }
+            lines.push((top, bottom, vec![item]));
+        }
+    }
+    let (last, previous) = lines.split_last()?;
+    let previous = previous.last()?;
+    if break_between_is_avoided(document, cascade, &previous.2, &last.2)
+        || !last.2.iter().all(|&item| {
+            avoids_page_break_inside(cascade.computed[item].break_inside)
+                || matches!(
+                    document.block_axis(item).height().expand(),
+                    ExpandedDimension::Length(_)
+                )
+                || breaks_only_around(document, cascade, item, has_named_pages)
+        })
+    {
+        return None;
+    }
+    last.2.iter().copied().max_by(|&left, &right| {
+        document.nodes[left]
+            .layout
+            .size
+            .height
+            .total_cmp(&document.nodes[right].layout.size.height)
+    })
 }
 
 /// The innermost final block of a breakable column item whose surrounding
@@ -12774,16 +12864,49 @@ fn shift_block_flow_after(
     }
 }
 
-/// Whether the parent of `node_id` is a flex container whose main axis is
-/// the inline axis, so its items sit side by side on flex lines.
-fn in_row_flex_container(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
-    document.parent_of(node_id).is_some_and(|parent_id| {
-        document.nodes[parent_id].formatting_context == FormattingContext::Flex
-            && matches!(
-                cascade.computed[parent_id].flex_direction,
-                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-            )
-    })
+/// The effective flex parent of `node_id` when its main axis is the inline
+/// axis, so its items sit side by side on flex lines.
+fn row_flex_container(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let parent = candidates::candidate_parent(document, node_id)?;
+    (document.nodes[parent].formatting_context == FormattingContext::Flex
+        && matches!(
+            cascade.computed[parent].flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        ))
+    .then_some(parent)
+}
+
+/// The in-flow peers currently sharing `node_id`'s row at `y`, with their
+/// current coordinates. Capture membership before any transition moves it.
+fn flex_line_peers(
+    document: &Document,
+    parent_id: usize,
+    node_id: usize,
+    y: f32,
+) -> Vec<(usize, f32)> {
+    document
+        .children_through_contents(parent_id)
+        .into_iter()
+        .filter(|&id| {
+            id != node_id && is_in_flow_flex_child_for_pagination(document, parent_id, id)
+        })
+        .filter_map(|id| {
+            let before_y = current_abs_y(document, id);
+            ((before_y - y).abs() <= 0.001).then_some((id, before_y))
+        })
+        .collect()
+}
+
+/// Places captured peers from their saved positions, so an ancestor that
+/// already moved them does not cause the displacement to be added twice.
+fn place_flex_line_peers(document: &mut Document, peers: &[(usize, f32)], delta: f32) {
+    for &(id, before_y) in peers {
+        materialize_y(document, id, before_y + delta);
+    }
 }
 
 /// Moves the siblings of `node_id` in `parent_id` that start at its raw
@@ -12796,16 +12919,8 @@ fn move_flex_line_siblings(
     raw_y: f32,
     shift_delta: f32,
 ) {
-    let siblings = document.nodes[parent_id].children.clone();
-    for sibling_id in siblings {
-        if sibling_id == node_id {
-            continue;
-        }
-        let sibling_raw_y = current_abs_y(document, sibling_id);
-        if (sibling_raw_y - raw_y).abs() <= 0.001 {
-            materialize_y(document, sibling_id, sibling_raw_y + shift_delta);
-        }
-    }
+    let peers = flex_line_peers(document, parent_id, node_id, raw_y);
+    place_flex_line_peers(document, &peers, shift_delta);
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose

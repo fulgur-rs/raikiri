@@ -18,7 +18,7 @@ use super::{
     first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
     floats_put_first_line_down, follows_flow_content, forced_line_breaks, forced_line_moves,
     forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
-    has_fixed_height, has_footnote_ancestor, in_row_flex_container, is_floating_box_for_pagination,
+    has_fixed_height, has_footnote_ancestor, is_floating_box_for_pagination,
     is_unfixed_absolute_box, lead_below_ancestor, lead_below_edges, leading_edges_move,
     leading_holder, line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
@@ -27,9 +27,9 @@ use super::{
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
-    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, run_ends_paragraph,
-    run_tail_move, shift_paragraph_lines, shift_text_candidate, starts_on_page_and_runs_past_it,
-    straddling_line, text_changes_page_name, text_sets_page_name,
+    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
+    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
+    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -1766,8 +1766,10 @@ impl PaginationState {
             lands_after_forced_break,
             overflow,
         );
-        let row_flex_break_before =
-            forced_before && in_row_flex_container(document, cascade, node_id);
+        let row_tail_move = overflow.page && candidate.context.item_tail_edges() > 0.0;
+        let row_flex_parent = (forced_before || row_tail_move)
+            .then(|| row_flex_container(document, cascade, node_id))
+            .flatten();
         if landing.is_finite() {
             if !lands_after_forced_break {
                 let consumed = self.float_gaps.discard_in_holder(
@@ -1779,6 +1781,15 @@ impl PaginationState {
                 );
                 self.queue_prefixes(consumed, target_page);
             }
+            // Capture tail membership before this transition changes positions;
+            // an earlier transition may already have shifted the whole parent.
+            let tail_line = row_flex_parent.filter(|_| row_tail_move).map(|parent| {
+                let before_y = current_abs_y(document, node_id);
+                (
+                    before_y,
+                    super::flex_line_peers(document, parent, node_id, before_y),
+                )
+            });
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -1795,10 +1806,12 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
-            // A forced break on one wrapped row-flex item belongs to
-            // its whole flex line. Move same-line siblings together;
-            // other lines keep their existing flow coordinates.
-            if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
+            // Forced breaks and closing-tail breaks belong to the whole
+            // aligned flex line; the other lines keep their flow coordinates.
+            if let Some((before_y, peers)) = tail_line {
+                let delta = current_abs_y(document, node_id) - before_y;
+                super::place_flex_line_peers(document, &peers, delta);
+            } else if let Some(parent_id) = row_flex_parent {
                 move_flex_line_siblings(
                     document,
                     parent_id,

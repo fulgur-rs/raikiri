@@ -1,0 +1,1231 @@
+{
+  "browser": "Chrome/152.0.7977.82",
+  "font": {
+    "path": "crates/raikiri-dom/tests/data/text-autospace/Ahem.ttf",
+    "size_px": 8,
+    "line_height_px": 10,
+    "sha256": "b719ecb31c5b21fc573c03f6421c74ac63c271a5a3ff841e34f9705fb94b8448"
+  },
+  "extraction": "PDF word ink coordinates in CSS pixels (points * 4/3), not box coordinates",
+  "cases": [
+    {
+      "name": "original",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "three-lines",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">ee</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "two-first",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">ee</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 39.99999866666666,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "two-last",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "ee",
+            "x": 59.99999733333333,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "tallest-first",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:20px;background:lightgreen;;\">ee</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">ff</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 59.99999733333333,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          },
+          {
+            "text": "ff",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "tallest-last",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"flex:none;width:60px;height:20px;background:lightblue;;\">ff</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 59.99999733333333,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          },
+          {
+            "text": "ff",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "row-gap",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;row-gap:5px\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "own-padding",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;padding-bottom:5px\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 45.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "fits",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:20px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "no-edges",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:0px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 180.59999200000001
+          }
+        ]
+      ]
+    },
+    {
+      "name": "contents",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"display:contents\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div></div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "ee",
+            "x": 59.99999733333333,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "absolute",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;position:relative\"><div style=\"display:contents\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"position:absolute;top:10px;width:5px;height:5px\">O</div></div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "O",
+            "x": 0.0,
+            "y": 170.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "ee",
+            "x": 59.99999733333333,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "align-start",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;align-items:flex-start\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "ee",
+            "x": 59.99999733333333,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "unit",
+      "css": "@page{size:100px 100px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:40px\">A</div><div style=\"height:30px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 70.59999733333333
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "forced-direct",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:0px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;position:relative\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;break-before:page;\">ff</div><div style=\"position:absolute;top:10px;width:5px;height:5px\">O</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "O",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 59.99999733333333,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "ff",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "forced-contents",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:0px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;position:relative\"><div style=\"display:contents\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;break-before:page;\">ff</div><div style=\"position:absolute;top:10px;width:5px;height:5px\">O</div></div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          },
+          {
+            "text": "O",
+            "x": 0.0,
+            "y": 170.59999333333334
+          },
+          {
+            "text": "dd",
+            "x": 59.99999733333333,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "ff",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "auto-items",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;height:auto\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;height:auto\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "avoid-items",
+      "css": "@page{size:200px 200px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:100px\">A</div><div style=\"height:60px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;break-inside:avoid\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;break-inside:avoid\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 100.59999599999999
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 160.59999333333334
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ]
+      ]
+    },
+    {
+      "name": "shifted-holder",
+      "css": "@page{size:100px 100px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"height:10px\">P</div><div style=\"padding-bottom:30px;break-before:page\"><div style=\"height:40px\">A</div><div style=\"height:30px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;position:relative\"><div style=\"display:contents\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"position:absolute;top:10px;width:5px;height:5px\">O</div></div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "P",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ],
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 70.59999733333333
+          },
+          {
+            "text": "O",
+            "x": 0.0,
+            "y": 80.599996
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "ee",
+            "x": 59.99999733333333,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "shifted-sibling",
+      "css": "@page{size:100px 100px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"height:10px\">P</div><div style=\"height:10px;break-before:page\">Q</div><div style=\"padding-bottom:30px;\"><div style=\"height:40px\">A</div><div style=\"height:30px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;position:relative\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"position:absolute;top:10px;width:5px;height:5px\">O</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "P",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ],
+        [
+          {
+            "text": "Q",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 10.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 50.599997333333334
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 80.599996
+          },
+          {
+            "text": "O",
+            "x": 0.0,
+            "y": 90.59999599999999
+          }
+        ],
+        [
+          {
+            "text": "dd",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "ee",
+            "x": 59.99999733333333,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "shifted-tall-first",
+      "css": "@page{size:100px 100px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"height:10px\">P</div><div style=\"padding-bottom:30px;break-before:page\"><div style=\"height:40px\">A</div><div style=\"height:30px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:20px;background:lightgreen;;\">ee</div><div style=\"flex:none;width:60px;height:10px;background:lightblue;;\">ff</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "P",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ],
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 70.59999733333333
+          },
+          {
+            "text": "dd",
+            "x": 59.99999733333333,
+            "y": 70.59999733333333
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          },
+          {
+            "text": "ff",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "shifted-tall-last",
+      "css": "@page{size:100px 100px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"height:10px\">P</div><div style=\"padding-bottom:30px;break-before:page\"><div style=\"height:40px\">A</div><div style=\"height:30px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;\"><div style=\"flex:none;width:60px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">ee</div><div style=\"flex:none;width:60px;height:20px;background:lightblue;;\">ff</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "P",
+            "x": 0.0,
+            "y": 0.6
+          }
+        ],
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 70.59999733333333
+          },
+          {
+            "text": "dd",
+            "x": 59.99999733333333,
+            "y": 70.59999733333333
+          }
+        ],
+        [
+          {
+            "text": "ee",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 50.599997333333334
+          },
+          {
+            "text": "ff",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    },
+    {
+      "name": "nowrap",
+      "css": "@page{size:100px 100px;margin:0}html,body{margin:0}body{font:8px/10px Ahem}",
+      "body": "<div style=\"padding-bottom:30px;\"><div style=\"height:40px\">A</div><div style=\"height:30px\">B</div><div style=\"display:flex;flex-wrap:wrap;width:100px;flex-wrap:nowrap\"><div style=\"flex:none;width:40px;height:10px;background:lightgreen;;\">cc</div><div style=\"flex:none;width:40px;height:10px;background:lightblue;;\">dd</div></div></div><div style=\"height:20px\">Z</div>",
+      "font_evidence": {
+        "loaded": true,
+        "faces": [
+          {
+            "family": "Ahem",
+            "status": "loaded"
+          }
+        ],
+        "xAdvance": 7.9998931884765625
+      },
+      "pages": [
+        [
+          {
+            "text": "A",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "B",
+            "x": 0.0,
+            "y": 40.599998666666664
+          }
+        ],
+        [
+          {
+            "text": "cc",
+            "x": 0.0,
+            "y": 0.6
+          },
+          {
+            "text": "Z",
+            "x": 0.0,
+            "y": 40.599998666666664
+          },
+          {
+            "text": "dd",
+            "x": 39.99999866666666,
+            "y": 0.6
+          }
+        ]
+      ]
+    }
+  ],
+  "viewport_px": [
+    800,
+    600
+  ],
+  "device_scale_factor": 1
+}

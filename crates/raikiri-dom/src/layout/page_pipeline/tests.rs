@@ -77,6 +77,7 @@ mod table_tail_tests;
 mod top_edge_tests;
 mod tree_order_tests;
 mod vertical_grid_tests;
+mod wrapping_flex_tail_tests;
 
 fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
     candidates::BoxContext::element(candidates::CandidateFlowContext::default(), attributes)
