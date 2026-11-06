@@ -737,6 +737,7 @@ fn direct_apply_ignores_precomputed_custom_values() {
     );
     apply_value(
         PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: "color".into(),
             value: "red".into(),
             key: PropertyKey::Color,
@@ -751,6 +752,7 @@ fn list_style_defaulting_marker_cannot_project_to_an_unrelated_property() {
     assert_eq!(
         project_deferred_value(
             PropertyValue::Deferred(DeferredValue {
+                context: crate::property::DeclarationContext::Css,
                 property: "list-style".into(),
                 value: "inherit".into(),
                 key: PropertyKey::ListStyle,
@@ -2082,6 +2084,7 @@ fn clamp_min_wins_when_bounds_are_reversed() {
 fn radius_inheritance_substitution_retains_shorthand_type_before_expansion() {
     let environment = CustomPropertyEnvironment::from_map(HashMap::new());
     let deferred = DeferredValue {
+        context: crate::property::DeclarationContext::Css,
         property: "border-radius".into(),
         value: "var(--missing, inherit)".into(),
         key: PropertyKey::BorderRadius,
@@ -2182,6 +2185,7 @@ fn shorthand_cache_keeps_sources_and_properties_separate() {
         ),
     ] {
         let deferred = DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: property.into(),
             value: source.into(),
             key,
@@ -2291,6 +2295,7 @@ fn cached_radius_keywords_project_each_corner_marker() {
             ),
         ] {
             let deferred = DeferredValue {
+                context: crate::property::DeclarationContext::Css,
                 property: "border-radius".into(),
                 value: "var(--k)".into(),
                 key,
@@ -2298,6 +2303,7 @@ fn cached_radius_keywords_project_each_corner_marker() {
             assert_eq!(
                 resolver.resolve(&deferred),
                 Some(PropertyValue::Deferred(DeferredValue {
+                    context: crate::property::DeclarationContext::Css,
                     property: property.into(),
                     value: keyword.into(),
                     key

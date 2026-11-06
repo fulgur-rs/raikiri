@@ -13,6 +13,7 @@ use crate::RaikiriSelectorImpl;
 use crate::cascade::rollback::{Rollback, rollback_kind};
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::logical::LogicalSide;
+use crate::property::DeclarationContext;
 use crate::property::{
     BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CssPosition,
     CssWideKeyword, CustomProperty, DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings,
@@ -22,7 +23,7 @@ use crate::property::{
     GridLineShorthand, GridShorthand, Length, LengthOrAuto, LengthPercentageOrCalc, Outline,
     OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
     PropertyValue, Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand,
-    consume_deferred_value, initial_grid_auto_track_list, parse_consumer_text_value, parse_value,
+    consume_deferred_value, initial_grid_auto_track_list, parse_consumer_text_value,
 };
 
 /// One property declaration = value + `!important` flag.
@@ -681,9 +682,19 @@ pub(crate) fn parse_declaration_block_within(
     consumer_properties: &[ConsumerPropertyRegistration],
     room: usize,
 ) -> Result<Vec<Declaration>, usize> {
+    parse_declaration_block_in_context(input, consumer_properties, room, DeclarationContext::Css)
+}
+
+pub(crate) fn parse_declaration_block_in_context(
+    input: &mut Parser<'_, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+    room: usize,
+    context: DeclarationContext,
+) -> Result<Vec<Declaration>, usize> {
     let mut parser = DeclParser {
         consumer_properties,
         drop_viewport_lengths: false,
+        context,
     };
     parse_declarations_within(input, &mut parser, room)
 }
@@ -703,6 +714,7 @@ pub(crate) fn parse_page_context_declaration_block(
     let mut parser = DeclParser {
         consumer_properties: &[],
         drop_viewport_lengths: true,
+        context: DeclarationContext::Css,
     };
     parse_declarations_within(input, &mut parser, room)
 }
@@ -754,6 +766,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
                 (PropertyKey::BorderRadiusBottomLeft, "border-bottom-left-radius"),
             ] {
                 push_longhand(PropertyValue::Deferred(DeferredValue {
+                    context: crate::property::DeclarationContext::Css,
                     key,
                     property: property.into(),
                     value: "inherit".into(),
@@ -1593,6 +1606,7 @@ pub(crate) fn expand_border_css_wide(
         (PropertyKey::BorderImageRepeat, "border-image-repeat"),
     ] {
         push(PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             key,
             property: property.into(),
             value: kw.as_css_str().into(),
@@ -2077,8 +2091,17 @@ pub(crate) fn parse_declaration_value<'i>(
     input: &mut Parser<'i, '_>,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) -> Result<ParsedDeclaration, ParseError<'i, ()>> {
+    parse_declaration_value_in_context(name, input, consumer_properties, DeclarationContext::Css)
+}
+
+fn parse_declaration_value_in_context<'i>(
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+    context: DeclarationContext,
+) -> Result<ParsedDeclaration, ParseError<'i, ()>> {
     let value = parse_registered_consumer_value(name.as_ref(), input, consumer_properties)
-        .or_else(|| parse_value(name.as_ref(), input))
+        .or_else(|| crate::property::parse_value_in_context(name.as_ref(), input, context))
         .ok_or_else(|| input.new_custom_error(()))?;
     let important = input.try_parse(cssparser::parse_important).is_ok();
     // Exhaustive consumption: trailing garbage after the value (and optional
@@ -2097,6 +2120,7 @@ pub(crate) fn parse_declaration_value<'i>(
 /// Per-declaration parser for cssparser::RuleBodyParser.
 struct DeclParser<'a> {
     consumer_properties: &'a [ConsumerPropertyRegistration],
+    context: DeclarationContext,
     /// Whether declarations other than custom properties that use a
     /// viewport-percentage length are dropped; see
     /// [`parse_page_context_declaration_block`].
@@ -2119,7 +2143,7 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
         {
             return Err(input.new_custom_error(()));
         }
-        parse_declaration_value(name, input, self.consumer_properties)
+        parse_declaration_value_in_context(name, input, self.consumer_properties, self.context)
     }
 }
 

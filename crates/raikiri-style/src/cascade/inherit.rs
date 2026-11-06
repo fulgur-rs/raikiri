@@ -1671,12 +1671,15 @@ pub(crate) fn apply_winners(
             // A size that the `style` attribute of the element gives is in the
             // SVG source already, and the renderer reads it there as a browser
             // does for an SVG element, where a number without a unit is a
-            // length. This cascade reads a size as a box property, which has
-            // no such number, so it would pick another declaration.
+            // length. Variable-bearing sizes must instead carry their resolved
+            // value, since the renderer cannot substitute custom properties.
             let inline_size = winner_key.is_svg_shape_size()
                 && supplier.is_some_and(|supplier| {
                     supplier.specificity == INLINE_SPECIFICITY
                         && supplier.source_order == INLINE_SOURCE_ORDER
+                        && !matches!(candidates.value(supplier.idx),
+                            PropertyValue::Deferred(deferred)
+                                if references_variable(&deferred.value))
                 });
             if let Some(collector) = svg_properties.as_mut()
                 && svg_property_is_collected(winner_key, collector.painting_only)
@@ -1696,7 +1699,16 @@ pub(crate) fn apply_winners(
                             if color.key == crate::property::PropertyKey::Color
                                 && svg_color_is_current_color(&color.source))
                         || (value.is_none() && svg_property_is_inherited(winner_key)),
-                    expression: value.as_ref().and_then(svg_property_expression),
+                    // Invalid substitution still wins the cascade. Its initial
+                    // size must replace the authored presentation attribute.
+                    expression: if value.is_none()
+                        && winner_key.is_svg_shape_size()
+                        && supplier.is_some()
+                    {
+                        Some("auto".to_owned())
+                    } else {
+                        value.as_ref().and_then(svg_property_expression)
+                    },
                     inherited_from: None,
                 });
             }

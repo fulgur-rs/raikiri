@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::property::parse_value;
 use crate::property::{
     BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL, BackgroundImage, BorderColor,
     BorderImageRepeat, BorderImageSlice, BorderStyle, CssColor, FontStyle, FontVariantCaps,
@@ -353,6 +354,7 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
 
     let deferred = |key, important| ParsedDeclaration {
         value: PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: "test".into(),
             value: "raw".into(),
             key,
@@ -444,6 +446,7 @@ fn declarations_carry_the_key_and_rollback_of_their_value() {
     assert_eq!(reverted.rollback, Rollback::Origin);
     let deferred = Declaration::new(
         PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: "width".into(),
             value: "var(--w)".into(),
             key: PropertyKey::Width,

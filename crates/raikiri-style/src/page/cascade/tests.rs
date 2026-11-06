@@ -5625,6 +5625,7 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
             }]),
         })),
         PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
             key: PropertyKey::Width,

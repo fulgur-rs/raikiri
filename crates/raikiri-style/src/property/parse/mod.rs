@@ -74,6 +74,54 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
     Some(with_contextual_colors(value, input.slice_from(start)))
 }
 
+pub(crate) fn parse_value_in_context(
+    name: &str,
+    input: &mut Parser<'_, '_>,
+    context: DeclarationContext,
+) -> Option<PropertyValue> {
+    let start = input.state();
+    let mut value = parse_value(name, input).or_else(|| {
+        if context == DeclarationContext::SvgStyleAttribute {
+            input.reset(&start);
+            parse_svg_style_size(name, input)
+        } else {
+            None
+        }
+    })?;
+    if let PropertyValue::Deferred(deferred) = &mut value
+        && deferred.key.is_svg_shape_size()
+    {
+        deferred.context = context;
+    }
+    Some(value)
+}
+
+// Recognize only the original Number token, before any math simplification.
+// The declaration parser or computed-value caller checks complete consumption.
+pub(crate) fn parse_svg_style_size(
+    name: &str,
+    input: &mut Parser<'_, '_>,
+) -> Option<PropertyValue> {
+    let make_value = if name.eq_ignore_ascii_case("width") {
+        PropertyValue::Width
+    } else if name.eq_ignore_ascii_case("height") {
+        PropertyValue::Height
+    } else {
+        return None;
+    };
+    let start = input.state();
+    let value = common::expect_number_stable(input).ok();
+    if let Some(value) = value
+        && value >= 0.0
+    {
+        return Some(make_value(LengthOrAuto::Length(Length::Px(
+            value.min(f32::MAX),
+        ))));
+    }
+    input.reset(&start);
+    None
+}
+
 /// [`parse_value`] before [`with_contextual_colors`] restores the symbolic
 /// `currentcolor` in border, outline, column-rule and text-decoration colors.
 fn parse_value_with_black_currentcolor(
@@ -142,6 +190,7 @@ fn parse_value_with_black_currentcolor(
         })
     {
         return Some(PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: normalized_name.clone().into(),
             value: keyword.as_css_str().into(),
             key: key?,
@@ -157,6 +206,7 @@ fn parse_value_with_black_currentcolor(
             // path cannot distinguish an invalid channel from a variable.
             if color_value_with_math_is_valid(value.as_ref()) {
                 return Some(PropertyValue::Deferred(DeferredValue {
+                    context: crate::property::DeclarationContext::Css,
                     property: name.to_ascii_lowercase().into(),
                     value,
                     key: key?,
@@ -281,6 +331,7 @@ fn parse_value_with_black_currentcolor(
                 };
                 if valid {
                     return Some(PropertyValue::Deferred(DeferredValue {
+                        context: crate::property::DeclarationContext::Css,
                         property: normalized_name.into(),
                         value,
                         key: key?,
@@ -293,6 +344,7 @@ fn parse_value_with_black_currentcolor(
                 // math without the false positives caused by an untyped dummy.
                 if color_value_with_math_is_valid(value.as_ref()) {
                     return Some(PropertyValue::Deferred(DeferredValue {
+                        context: crate::property::DeclarationContext::Css,
                         property: name.to_ascii_lowercase().into(),
                         value,
                         key: key?,
@@ -351,6 +403,7 @@ fn parse_value_with_black_currentcolor(
                     && deferred_dummy_is_valid_for_property(value.as_ref(), name)
                 {
                     return Some(PropertyValue::Deferred(DeferredValue {
+                        context: crate::property::DeclarationContext::Css,
                         property: name.to_ascii_lowercase().into(),
                         value,
                         key: key?,
@@ -372,6 +425,7 @@ fn parse_value_with_black_currentcolor(
                 && deferred_dummy_is_valid_for_property(value.as_ref(), name)
             {
                 return Some(PropertyValue::Deferred(DeferredValue {
+                    context: crate::property::DeclarationContext::Css,
                     property: name.to_ascii_lowercase().into(),
                     value,
                     key: key?,
@@ -381,6 +435,7 @@ fn parse_value_with_black_currentcolor(
             }
         }
         return Some(PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
             property: name.to_ascii_lowercase().into(),
             value,
             key: key?,
@@ -1239,6 +1294,7 @@ pub(crate) fn parse_property_grammar(
                     Some(PropertyValue::BorderRadiusInherit)
                 } else {
                     Some(PropertyValue::Deferred(DeferredValue {
+                        context: crate::property::DeclarationContext::Css,
                         property: "border-radius".into(),
                         value: keyword.as_css_str().into(),
                         key: PropertyKey::BorderRadius,

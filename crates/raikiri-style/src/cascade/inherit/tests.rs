@@ -9015,6 +9015,7 @@ fn apply_winners_deferred_border_radius_resolving_to_inherit() {
     let candidates = OwnedCandidates::from_declarations([(
         crate::rule::Declaration {
             value: PropertyValue::Deferred(crate::property::DeferredValue {
+                context: crate::property::DeclarationContext::Css,
                 property: "border-radius".into(),
                 value: "var(--missing, inherit)".into(),
                 key: crate::property::PropertyKey::BorderRadius,
@@ -12346,6 +12347,7 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
         crate::property::BackgroundImage::None
     );
     let marker = PropertyValue::Deferred(crate::property::DeferredValue {
+        context: crate::property::DeclarationContext::Css,
         property: "list-style-type".into(),
         value: "inherit".into(),
         key: crate::property::PropertyKey::ListStyleType,
