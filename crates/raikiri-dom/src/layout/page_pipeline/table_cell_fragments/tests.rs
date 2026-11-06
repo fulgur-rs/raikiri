@@ -198,7 +198,7 @@ fn generated_cell_content_keeps_the_existing_path() {
             .append_element(Some(fixture.body), "style", Some("display:none"));
         fixture.doc.append_text(
             style,
-            &format!("#cell::{pseudo} {{ content: 'U'; {extra} }}"),
+            format!("#cell::{pseudo} {{ content: 'U'; {extra} }}"),
         );
         assert!(!fixture.qualified(), "::{pseudo}");
     }
