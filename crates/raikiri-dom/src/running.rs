@@ -38,6 +38,7 @@ use crate::layout::{
 use crate::node::NodeData;
 
 mod neighbors;
+mod rendered_sources;
 use neighbors::RenderedNeighbors;
 
 /// Height of the page a running element is measured on. A running element
@@ -101,8 +102,15 @@ impl RunningIndex {
             return Self::default();
         }
         let mut rendered_pages = HashMap::<usize, (u32, u32)>::new();
+        let mut excluded_by_layout = HashMap::new();
         for (projected, page) in pages {
+            let excluded = excluded_by_layout
+                .entry(std::ptr::from_ref(projected))
+                .or_insert_with(|| rendered_sources::excluded_contents(projected, cascade));
             for fragment in projected.page_fragments(page) {
+                if excluded.contains(&(fragment.node().0 as usize)) {
+                    continue;
+                }
                 rendered_pages
                     .entry(fragment.node().0 as usize)
                     .and_modify(|(first, last)| {
@@ -123,11 +131,13 @@ impl RunningIndex {
         if !has_placed_elements(cascade) {
             return Self::default();
         }
+        let excluded = rendered_sources::excluded_contents(document, cascade);
         let rendered_pages = document
             .scene_geometry()
             .records()
             .iter()
             // Match the projected sources: collapsed whitespace is not content.
+            .filter(|record| !excluded.contains(&record.node()))
             .filter(|record| match &document.nodes[record.node()].data {
                 NodeData::Text(text) => !text.text_content.as_str().trim().is_empty(),
                 _ => true,

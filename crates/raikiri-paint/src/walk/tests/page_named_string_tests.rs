@@ -113,7 +113,11 @@ enum LegacyRoute {
 }
 
 fn legacy_margin_glyphs(rule: &str, route: LegacyRoute) -> Vec<String> {
-    let (document, cascade, page, _) = fixture("<p>before</p><h2>A1</h2><h2>A2</h2>", rule, false);
+    legacy_margin_glyphs_for_body("<p>before</p><h2>A1</h2><h2>A2</h2>", rule, route)
+}
+
+fn legacy_margin_glyphs_for_body(body: &str, rule: &str, route: LegacyRoute) -> Vec<String> {
+    let (document, cascade, page, _) = fixture(body, rule, false);
     let mut scene = Scene::new();
     match route {
         LegacyRoute::Images => {
@@ -181,5 +185,135 @@ fn builtin_margin_named_strings_start_ignores_leading_html_whitespace() {
                 "paged={paged}, prefix={prefix:?}"
             );
         }
+    }
+}
+
+#[test]
+fn contents_named_strings_empty_wrappers_do_not_precede_heading() {
+    for prefix in [
+        "<span style='display:contents'></span>",
+        "<span style='display:contents'><span style='display:contents'></span></span>",
+    ] {
+        for paged in [false, true] {
+            let body = format!("<body>{prefix}<h2>A1</h2><h2>A2</h2></body>");
+            assert_eq!(
+                texts(&body, "string(title,start)", paged),
+                ["A1"],
+                "paged={paged}, prefix={prefix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_preserve_real_content() {
+    for prefix in [
+        "<span style='display:contents'>before</span>",
+        "<div style='display:contents'><p>before</p></div>",
+        "<div style='width:0;height:0'></div>",
+    ] {
+        for paged in [false, true] {
+            let body = format!("<body>{prefix}<h2>A1</h2><h2>A2</h2></body>");
+            assert_eq!(
+                texts(&body, "string(title,start)", paged),
+                [""],
+                "paged={paged}, prefix={prefix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_preserve_single_page_generated_content() {
+    for pseudo in ["before", "after"] {
+        for declaration in [
+            "content:'text'",
+            "content:'';padding:5px",
+            "content:'';display:inline-block;width:10px;height:10px",
+            "content:'';display:block;padding:5px",
+        ] {
+            let body = format!(
+                "<body><style>.c::{pseudo}{{{declaration}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+            );
+            assert_eq!(
+                texts(&body, "string(title,start)", false),
+                [""],
+                "{pseudo}: {declaration}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_absent_pseudo_does_not_precede_heading() {
+    for pseudo in ["before", "after"] {
+        for declaration in ["content:none", "content:''", "content:'text';display:none"] {
+            for paged in [false, true] {
+                let body = format!(
+                    "<body><style>.c::{pseudo}{{{declaration}}}</style><span class=c style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>"
+                );
+                assert_eq!(
+                    texts(&body, "string(title,start)", paged),
+                    ["A1"],
+                    "paged={paged}, {pseudo}: {declaration}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn contents_named_strings_carry_in_yields_to_next_page_heading() {
+    let body = "<body><h2>OLD</h2><section style='break-before:page'><span style='display:contents'></span><h2>NEW</h2><h2>LAST</h2></section><p style='break-before:page'>tail</p></body>";
+    for (mode, expected) in [
+        ("first", ["OLD", "NEW", "LAST"]),
+        ("start", ["OLD", "NEW", "LAST"]),
+        ("last", ["OLD", "LAST", "LAST"]),
+        ("first-except", ["", "", "LAST"]),
+    ] {
+        assert_eq!(
+            texts(body, &format!("string(title,{mode})"), true),
+            expected,
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn contents_named_strings_running_element_uses_next_real_page() {
+    let body = "<body><p>OLD</p><div id=r style='position:running(hdr)'>RUN</div><span style='display:contents'></span><p style='break-before:page'>NEXT</p></body>";
+    let (document, cascade, _, count) = fixture(body, "element(hdr)", true);
+    assert_eq!(count, 2);
+    let running = document
+        .preorder(document.root_index())
+        .find(|&node| document.element_attribute(node, "id") == Some("r"))
+        .unwrap();
+    let index = raikiri_dom::RunningIndex::build(
+        &document,
+        &cascade,
+        (0..count).map(|page| (&document, page)),
+    );
+    assert_eq!(
+        index.select("hdr", raikiri_style::property::StringFetchMode::First, 0),
+        None
+    );
+    assert_eq!(
+        index.select("hdr", raikiri_style::property::StringFetchMode::Start, 1),
+        Some(raikiri_traits::NodeId(running as u64))
+    );
+}
+
+#[test]
+fn contents_named_strings_single_paint_matches_literal() {
+    let body = "<body><span style='display:contents'></span><h2>A1</h2><h2>A2</h2></body>";
+    for route in [
+        LegacyRoute::Plain,
+        LegacyRoute::Images,
+        LegacyRoute::NamedImagesAndHighlights,
+    ] {
+        assert_eq!(
+            legacy_margin_glyphs_for_body(body, "'V:' string(title,start)", route),
+            legacy_margin_glyphs_for_body(body, "'V:A1'", route)
+        );
     }
 }
