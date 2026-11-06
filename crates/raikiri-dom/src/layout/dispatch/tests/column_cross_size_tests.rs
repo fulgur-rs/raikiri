@@ -107,11 +107,11 @@ fn hypothetical_cross_measurements_preserve_main_limits_and_ordinary_cached_size
             let expected = if vertical {
                 Size {
                     width: main,
-                    height: 10.0,
+                    height: 30.0,
                 }
             } else {
                 Size {
-                    width: 10.0,
+                    width: 20.0,
                     height: main,
                 }
             };
@@ -282,6 +282,11 @@ fn item_main_maximum_remains_effective_after_hypothetical_cross_measurement() {
         let vertical = case["container"].as_str().unwrap().contains("writing-mode");
         // Full container sizes and positions are also checked by column_main_limits_tests.
         let cross = if vertical { actual.0.3 } else { actual.0.2 };
-        assert_eq!(cross, 10.0, "{}", case["name"]);
+        assert_eq!(
+            cross,
+            if vertical { height } else { width },
+            "{}",
+            case["name"]
+        );
     }
 }

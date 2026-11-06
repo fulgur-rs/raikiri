@@ -65,9 +65,18 @@ fn matrix_rectangles(case: &serde_json::Value) -> serde_json::Value {
 }
 
 #[test]
-fn column_main_limits_match_chromium_and_preserve_existing_cross_residuals() {
+fn column_main_limits_match_loaded_ahem_or_preserve_documented_baselines() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("data/column-main-limits.json")).unwrap();
+    assert_eq!(
+        fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| case.get("preserved_baseline").is_some())
+            .count(),
+        7
+    );
     let mut differences = Vec::new();
     for case in fixture["cases"].as_array().unwrap() {
         let actual = matrix_rectangles(case);
@@ -75,31 +84,20 @@ fn column_main_limits_match_chromium_and_preserve_existing_cross_residuals() {
             actual.as_object().unwrap().len(),
             case["rectangles"].as_object().unwrap().len()
         );
-        let vertical = case["name"].as_str().unwrap().starts_with("vertical-");
+        let expected = case
+            .get("preserved_baseline")
+            .map_or(&case["rectangles"], |baseline| &baseline["rectangles"]);
         let close = actual.as_object().unwrap().iter().all(|(id, rect)| {
             rect.as_array()
                 .unwrap()
                 .iter()
                 .enumerate()
                 .all(|(axis, value)| {
-                    let cross = if vertical {
-                        axis == 1 || axis == 3
-                    } else {
-                        axis == 0 || axis == 2
-                    };
-                    let expected = if cross && case.get("existing_cross_baseline").is_some() {
-                        &case["existing_cross_baseline"][id][if axis < 2 { 0 } else { 1 }]
-                    } else {
-                        &case["rectangles"][id][axis]
-                    };
-                    (value.as_f64().unwrap() - expected.as_f64().unwrap()).abs() <= 0.02
+                    (value.as_f64().unwrap() - expected[id][axis].as_f64().unwrap()).abs() <= 0.02
                 })
         });
         if !close {
-            differences.push(format!(
-                "{}: {} != {}",
-                case["name"], actual, case["rectangles"]
-            ));
+            differences.push(format!("{}: {} != {}", case["name"], actual, expected));
         }
     }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
@@ -167,24 +165,35 @@ fn bounded_column_measurements_restore_styles_and_cached_results() {
         AvailableSpace, LayoutInput, RequestedAxis, RunMode, SizingMode,
     };
     use crate::layout::test_support::{cascaded, with_ahem};
-    for vertical in [false, true] {
+    fn fixture(vertical: bool) -> (crate::Document, usize, usize, usize, usize) {
         let (container, item) = if vertical {
             (
                 "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:calc(10% + 5px)",
-                "display:block;flex:0.5 1 160px;max-width:80px;position:relative;left:10%;right:5px;writing-mode:horizontal-tb",
+                "display:block;flex:0.5 1 160px;max-width:80px;position:relative;left:10%;right:5px;writing-mode:horizontal-tb;padding:5%",
             )
         } else {
             (
                 "display:inline-flex;flex-direction:column;row-gap:calc(10% + 5px)",
-                "display:block;flex:0.5 1 120px;max-height:80px;position:relative;top:10%;bottom:5px;writing-mode:vertical-rl",
+                "display:block;flex:0.5 1 120px;max-height:80px;position:relative;top:10%;bottom:5px;writing-mode:vertical-rl;padding:5%",
             )
         };
-        let (mut doc, container, item) =
+        let (mut doc, root, item) =
             super::column_cross_size_tests::column_document(container, item, "xxxx xxxx xx");
+        let child = doc.append_element(
+            Some(item),
+            "span",
+            Some("display:inline-block;width:25%;height:20%;padding:5%"),
+        );
+        doc.append_text(child, "xx");
+        let image = doc.append_element(Some(root), "img", Some("display:block;writing-mode:horizontal-tb;flex:0 0 40px;width:15px;height:20px;padding:5%"));
+        doc.mark_in_document_flags();
         with_ahem(&mut doc);
+        (doc, root, item, child, image)
+    }
+    for vertical in [false, true] {
+        let (mut doc, container, item, child, image) = fixture(vertical);
         let cascade = cascaded(&doc);
         let mut tree = LayoutSession::bridged(&mut doc, &cascade);
-        let epoch = tree.layout_cache_context.epoch();
         let basis = tree.physical_style(item).flex_basis();
         let gap = tree.physical_style(container).gap();
         let inset = tree.physical_style(item).inset();
@@ -197,6 +206,7 @@ fn bounded_column_measurements_restore_styles_and_cached_results() {
         inputs.available_space.width = AvailableSpace::MaxContent;
         inputs.available_space.height = AvailableSpace::MaxContent;
         let original = tree.compute_child_layout(container.into(), inputs).size;
+        let epoch = tree.layout_cache_context.epoch();
         for definite in [true, false, true, false] {
             let mut constrained = inputs;
             if vertical {
@@ -218,34 +228,19 @@ fn bounded_column_measurements_restore_styles_and_cached_results() {
                     let actual = tree
                         .compute_child_layout(container.into(), constrained)
                         .size;
-                    let (mut fresh_doc, fresh_container, fresh_item) =
-                        super::column_cross_size_tests::column_document(
-                            if vertical {
-                                "display:flex;flex-direction:column;writing-mode:vertical-rl;row-gap:calc(10% + 5px)"
-                            } else {
-                                "display:inline-flex;flex-direction:column;row-gap:calc(10% + 5px)"
-                            },
-                            if vertical {
-                                "display:block;flex:0.5 1 160px;max-width:80px;position:relative;left:10%;right:5px;writing-mode:horizontal-tb"
-                            } else {
-                                "display:block;flex:0.5 1 120px;max-height:80px;position:relative;top:10%;bottom:5px;writing-mode:vertical-rl"
-                            },
-                            "xxxx xxxx xx",
-                        );
-                    with_ahem(&mut fresh_doc);
+                    let (mut fresh_doc, fresh_root, fresh_item, fresh_child, fresh_image) =
+                        fixture(vertical);
                     let fresh_cascade = cascaded(&fresh_doc);
                     let mut fresh = LayoutSession::bridged(&mut fresh_doc, &fresh_cascade);
                     let expected = fresh
-                        .compute_child_layout(fresh_container.into(), constrained)
+                        .compute_child_layout(fresh_root.into(), constrained)
                         .size;
                     if run_mode == RunMode::PerformLayout {
-                        assert_eq!(
-                            tree.nodes[item].layout, fresh.nodes[fresh_item].layout,
-                            "item geometry: vertical={vertical} definite={definite} axis={axis:?}"
-                        );
+                        assert_eq!(tree.nodes[item].layout, fresh.nodes[fresh_item].layout);
+                        assert_eq!(tree.nodes[child].layout, fresh.nodes[fresh_child].layout);
+                        assert_eq!(tree.nodes[image].layout, fresh.nodes[fresh_image].layout);
                     }
-                    // ComputeSize does not promise the unrequested axis; a cache
-                    // hit may retain it while a fresh measurement leaves it zero.
+                    // A single-axis ComputeSize does not promise the other dimension.
                     if run_mode == RunMode::PerformLayout || axis != RequestedAxis::Vertical {
                         assert_eq!(
                             actual.width, expected.width,
@@ -364,4 +359,87 @@ fn an_invalid_resolved_flex_basis_delegates_without_a_measurement_override() {
     assert_eq!(calls.get(), 1);
     assert_eq!(output.size, marker);
     tree.restore_overrides_to(0);
+}
+
+#[test]
+fn nested_orthogonal_columns_do_not_remeasure_descendants_exponentially() {
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{
+        COLUMN_CROSS_MEASUREMENTS, absolute_rect, cascaded, page_box_800x600, with_ahem,
+    };
+    let mut counts = Vec::new();
+    for depth in [1, 2, 4, 8] {
+        let (mut doc, root, mut paragraph) = super::column_cross_size_tests::column_document(
+            "display:inline-flex;flex-direction:column",
+            "display:block;writing-mode:vertical-rl;flex:0 0 60px",
+            "x",
+        );
+        for _ in 1..depth {
+            let flex = doc.append_element(
+                Some(paragraph),
+                "span",
+                Some("display:inline-flex;writing-mode:horizontal-tb;flex-direction:column"),
+            );
+            paragraph = doc.append_element(
+                Some(flex),
+                "div",
+                Some("display:block;writing-mode:vertical-rl;flex:0 0 60px"),
+            );
+            doc.append_text(paragraph, "x");
+        }
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        COLUMN_CROSS_MEASUREMENTS.with(|count| count.set(0));
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+        counts.push(COLUMN_CROSS_MEASUREMENTS.with(|count| count.get()));
+        let (_, _, width, height) = absolute_rect(&doc, root);
+        assert!(width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0);
+    }
+    eprintln!("nested orthogonal measurement counts: {counts:?}");
+    assert!(counts[3] <= counts[2] * 4 + 64, "{counts:?}");
+}
+
+#[test]
+fn an_unresolved_minimum_keeps_every_siblings_original_flex_basis() {
+    use crate::layout::context::LayoutSession;
+    use crate::layout::protocol::{LayoutInput, LayoutOutput, RequestedAxis, RunMode};
+    use crate::layout::test_support::{cascaded, with_ahem};
+    use raikiri_layout_style::values::Dimension;
+    let (mut doc, container, first) = super::column_cross_size_tests::column_document(
+        "display:inline-flex;flex-direction:column",
+        "display:block;flex:0 0 120px;max-height:80px",
+        "x",
+    );
+    doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;flex:0 0 40px;min-height:50%"),
+    );
+    doc.mark_in_document_flags();
+    with_ahem(&mut doc);
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Both,
+        ..LayoutInput::HIDDEN
+    };
+    let calls = std::cell::Cell::new(0);
+    super::super::column_main_limits::layout(
+        &mut tree,
+        container.into(),
+        inputs,
+        false,
+        |tree, _, received| {
+            calls.set(calls.get() + 1);
+            assert_eq!(received, inputs);
+            assert_eq!(
+                tree.physical_style(first).flex_basis(),
+                Dimension::length(120.0)
+            );
+            assert_eq!(tree.override_checkpoint(), 0);
+            LayoutOutput::HIDDEN
+        },
+    );
+    assert_eq!(calls.get(), 1);
 }

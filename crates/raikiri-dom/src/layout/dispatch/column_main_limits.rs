@@ -10,8 +10,8 @@ use raikiri_layout_style::{LayoutStyleView, LengthProperty as P, OwnedPropertyOv
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
 /// Measure bounded hypothetical main sizes without changing the bases or
-/// flexibility used by the ordinary layout. An unresolved basis leaves the
-/// container on its existing path.
+/// flexibility used by the ordinary layout. Unresolved outer constraints leave
+/// the container on its existing path.
 pub(super) fn layout(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -32,7 +32,8 @@ pub(super) fn layout(
         inputs.known_dimensions.height
     };
     let style = tree.physical_style(idx);
-    if main_is_definite
+    if !super::column_cross_measure::supported(tree, idx)
+        || main_is_definite
         || style.flex_direction_is_row()
         || style.flex_wraps()
         || style.block_aspect_ratio().is_some()
@@ -156,7 +157,11 @@ fn finite_basis(style: &LayoutStyleView<'_>, vertical: bool) -> Option<(f32, f32
     } else {
         (min.height, max.height)
     };
-    let min = min.maybe_resolve(None::<f32>);
+    let resolved_min = min.maybe_resolve(None::<f32>);
+    if !min.is_auto() && resolved_min.is_none() {
+        return None;
+    }
+    let min = resolved_min;
     let max = max.maybe_resolve(None::<f32>);
     if !basis.is_finite()
         || basis < 0.0

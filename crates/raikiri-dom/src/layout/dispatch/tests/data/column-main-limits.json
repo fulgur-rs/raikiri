@@ -18,13 +18,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -43,13 +43,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -68,13 +68,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -93,13 +93,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -118,13 +118,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           60
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           60
         ]
       }
@@ -143,13 +143,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           40
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           40
         ]
       }
@@ -168,13 +168,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           100
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           100
         ]
       }
@@ -193,13 +193,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -218,13 +218,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           200
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -243,27 +243,16 @@
         "container": [
           0,
           0,
-          20,
+          30,
           50
         ],
         "a": [
           0,
           0,
-          20,
+          30,
           80
         ]
-      },
-      "existing_cross_baseline": {
-        "a": [
-          0.0,
-          10.0
-        ],
-        "container": [
-          0.0,
-          10.0
-        ]
-      },
-      "cross_residual": "RAIKIRI-1488; unchanged from b09ff9291ceca1fd837250f3f2e544aac858f056"
+      }
     },
     {
       "name": "horizontal-min-container",
@@ -279,13 +268,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           200
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -304,13 +293,13 @@
         "container": [
           0,
           0,
-          20,
+          30,
           80
         ],
         "a": [
           0,
           0,
-          20,
+          30,
           80
         ]
       }
@@ -329,13 +318,13 @@
         "container": [
           0,
           0,
-          20,
+          30,
           90
         ],
         "a": [
           0,
           0,
-          20,
+          30,
           90
         ]
       }
@@ -363,18 +352,7 @@
           90,
           60
         ]
-      },
-      "existing_cross_baseline": {
-        "a": [
-          0.0,
-          70.0
-        ],
-        "container": [
-          0.0,
-          70.0
-        ]
-      },
-      "cross_residual": "RAIKIRI-1488; unchanged from b09ff9291ceca1fd837250f3f2e544aac858f056"
+      }
     },
     {
       "name": "horizontal-margin",
@@ -390,13 +368,13 @@
         "container": [
           0,
           0,
-          18,
+          28,
           86
         ],
         "a": [
           4,
           3,
-          10,
+          20,
           80
         ]
       }
@@ -415,13 +393,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -465,27 +443,16 @@
         "container": [
           0,
           0,
-          55,
+          120,
           80
         ],
         "a": [
           0,
           0,
-          55,
+          120,
           80
         ]
-      },
-      "existing_cross_baseline": {
-        "a": [
-          0.0,
-          120.0
-        ],
-        "container": [
-          0.0,
-          120.0
-        ]
-      },
-      "cross_residual": "RAIKIRI-1488; unchanged from b09ff9291ceca1fd837250f3f2e544aac858f056"
+      }
     },
     {
       "name": "horizontal-relative-percent",
@@ -501,13 +468,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -531,19 +498,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           120
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           40
         ]
       }
@@ -567,19 +534,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           120
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           40
         ]
       }
@@ -603,19 +570,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           120
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           40
         ]
       }
@@ -639,19 +606,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           125
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           85,
-          10,
+          20,
           40
         ]
       }
@@ -675,19 +642,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           120
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           40
         ]
       }
@@ -711,19 +678,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           125
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           85,
-          10,
+          20,
           40
         ]
       }
@@ -747,19 +714,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           200
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           100,
-          10,
+          20,
           40
         ]
       }
@@ -816,13 +783,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -842,13 +809,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -867,13 +834,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -892,13 +859,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -917,13 +884,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -942,13 +909,13 @@
           0,
           0,
           60,
-          10
+          30
         ],
         "a": [
           0,
           0,
           60,
-          10
+          30
         ]
       }
     },
@@ -967,13 +934,13 @@
           0,
           0,
           40,
-          10
+          30
         ],
         "a": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -992,13 +959,13 @@
           0,
           0,
           100,
-          10
+          20
         ],
         "a": [
           0,
           0,
           100,
-          10
+          20
         ]
       }
     },
@@ -1017,13 +984,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1042,13 +1009,13 @@
           0,
           0,
           200,
-          10
+          30
         ],
         "a": [
           120,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1067,26 +1034,15 @@
           0,
           0,
           50,
-          20
+          30
         ],
         "a": [
           -30,
           0,
           80,
-          20
+          30
         ]
-      },
-      "existing_cross_baseline": {
-        "a": [
-          0.0,
-          10.0
-        ],
-        "container": [
-          0.0,
-          10.0
-        ]
-      },
-      "cross_residual": "RAIKIRI-1488; unchanged from b09ff9291ceca1fd837250f3f2e544aac858f056"
+      }
     },
     {
       "name": "vertical-min-container",
@@ -1103,13 +1059,13 @@
           0,
           0,
           200,
-          10
+          30
         ],
         "a": [
           120,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1128,13 +1084,13 @@
           0,
           0,
           80,
-          20
+          40
         ],
         "a": [
           0,
           0,
           80,
-          20
+          40
         ]
       }
     },
@@ -1153,13 +1109,13 @@
           0,
           0,
           90,
-          20
+          40
         ],
         "a": [
           0,
           0,
           90,
-          20
+          40
         ]
       }
     },
@@ -1186,18 +1142,7 @@
           60,
           90
         ]
-      },
-      "existing_cross_baseline": {
-        "a": [
-          0.0,
-          70.0
-        ],
-        "container": [
-          0.0,
-          70.0
-        ]
-      },
-      "cross_residual": "RAIKIRI-1488; unchanged from b09ff9291ceca1fd837250f3f2e544aac858f056"
+      }
     },
     {
       "name": "vertical-margin",
@@ -1214,13 +1159,13 @@
           0,
           0,
           88,
-          16
+          36
         ],
         "a": [
           4,
           3,
           80,
-          10
+          30
         ]
       }
     },
@@ -1239,13 +1184,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1289,26 +1234,15 @@
           0,
           0,
           80,
-          65
+          140
         ],
         "a": [
           0,
           0,
           80,
-          65
+          140
         ]
-      },
-      "existing_cross_baseline": {
-        "a": [
-          0.0,
-          140.0
-        ],
-        "container": [
-          0.0,
-          140.0
-        ]
-      },
-      "cross_residual": "RAIKIRI-1488; unchanged from b09ff9291ceca1fd837250f3f2e544aac858f056"
+      }
     },
     {
       "name": "vertical-relative-percent",
@@ -1325,13 +1259,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1355,19 +1289,19 @@
           0,
           0,
           120,
-          10
+          30
         ],
         "a": [
           40,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1391,19 +1325,19 @@
           0,
           0,
           120,
-          10
+          30
         ],
         "a": [
           40,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1427,19 +1361,19 @@
           0,
           0,
           120,
-          10
+          30
         ],
         "a": [
           40,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1463,19 +1397,19 @@
           0,
           0,
           125,
-          10
+          30
         ],
         "a": [
           45,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1499,19 +1433,19 @@
           0,
           0,
           120,
-          10
+          30
         ],
         "a": [
           40,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1535,19 +1469,19 @@
           0,
           0,
           125,
-          10
+          30
         ],
         "a": [
           45,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1571,19 +1505,19 @@
           0,
           0,
           200,
-          10
+          30
         ],
         "a": [
           120,
           0,
           80,
-          10
+          30
         ],
         "b": [
           60,
           0,
           40,
-          10
+          30
         ]
       }
     },
@@ -1640,13 +1574,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1664,13 +1598,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -1689,13 +1623,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           -5,
-          10,
+          20,
           80
         ]
       }
@@ -1714,13 +1648,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ]
       }
@@ -1739,13 +1673,13 @@
         "container": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "a": [
           0,
           -5,
-          10,
+          20,
           80
         ]
       }
@@ -1769,19 +1703,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           300
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           130
         ]
       }
@@ -1805,19 +1739,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           100
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           60
         ],
         "b": [
           0,
           60,
-          10,
+          20,
           40
         ]
       }
@@ -1848,19 +1782,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           200
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           120
         ],
         "b_child_0": [
@@ -1897,19 +1831,19 @@
         "container": [
           0,
           0,
-          10,
+          20,
           100
         ],
         "a": [
           0,
           0,
-          10,
+          20,
           80
         ],
         "b": [
           0,
           80,
-          10,
+          20,
           20
         ],
         "b_child_0": [
@@ -1935,13 +1869,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1960,13 +1894,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           -5,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -1985,13 +1919,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           0,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -2010,13 +1944,13 @@
           0,
           0,
           80,
-          10
+          30
         ],
         "a": [
           -5,
           0,
           80,
-          10
+          30
         ]
       }
     },
@@ -2040,19 +1974,19 @@
           0,
           0,
           300,
-          10
+          30
         ],
         "a": [
           220,
           0,
           80,
-          10
+          30
         ],
         "b": [
           90,
           0,
           130,
-          10
+          30
         ]
       }
     },
@@ -2076,19 +2010,19 @@
           0,
           0,
           100,
-          10
+          30
         ],
         "a": [
           33.328125,
           0,
           66.671875,
-          10
+          30
         ],
         "b": [
           0,
           0,
           33.328125,
-          10
+          30
         ]
       }
     },
@@ -2119,19 +2053,19 @@
           0,
           0,
           200,
-          10
+          30
         ],
         "a": [
           120,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           120,
-          10
+          30
         ],
         "b_child_0": [
           0,
@@ -2168,19 +2102,19 @@
           0,
           0,
           100,
-          10
+          30
         ],
         "a": [
           20,
           0,
           80,
-          10
+          30
         ],
         "b": [
           0,
           0,
           20,
-          10
+          30
         ],
         "b_child_0": [
           -100,
@@ -2188,6 +2122,1039 @@
           120,
           10
         ]
+      }
+    },
+    {
+      "name": "horizontal-original-no-limit",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "vertical-original-no-limit",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 80px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          80,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          80,
+          10
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-max-inactive",
+      "container": "display:inline-flex;flex-direction:column;max-height:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-small-no-item-max",
+      "container": "display:inline-flex;flex-direction:column;height:50px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          50
+        ],
+        "a": [
+          0,
+          0,
+          30,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-percent-max",
+      "container": "display:inline-flex;flex-direction:column;height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          100
+        ]
+      }
+    },
+    {
+      "name": "horizontal-min-percent-max",
+      "container": "display:inline-flex;flex-direction:column;min-height:300px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          300
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-edges",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          50
+        ],
+        "a": [
+          10,
+          10,
+          30,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-content-box",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px;box-sizing:content-box;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3px",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          64
+        ],
+        "a": [
+          10,
+          10,
+          30,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-max-percent",
+      "container": "display:inline-flex;flex-direction:column;max-height:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-max-calc-percent",
+      "container": "display:inline-flex;flex-direction:column;max-height:calc(50% + 10px)",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-container-min-wins",
+      "container": "display:inline-flex;flex-direction:column;max-height:50px;min-height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-item-min",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;min-height:50%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          300
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          300
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Unresolved main minimum",
+        "rectangles": {
+          "a": [
+            0.0,
+            0.0,
+            10.0,
+            80.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            10.0,
+            120.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "horizontal-calc-percent-max",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:calc(50% + 5px)",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          120
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          120
+        ]
+      }
+    },
+    {
+      "name": "horizontal-fixed-calc-percent-max",
+      "container": "display:inline-flex;flex-direction:column;height:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;max-height:calc(50% + 5px)",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          200
+        ],
+        "a": [
+          0,
+          0,
+          20,
+          105
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-max-inactive",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          20
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          20
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-small-no-item-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:50px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          30
+        ],
+        "a": [
+          -110,
+          0,
+          160,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          20
+        ],
+        "a": [
+          100,
+          0,
+          100,
+          20
+        ]
+      }
+    },
+    {
+      "name": "vertical-min-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;min-width:300px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          300,
+          10
+        ],
+        "a": [
+          140,
+          0,
+          160,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          50,
+          50
+        ],
+        "a": [
+          -40,
+          10,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-content-box",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px;box-sizing:content-box;padding:5px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3px",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          64,
+          50
+        ],
+        "a": [
+          -26,
+          10,
+          80,
+          30
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-max-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-max-calc-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:calc(50% + 10px)",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-container-min-wins",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px;min-width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          10
+        ],
+        "a": [
+          140,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-item-min",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;min-width:50%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          400,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          400,
+          10
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Unresolved main minimum",
+        "rectangles": {
+          "a": [
+            80.0,
+            0.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            160.0,
+            10.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vertical-calc-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:calc(50% + 5px)",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          160,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          160,
+          10
+        ]
+      }
+    },
+    {
+      "name": "vertical-fixed-calc-percent-max",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;max-width:calc(50% + 5px)",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          200,
+          20
+        ],
+        "a": [
+          95,
+          0,
+          105,
+          20
+        ]
+      }
+    },
+    {
+      "name": "horizontal-percent-edges",
+      "container": "display:inline-flex;flex-direction:column;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          20,
+          81.1875
+        ],
+        "a": [
+          0.59375,
+          0.59375,
+          18.8125,
+          80
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            0.29999998211860657,
+            0.29999998211860657,
+            9.399999618530273,
+            80.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            10.0,
+            120.5999984741211
+          ]
+        }
+      }
+    },
+    {
+      "name": "horizontal-limited-percent-edges",
+      "container": "display:inline-flex;flex-direction:column;max-height:100px;padding:3px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          30,
+          91.1875
+        ],
+        "a": [
+          5.59375,
+          5.59375,
+          18.8125,
+          80
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            5.300000190734863,
+            5.300000190734863,
+            9.399999618530273,
+            80.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            20.0,
+            100.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "horizontal-container-max-ten-percent",
+      "container": "display:inline-flex;flex-direction:column;max-height:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 60px;max-height:80px;max-height:none",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          10,
+          60
+        ],
+        "a": [
+          0,
+          0,
+          10,
+          60
+        ]
+      }
+    },
+    {
+      "name": "vertical-percent-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          81.78125,
+          30
+        ],
+        "a": [
+          0.890625,
+          0.890625,
+          80,
+          28.21875
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            80.0,
+            0.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            160.0,
+            10.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vertical-limited-percent-edges",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:100px;padding:3px;border:2px solid",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;padding:5%;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          91.78125,
+          40
+        ],
+        "a": [
+          5.890625,
+          5.890625,
+          80,
+          28.21875
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Cyclic main percentage margins without independently stated cross size",
+        "rectangles": {
+          "a": [
+            15.0,
+            5.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            100.0,
+            20.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vertical-container-max-ten-percent",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:10%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 60px;max-width:80px;max-width:none",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          60,
+          10
+        ],
+        "a": [
+          0,
+          0,
+          60,
+          10
+        ]
+      }
+    },
+    {
+      "name": "horizontal-stated-cross-percent-margin",
+      "container": "display:inline-flex;flex-direction:column;width:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          100,
+          86
+        ],
+        "a": [
+          3,
+          3,
+          94,
+          80
+        ]
+      }
+    },
+    {
+      "name": "horizontal-stated-percentage-cross-margin",
+      "container": "display:inline-flex;flex-direction:column;width:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:vertical-rl;flex:0 0 120px;max-height:80px;margin:3%",
+          "text": "xxxx xxxx xx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          400,
+          104
+        ],
+        "a": [
+          12,
+          12,
+          376,
+          80
+        ]
+      }
+    },
+    {
+      "name": "vertical-stated-cross-percent-margin",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:100px",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          86,
+          100
+        ],
+        "a": [
+          3,
+          3,
+          80,
+          94
+        ]
+      }
+    },
+    {
+      "name": "vertical-stated-percentage-cross-margin",
+      "container": "display:flex;flex-direction:column;writing-mode:vertical-rl;height:50%",
+      "items": [
+        {
+          "id": "a",
+          "style": "writing-mode:horizontal-tb;flex:0 0 160px;max-width:80px;margin:3%",
+          "text": "xxxx xxxx xxxx"
+        }
+      ],
+      "rectangles": {
+        "container": [
+          0,
+          0,
+          98,
+          300
+        ],
+        "a": [
+          9,
+          9,
+          80,
+          282
+        ]
+      },
+      "preserved_baseline": {
+        "revision": "b09ff9291ceca1fd837250f3f2e544aac858f056",
+        "issue": "RAIKIRI-1488",
+        "reason": "Authored percentage cross cannot resolve against the original parent basis",
+        "rectangles": {
+          "a": [
+            80.0,
+            0.0,
+            80.0,
+            10.0
+          ],
+          "container": [
+            0.0,
+            0.0,
+            160.0,
+            10.0
+          ]
+        }
       }
     }
   ],
@@ -2200,9 +3167,20 @@
     ],
     "body": "margin:0;width:800px;font-family:Ahem;font-size:10px;line-height:10px",
     "div": "display:block;box-sizing:border-box",
-    "measurement": "document.fonts.ready; getBoundingClientRect(); each case alone",
+    "measurement": "CDP device viewport800x600; await document.fonts.load(\"10px Ahem\") before inserting dynamic cases; document.fonts.check and loaded face verified; canvas x advance9.999984741px; each case alone",
     "tolerance_px": 0.02,
-    "date": "2026-11-06"
+    "date": "2026-11-06",
+    "font_evidence": {
+      "fontReady": true,
+      "xAdvance": 9.999984741210938,
+      "faces": [
+        {
+          "family": "Ahem",
+          "status": "loaded"
+        }
+      ]
+    },
+    "ahem_sha256": "b719ecb31c5b21fc573c03f6421c74ac63c271a5a3ff841e34f9705fb94b8448"
   },
-  "cross_residual_issue": "RAIKIRI-1488"
+  "preserved_baselines_note": "Seven explicitly excluded legacy cases retain immutable b09 rectangles; their loaded-Ahem Chromium rectangles remain separately recorded and are not claimed to match."
 }

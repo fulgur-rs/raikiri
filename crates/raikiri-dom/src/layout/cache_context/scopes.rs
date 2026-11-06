@@ -52,6 +52,17 @@ impl LayoutSession<'_> {
         self.resolved_edge_scope(idx, basis, false, true, compute)
     }
 
+    /// Resolve box edges locally while the caller keeps this box's cache isolated.
+    /// Table border cache invalidation remains identical to the global scope.
+    pub(crate) fn with_local_resolved_box_edges<R>(
+        &mut self,
+        idx: usize,
+        basis: f32,
+        compute: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.resolved_edge_scope(idx, basis, true, true, compute)
+    }
+
     fn resolved_edge_scope<R>(
         &mut self,
         idx: usize,

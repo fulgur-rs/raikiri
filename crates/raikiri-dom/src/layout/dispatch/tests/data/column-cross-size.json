@@ -13,10 +13,20 @@
     "body": "margin:0;width:800px;font:10px/10px Ahem",
     "div": "box-sizing:border-box",
     "font": "crates/raikiri-dom/tests/data/text-autospace/Ahem.ttf",
-    "measurement": "DOMRect after document.fonts.ready, each case rendered alone at the body origin",
+    "measurement": "CDP fixed800x600; explicit document.fonts.load(\"10px Ahem\") BEFORE dynamic insertion; each case alone; Ahem face loaded and canvas advance ~10px verified",
     "scope": "Single-line column flex containers, normal white-space, orthogonal paragraph items. Separate baseline mismatches involving white-space:nowrap automatic main minima and wrapping containers are outside this fixture.",
-    "reproduce": "Embed Ahem as a data-URL @font-face; apply the recorded body/div styles; render container div with one item div and its text; wait for document.fonts.ready and measure both DOMRects.",
-    "main_limit_controls": "Item sizes and container cross sizes are checked here; full container and item DOMRects are additionally asserted in column_main_limits_tests after RAIKIRI-1487."
+    "reproduce": "Embed bundled Ahem data URL; explicitly await document.fonts.load(\"10px Ahem\"), check loaded face and canvas advance10px, set800x600CDPviewport, then create each recorded container/item and measure both DOMRects.",
+    "main_limit_controls": "Item sizes and container cross sizes are checked here; full container and item DOMRects are additionally asserted in column_main_limits_tests after RAIKIRI-1487.",
+    "font_evidence": {
+      "fontReady": true,
+      "xAdvance": 9.999984741210938,
+      "faces": [
+        {
+          "family": "Ahem",
+          "status": "loaded"
+        }
+      ]
+    }
   },
   "cases": [
     {
@@ -171,13 +181,13 @@
       "container_rect": [
         0,
         0,
-        10,
+        20,
         60
       ],
       "item_rect": [
         0,
         0,
-        10,
+        20,
         60
       ]
     },
@@ -189,13 +199,13 @@
       "container_rect": [
         0,
         0,
-        10,
+        20,
         60
       ],
       "item_rect": [
         0,
         0,
-        10,
+        20,
         60
       ]
     },
@@ -303,7 +313,7 @@
       "item_rect": [
         0,
         0,
-        10,
+        30,
         60
       ]
     },
@@ -352,13 +362,13 @@
         0,
         0,
         80,
-        10
+        20
       ],
       "item_rect": [
         0,
         0,
         80,
-        10
+        20
       ]
     },
     {
@@ -370,13 +380,13 @@
         0,
         0,
         80,
-        10
+        30
       ],
       "item_rect": [
         0,
         0,
         80,
-        10
+        30
       ]
     },
     {
@@ -484,7 +494,7 @@
         0,
         0,
         80,
-        10
+        30
       ]
     },
     {
@@ -537,7 +547,7 @@
       "item_rect": [
         0,
         0,
-        10,
+        30,
         60
       ]
     },
@@ -555,7 +565,7 @@
       "item_rect": [
         0,
         0,
-        10,
+        30,
         60
       ]
     },
@@ -573,7 +583,7 @@
       "item_rect": [
         0,
         0,
-        10,
+        30,
         60
       ]
     },
@@ -591,7 +601,7 @@
       "item_rect": [
         0,
         0,
-        10,
+        30,
         60
       ]
     },
@@ -610,7 +620,7 @@
         0,
         0,
         80,
-        10
+        30
       ]
     },
     {
@@ -628,7 +638,7 @@
         0,
         0,
         80,
-        10
+        30
       ]
     },
     {
@@ -646,7 +656,7 @@
         0,
         0,
         80,
-        10
+        30
       ]
     },
     {
@@ -664,7 +674,7 @@
         0,
         0,
         80,
-        10
+        30
       ]
     }
   ],
@@ -677,13 +687,13 @@
       "container_rect": [
         0,
         0,
-        10,
+        20,
         80
       ],
       "item_rect": [
         0,
         0,
-        10,
+        20,
         80
       ]
     },
@@ -695,13 +705,13 @@
       "container_rect": [
         0,
         0,
-        10,
+        20,
         80
       ],
       "item_rect": [
         0,
         0,
-        10,
+        20,
         80
       ]
     },
@@ -714,13 +724,13 @@
         0,
         0,
         80,
-        10
+        30
       ],
       "item_rect": [
         0,
         0,
         80,
-        10
+        30
       ]
     },
     {
@@ -732,13 +742,13 @@
         0,
         0,
         80,
-        10
+        30
       ],
       "item_rect": [
         0,
         0,
         80,
-        10
+        30
       ]
     }
   ]
