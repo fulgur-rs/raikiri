@@ -804,7 +804,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                 self.rule_tree,
                 sink.room(),
                 context,
-            )?;
+            )?; // cov:ignore: cache handle overflow requires more than u32::MAX blocks or declarations
             self.block_cache.push(&mut sink, block, |decl| {
                 Precedence::new(
                     Origin::Author,
