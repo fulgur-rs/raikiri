@@ -546,3 +546,99 @@ fn a_column_container_in_a_grid_row() {
         ],
     );
 }
+
+/// The height of the spacer that `below_spacer` puts above a container.
+const SPACER: f32 = 300.0;
+
+/// `body` below a spacer, so that boxes a negative margin pulls up stay on the
+/// page.
+fn below_spacer(body: &str) -> String {
+    format!("<div style=\"height:{SPACER}px\"></div>{body}")
+}
+
+#[test]
+fn negative_margins_leave_free_space_that_a_growing_item_fills() {
+    // The sum of the outer sizes is below zero, which the container's height
+    // cannot be, so the item has the rest of the space to grow into.
+    let grow = |style: &str| below_spacer(&column("width:100px", &item("a", style, "")));
+    assert_boxes(
+        &grow("flex:1 1 100px;min-height:0;margin-top:-200px"),
+        &[
+            ("c", [0.0, SPACER, 100.0, 0.0]),
+            ("a", [0.0, SPACER - 200.0, 100.0, 200.0]),
+        ],
+    );
+    assert_boxes(
+        &grow("flex:1 1 100px;min-height:0;margin-bottom:-150px"),
+        &[
+            ("c", [0.0, SPACER, 100.0, 0.0]),
+            ("a", [0.0, SPACER, 100.0, 150.0]),
+        ],
+    );
+    // A percentage refers to the width of the container.
+    assert_boxes(
+        &grow("flex:1 1 100px;min-height:0;margin-top:-300%"),
+        &[
+            ("c", [0.0, SPACER, 100.0, 0.0]),
+            ("a", [0.0, SPACER - 300.0, 100.0, 300.0]),
+        ],
+    );
+    // An item that cannot grow keeps its basis.
+    assert_boxes(
+        &grow("flex:0 1 100px;min-height:0;margin-top:-200px"),
+        &[
+            ("c", [0.0, SPACER, 100.0, 0.0]),
+            ("a", [0.0, SPACER - 200.0, 100.0, 100.0]),
+        ],
+    );
+    // A margin that leaves the sum above zero changes nothing.
+    assert_boxes(
+        &grow("flex:1 1 100px;min-height:0;margin-top:-30px"),
+        &[
+            ("c", [0.0, SPACER, 100.0, 70.0]),
+            ("a", [0.0, SPACER - 30.0, 100.0, 100.0]),
+        ],
+    );
+}
+
+#[test]
+fn negative_margins_share_the_free_space_by_flex_grow() {
+    let body = below_spacer(&column(
+        "width:100px",
+        &(item("a", "flex:1 1 100px;min-height:0;margin-top:-250px", "")
+            + &item("b", "flex:2 1 20px;min-height:0", "")),
+    ));
+    assert_boxes(
+        &body,
+        &[
+            ("c", [0.0, SPACER, 100.0, 0.0]),
+            ("a", [0.0, SPACER - 250.0, 100.0, 143.33]),
+            ("b", [0.0, SPACER - 106.67, 100.0, 106.67]),
+        ],
+    );
+    // Padding stays outside the free space.
+    let padded = below_spacer(&column(
+        "width:100px;padding:5px",
+        &item("a", "flex:1 1 100px;min-height:0;margin-top:-200px", ""),
+    ));
+    assert_boxes(
+        &padded,
+        &[
+            ("c", [0.0, SPACER, 100.0, 10.0]),
+            ("a", [5.0, SPACER - 195.0, 90.0, 200.0]),
+        ],
+    );
+    // An item of automatic size next to a growing one.
+    let mixed = below_spacer(&column(
+        "width:100px",
+        &(item("a", "margin-bottom:-80px", WORDS) + &item("b", "flex:1 1 20px;min-height:0", "")),
+    ));
+    assert_boxes(
+        &mixed,
+        &[
+            ("c", [0.0, SPACER, 100.0, 0.0]),
+            ("a", [0.0, SPACER, 100.0, 50.0]),
+            ("b", [0.0, SPACER - 30.0, 100.0, 30.0]),
+        ],
+    );
+}

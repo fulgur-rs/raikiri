@@ -343,8 +343,10 @@ pub(super) fn with_orthogonal_percentage_flex_bases<R>(
 ///
 /// With no `min-height` or `max-height` on the container the sum is the height,
 /// and nothing is left to flex, so the rigid items are laid out as they are.
-/// Otherwise the height the rigid items found is given to the container, which
-/// lays the items out at their own flex factors within it.
+/// Otherwise, and where a negative margin could make the sum fall below the
+/// zero the height cannot go under, the height the rigid items found is given
+/// to the container, which lays the items out at their own flex factors
+/// within it.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#algo-main-container>
 pub(super) fn with_hypothetical_column_height(
@@ -366,27 +368,41 @@ pub(super) fn with_hypothetical_column_height(
     {
         return layout(tree, inputs);
     }
-    let bounded = container
-        .max_size()
-        .height
-        .maybe_resolve(None::<f32>)
-        .is_some()
+    let items = tree
+        .child_ids(node_id)
+        .map(usize::from)
+        .filter(|&item| {
+            tree.nodes[item].layout_position() != Position::Absolute
+                && tree.physical_style(item).box_generation_mode() != BoxGenerationMode::None
+        })
+        .collect::<Vec<_>>();
+    // A negative margin can make the sum of the outer sizes negative. The
+    // container stops at a height of zero then, and the free space left is
+    // what a growing item fills. A margin that is a percentage or a `calc()`
+    // is checked for its smallest and its largest value.
+    let negative_margin = items.iter().any(|&item| {
+        let margin = tree.physical_style(item).margin();
+        [margin.top, margin.bottom].into_iter().any(|side| {
+            [0.0, 1.0e9]
+                .into_iter()
+                .any(|width| side.resolve(Some(width)).is_some_and(|value| value < 0.0))
+        })
+    });
+    let bounded = negative_margin
+        || container
+            .max_size()
+            .height
+            .maybe_resolve(None::<f32>)
+            .is_some()
         || container
             .min_size()
             .height
             .maybe_resolve(None::<f32>)
             .is_some_and(|min| min > 0.0);
-    let rigid = tree
-        .child_ids(node_id)
-        .filter_map(|child| {
-            let item = usize::from(child);
-            if tree.nodes[item].layout_position() == Position::Absolute {
-                return None;
-            }
+    let rigid = items
+        .into_iter()
+        .filter_map(|item| {
             let style = tree.physical_style(item);
-            if style.box_generation_mode() == BoxGenerationMode::None {
-                return None;
-            }
             let basis = crate::layout::resolve_dimension(style.flex_basis(), None)
                 .filter(|basis| basis.is_finite())?;
             let bounded_basis = style
