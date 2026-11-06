@@ -556,10 +556,11 @@ fn wrapped_block_tree(
     if in_multicol_context && node.column_span_all {
         return None;
     }
-    let children_in_multicol_context =
-        in_multicol_context && node.display() != DisplayValue::FlowRoot;
+    let independent_context =
+        node.display() == DisplayValue::FlowRoot || node.roots_block_context();
+    let children_in_multicol_context = in_multicol_context && !independent_context;
     let has_edges = has_block_edge_decorations(&style);
-    if node.display() == DisplayValue::FlowRoot && !allow_sliced_wrappers
+    if independent_context && !allow_sliced_wrappers
         || has_edges
             && (!allow_sliced_wrappers || node.clones_box_decorations || !is_root)
         || node.paints_whole_box_effects

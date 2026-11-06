@@ -199,13 +199,13 @@ pub(in crate::layout) fn size_containment(
     if !applies {
         return none;
     }
-    if cv.contain.contains(Contain::SIZE) {
+    if cv.effective_containment().contains(Contain::SIZE) {
         return Size {
             width: true,
             height: true,
         };
     }
-    if !cv.contain.contains(Contain::INLINE_SIZE) {
+    if !cv.effective_containment().contains(Contain::INLINE_SIZE) {
         return none;
     }
     let vertical = crate::layout::dispatch::used_writing_mode(doc, idx).is_vertical();
@@ -222,7 +222,8 @@ pub(in crate::layout) fn full_size_containment(
     cv: &ComputedValues,
     boxes: BoxTree<'_>,
 ) -> bool {
-    cv.contain.contains(raikiri_style::property::Contain::SIZE)
+    cv.effective_containment()
+        .contains(raikiri_style::property::Contain::SIZE)
         && size_containment_display(cv.display)
         && !super::super::fixed::generates_inline_box_with_tree(doc, idx, cv, boxes)
 }

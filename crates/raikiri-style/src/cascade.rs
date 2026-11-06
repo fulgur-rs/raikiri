@@ -616,7 +616,7 @@ fn find_principal_element<D: StyleDom>(dom: &D, computed: &[ComputedValues], roo
     let contained = |index: usize| {
         computed
             .get(index)
-            .is_none_or(|v| v.contain != Contain::NONE)
+            .is_none_or(|v| v.effective_containment() != Contain::NONE)
     };
     let root_id = StyleNodeId::new(root as u64);
     if !is_html(root_id, "html") || contained(root) {

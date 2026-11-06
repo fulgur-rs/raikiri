@@ -610,6 +610,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
         | PropertyValue::Contain(_)
+        | PropertyValue::ContainerType(_)
         | PropertyValue::ContainIntrinsicWidth(_)
         | PropertyValue::ContainIntrinsicHeight(_)
         | PropertyValue::ContainIntrinsicSize(_)

@@ -1,4 +1,5 @@
 use super::*;
+mod container_type_tests;
 mod named_string_tests;
 mod xhtml_tests;
 

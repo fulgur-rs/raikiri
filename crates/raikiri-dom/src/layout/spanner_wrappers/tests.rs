@@ -503,3 +503,16 @@ fn a_wrapper_with_a_first_line_or_first_letter_style_keeps_its_box() {
         assert_eq!(doc.nodes[wrapper].generates_no_box(), lifted, "{rule}");
     }
 }
+
+#[test]
+fn container_type_wrapper_keeps_its_box_around_a_column_spanner() {
+    for kind in ["inline-size", "size"] {
+        let (doc, wrapper) = wrapped_spanner(
+            COLUMNS,
+            "div",
+            &format!("display:block;container-type:{kind}"),
+        );
+        assert!(!doc.nodes[wrapper].generates_no_box(), "{kind}");
+        assert!(doc.nodes[wrapper].roots_block_context(), "{kind}");
+    }
+}

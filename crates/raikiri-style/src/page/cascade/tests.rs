@@ -4710,7 +4710,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 204;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 205;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -5382,6 +5382,7 @@ property_key_samples! {
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
     // CSS Containment 2 §2 / CSS Will Change 1 §3 — non-initial.
     Contain => PropertyValue::Contain(crate::property::Contain::CONTENT),
+    ContainerType => PropertyValue::ContainerType(crate::property::ContainerType::Size),
     WillChange => PropertyValue::WillChange(crate::property::WillChange::TRANSFORM),
     // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
     MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".into())),
@@ -5929,6 +5930,7 @@ property_value_variant_registry! {
     MixBlendMode,
     BoxDecorationBreak,
     Contain,
+    ContainerType,
     WillChange,
     MaskImage,
     ClipPath,
@@ -6798,6 +6800,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MixBlendMode(_)
             | PropertyValue::BoxDecorationBreak(_)
             | PropertyValue::Contain(_)
+            | PropertyValue::ContainerType(_)
             | PropertyValue::WillChange(_)
 
             // `clip-path` (§5.1) — no embedded length at all (no

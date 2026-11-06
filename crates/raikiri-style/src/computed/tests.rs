@@ -676,6 +676,7 @@ fn non_initial_parent() -> ComputedValues {
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Containment 2 §2 / CSS Will Change 1 §3: non-inherited.
         contain: crate::property::Contain::CONTENT,
+        container_type: crate::property::ContainerType::Size,
         will_change: crate::property::WillChange::TRANSFORM,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited,
         // so use values different from the initial `none`
@@ -1006,6 +1007,7 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.mix_blend_mode, initial.mix_blend_mode);
     // CSS Containment 2 §2 / CSS Will Change 1 §3: non-inherited.
     assert_eq!(child.contain, initial.contain);
+    assert_eq!(child.container_type, initial.container_type);
     assert_eq!(child.will_change, initial.will_change);
     // CSS Masking Level 1 §7.1/§5.1: both are non-inherited.
     assert_eq!(child.mask_image, initial.mask_image);

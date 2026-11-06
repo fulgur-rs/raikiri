@@ -38,18 +38,18 @@ use crate::property::{
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxDecorationBreak, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue,
-    ColumnSpanValue, ColumnWidthValue, Contain, ContainIntrinsicSize, ContentAlignmentValue,
-    ContentComponent, ContentList, CounterResetValue, CssColor, CssPosition, CssPositionOffset,
-    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontFamilyName, FontFeatureSettings, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LengthPercentageOrCalc, LetterSpacingValue, LineBreak, LineHeight,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
+    ColumnSpanValue, ColumnWidthValue, Contain, ContainIntrinsicSize, ContainerType,
+    ContentAlignmentValue, ContentComponent, ContentList, CounterResetValue, CssColor, CssPosition,
+    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontFeatureSettings,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
+    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
+    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length,
+    LengthOrAuto, LengthOrNormal, LengthPercentageOrCalc, LetterSpacingValue, LineBreak,
+    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
     RelativeCalcLengthPercentage, RelativeCalcUnit, RubyPosition, SelfAlignmentValue, Sides,
     TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
@@ -694,6 +694,8 @@ pub struct SpecifiedValues {
     pub mix_blend_mode: MixBlendMode,
     /// **Specified** `contain`; same pass-through shape as `isolation`.
     pub contain: Contain,
+    /// Non-inherited `container-type`, initially [`ContainerType::Normal`].
+    pub container_type: ContainerType,
     /// **Specified** `will-change`; same pass-through shape as `isolation`.
     pub will_change: WillChange,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
@@ -1202,6 +1204,7 @@ impl SpecifiedValues {
             mix_blend_mode: MixBlendMode::Normal,
             // CSS Containment 2 §2: contain is initially `none`.
             contain: Contain::NONE,
+            container_type: ContainerType::Normal,
             // CSS Will Change 1 §3: will-change is initially `auto`.
             will_change: WillChange::AUTO,
             // CSS Masking Level 1 §7.1: mask-image is initially `none`.
@@ -1583,6 +1586,7 @@ impl SpecifiedValues {
             mix_blend_mode: MixBlendMode::Normal,
             // non-inherited (CSS Containment 2 §2 "Inherited: no").
             contain: Contain::NONE,
+            container_type: ContainerType::Normal,
             // non-inherited (CSS Will Change 1 §3 "Inherited: no").
             will_change: WillChange::AUTO,
             // non-inherited (CSS Masking Level 1 §7.1 "Inherited: no").
@@ -2897,6 +2901,7 @@ impl SpecifiedValues {
             // `isolation` above.
             mix_blend_mode: self.mix_blend_mode,
             contain: self.contain,
+            container_type: self.container_type,
             will_change: self.will_change,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`

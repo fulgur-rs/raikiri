@@ -92,6 +92,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "contain-intrinsic-inline-size",
         "contain-intrinsic-size",
         "contain-intrinsic-width",
+        "container-type",
         "content",
         "counter-increment",
         "counter-reset",
