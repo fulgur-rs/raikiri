@@ -183,10 +183,10 @@ fn clip_filter(
         };
         // The primitive and the two that follow it are written next to each
         // other, in the scope of the same namespaces.
-        let parent = primitive
+        if !primitive
             .parent()
-            .map_or(0, |parent| parent.namespaces().count());
-        if primitive.namespaces().count() != parent {
+            .is_some_and(|parent| same_bindings(*primitive, parent))
+        {
             continue;
         }
         let (inner, mask) = (fresh(), fresh());
@@ -247,6 +247,18 @@ fn clip(
     }
     text.push_str("/>");
     text
+}
+
+/// Whether `primitive` and its `parent` have the same prefixes (and the same
+/// default namespace) bound to the same names. A count alone would miss a
+/// primitive that binds a prefix of its parent again to another namespace.
+fn same_bindings(primitive: roxmltree::Node<'_, '_>, parent: roxmltree::Node<'_, '_>) -> bool {
+    primitive.namespaces().count() == parent.namespaces().count()
+        && primitive.namespaces().all(|binding| {
+            parent
+                .namespaces()
+                .any(|other| other.name() == binding.name() && other.uri() == binding.uri())
+        })
 }
 
 /// The four values of the subregion of `primitive` as the fractions it writes,

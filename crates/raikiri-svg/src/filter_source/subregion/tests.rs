@@ -551,6 +551,21 @@ fn a_primitive_that_sets_a_namespace_is_left_alone() {
         "<feColorMatrix xmlns:o='urn:other' type='saturate' x='25%' y='25%' width='50%' height='50%'/>",
     );
     assert!(matches!(like_browsers(&source), Cow::Borrowed(_)));
+    // As many bindings as the filter has, but the default one is another: the
+    // clip would be written in the namespace of the filter, which is not SVG.
+    let source = "<s:svg xmlns:s='http://www.w3.org/2000/svg' width='100' height='100'>\
+        <s:filter id='f' xmlns='urn:other' primitiveUnits='objectBoundingBox'>\
+        <feColorMatrix xmlns='http://www.w3.org/2000/svg' type='saturate' \
+        x='25%' y='25%' width='50%' height='50%'/></s:filter>\
+        <s:rect x='20' y='20' width='40' height='40' fill='green' filter='url(#f)'/></s:svg>";
+    assert!(matches!(like_browsers(source), Cow::Borrowed(_)));
+    // The same binding again changes nothing, so the primitive is clipped.
+    let source = fractions(&format!(
+        "<feColorMatrix xmlns='http://www.w3.org/2000/svg' {RED} x='25%' y='25%' width='50%' height='50%'/>"
+    ));
+    let drawn = rasterized(&source);
+    assert_eq!(pixel(&drawn, 35, 35), SOLID_RED);
+    assert_eq!(pixel(&drawn, 25, 25), CLEAR);
 }
 
 #[test]
