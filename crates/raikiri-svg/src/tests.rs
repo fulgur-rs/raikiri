@@ -2268,9 +2268,6 @@ fn source_export_without_frozen_rules_keeps_unmatched_selectors_inert() {
     // cssparser could make it apply one, so they stay as written.
     for stylesheet in [
         "rect:is(.hot), rect { color:red }",
-        "rect { color: ; fill: blue }",
-        "rect { opacity: ; fill: blue }",
-        "@media print { .x { content:\"}\" } } rect, circle { color:red }",
         "<!-- note -->rect { color:red }",
         "g >, rect:is(.a) { color:red }",
         "rect\u{a0}, circle { color:red }",
@@ -3156,3 +3153,4 @@ thread_local! {
     pub(super) static SELECTOR_FREEZE_STATS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 mod retained_source_tests;
+mod stylesheet_recovery_tests;
