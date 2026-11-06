@@ -625,6 +625,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         if elem.namespace_uri() == Some(SVG_NAMESPACE) {
             if !is_svg_root {
                 super::svg_hints::push_font_size_hint(elem, &mut sink)?;
+                super::svg_hints::push_shape_dimension_hints(elem, &mut sink)?;
             }
             for (attribute, property, expected_key) in [
                 ("display", "display", crate::property::PropertyKey::Display),
@@ -837,12 +838,26 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
     }
 }
 
+/// Size slots whose selected declaration changed during `all` rollback.
+#[derive(Default)]
+pub(crate) struct AllSizeRollback {
+    width: bool,
+    height: bool,
+}
+
+impl AllSizeRollback {
+    pub(crate) fn changed(&self, key: PropertyKey) -> bool {
+        (key == PropertyKey::Width && self.width) || (key == PropertyKey::Height && self.height)
+    }
+}
+
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     // Selector::specificity in selectors returns a packed 32-bit integer.
     selector.specificity()
 }
 /// Pick the winning declaration for each property key using specificity,
-/// `!important`, and source order.
+/// `!important`, and source order. Return which physical sizes changed
+/// suppliers during `all` rollback so SVG export can replace authored sizes.
 ///
 /// Write results to `best` rather than returning them. `best` is a
 /// **direct-address table** indexed by the [`PropertyKey`] discriminant:
@@ -876,7 +891,8 @@ pub(crate) fn pick_winners(
     candidates: ElementCandidates<'_>,
     winners: &mut Vec<Option<RankedDecl>>,
     flow: Option<FlowMapping>,
-) {
+) -> AllSizeRollback {
+    let mut sizes = AllSizeRollback::default();
     debug_assert!(
         winners.iter().all(Option::is_none),
         "pick_winners は空の scratch buffer を要求する — \
@@ -918,9 +934,17 @@ pub(crate) fn pick_winners(
                 }
                 Some(candidate.precedence().layered(idx, candidate.rollback()))
             });
+            if selected != Some(existing.idx) {
+                match key {
+                    PropertyKey::Width => sizes.width = true,
+                    PropertyKey::Height => sizes.height = true,
+                    _ => {}
+                }
+            }
             *winner = selected.map(|idx| decls[idx].precedence().ranked(idx));
         }
     }
+    sizes
 }
 
 /// The writing mode and direction that place the flow-relative candidates

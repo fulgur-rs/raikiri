@@ -1,4 +1,4 @@
-//! Outermost SVG sizing attributes used by CSS layout and vector consumers.
+//! SVG sizing attributes used by CSS layout and vector consumers.
 
 use cssparser::{Parser, ParserInput};
 
@@ -29,6 +29,23 @@ pub(super) fn push_dimension_hints(
             continue;
         };
         sink.push_hint(value)?;
+    }
+    Ok(())
+}
+
+/// Add the geometry properties supported on SVG rectangles and images.
+///
+/// Other descendants retain their native SVG attribute handling.
+pub(super) fn push_shape_dimension_hints(
+    elem: &impl StyleElement,
+    sink: &mut CandidateSink<'_>,
+) -> Result<(), CascadeError> {
+    if matches!(elem.tag_name(), "rect" | "image") {
+        for name in ["width", "height"] {
+            if let Some(value) = elem.attr(name).and_then(|raw| parse_dimension(name, raw)) {
+                sink.push_hint(value)?;
+            }
+        }
     }
     Ok(())
 }
