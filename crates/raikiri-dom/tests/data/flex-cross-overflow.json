@@ -1,0 +1,369 @@
+{
+  "chromium": "Chromium 152.0.7977.82 Arch Linux",
+  "settings": {
+    "page_px": [
+      800,
+      600
+    ],
+    "margin": 0,
+    "scale": 1,
+    "raster_dpi": 96,
+    "background": "red; color:transparent (observational additions)",
+    "font": "10px/10px Ahem",
+    "text": "xxxxxxxxxxxxxxxxx",
+    "reproduce": "Embed crates/raikiri-dom/tests/data/text-autospace/Ahem.ttf as an Ahem @font-face data URL. Use @page size:800px 600px;margin:0; body margin:0;font:10px/10px Ahem; div box-sizing:border-box. Container display:flex;height:80px;align-items from case. Child id=a;writing-mode from case;width:10px;sizing from case;background:red;color:transparent; text is seventeen x glyphs. Set document.documentElement.dataset.rect=JSON.stringify(a.getBoundingClientRect().toJSON()) after document.fonts.ready with --virtual-time-budget=3000, before --dump-dom. PDF uses print media; DOMRect uses screen media with the same element CSS. Red bbox excludes right/bottom edges.",
+    "command": "chromium --headless --no-sandbox --disable-gpu --virtual-time-budget=3000 --no-pdf-header-footer --print-to-pdf=OUTPUT.pdf --dump-dom file:///INPUT.html; pdftoppm -r 96 -singlefile OUTPUT.pdf OUTPUT"
+  },
+  "cases": [
+    {
+      "mode": "horizontal-tb",
+      "sizing": "height:170px",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "horizontal-tb",
+      "sizing": "height:170px",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-rl",
+      "sizing": "height:170px",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-rl",
+      "sizing": "height:170px",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-rl",
+      "sizing": "inline-size:max-content",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-rl",
+      "sizing": "inline-size:max-content",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-rl",
+      "sizing": "inline-size:fit-content",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-rl",
+      "sizing": "inline-size:fit-content",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-lr",
+      "sizing": "height:170px",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-lr",
+      "sizing": "height:170px",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-lr",
+      "sizing": "inline-size:max-content",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-lr",
+      "sizing": "inline-size:max-content",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-lr",
+      "sizing": "inline-size:fit-content",
+      "alignment": "flex-end",
+      "dom_rect": {
+        "x": 0,
+        "y": -90,
+        "width": 10,
+        "height": 170,
+        "top": -90,
+        "right": 10,
+        "bottom": 80,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        80
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    },
+    {
+      "mode": "vertical-lr",
+      "sizing": "inline-size:fit-content",
+      "alignment": "center",
+      "dom_rect": {
+        "x": 0,
+        "y": -45,
+        "width": 10,
+        "height": 170,
+        "top": -45,
+        "right": 10,
+        "bottom": 125,
+        "left": 0
+      },
+      "red_bbox": [
+        0,
+        0,
+        10,
+        125
+      ],
+      "raster_size": [
+        800,
+        600
+      ]
+    }
+  ]
+}
