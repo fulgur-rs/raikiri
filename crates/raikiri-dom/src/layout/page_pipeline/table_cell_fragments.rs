@@ -44,6 +44,7 @@ pub(super) fn fitting(
     }
     let cell = only_box(document, row)?;
     if document.nodes[cell].display() != DisplayValue::TableCell
+        || document.nodes[cell].has_before_or_after_content
         || !starts_on_page_and_runs_past_it(
             top,
             top + document.nodes[cell].layout.size.height,

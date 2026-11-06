@@ -173,3 +173,26 @@ fn avoidance_forced_breaks_positioned_offsets_and_clipped_cells_do_not_qualify()
         assert!(!fixture.qualified(), "{css}");
     }
 }
+
+#[test]
+fn generated_cell_content_keeps_the_existing_path() {
+    for (pseudo, extra) in [
+        ("before", ""),
+        ("after", ""),
+        ("before", "display:block;break-before:page"),
+    ] {
+        let mut fixture = Fixture::new();
+        fixture
+            .doc
+            .set_element_attribute(fixture.cell, "id", "cell")
+            .unwrap();
+        let style = fixture
+            .doc
+            .append_element(Some(fixture.body), "style", Some("display:none"));
+        fixture.doc.append_text(
+            style,
+            &format!("#cell::{pseudo} {{ content: 'U'; {extra} }}"),
+        );
+        assert!(!fixture.qualified(), "::{pseudo}");
+    }
+}
