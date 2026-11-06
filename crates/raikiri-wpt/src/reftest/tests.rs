@@ -736,6 +736,141 @@ fn explicit_reference_page_margin_is_not_overridden_by_mirroring() {
     ));
 }
 
+const ALL_DEFAULT_MARGINS: [&str; 4] = [
+    "margin-top: 48px;",
+    "margin-right: 48px;",
+    "margin-bottom: 48px;",
+    "margin-left: 48px;",
+];
+
+#[test]
+fn each_page_margin_side_is_read_on_its_own() {
+    for (property, side) in [
+        ("margin-top", "top"),
+        ("MARGIN-RIGHT", "right"),
+        ("margin-bottom", "bottom"),
+        ("margin-left", "left"),
+    ] {
+        let injected =
+            inject_default_page_margin(&format!("<style>@page {{ {property}: 1px; }}</style>"));
+        for other in ["top", "right", "bottom", "left"] {
+            assert_eq!(
+                injected.contains(&format!("margin-{other}: 48px;")),
+                other != side,
+                "{property}: {injected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn page_properties_that_draw_no_border_do_not_count_as_a_page_border() {
+    for property in [
+        "border-radius: 4px",
+        "border-top-left-radius: 4px",
+        "border-image-source: none",
+        "border-collapse: collapse",
+        "border-spacing: 2px",
+        "borders: 1px",
+    ] {
+        let injected =
+            inject_default_page_margin(&format!("<style>@page {{ {property}; }}</style>"));
+        for declaration in ALL_DEFAULT_MARGINS {
+            assert!(injected.contains(declaration), "{property}: {injected}");
+        }
+    }
+}
+
+#[test]
+fn page_properties_that_set_a_border_count_as_a_page_border() {
+    for property in [
+        "border: 1px solid",
+        "BORDER-TOP: 1px solid",
+        "border-width: 1px",
+        "border-left-style: solid",
+        "border-bottom-color: red",
+        "border-block-end-color: red",
+        "border-inline: 1px solid",
+        "border-inline-start-width: 1px",
+    ] {
+        let input = format!("<style>@page {{ {property}; }}</style>");
+        assert_eq!(inject_default_page_margin(&input), input, "{property}");
+    }
+}
+
+#[test]
+fn a_semicolon_inside_a_string_does_not_end_a_page_declaration() {
+    // The `margin: 0` after the string is a declaration of its own.
+    let input = r#"<style>@page { background: url("a;b"); margin: 0; }</style>"#;
+    assert_eq!(inject_default_page_margin(input), input);
+    // The `margin-top` is only text in the string.
+    let injected = inject_default_page_margin(
+        r#"<style>@page { background: url("x;margin-top:1px"); }</style>"#,
+    );
+    for declaration in ALL_DEFAULT_MARGINS {
+        assert!(injected.contains(declaration), "{injected}");
+    }
+}
+
+#[test]
+fn an_at_page_in_a_comment_or_a_string_is_not_a_rule() {
+    let input = r#"<style>/* @page { size: 1px } */ p::after { content: "@page { }" }</style>"#;
+    assert!(scan_page_rules(input).is_empty());
+    assert_eq!(inject_default_page_margin(input), input);
+}
+
+#[test]
+fn rules_in_a_conditional_group_are_found_and_the_rest_are_not() {
+    let rules = scan_page_rules(
+        "<style>@media print { @page { size: 1px } } @supports (color: red) { @page :first { margin: 0 } } p { @page { } }</style>",
+    );
+    assert_eq!(rules.len(), 2);
+    assert!(rules[0].unqualified && !rules[0].has_authored_edge());
+    assert!(!rules[1].unqualified && rules[1].has_authored_edge());
+}
+
+#[test]
+fn a_page_block_that_does_not_close_runs_to_the_end() {
+    let injected = inject_default_page_margin("<style>@page { size: 1px;");
+    for declaration in ALL_DEFAULT_MARGINS {
+        assert!(injected.contains(declaration), "{injected}");
+    }
+    assert!(injected.ends_with("size: 1px;"));
+}
+
+#[test]
+fn declarations_after_a_margin_box_belong_to_the_page_rule() {
+    let input = r#"<style>@page { @top-left { content: "x" } margin: 0; }</style>"#;
+    assert_eq!(inject_default_page_margin(input), input);
+    // The declarations of the margin box itself do not.
+    let injected =
+        inject_default_page_margin("<style>@page { @top-left { margin-top: 1px } }</style>");
+    for declaration in ALL_DEFAULT_MARGINS {
+        assert!(injected.contains(declaration), "{injected}");
+    }
+}
+
+#[test]
+fn only_a_rule_without_a_selector_is_unqualified() {
+    let selectors = [
+        ("@page { }", true),
+        ("@page /* comment */ { }", true),
+        ("@page :first { }", false),
+        ("@page named { }", false),
+        ("@page named:left { }", false),
+    ];
+    for (rule, unqualified) in selectors {
+        let rules = scan_page_rules(rule);
+        assert_eq!(rules.len(), 1, "{rule}");
+        assert_eq!(rules[0].unqualified, unqualified, "{rule}");
+    }
+}
+
+#[test]
+fn an_at_page_with_an_invalid_selector_is_not_a_rule() {
+    assert!(scan_page_rules("@page named other { margin: 0 }").is_empty());
+}
+
 #[test]
 fn parse_reftest_links_match_and_mismatch() {
     let html = r#"<html><head>
@@ -3445,7 +3580,9 @@ fn cssom_print_empty_source_discards_old_page_hint_and_keeps_inline_hint() {
 #[test]
 fn print_normalization_keeps_sheet_boundaries_and_original_dom_text() {
     let original = "/* 名 */ @page named{size:300px 200px}";
-    let html = format!("<head><style>@page {{</style><style>{original}</style></head>");
+    // An unclosed rule that is not a group would swallow the next sheet's `@page`
+    // if the sheets were scanned as one text.
+    let html = format!("<head><style>p {{</style><style>{original}</style></head>");
     let mut parsed = raikiri_html::parse(html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
     let ids = live_style_element_ids(&parsed.dom, parsed.dom.root_index());
     let count = parsed.dom.node_count();
@@ -3464,6 +3601,25 @@ fn print_normalization_keeps_sheet_boundaries_and_original_dom_text() {
             .contains("margin: 48px;")
     );
     assert_eq!(parsed.dom.stylesheet_source(ids[0]), None);
+}
+
+#[test]
+fn print_normalization_places_a_margin_after_a_sheet_that_ends_inside_an_at_page() {
+    // The first sheet's `@page` block runs to the end of the sheet, so the
+    // default margin of the second sheet's rule is placed at its own offset.
+    let html =
+        "<head><style>@page named { size: 1px;</style><style>@page { size: 2px }</style></head>";
+    let mut parsed = raikiri_html::parse(html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
+    let ids = live_style_element_ids(&parsed.dom, parsed.dom.root_index());
+    assert_eq!(current_inline_page_rules(&parsed.dom).len(), 2);
+    normalize_print_stylesheets(&mut parsed.dom);
+    assert_eq!(parsed.dom.stylesheet_source(ids[0]), None);
+    let second = parsed.dom.stylesheet_source(ids[1]).unwrap();
+    assert!(
+        second.starts_with("@page {margin-top: 48px;margin-right: 48px;"),
+        "{second}"
+    );
+    assert!(second.ends_with("size: 2px }"), "{second}");
 }
 
 #[test]
