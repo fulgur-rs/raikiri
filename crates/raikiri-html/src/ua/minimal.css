@@ -567,6 +567,10 @@ colgroup { display: table-column-group; }
 tbody { display: table-row-group; }
 thead { display: table-header-group; }
 tfoot { display: table-footer-group; }
+/* A header or footer group repeats on every page only while it stays whole, so
+ * thead and tfoot avoid breaking inside by default; an author who sets
+ * `break-inside: auto` opts out of the repetition. */
+thead, tfoot { break-inside: avoid; }
 tr { display: table-row; }
 td, th { display: table-cell; padding: 1px; }
 thead, tbody, tfoot, table > tr { vertical-align: middle; }

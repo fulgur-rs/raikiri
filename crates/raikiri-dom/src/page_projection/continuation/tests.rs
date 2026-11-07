@@ -523,7 +523,11 @@ fn repeated_table_headers_do_not_become_continuation_starts() {
             "table",
             Some("display:table;border-spacing:0;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
         );
-        header = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+        header = doc.append_element(
+            Some(table),
+            "thead",
+            Some("display:table-header-group;break-inside:avoid"),
+        );
         let row = doc.append_element(Some(header), "tr", Some("display:table-row"));
         let cell = doc.append_element(
             Some(row),
