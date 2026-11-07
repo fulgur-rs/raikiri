@@ -230,3 +230,21 @@ fn a_replaced_child_keeps_taking_its_percentage_of_the_stated_height() {
     assert_eq!(laid.child(1), (0.0, 150.0, 50.0, 50.0));
     assert_eq!(laid.child(2), (0.0, 200.0, 50.0, 70.0));
 }
+
+#[test]
+fn a_replaced_child_that_scrolls_is_not_left_out_of_the_row() {
+    // `overflow` does not make an image a scrolling box: it still asks the row
+    // for its half of the stated 100px, after a 150px block.
+    for overflow in ["auto", "scroll"] {
+        let laid = lay_out_cells(
+            "height:100px",
+            &[
+                "height:150px",
+                &format!("img|width:50px;overflow:{overflow};height:50%"),
+            ],
+            "",
+        );
+        assert_eq!(laid.cell(0), (0.0, 0.0, 100.0, 200.0), "{overflow}");
+        assert_eq!(laid.child(1), (0.0, 150.0, 50.0, 50.0), "{overflow}");
+    }
+}

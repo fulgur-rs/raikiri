@@ -4808,13 +4808,15 @@ fn is_block_level_child(doc: &LayoutSession<'_>, child: usize) -> bool {
 /// asks its row for nothing beyond its margins, padding, border and
 /// `min-height` length, so a scrollable box sized to its cell does not stretch
 /// the cell to its own content, as in Chromium. A float, an inline-level box
-/// or a box deeper in the cell is not left out, and neither is any box in a
-/// cell without a stated height.
+/// or a box deeper in the cell is not left out, and neither is a replaced box
+/// (see [`percentage_height_replaced_children`]) or any box in a cell without a
+/// stated height.
 fn restricted_scroller_children(doc: &LayoutSession<'_>, cell: usize) -> Vec<usize> {
     cell_children_where(doc, cell, |doc, child| {
         let style = doc.table_style(child);
         is_block_level_child(doc, child)
             && !style.float().is_floated()
+            && !crate::paint_rules::is_replaced_element(doc.document, child)
             && style.overflow().y == Overflow::Scroll
             && is_percentage(style.size().height)
     })
