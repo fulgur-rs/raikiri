@@ -5,8 +5,21 @@ use raikiri_layout_style::values::Position;
 use raikiri_style::property::{BorderCollapseValue, CaptionSideValue, DisplayValue};
 use std::collections::{BTreeSet, HashMap};
 
+#[cfg(test)]
+thread_local! {
+    /// The moved rows [`follow_moved_rows`] was given, summed over its
+    /// calls, and the calls of [`has_row_spanning_cell`].
+    pub(crate) static ROW_MOVE_WORK: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
 /// Whether a cell of `table` spans more than one row.
 pub(crate) fn has_row_spanning_cell(document: &Document, table: usize) -> bool {
+    #[cfg(test)]
+    ROW_MOVE_WORK.with(|work| {
+        let (rows, checks) = work.get();
+        work.set((rows, checks + 1));
+    });
     document.table_objects.rows.get(&table).is_some_and(|rows| {
         rows.iter()
             .flat_map(|row| row.cells.iter().copied())
@@ -28,12 +41,21 @@ pub(crate) fn follow_moved_rows(
     moved_rows: &HashMap<usize, f32>,
     repeats_header: impl Fn(usize) -> bool,
 ) {
+    // Collect the tables first: many moved rows share a table, and checking
+    // a table for spanning cells walks all of its cells.
     let tables: BTreeSet<usize> = moved_rows
         .keys()
         .filter_map(|&row| table_of(document, row))
-        .filter(|&table| !has_row_spanning_cell(document, table))
         .collect();
+    #[cfg(test)]
+    ROW_MOVE_WORK.with(|work| {
+        let (rows, checks) = work.get();
+        work.set((rows + moved_rows.len(), checks));
+    });
     for table in tables {
+        if has_row_spanning_cell(document, table) {
+            continue;
+        }
         let repeated_header = repeats_header(table);
         let groups: Vec<usize> = document.nodes[table]
             .children
