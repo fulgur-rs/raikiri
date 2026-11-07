@@ -145,3 +145,75 @@ fn a_document_without_backgrounds_has_no_owner() {
     assert_eq!(canvas_background_owner(&empty, &cascade), None);
     assert_eq!(canvas_box_use(&empty, &cascade), CanvasBoxUse::None);
 }
+
+const CONTAINMENTS: [&str; 10] = [
+    "contain: layout",
+    "contain: paint",
+    "contain: size",
+    "contain: style",
+    "contain: content",
+    "contain: strict",
+    "contain: inline-size",
+    "container-type: size",
+    "container-type: inline-size",
+    "contain: layout style",
+];
+
+#[test]
+fn containment_on_the_body_keeps_its_background_from_the_canvas() {
+    for containment in CONTAINMENTS {
+        let (document, cascade) = fixture("", &format!("background-color: red; {containment}"));
+        assert_eq!(
+            canvas_background_owner(&document, &cascade),
+            None,
+            "{containment}"
+        );
+        assert_eq!(
+            canvas_box_use(&document, &cascade),
+            CanvasBoxUse::None,
+            "{containment}"
+        );
+    }
+    // A background image is held back the same way.
+    let (document, cascade) = fixture("", &format!("{TILE} contain: style"));
+    assert_eq!(canvas_background_owner(&document, &cascade), None);
+    assert_eq!(canvas_box_use(&document, &cascade), CanvasBoxUse::None);
+}
+
+#[test]
+fn containment_on_the_root_keeps_the_body_background_from_the_canvas() {
+    for containment in CONTAINMENTS {
+        let (document, cascade) = fixture(containment, "background-color: red");
+        assert_eq!(
+            canvas_background_owner(&document, &cascade),
+            None,
+            "{containment}"
+        );
+    }
+}
+
+#[test]
+fn a_root_with_a_background_keeps_it_for_the_canvas_under_containment() {
+    for containment in CONTAINMENTS {
+        let (document, cascade) = fixture(
+            &format!("background-color: red; {containment}"),
+            &format!("background-color: blue; {containment}"),
+        );
+        let owner = canvas_background_owner(&document, &cascade).expect("an owner");
+        assert_eq!(
+            document.get_node(owner).unwrap().tag_name(),
+            Some("html"),
+            "{containment}"
+        );
+    }
+}
+
+#[test]
+fn a_property_that_is_not_containment_does_not_stop_the_propagation() {
+    let (document, cascade) = fixture(
+        "container-type: normal",
+        "background-color: red; contain: none",
+    );
+    let owner = canvas_background_owner(&document, &cascade).expect("an owner");
+    assert_eq!(document.get_node(owner).unwrap().tag_name(), Some("body"));
+}

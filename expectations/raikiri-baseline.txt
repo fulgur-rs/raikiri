@@ -5551,3 +5551,24 @@ css/filter-effects/filter-subregion-01.html
 css/css-display/display-contents-dynamic-table-002-inline.html
 css/css-display/display-contents-dynamic-table-002-none.html
 css/css-display/display-contents-table-002.html
+
+# --- Containment on the root or the body keeps the body's background off the canvas (WPT pin 97ea26e2, EXACT, Linux, 2026-11-07) ---
+# The body of these tests has `background: red` and the root or the body has `contain: layout`, `paint`, `size` or `style`; the reference is a white box. Containment on either element stops the body background from propagating to the canvas (CSS Containment 2 section 2), so no red is left outside the 300x200 box. Before the change the canvas took the body's red and 420,000 of 480,000 pixels differed. audit-vacuous-passes reports VACUOUS-UNSTYLED for all eight because they are negative tests: remove `background: red` and the page is white as well. They were reviewed one by one, and each fails with the fix reverted (crates/raikiri-paint/tests/canvas_contain_background.rs pins the same cases with pixels).
+css/css-contain/contain-body-bg-001.html
+css/css-contain/contain-body-bg-002.html
+css/css-contain/contain-body-bg-003.html
+css/css-contain/contain-body-bg-004.html
+css/css-contain/contain-html-bg-001.html
+css/css-contain/contain-html-bg-002.html
+css/css-contain/contain-html-bg-003.html
+css/css-contain/contain-html-bg-004.html
+
+# --- Style containment scopes the counters of its subtree (WPT pin 97ea26e2, EXACT, Linux, 2026-11-07) ---
+# An element with `contain: style` (or `container-type: size` or `inline-size`) and a box of its own keeps what its descendants and its generated content increment or set apart from the counters outside (CSS Containment 2 section 3.3): they start a counter of their own, which the elements after the subtree do not see, and the directives of the contained element itself belong to the scope around it. Each of these tests was an expected failure before the change, by 512 to 2,352 pixels of text, and audit-vacuous-passes reports KEEP for all seven in a run. contain-style-dynamic-002 passed before as well; it joins them because the audit now finds it depends on the feature.
+css/css-contain/contain-style-counters-001.html
+css/css-contain/contain-style-counters-005.html
+css/css-contain/contain-style-dynamic-002.html
+css/css-contain/contain-style-ol-ordinal-pseudo.html
+css/css-contain/counter-scoping-001.html
+css/css-contain/counter-scoping-002.html
+css/css-contain/counter-scoping-003.html
