@@ -4788,7 +4788,7 @@ fn gradient_stops_outside_the_srgb_gamut_keep_their_own_coordinates() {
 }
 
 #[test]
-fn gradient_stops_inside_the_gamut_or_at_a_lightness_boundary_stay_8_bit() {
+fn gradient_stops_inside_the_gamut_stay_8_bit() {
     assert_eq!(
         first_linear_stop_color("linear-gradient(lch(50% 0 0deg), red)"),
         GradientStopColor::Resolved(CssColor {
@@ -4798,16 +4798,88 @@ fn gradient_stops_inside_the_gamut_or_at_a_lightness_boundary_stay_8_bit() {
             a: 255,
         })
     );
-    // White at the lightness boundary, whatever its chroma.
-    assert_eq!(
-        first_linear_stop_color("linear-gradient(lch(100% 150 0deg), red)"),
-        GradientStopColor::Resolved(CssColor {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 255,
-        })
-    );
+    // At the lightness boundary without chroma, the coordinates are in the
+    // gamut: black and white.
+    for (css, channel) in [("lab(0% 0 0)", 0), ("lab(100% 0 0)", 255)] {
+        assert_eq!(
+            first_linear_stop_color(&format!("linear-gradient({css}, red)")),
+            GradientStopColor::Resolved(CssColor {
+                r: channel,
+                g: channel,
+                b: channel,
+                a: 255,
+            }),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn gradient_stops_at_a_lightness_boundary_keep_their_own_coordinates() {
+    // The 8-bit color of such a stop is the black or white of the boundary,
+    // but the gradient interpolates from the coordinates (CSS Color 4 §12):
+    // `lab(0% 125 125)` is not neutral black to the colors it mixes with.
+    for (css, space, components, drawn) in [
+        (
+            "lab(0% 125 125)",
+            MixColorSpace::Lab,
+            [0.0, 125.0, 125.0],
+            0,
+        ),
+        (
+            "lab(100% 100 -100)",
+            MixColorSpace::Lab,
+            [100.0, 100.0, -100.0],
+            255,
+        ),
+        (
+            "lab(150% 125 125)",
+            MixColorSpace::Lab,
+            [100.0, 125.0, 125.0],
+            255,
+        ),
+        (
+            "oklab(0% 0.3 0.3)",
+            MixColorSpace::Oklab,
+            [0.0, 0.3, 0.3],
+            0,
+        ),
+        (
+            "oklab(100% 0.3 0.3)",
+            MixColorSpace::Oklab,
+            [1.0, 0.3, 0.3],
+            255,
+        ),
+    ] {
+        let source = format!("linear-gradient({css}, red)");
+        let GradientStopColor::Unbounded(color) = first_linear_stop_color(&source) else {
+            panic!("{css}: a boundary stop outside the gamut should stay unbounded");
+        };
+        assert_eq!(color.space, space, "{css}");
+        for (got, want) in color.components.iter().zip(components) {
+            assert!((got - want).abs() < 1e-3, "{css}: {:?}", color.components);
+        }
+        assert_eq!(
+            color.srgb,
+            CssColor {
+                r: drawn,
+                g: drawn,
+                b: drawn,
+                a: 255,
+            },
+            "{css}"
+        );
+    }
+    // The polar form keeps its hue in degrees.
+    let GradientStopColor::Unbounded(color) =
+        first_linear_stop_color("linear-gradient(lch(100% 150 40deg), red)")
+    else {
+        panic!("an lch() boundary stop outside the gamut should stay unbounded");
+    };
+    assert_eq!(color.space, MixColorSpace::Lch);
+    assert_eq!(color.components[0], 100.0);
+    assert_eq!(color.components[1], 150.0);
+    assert!((color.components[2] - 40.0).abs() < 1e-3);
 }
 
 #[test]
