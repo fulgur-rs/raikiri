@@ -459,6 +459,7 @@ impl Shaped {
         // Text between images goes in as spans of their own, numbered after
         // the images, whose ids are their positions in the list.
         let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
+        builder.with_line_break_override(super::atomic_breaks::around_atomics);
         let mut atomics = AtomicSizes::new();
         let horizontal = style.writing_mode == WritingMode::HorizontalTb;
         let mut spans = images.len() as u64;

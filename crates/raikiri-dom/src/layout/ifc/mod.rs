@@ -2,6 +2,7 @@
 //! paragraphs out.
 
 pub(crate) mod assign;
+mod atomic_breaks;
 pub(crate) mod boxes;
 pub(crate) mod ch;
 mod clear_breaks;

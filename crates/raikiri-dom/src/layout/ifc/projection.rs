@@ -717,10 +717,24 @@ impl ProjectedBuilder {
     /// # Errors
     /// [`IfcError::Limit`] when a shodo resource limit is exceeded.
     pub(crate) fn build(
-        self,
+        mut self,
         cx: &mut LayoutContext,
         fonts: &FontCollection,
     ) -> Result<ProjectedIfc, IfcError> {
+        // The text shows a float or an absolutely positioned box as the same
+        // character as an atomic inline, and the override cannot tell them
+        // apart, so a paragraph that has one keeps the Unicode opportunities.
+        let kinds = || self.meta.boxes.iter().map(|inline_box| inline_box.kind);
+        let has_atomic = self.meta.marker_atomic.is_some()
+            || !self.meta.generated_atomics.is_empty()
+            || !self.meta.generated_boxes.is_empty()
+            || kinds().any(|kind| kind == IfcBoxKind::Atomic);
+        let has_out_of_flow =
+            kinds().any(|kind| matches!(kind, IfcBoxKind::Float | IfcBoxKind::OutOfFlow));
+        if has_atomic && !has_out_of_flow {
+            self.paragraph
+                .with_line_break_override(super::atomic_breaks::around_atomics);
+        }
         let paragraph = self.paragraph.build(cx, fonts).map_err(IfcError::Limit)?;
         Ok(Projected {
             paragraph,
