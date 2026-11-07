@@ -62,8 +62,11 @@
 //! register-site walker uses.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::target::{format_counter, join_counter_stack};
+use raikiri_style::CounterStyleRegistry;
+
+use super::target::{format_counter_in, join_counter_stack};
 use super::{
     ContentSource, ContentValueItem, GcpmDirective, RunningTemplateId, TargetInfo, TargetRegistry,
 };
@@ -343,6 +346,7 @@ impl NamedStringState {
 fn resolve_content_source(
     source: &ContentSource,
     counters: &HashMap<Symbol, CounterStack>,
+    styles: Option<&CounterStyleRegistry>,
 ) -> Option<String> {
     let mut out = String::new();
     for item in &source.items {
@@ -355,7 +359,7 @@ fn resolve_content_source(
                     .get(name)
                     .and_then(CounterStack::current)
                     .unwrap_or(0);
-                out.push_str(&format_counter(value, style));
+                out.push_str(&format_counter_in(value, style, styles));
             }
             ContentValueItem::Counters {
                 name,
@@ -367,9 +371,9 @@ fn resolve_content_source(
                     // Absent or empty-stack counter → single formatted "0",
                     // not "" (same rule as TargetInfo::resolve's Counters
                     // arm — CSS Content 3 §2.6.2's initial-value-0 default).
-                    out.push_str(&format_counter(0, style));
+                    out.push_str(&format_counter_in(0, style, styles));
                 } else {
-                    out.push_str(&join_counter_stack(stack, separator, style));
+                    out.push_str(&join_counter_stack(stack, separator, style, styles));
                 }
             }
             ContentValueItem::String { .. }
@@ -427,6 +431,10 @@ pub struct PageContext {
     /// either incrementally via [`Self::apply_directive`]'s `RegisterTarget`
     /// arm, or in bulk via [`Self::set_targets`] — see both methods' docs.
     targets: TargetRegistry,
+    /// The author `@counter-style` rules `string-set` looks a counter style
+    /// up in, set by [`Self::set_counter_styles`]. Without them only the
+    /// predefined styles of CSS Counter Styles 3 can show a value.
+    counter_styles: Option<Arc<CounterStyleRegistry>>,
     /// 0-based index of the page this context describes (design §7.2).
     /// Plain `pub` field, directly settable — but [`Self::begin_page`] is
     /// the preferred way to advance it: it updates this field *and* the
@@ -505,7 +513,9 @@ impl PageContext {
                 // the `attr()`/`content()` gap would need reconsidering if a
                 // future consumer needs to observe silently-dropped
                 // assignments.
-                if let Some(resolved) = resolve_content_source(source, &self.counters) {
+                if let Some(resolved) =
+                    resolve_content_source(source, &self.counters, self.counter_styles.as_deref())
+                {
                     self.strings
                         .entry(name.clone())
                         .or_default()
@@ -721,6 +731,25 @@ impl PageContext {
     /// registry for arbitrary external mutation.
     pub fn set_targets(&mut self, targets: TargetRegistry) {
         self.targets = targets;
+        // The author's counter styles belong to the document, not to one
+        // registry: a context that has them keeps them for the new registry.
+        if let Some(styles) = &self.counter_styles {
+            self.targets.set_counter_styles(Arc::clone(styles));
+        }
+    }
+
+    /// Give `string-set` and the `target-counter()` / `target-counters()` of
+    /// [`Self::targets`] the author `@counter-style` rules of the document
+    /// (the cascade's `counter_styles`). A counter style name is looked up
+    /// there first, since an author rule can redefine a predefined name, and
+    /// a value the rule cannot show goes to its `fallback` style (see
+    /// `format_counter_with_styles`).
+    /// Without the rules only the predefined styles of CSS Counter Styles 3
+    /// can show a value, and any other name shows it in decimal. A
+    /// `string-set` already applied keeps the text it resolved.
+    pub fn set_counter_styles(&mut self, styles: Arc<CounterStyleRegistry>) {
+        self.targets.set_counter_styles(Arc::clone(&styles));
+        self.counter_styles = Some(styles);
     }
 
     /// Read the counter stack tracked under `name`, if any counter

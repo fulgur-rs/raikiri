@@ -1,6 +1,8 @@
 use super::*;
 
+use raikiri_style::CounterStyleRegistry;
 use smol_str::SmolStr;
+use std::sync::Arc;
 
 // ── Skeleton pins ─────────
 
@@ -150,6 +152,31 @@ fn the_marker_suffix_of_a_predefined_counter_style_is_its_suffix_descriptor() {
         "no-such-style",
     ] {
         assert_eq!(predefined_counter_suffix(name), ". ", "{name}");
+    }
+}
+
+#[test]
+fn format_counter_disclosure_styles_show_one_triangle_for_every_value() {
+    // CSS Counter Styles 3 section 6.3 leaves the character to the user
+    // agent; Chromium shows U+25BE and U+25B8 in every direction and writing
+    // mode, and whatever the value.
+    for value in [i32::MIN, -3, 0, 1, 5, i32::MAX] {
+        for (name, triangle) in [
+            ("disclosure-open", "\u{25be}"),
+            ("disclosure-closed", "\u{25b8}"),
+            ("Disclosure-Open", "\u{25be}"),
+            ("DISCLOSURE-CLOSED", "\u{25b8}"),
+        ] {
+            let style = CounterStyle::Named(SmolStr::new(name));
+            assert_eq!(format_counter(value, &style), triangle, "{name} {value}");
+        }
+    }
+}
+
+#[test]
+fn the_marker_suffix_of_a_disclosure_style_is_a_space() {
+    for name in ["disclosure-open", "disclosure-closed", "Disclosure-Closed"] {
+        assert_eq!(predefined_counter_suffix(name), " ", "{name}");
     }
 }
 
@@ -849,11 +876,17 @@ fn format_counter_ethiopic_numeric_out_of_range_falls_back_to_decimal() {
 #[test]
 fn join_counter_stack_decimal_with_dot_separator() {
     assert_eq!(
-        join_counter_stack(&[1, 2, 3], ".", &CounterStyle::Decimal),
+        join_counter_stack(&[1, 2, 3], ".", &CounterStyle::Decimal, None),
         "1.2.3"
     );
-    assert_eq!(join_counter_stack(&[5], ".", &CounterStyle::Decimal), "5");
-    assert_eq!(join_counter_stack(&[], ".", &CounterStyle::Decimal), "");
+    assert_eq!(
+        join_counter_stack(&[5], ".", &CounterStyle::Decimal, None),
+        "5"
+    );
+    assert_eq!(
+        join_counter_stack(&[], ".", &CounterStyle::Decimal, None),
+        ""
+    );
 }
 
 #[test]
@@ -863,7 +896,7 @@ fn join_counter_stack_non_decimal_style() {
     // check that a non-decimal style formats every level, not just the
     // leaf.
     let style = CounterStyle::Named(SmolStr::new("lower-alpha"));
-    assert_eq!(join_counter_stack(&[1, 2, 3], ".", &style), "a.b.c");
+    assert_eq!(join_counter_stack(&[1, 2, 3], ".", &style, None), "a.b.c");
 }
 
 // ── target-counter resolve (immediate path) ─────────────────────
@@ -1512,4 +1545,114 @@ fn resolve_content_component_returns_none_for_non_target_variants() {
 
     // No non-target dispatch should have queued a pending slot.
     assert!(reg.pending_slots.is_empty());
+}
+
+// ── author @counter-style rules ─────────────────────────────────
+
+fn author_styles(source: &str) -> Arc<CounterStyleRegistry> {
+    Arc::new(CounterStyleRegistry::from_source(source))
+}
+
+#[test]
+fn format_counter_with_styles_prefers_an_author_style_over_a_predefined_name() {
+    let styles = author_styles(
+        "@counter-style lower-alpha { system: cyclic; symbols: '*'; } \
+         @counter-style stars { system: cyclic; symbols: '\u{2605}'; }",
+    );
+    assert_eq!(
+        format_counter_with_styles(5, &named("lower-alpha"), &styles),
+        "*"
+    );
+    // A predefined name matches without regard to case, an author name exactly.
+    assert_eq!(
+        format_counter_with_styles(5, &named("Lower-Alpha"), &styles),
+        "*"
+    );
+    assert_eq!(
+        format_counter_with_styles(5, &named("upper-alpha"), &styles),
+        "E"
+    );
+    assert_eq!(
+        format_counter_with_styles(5, &named("stars"), &styles),
+        "\u{2605}"
+    );
+    assert_eq!(format_counter_with_styles(5, &named("Stars"), &styles), "5");
+    assert_eq!(
+        format_counter_with_styles(5, &CounterStyle::Decimal, &styles),
+        "5"
+    );
+}
+
+#[test]
+fn format_counter_with_styles_follows_a_fallback_to_a_predefined_style() {
+    let styles = author_styles(
+        "@counter-style x { system: cyclic; symbols: '\u{2605}'; range: 1 2; \
+         fallback: Lower-Roman } \
+         @counter-style y { system: cyclic; symbols: '\u{2605}'; range: 1 2; \
+         fallback: nonexistent } \
+         @counter-style z { system: cyclic; symbols: '\u{2605}'; range: 1 2; \
+         fallback: disclosure-open }",
+    );
+    let x = named("x");
+    assert_eq!(format_counter_with_styles(2, &x, &styles), "\u{2605}");
+    assert_eq!(format_counter_with_styles(4, &x, &styles), "iv");
+    // Roman numerals stop at 3999: the predefined style falls back to decimal.
+    assert_eq!(format_counter_with_styles(4000, &x, &styles), "4000");
+    assert_eq!(
+        format_counter_with_styles(4, &named("y"), &styles),
+        "4",
+        "a style no one defines is decimal"
+    );
+    assert_eq!(
+        format_counter_with_styles(4, &named("z"), &styles),
+        "\u{25be}"
+    );
+}
+
+#[test]
+fn target_counter_shows_the_value_in_an_author_style() {
+    let styles = author_styles(
+        "@counter-style x { system: cyclic; symbols: '\u{2605}'; range: 1 2; fallback: upper-alpha }",
+    );
+    let mut reg = TargetRegistry::default();
+    reg.set_counter_styles(styles);
+    reg.register(
+        Symbol::new("chapter-3"),
+        make_info(&[("chapter", &[1, 2, 4])], &[]),
+    );
+    let counter = reg.resolve_target_counter("#chapter-3", Symbol::new("chapter"), named("x"));
+    assert_eq!(counter, ResolveOutcome::Resolved("D".to_owned()));
+    let counters =
+        reg.resolve_target_counters("#chapter-3", Symbol::new("chapter"), "-", named("x"));
+    assert_eq!(
+        counters,
+        ResolveOutcome::Resolved("\u{2605}-\u{2605}-D".to_owned())
+    );
+    // The same counters without the rules show a style they do not know in decimal.
+    let mut plain = TargetRegistry::default();
+    plain.register(
+        Symbol::new("chapter-3"),
+        make_info(&[("chapter", &[1, 2, 4])], &[]),
+    );
+    assert_eq!(
+        plain.resolve_target_counters("#chapter-3", Symbol::new("chapter"), "-", named("x")),
+        ResolveOutcome::Resolved("1-2-4".to_owned())
+    );
+}
+
+#[test]
+fn a_pending_target_counter_is_formatted_with_the_author_styles_at_flush() {
+    let mut reg = TargetRegistry::default();
+    let pending = reg.resolve_target_counter("#later", Symbol::new("chapter"), named("x"));
+    let ResolveOutcome::Pending(slot_id) = pending else {
+        panic!("expected a pending slot");
+    };
+    reg.set_counter_styles(author_styles(
+        "@counter-style x { system: cyclic; symbols: '\u{2605}' }",
+    ));
+    reg.register(Symbol::new("later"), make_info(&[("chapter", &[2])], &[]));
+    let resolutions = reg.flush_pending();
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0].slot_id, slot_id);
+    assert_eq!(resolutions[0].value.as_deref(), Some("\u{2605}"));
 }

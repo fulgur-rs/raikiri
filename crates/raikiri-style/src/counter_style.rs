@@ -13,12 +13,13 @@
 //! # Scope
 //!
 //! This module implements `@counter-style` parsing, the registry, and the
-//! `generate a counter` algorithm. Wiring formatted custom-counter strings
-//! into `raikiri-traits::TargetRegistry`'s target-resolution flow remains
-//! deferred; ordinary marker and generated-content paint consumes this module
-//! through the cascade result without adding a dependency on
-//! `raikiri-traits`. See `resolve_custom_counter`'s doc for the exact
-//! representation contract.
+//! `generate a counter` algorithm. It does not format the predefined styles of
+//! CSS Counter Styles 3, which `raikiri-traits` owns: a consumer such as
+//! `raikiri-dom`'s markers and generated content, or `raikiri-traits`'s
+//! `string-set` and `target-counter()`, takes the cascade's registry and shows
+//! the value a fallback chain hands to a predefined style. See
+//! `resolve_custom_counter`'s and `resolve_counter_representation`'s docs for
+//! the exact representation contract.
 //!
 //! What's implemented:
 //!
@@ -62,11 +63,12 @@
 //! CSS Counter Styles Level 3 §3 cascade ordering, with author rules taking
 //! precedence over user-agent rules. The cascade result exposes the registry
 //! to marker and generated-content counter resolution through
-//! `resolve_custom_counter`.
+//! `resolve_custom_counter` and `resolve_counter_representation`.
 //!
-//! Target-counter resolution through `raikiri-traits::TargetRegistry` remains
-//! outside this module.
+//! `raikiri-traits::TargetRegistry` and `PageContext` take the same registry
+//! through their `set_counter_styles` for `target-counter()` and `string-set`.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use cssparser::{
@@ -1308,30 +1310,99 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// the predefined-style formatting logic (`decimal-leading-zero` /
 /// `*-roman` / `*-alpha` / `*-latin` / `disc` / `circle` / `square`) already
 /// lives there, in `format_counter` / `format_named_counter`.
-/// Reimplementing it here would duplicate that source of truth. The paint
-/// consumer treats `None` from this function as the CSS decimal fallback,
-/// while a successful result
-/// is rendered as the custom style's representation. Prefix/suffix application
-/// for a default `::marker` stays at that consumer boundary because these
-/// descriptors do not apply to `counter()` / `counters()` themselves.
+/// Reimplementing it here would duplicate that source of truth. A consumer
+/// that can only show decimal treats `None` from this function as the CSS
+/// decimal fallback, while a successful result is rendered as the custom
+/// style's representation; one that can show the predefined styles uses
+/// `resolve_counter_representation`, which also names the style a fallback
+/// chain ends at. Prefix/suffix application for a default `::marker` stays at
+/// that consumer boundary because these descriptors do not apply to
+/// `counter()` / `counters()` themselves.
 #[doc(hidden)]
 pub fn resolve_custom_counter(
     registry: &CounterStyleRegistry,
     name: &str,
     value: i32,
 ) -> Option<String> {
+    match resolve_counter_representation(registry, name, value, &|name| Cow::Borrowed(name)) {
+        CounterRepresentation::Text(text) => Some(text),
+        CounterRepresentation::Undefined(_) | CounterRepresentation::Loop => None,
+    }
+}
+
+/// How the `generate a counter` algorithm ends for one counter value: the
+/// outcome of `resolve_counter_representation`, which tells apart the ways
+/// `resolve_custom_counter` reports `None`.
+#[doc(hidden)]
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CounterRepresentation {
+    /// A style of the fallback chain, within the registry, showed the value.
+    Text(String),
+    /// No style of the chain within the registry shows the value, and the
+    /// chain reaches this name, which the registry does not define: step 1
+    /// of the algorithm, "If the counter style is unknown ... generate a
+    /// counter representation using the decimal style". The name is written
+    /// as the stylesheet wrote it. A predefined style of the specification
+    /// has no rule in the registry, so the caller shows the value in that
+    /// style when the name is one and in decimal when it is not.
+    Undefined(SmolStr),
+    /// The chain loops back to a style it already tried: "if a loop in the
+    /// specified fallbacks is detected, the decimal style must be used
+    /// instead" (§3.7 `fallback`).
+    Loop,
+}
+
+/// Resolve `name` against `registry` like `resolve_custom_counter`, but
+/// report where the algorithm ends when it leaves the registry: the name of
+/// the style it reaches that the registry does not define, which
+/// `resolve_custom_counter` leaves to the caller as a bare `None`.
+///
+/// This is the function for a caller that can show the predefined styles of
+/// CSS Counter Styles 3: an author style such as `fallback: lower-roman`
+/// names one, and its values the author style cannot show are written in
+/// that style, not in decimal.
+///
+/// `registry_name` maps the name a `fallback` descriptor wrote to the name
+/// the registry stores the style under. A predefined name matches without
+/// regard to case, so an author style that redefines one is found by every
+/// spelling of it, while the name of any other style matches exactly; this
+/// crate does not know which names are predefined, so the caller says. A
+/// caller with no such rule passes `&|name| Cow::Borrowed(name)`.
+#[doc(hidden)]
+pub fn resolve_counter_representation(
+    registry: &CounterStyleRegistry,
+    name: &str,
+    value: i32,
+    registry_name: &dyn for<'n> Fn(&'n str) -> Cow<'n, str>,
+) -> CounterRepresentation {
     let mut visited = HashSet::new();
-    generate_counter(registry, name, value, &mut visited)
+    generate_counter(registry, name, value, registry_name, &mut visited)
+}
+
+/// The rule that `rule` falls back to, or the end of the algorithm when the
+/// registry does not define it.
+fn fallback_rule<'a>(
+    registry: &'a CounterStyleRegistry,
+    rule: &CounterStyleRule,
+    registry_name: &dyn for<'n> Fn(&'n str) -> Cow<'n, str>,
+) -> Result<&'a CounterStyleRule, CounterRepresentation> {
+    registry
+        .get(&registry_name(rule.fallback.as_str()))
+        .ok_or_else(|| CounterRepresentation::Undefined(rule.fallback.clone()))
 }
 
 fn generate_counter<'a>(
     registry: &'a CounterStyleRegistry,
     name: &str,
     value: i32,
+    registry_name: &dyn for<'n> Fn(&'n str) -> Cow<'n, str>,
     visited: &mut HashSet<&'a str>,
-) -> Option<String> {
+) -> CounterRepresentation {
     // Step 1.
-    let mut rule = registry.get(name)?;
+    let Some(mut rule) = registry.get(name) else {
+        return CounterRepresentation::Undefined(SmolStr::new(name));
+    };
     // Per §3.7's explicit loop-detection rule ("if a loop in the specified
     // fallbacks is detected, the decimal style must be used instead" — full
     // quote + anchor on this function's doc), modeled here via the crate's
@@ -1347,12 +1418,15 @@ fn generate_counter<'a>(
         // buckets and pointers, while expected O(1) lookup avoids the old
         // Vec's O(N) scan at every hop.
         if !visited.insert(rule.name.as_str()) {
-            return None;
+            return CounterRepresentation::Loop;
         }
 
         // Step 2.
         if !rule_contains_value(rule, value) {
-            rule = registry.get(rule.fallback.as_str())?;
+            match fallback_rule(registry, rule, registry_name) {
+                Ok(next) => rule = next,
+                Err(end) => return end,
+            }
             continue;
         }
 
@@ -1380,7 +1454,10 @@ fn generate_counter<'a>(
             CounterStyleSystem::Extends(_) => None,
         };
         let Some(repr) = initial else {
-            rule = registry.get(rule.fallback.as_str())?;
+            match fallback_rule(registry, rule, registry_name) {
+                Ok(next) => rule = next,
+                Err(end) => return end,
+            }
             continue;
         };
 
@@ -1400,7 +1477,10 @@ fn generate_counter<'a>(
             0
         };
         let Some(mut repr) = apply_pad(&rule.pad, repr, negative_reserved) else {
-            rule = registry.get(rule.fallback.as_str())?;
+            match fallback_rule(registry, rule, registry_name) {
+                Ok(next) => rule = next,
+                Err(end) => return end,
+            }
             continue;
         };
 
@@ -1416,7 +1496,7 @@ fn generate_counter<'a>(
         }
 
         // Step 6.
-        return Some(repr);
+        return CounterRepresentation::Text(repr);
     }
 }
 
