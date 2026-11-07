@@ -62,6 +62,7 @@ mod margin_box;
 mod negative_levels;
 mod page_geometry;
 mod paint_walk;
+mod rounded_dashes;
 mod visit;
 mod visit_element;
 mod visit_text;
@@ -77,6 +78,9 @@ use inline_svg::InlineSvg;
 use margin_box::paint_margin_box;
 use page_geometry::PageGeometry;
 use paint_walk::{PaintWalk, index_fragments};
+use rounded_dashes::{
+    inner_edge_is_rounded, paint_rounded_dashed_border, within_rounded_outer_edge,
+};
 
 use crate::text;
 
@@ -3564,8 +3568,11 @@ pub(crate) fn paint_element_box_shadows(
 }
 
 /// Paint a regular element border with a rounded outer edge when the four
-/// sides share one solid width and color.  The existing strip painter remains
-/// the conservative fallback for mixed side styles and widths.
+/// sides share one width, color and style that is solid, dashed or dotted.  A
+/// dashed or dotted border follows the curve when its inner edge is rounded,
+/// and is drawn in straight sides inside the rounded outer edge when it is not.
+/// The existing strip painter remains the conservative fallback for mixed
+/// sides and for the other styles.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_border_rounded(
     scene: &mut impl PaintScene,
@@ -3594,9 +3601,10 @@ pub(crate) fn paint_element_border_rounded(
         && widths
             .iter()
             .all(|value| (*value - widths[0]).abs() < f64::EPSILON);
-    let solid = [&border.left, &border.top, &border.right, &border.bottom]
+    let style = border.left.style();
+    let uniform_style = [&border.top, &border.right, &border.bottom]
         .iter()
-        .all(|side| side.style() == BorderStyle::Solid);
+        .all(|side| side.style() == style);
     let color_for = |side: &raikiri_style::resolve::ComputedBorder| match side.color {
         BorderColor::CurrentColor => Some(Color::from_rgba8(
             current_color.r,
@@ -3618,18 +3626,31 @@ pub(crate) fn paint_element_border_rounded(
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color); // cov:ignore: BorderColor variants currently always produce Some
         return; // cov:ignore: all current BorderColor variants produce Some
     };
-    if !(uniform_width && solid && uniform_color) {
+    if !(uniform_width && uniform_style && uniform_color) {
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
         return;
     }
 
-    fill_rounded_border_ring(
-        scene,
-        (abs_x, abs_y, width, height),
-        radii,
-        widths[0],
-        color,
-    );
+    let rect = (abs_x, abs_y, width, height);
+    match style {
+        BorderStyle::Solid => fill_rounded_border_ring(scene, rect, radii, widths[0], color),
+        BorderStyle::Dashed | BorderStyle::Dotted if inner_edge_is_rounded(radii, widths[0]) => {
+            paint_rounded_dashed_border(
+                scene,
+                rect,
+                radii,
+                widths[0],
+                color,
+                style == BorderStyle::Dotted,
+            );
+        }
+        BorderStyle::Dashed | BorderStyle::Dotted => {
+            within_rounded_outer_edge(scene, rect, radii, |scene| {
+                paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+            });
+        }
+        _ => paint_element_border(scene, width, height, abs_x, abs_y, border, current_color),
+    }
 }
 
 /// Fill the ring that a border of `stroke_width` makes inside the rounded
