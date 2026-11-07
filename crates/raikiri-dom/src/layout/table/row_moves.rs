@@ -36,9 +36,15 @@ pub(crate) fn has_row_spanning_cell(document: &Document, table: usize) -> bool {
 /// top with its repeated header and is finished with it. A table with cells
 /// spanning rows keeps its layout geometry, since a spanning cell's rectangle
 /// covers more than its own row's track.
+///
+/// A caption above the grid that pagination moved to a later page, with the
+/// distance in `moved_captions`, takes the table's top edge along: the table
+/// starts on the page it opens, as it does with its first row when no caption
+/// comes before it.
 pub(crate) fn follow_moved_rows(
     document: &mut Document,
     moved_rows: &HashMap<usize, f32>,
+    moved_captions: &HashMap<usize, f32>,
     repeats_header: impl Fn(usize) -> bool,
 ) {
     // Collect the tables first: many moved rows share a table, and checking
@@ -46,11 +52,16 @@ pub(crate) fn follow_moved_rows(
     let tables: BTreeSet<usize> = moved_rows
         .keys()
         .filter_map(|&row| document.table_of_row(row))
+        .chain(
+            moved_captions
+                .keys()
+                .filter_map(|&caption| document.layout_parent_of(caption)),
+        )
         .collect();
     #[cfg(test)]
     ROW_MOVE_WORK.with(|work| {
         let (rows, checks) = work.get();
-        work.set((rows + moved_rows.len(), checks));
+        work.set((rows + moved_rows.len() + moved_captions.len(), checks));
     });
     for table in tables {
         if has_row_spanning_cell(document, table) {
@@ -95,22 +106,30 @@ pub(crate) fn follow_moved_rows(
         // the table included, keeps the table's top edge where it is (an
         // absolutely positioned one is out of the table's flow), and so may
         // content outside the rows, wrapped in an anonymous row.
-        let top_caption = document.children_through_contents(table).iter().any(|&id| {
-            !document.nodes[id].is_display_none()
-                && document.nodes[id].display() == DisplayValue::TableCaption
-                && document.nodes[id].caption_side == CaptionSideValue::Top
-                && document.nodes[id].layout_position() != Position::Absolute
-        });
+        let first_top_caption = document
+            .children_through_contents(table)
+            .iter()
+            .copied()
+            .find(|&id| {
+                !document.nodes[id].is_display_none()
+                    && document.nodes[id].display() == DisplayValue::TableCaption
+                    && document.nodes[id].caption_side == CaptionSideValue::Top
+                    && document.nodes[id].layout_position() != Position::Absolute
+            });
         let anonymous_rows = groups
             .iter()
             .any(|&group| document.anonymous_table_cells(group).next().is_some());
         if repeated_header {
             continue;
         }
-        // An anonymous table has no box of its own to draw: its row groups and
-        // rows, which stand in the table's parent, are all that moves.
-        if !top_caption
+        // The first caption above the grid is the first box of the table: when
+        // it moved to a later page, the table's top edge goes with it.
+        if let Some(&delta) = first_top_caption.and_then(|caption| moved_captions.get(&caption)) {
+            move_top(document, table, delta);
+        } else if first_top_caption.is_none()
             && !anonymous_rows
+            // An anonymous table has no box of its own to draw: its row groups
+            // and rows, which stand in the table's parent, are all that moves.
             && !document.is_anonymous_table(table)
             && let Some((first, _)) = table_first
             && let Some(&delta) = moved_rows.get(&first)
