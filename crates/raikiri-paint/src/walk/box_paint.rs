@@ -10,7 +10,7 @@ use super::{
     paint_canvas, paint_element_background, paint_element_border_image,
     paint_element_border_rounded, paint_element_border_with_top, paint_element_box_shadows,
     paint_element_outline, paint_generated_pseudo, paint_image, paint_list_marker_with_snapshots,
-    push_overflow_clip,
+    paint_outline_break_bars, push_overflow_clip, solid_outline,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Rect};
@@ -30,6 +30,46 @@ struct OwnBox {
     width: f32,
     height: f32,
     background_height: f32,
+}
+
+/// How the box of an element is cut at the page area on one page.
+#[derive(Clone, Copy)]
+struct PageCut {
+    /// The page area, in page coordinates.
+    area: Rect,
+    /// The box comes from the page before: it starts above the page area on a
+    /// page that is not the first.
+    from_before: bool,
+    /// The box goes on to the next page.
+    after: bool,
+}
+
+/// The clip that cuts the rectangle `(x, y, width, height)` at the edges of
+/// `area` that it leaves by more than rounding error, or `None` when it stays
+/// inside. `top_cuts` tells whether the top edge cuts at all: an absolutely
+/// positioned box above the page area of the first page is not cut there.
+///
+/// A rectangle that stays inside needs no clip, which would only change the
+/// anti-aliasing of its edges.
+fn page_area_clip(
+    (x, y, width, height): (f32, f32, f32, f32),
+    area: Rect,
+    top_cuts: bool,
+) -> Option<Rect> {
+    const TOLERANCE: f64 = 0.01;
+    const UNBOUNDED: f64 = 1.0e7;
+    let left = f64::from(x) < area.x0 - TOLERANCE;
+    let top = top_cuts && f64::from(y) < area.y0 - TOLERANCE;
+    let right = f64::from(x + width) > area.x1 + TOLERANCE;
+    let bottom = f64::from(y + height) > area.y1 + TOLERANCE;
+    (left || top || right || bottom).then(|| {
+        Rect::new(
+            if left { area.x0 } else { -UNBOUNDED },
+            if top { area.y0 } else { -UNBOUNDED },
+            if right { area.x1 } else { UNBOUNDED },
+            if bottom { area.y1 } else { UNBOUNDED },
+        )
+    })
 }
 
 /// The full winning lines paint around the cell's logical border centers.
@@ -186,16 +226,76 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // sliced box draws a whole outline around itself, like the
         // pieces of an inline box.
         if paints_own_box {
-            paint_element_outline(
-                scene,
-                own.width,
-                fragment_paint_height,
-                own.x,
-                fragment_paint_y,
-                &cv.outline,
-                cv.outline_offset,
-                cv.color,
+            self.paint_outline(
+                element,
+                (own.x, fragment_paint_y, own.width, fragment_paint_height),
             );
+        }
+    }
+
+    /// Paint the outline around the box `(x, y, width, height)` of `element`.
+    ///
+    /// On a page it is cut at the page area, and where a page break cuts the
+    /// box the outline is a bar along the edge of the page area, inside it, as
+    /// in Chromium (see [`paint_outline_break_bars`]).
+    fn paint_outline(
+        &mut self,
+        element: &ElementBox<'w>,
+        (x, y, width, height): (f32, f32, f32, f32),
+    ) {
+        let cv = element.cv;
+        let Some(solid) = solid_outline(&cv.outline, cv.outline_offset, cv.color) else {
+            return;
+        };
+        let outset = solid.width + solid.offset;
+        // The ring lies `outset` outside the box. It is cut at the edges of
+        // the page area that it leaves.
+        let ring = (
+            x - outset,
+            y - outset,
+            width + 2.0 * outset,
+            height + 2.0 * outset,
+        );
+        // The page cut of the box, where the page area clips the ring.
+        let cut = self.page_cut(element).filter(|cut| {
+            width > 0.0 && height > 0.0 && page_area_clip(ring, cut.area, true).is_some()
+        });
+        let clip = cut.and_then(|cut| page_area_clip(ring, cut.area, true));
+        if let Some(clip) = clip {
+            self.scene
+                .scene
+                .push_clip_layer(self.geometry.page_clip_transform, &clip);
+        }
+        // The bars are given in the coordinates of the page, which a transform
+        // of the box or of an ancestor would move, so a transformed box has
+        // none.
+        let bars = cut.filter(|cut| {
+            (cut.from_before || cut.after) && !self.in_transformed_box(element.node_id)
+        });
+        let scene = &mut *self.scene;
+        paint_element_outline(
+            scene,
+            width,
+            height,
+            x,
+            y,
+            &cv.outline,
+            cv.outline_offset,
+            cv.color,
+        );
+        if let Some(cut) = bars {
+            paint_outline_break_bars(
+                scene,
+                (x, y, width, height),
+                &solid,
+                (
+                    cut.from_before.then_some(cut.area.y0),
+                    cut.after.then_some(cut.area.y1),
+                ),
+            );
+        }
+        if cut.is_some() {
+            scene.pop_layer();
         }
     }
 
@@ -309,15 +409,11 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             cv,
             inside_fixed,
             fixed_in_viewport,
-            paint_y,
-            paint_height,
             ..
         } = *element;
         let PageGeometry {
             page_clip_transform,
             page_content_clip,
-            page_top,
-            flow_band,
             ..
         } = self.geometry;
         // Paint element background (CSS Backgrounds 3 §2.2).
@@ -331,41 +427,129 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                         PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
                     )
             })
-            .or_else(|| {
-                // An absolutely positioned box is laid out whole, not broken
-                // at the pages. Its background is cut to the page area where
-                // the box goes on to the next page or comes from the page
-                // before, as the background of each fragment of a broken box
-                // is (CSS Fragmentation 3, section 5.4). On the first page a
-                // box above the page area lies in the margin, and is not cut.
-                const UNBOUNDED: f64 = 1.0e7;
-                let clip = page_content_clip?;
-                if inside_fixed
-                    || fixed_in_viewport
-                    || flow_band.is_some()
-                    || !matches!(cv.position, PositionValue::Absolute)
-                {
-                    return None;
-                }
-                let continues_from_before = page_top > 0.0 && f64::from(paint_y) < clip.y0 - 0.01;
-                let continues_after = f64::from(paint_y + paint_height) > clip.y1 + 0.01;
-                (continues_from_before || continues_after).then(|| {
-                    Rect::new(
-                        -UNBOUNDED,
-                        if continues_from_before {
-                            clip.y0
-                        } else {
-                            -UNBOUNDED
-                        },
-                        UNBOUNDED,
-                        if continues_after { clip.y1 } else { UNBOUNDED },
-                    )
-                })
-            });
+            .or_else(|| self.absolute_page_cut(element));
         if let Some(clip) = clip_background {
             self.scene.scene.push_clip_layer(page_clip_transform, &clip);
         }
         clip_background.is_some()
+    }
+
+    /// Clip the border of `element`, which paints in `border_box`, at the
+    /// edges of the page area that it leaves, and return whether a clip was
+    /// pushed.
+    ///
+    /// An absolutely positioned box is cut at the top only where it comes
+    /// from the page before, as its background is.
+    fn push_border_page_clip(
+        &mut self,
+        element: &ElementBox<'w>,
+        border_box: (f32, f32, f32, f32),
+    ) -> bool {
+        let absolute = matches!(element.cv.position, PositionValue::Absolute);
+        let clip = self.page_cut(element).and_then(|cut| {
+            page_area_clip(
+                border_box,
+                cut.area,
+                if absolute { cut.from_before } else { true },
+            )
+        });
+        if let Some(clip) = clip {
+            self.scene
+                .scene
+                .push_clip_layer(self.geometry.page_clip_transform, &clip);
+        }
+        clip.is_some()
+    }
+
+    /// What the absolutely positioned box of `element` is clipped to on this
+    /// page, or `None` when it is not cut.
+    ///
+    /// An absolutely positioned box is laid out whole, not broken at the
+    /// pages. What it paints is cut to the page area where the box goes on to
+    /// the next page or comes from the page before, as each fragment of a
+    /// broken box is (CSS Fragmentation 3, section 5.4). On the first page a
+    /// box above the page area lies in the margin, and is not cut.
+    fn absolute_page_cut(&self, element: &ElementBox<'w>) -> Option<Rect> {
+        const UNBOUNDED: f64 = 1.0e7;
+        if !matches!(element.cv.position, PositionValue::Absolute) {
+            return None;
+        }
+        let PageCut {
+            area,
+            from_before,
+            after,
+        } = self.page_cut(element)?;
+        (from_before || after).then(|| {
+            Rect::new(
+                -UNBOUNDED,
+                if from_before { area.y0 } else { -UNBOUNDED },
+                UNBOUNDED,
+                if after { area.y1 } else { UNBOUNDED },
+            )
+        })
+    }
+
+    /// Where the box of `element` lies against the page area on this page, or
+    /// `None` for a box that the page area does not cut: a fixed one, or one
+    /// on a page that follows the x axis.
+    fn page_cut(&self, element: &ElementBox<'w>) -> Option<PageCut> {
+        let ElementBox {
+            cv,
+            node_id,
+            inside_fixed,
+            fixed_in_viewport,
+            paint_y,
+            paint_height,
+            ..
+        } = *element;
+        let PageGeometry {
+            page_content_clip,
+            page_top,
+            flow_band,
+            ..
+        } = self.geometry;
+        let area = page_content_clip?;
+        if inside_fixed
+            || fixed_in_viewport
+            || flow_band.is_some()
+            || matches!(cv.position, PositionValue::Fixed)
+        {
+            return None;
+        }
+        let from_before = page_top > 0.0 && f64::from(paint_y) < area.y0 - 0.01;
+        let after = f64::from(paint_y + paint_height) > area.y1 + 0.01;
+        // A relatively positioned box lies where its offset puts it, not
+        // where a break cut it, and neither does a box that the relative
+        // offset of an ancestor moved. Only a box that crosses an edge of the
+        // page area needs the check.
+        let broken = (from_before || after)
+            && match cv.position {
+                PositionValue::Absolute => true,
+                PositionValue::Static => !self.moved_by_relative_ancestor(node_id),
+                _ => false,
+            };
+        Some(PageCut {
+            area,
+            from_before: broken && from_before,
+            after: broken && after,
+        })
+    }
+
+    /// Whether the node `node_id` or one of its ancestors has a transform
+    /// that applies to it.
+    fn in_transformed_box(&self, node_id: usize) -> bool {
+        self.document.inclusive_ancestors(node_id).any(|id| {
+            raikiri_dom::has_applied_transform(self.document, id, &self.cascade.computed[id])
+        })
+    }
+
+    /// Whether a relative offset of an ancestor of the node `node_id` moves
+    /// it vertically.
+    fn moved_by_relative_ancestor(&self, node_id: usize) -> bool {
+        self.document.ancestors(node_id).any(|ancestor| {
+            let cv = &self.cascade.computed[ancestor];
+            raikiri_dom::used_relative_offset(self.document, self.cascade, cv, ancestor).1 != 0.0
+        })
     }
 
     /// Clip to the cell areas of a source row or row group, which the box
@@ -476,6 +660,17 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             painted_border,
         );
         let (own_paint_y, own_paint_height) = (border_box.y, border_box.height);
+        // The border is cut at the page area where it leaves it.
+        let clipped_to_page_content = paints_own_box
+            && self.push_border_page_clip(
+                element,
+                (
+                    border_box.x,
+                    border_box.y,
+                    border_box.width,
+                    border_box.height,
+                ),
+            );
         // A border image replaces the border styles (CSS
         // Backgrounds 3 §6).
         let border_image_drawn = paints_own_box
@@ -509,6 +704,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cv.color,
                 &paint_border_radius,
             );
+        }
+        if clipped_to_page_content {
+            scene.pop_layer();
         }
     }
 

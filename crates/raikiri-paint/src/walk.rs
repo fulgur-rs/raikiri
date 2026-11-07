@@ -3691,6 +3691,122 @@ fn fill_rounded_border_ring(
     }
 }
 
+/// The width, offset and color of an outline that paints: a solid one of a
+/// positive finite width.
+pub(crate) struct SolidOutline {
+    pub(crate) width: f32,
+    pub(crate) offset: f32,
+    pub(crate) color: CssColor,
+}
+
+/// The outline of `outline` as it paints, or `None` when it paints nothing.
+pub(crate) fn solid_outline(
+    outline: &raikiri_style::ComputedOutline,
+    outline_offset: ComputedLength,
+    current_color: CssColor,
+) -> Option<SolidOutline> {
+    let width = outline.width().px();
+    let offset = outline_offset.px();
+    if width <= 0.0
+        || !width.is_finite()
+        || !offset.is_finite()
+        || !matches!(outline.style(), OutlineStyle::Solid)
+    {
+        return None;
+    }
+    let color = match outline.color {
+        OutlineColor::Resolved(color) => color,
+        OutlineColor::CurrentColor | OutlineColor::Invert => current_color,
+        _ => current_color, // cov:ignore: defensive fallback for future OutlineColor variants
+    };
+    Some(SolidOutline {
+        width,
+        offset,
+        color,
+    })
+}
+
+/// Paint the outline of a box that a page break cuts where the cut is: a bar
+/// along the edge of the page area, inside it, as Chromium does (the ring of
+/// the box there would lie in the page margin). The bar starts `outline-offset`
+/// from the edge, is as thick as the outline, and runs between the inner edges
+/// of the two side segments of the ring, which the page area clips and leaves
+/// in place: the box's width from `x`, plus the offset on both sides.
+/// `top` and `bottom` are the edges of the page area where the box goes on.
+///
+/// A translucent outline is painted once: its bars leave out what the
+/// horizontal segments of the ring (painted by [`paint_element_outline`]) and
+/// the other bar already cover, which would show as a darker overlap. An opaque
+/// outline paints whole bars, as splitting them would only add seams at
+/// fractional edges.
+pub(crate) fn paint_outline_break_bars(
+    scene: &mut impl PaintScene,
+    (x, y, width, height): (f32, f32, f32, f32),
+    SolidOutline {
+        width: outline_width,
+        offset,
+        color,
+    }: &SolidOutline,
+    (top, bottom): (Option<f64>, Option<f64>),
+) {
+    // The distance of a bar from the page area edge: no negative offset takes
+    // it out of the page area.
+    let gap = f64::from(offset.max(0.0));
+    let thickness = f64::from(*outline_width);
+    // The inner edges of the side segments: the offset itself, not `gap`, so
+    // that a negative offset (the ring reaches into the box) also stops the bar
+    // at the side segments. A box narrower than twice that leaves an empty bar.
+    let offset = f64::from(*offset);
+    let left = f64::from(x) - offset;
+    let right = (f64::from(x) + f64::from(width) + offset).max(left);
+    let (box_top, box_bottom) = (f64::from(y), f64::from(y) + f64::from(height));
+    // The vertical extents that the outline paints across the bars' width: the
+    // top and the bottom segment of the ring.
+    let mut painted = vec![
+        (box_top - offset - thickness, box_top - offset),
+        (box_bottom + offset, box_bottom + offset + thickness),
+    ];
+    let translucent = color.a < u8::MAX;
+    let color = Color::from_rgba8(color.r, color.g, color.b, color.a);
+    for bar in [
+        top.map(|edge| (edge + gap, edge + gap + thickness)),
+        bottom.map(|edge| (edge - gap - thickness, edge - gap)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let pieces = if translucent {
+            subtract_extents(bar, &painted)
+        } else {
+            vec![bar]
+        };
+        for (near, far) in pieces {
+            scene.fill(
+                Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                color,
+                None,
+                &Rect::new(left, near, right, far),
+            );
+        }
+        painted.push(bar);
+    }
+}
+
+/// The parts of the vertical extent `bar` (`near`, `far`) that lie outside
+/// every extent of `painted`.
+fn subtract_extents(bar: (f64, f64), painted: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut pieces = vec![bar];
+    for &(from, to) in painted {
+        pieces = pieces
+            .into_iter()
+            .flat_map(|(near, far)| [(near, far.min(from)), (near.max(to), far)])
+            .filter(|(near, far)| far > near)
+            .collect();
+    }
+    pieces
+}
+
 /// Paint a basic solid element outline without changing layout geometry.
 ///
 /// The first visual tranche intentionally handles square block outlines only.
@@ -3707,15 +3823,15 @@ pub(crate) fn paint_element_outline(
     outline_offset: ComputedLength,
     current_color: CssColor,
 ) {
-    let outline_width = outline.width().px();
-    let offset = outline_offset.px();
-    if width <= 0.0
-        || height <= 0.0
-        || outline_width <= 0.0
-        || !outline_width.is_finite()
-        || !offset.is_finite()
-        || !matches!(outline.style(), OutlineStyle::Solid)
-    {
+    let Some(SolidOutline {
+        width: outline_width,
+        offset,
+        color,
+    }) = solid_outline(outline, outline_offset, current_color)
+    else {
+        return;
+    };
+    if width <= 0.0 || height <= 0.0 {
         return;
     }
     let outset = outline_width + offset;
@@ -3724,15 +3840,10 @@ pub(crate) fn paint_element_outline(
     if outer_width <= 0.0 || outer_height <= 0.0 {
         return; // cov:ignore: collapsed negative-offset outlines are deferred
     }
-    let color = match outline.color {
-        OutlineColor::Resolved(color) => BorderColor::Resolved(color),
-        OutlineColor::CurrentColor | OutlineColor::Invert => BorderColor::Resolved(current_color),
-        _ => BorderColor::Resolved(current_color), // cov:ignore: defensive fallback for future OutlineColor variants
-    };
     let mut border = Border::new();
     border.width = Length::Px(outline_width);
     border.style = BorderStyle::Solid;
-    border.color = color;
+    border.color = BorderColor::Resolved(color);
     let border = resolve_border(
         border,
         ComputedLength(16.0),
