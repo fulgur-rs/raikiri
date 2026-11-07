@@ -505,6 +505,48 @@ fn holds_only_block_level_boxes(
     })
 }
 
+/// Whether no block-level child of `children` outside the table parts can
+/// hold a line: no text that makes one, no inline-level box and no generated
+/// content anywhere below it. A vertical container takes the lines of its
+/// block children as its own and lays all its children out through the
+/// inline engine then (see `inline_content` in `layout::ifc::assign`),
+/// which does not place an anonymous table, so the table parts stay blocks.
+fn blocks_beside_parts_hold_no_lines(
+    doc: &Document,
+    cascade: &CascadeResult,
+    children: &[usize],
+) -> bool {
+    let mut pending: Vec<usize> = children
+        .iter()
+        .copied()
+        .filter(|&child| !is_table_internal(doc.nodes[child].display()))
+        .collect();
+    while let Some(id) = pending.pop() {
+        let node = doc.ifc_layout_node(id).unwrap();
+        if !node.is_in_document() || node.is_non_rendered_html_element() {
+            continue;
+        }
+        if node.kind() == NodeKind::Text {
+            if crate::layout::ifc::assign::text_makes_a_line(doc, cascade, id) {
+                return false;
+            }
+            continue;
+        }
+        let display = node.display();
+        if display == DisplayValue::None {
+            continue;
+        }
+        if display.is_inline_level()
+            || generates_pseudo_box(cascade, id)
+            || crate::generated_content::is_in_flow_generated_text(cascade, id, PseudoElem::Marker)
+        {
+            return false;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    true
+}
+
 /// Group the table-internal boxes outside any table into the runs that one
 /// anonymous table each wraps. White space and boxes that generate nothing
 /// between two parts do not end a run, and a `display: contents` box is
@@ -528,6 +570,8 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
             .iter()
             .any(|&child| is_table_internal(doc.nodes[child].display()))
             || !holds_only_block_level_boxes(doc, cascade, &children)
+            || (cascade.computed[parent].cssom_writing_mode.is_vertical()
+                && !blocks_beside_parts_hold_no_lines(doc, cascade, &children))
         {
             continue;
         }

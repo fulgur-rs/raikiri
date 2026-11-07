@@ -283,6 +283,61 @@ fn multicol_inside_marker_and_generated_content_parents_keep_rows_blocks() {
     }
 }
 
+/// The number of anonymous tables built in a vertical `body` that holds a row
+/// and the block `sibling` builds, with a block of its own below `sibling`.
+fn vertical_tables_beside(sibling: impl FnOnce(&mut Document, usize)) -> usize {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let block = div(&mut doc, body, "display:block");
+    sibling(&mut doc, block);
+    let row = div(&mut doc, body, "display:table-row");
+    div(&mut doc, row, "display:table-cell");
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.table_objects.tables.len()
+}
+
+#[test]
+fn a_vertical_parent_whose_blocks_hold_lines_keeps_rows_blocks() {
+    // The text makes the vertical parent lay its children out as lines (see
+    // `inline_content`), which places no anonymous table.
+    assert_eq!(
+        vertical_tables_beside(|doc, block| {
+            doc.append_text(block, "x");
+        }),
+        0
+    );
+    assert_eq!(
+        vertical_tables_beside(|doc, block| {
+            let inner = div(doc, block, "display:block");
+            doc.append_text(inner, "x");
+        }),
+        0
+    );
+    assert_eq!(
+        vertical_tables_beside(|doc, block| {
+            doc.append_element(Some(block), "span", Some("display:inline"));
+        }),
+        0
+    );
+    // Empty blocks, white space and hidden boxes leave no line.
+    assert_eq!(
+        vertical_tables_beside(|doc, block| {
+            doc.append_text(block, " \n ");
+            div(doc, block, "display:block");
+            let hidden = div(doc, block, "display:none");
+            doc.append_text(hidden, "x");
+        }),
+        1
+    );
+}
+
 #[test]
 fn vertical_and_outside_marker_list_item_parents_wrap_their_rows() {
     for body_css in [

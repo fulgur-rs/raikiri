@@ -783,3 +783,38 @@ fn an_anonymous_table_in_a_vertical_block_keeps_the_content_of_its_parts() {
         ],
     );
 }
+
+#[test]
+fn a_row_beside_a_block_with_text_in_a_vertical_block_keeps_its_own_text() {
+    // The text of the block makes the vertical parent lay its children out as
+    // lines, where the row stays a block that lays out its own text.
+    check(
+        "block with text",
+        &vertical(
+            "vertical-rl",
+            "<div id=b>x</div><div id=r style=\"display:table-row\">row text</div>",
+        ),
+        &[
+            ("p", [8.0, 8.0, 20.0, 80.0]),
+            ("b", [18.0, 8.0, 10.0, 80.0]),
+            ("r", [8.0, 8.0, 10.0, 80.0]),
+        ],
+    );
+    check(
+        "nested block with text",
+        &vertical(
+            "vertical-rl",
+            &format!(
+                "<div id=b><div id=d>x</div></div>{}",
+                group("row", "r", &cell("c1", "aa"))
+            ),
+        ),
+        &[
+            ("p", [8.0, 8.0, 20.0, 20.0]),
+            ("b", [18.0, 8.0, 10.0, 20.0]),
+            ("d", [18.0, 8.0, 10.0, 20.0]),
+            ("r", [8.0, 8.0, 10.0, 20.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+        ],
+    );
+}
