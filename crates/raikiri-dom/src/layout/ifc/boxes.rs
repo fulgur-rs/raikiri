@@ -2303,9 +2303,19 @@ pub(crate) fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
 /// and the vertical box fits the page area. Only the padding above and below
 /// counts; the padding on the left and right, and any padding of a
 /// content-box limit, leave the limit as it is.
+///
+/// A table cell laid out at its final width has no `max-height` in its style,
+/// so the cap the table recorded for it stands in for the limit.
 pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Option<f32> {
     let style = tree.physical_style(container);
-    let max = style.max_size().height.maybe_resolve(None::<f32>)?;
+    let Some(max) = style.max_size().height.maybe_resolve(None::<f32>) else {
+        return tree
+            .context
+            .table_cell_max_height_caps
+            .iter()
+            .rev()
+            .find_map(|&(cell, cap)| (cell == container).then_some(cap));
+    };
     let min = style
         .min_size()
         .height

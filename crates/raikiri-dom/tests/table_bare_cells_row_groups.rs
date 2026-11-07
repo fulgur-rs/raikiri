@@ -3,6 +3,10 @@
 //! The first header group is then drawn above every row and the first footer
 //! group below every row (CSS 2 §17.2), the other groups keep their place.
 //!
+//! Table parts outside any table get an anonymous table around each run of
+//! them, also when a `display: contents` element sits between the parent and the
+//! parts (CSS 2 §17.2.1, CSS Display 3 §2.5).
+//!
 //! The expected boxes are the ones Chromium computes for the same markup in an
 //! 800px by 600px viewport, with the body margin of 8px: each is an element's
 //! left, top, width and height.
@@ -303,6 +307,206 @@ fn a_body_group_or_a_row_between_bare_cells_keeps_its_place() {
             ("a", [8.0, 8.0, 10.0, 10.0]),
             ("R", [8.0, 18.0, 10.0, 10.0]),
             ("e", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+fn wrapper(inner: &str) -> String {
+    format!("<div style=\"display:contents\">{inner}</div>")
+}
+
+fn plain(inner: &str) -> String {
+    format!("<div id=p>{inner}</div>")
+}
+
+#[test]
+fn a_row_outside_a_table_gets_an_anonymous_table_also_through_display_contents() {
+    // The row's text becomes an anonymous cell of 20px; the cell after it adds 10px.
+    let row = group("row", "a", &format!("2a{}", cell("b", "2")));
+    let expected: &[(&str, [f32; 4])] = &[
+        ("a", [8.0, 8.0, 30.0, 10.0]),
+        ("b", [28.0, 8.0, 10.0, 10.0]),
+    ];
+    check("row", &plain(&row), expected);
+    check("row in a wrapper", &plain(&wrapper(&row)), expected);
+}
+
+#[test]
+fn a_cell_outside_a_table_is_as_wide_as_its_content_also_through_display_contents() {
+    let expected: &[(&str, [f32; 4])] = &[("a", [8.0, 8.0, 10.0, 10.0])];
+    check("cell", &plain(&cell("a", "3")), expected);
+    check(
+        "cell in a wrapper",
+        &plain(&wrapper(&cell("a", "3"))),
+        expected,
+    );
+}
+
+#[test]
+fn cells_outside_a_table_share_one_anonymous_row() {
+    let expected: &[(&str, [f32; 4])] = &[
+        ("a", [8.0, 8.0, 20.0, 10.0]),
+        ("b", [28.0, 8.0, 20.0, 10.0]),
+    ];
+    let both = format!("{}{}", cell("a", "5a"), cell("b", "5b"));
+    check("two cells", &plain(&both), expected);
+    check(
+        "the first cell in a wrapper",
+        &plain(&format!("{}{}", wrapper(&cell("a", "5a")), cell("b", "5b"))),
+        expected,
+    );
+    check(
+        "wrappers nested around the first cell",
+        &plain(&format!(
+            "{}{}",
+            wrapper(&wrapper(&cell("a", "5a"))),
+            cell("b", "5b")
+        )),
+        expected,
+    );
+    check(
+        "whitespace between the cells",
+        &plain(&format!(" {} {} ", cell("a", "5a"), cell("b", "5b"))),
+        expected,
+    );
+}
+
+#[test]
+fn a_caption_outside_a_table_is_as_wide_as_its_content() {
+    check(
+        "caption",
+        &plain(&group("caption", "a", "1")),
+        &[("a", [8.0, 8.0, 10.0, 10.0])],
+    );
+}
+
+#[test]
+fn a_caption_before_a_row_outside_a_table_sits_above_it_also_through_display_contents() {
+    let caption = group("caption", "a", "1");
+    let row = group("row", "b", &format!("2a{}", cell("c", "2")));
+    let expected: &[(&str, [f32; 4])] = &[
+        ("a", [8.0, 8.0, 30.0, 10.0]),
+        ("b", [8.0, 18.0, 30.0, 10.0]),
+        ("c", [28.0, 18.0, 10.0, 10.0]),
+    ];
+    check(
+        "caption and row",
+        &plain(&format!("{caption}{row}")),
+        expected,
+    );
+    check(
+        "caption and row in separate wrappers",
+        &plain(&format!("{}{}", wrapper(&caption), wrapper(&row))),
+        expected,
+    );
+}
+
+#[test]
+fn a_caption_after_a_cell_outside_a_table_is_drawn_above_it() {
+    check(
+        "cell then caption",
+        &plain(&format!(
+            "{}{}",
+            cell("a", "5a"),
+            group("caption", "b", "5b")
+        )),
+        &[
+            ("a", [8.0, 18.0, 20.0, 10.0]),
+            ("b", [8.0, 8.0, 20.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_cell_followed_by_a_row_outside_a_table_forms_a_row_above_it() {
+    check(
+        "cell then row",
+        &plain(&format!(
+            "{}{}",
+            cell("a", "5a"),
+            group("row", "b", &cell("c", "5c"))
+        )),
+        &[
+            ("a", [8.0, 8.0, 20.0, 10.0]),
+            ("b", [8.0, 18.0, 20.0, 10.0]),
+            ("c", [8.0, 18.0, 20.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_row_group_outside_a_table_gets_an_anonymous_table() {
+    let inner = group("row", "b", &cell("c", "5c"));
+    check(
+        "row group",
+        &plain(&group("row-group", "g", &inner)),
+        &[
+            ("g", [8.0, 8.0, 20.0, 10.0]),
+            ("b", [8.0, 8.0, 20.0, 10.0]),
+            ("c", [8.0, 8.0, 20.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_block_between_cells_outside_a_table_splits_them_into_two_anonymous_tables() {
+    check(
+        "block after a cell",
+        &plain(&format!("<div id=x>xx</div>{}", cell("a", "5a"))),
+        &[
+            ("x", [8.0, 8.0, 784.0, 10.0]),
+            ("a", [8.0, 18.0, 20.0, 10.0]),
+        ],
+    );
+    check(
+        "block between two cells",
+        &plain(&format!(
+            "{}<div id=x>xx</div>{}",
+            cell("a", "5a"),
+            cell("b", "5b")
+        )),
+        &[
+            ("a", [8.0, 8.0, 20.0, 10.0]),
+            ("x", [8.0, 18.0, 784.0, 10.0]),
+            ("b", [8.0, 28.0, 20.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_caption_alone_outside_a_table_sits_below_the_block_before_it() {
+    let caption = "<div id=cap style=\"display:table-caption;width:100px;height:30px\"></div>";
+    check(
+        "block then caption",
+        &plain(&format!("<div id=x>xx</div>{caption}")),
+        &[
+            ("x", [8.0, 8.0, 784.0, 10.0]),
+            ("cap", [8.0, 18.0, 100.0, 30.0]),
+        ],
+    );
+    check(
+        "block, caption, block",
+        &plain(&format!("<div id=x>xx</div>{caption}<div id=y>yy</div>")),
+        &[
+            ("x", [8.0, 8.0, 784.0, 10.0]),
+            ("cap", [8.0, 18.0, 100.0, 30.0]),
+            ("y", [8.0, 48.0, 784.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_caption_with_layout_containment_outside_a_table_holds_its_positioned_content() {
+    // The paragraph's margin collapses with the body's, so it starts at 10px.
+    check(
+        "caption with layout containment",
+        "<p id=p>Test passes</p><div id=cap style=\"display:table-caption;contain:layout;\
+         width:100px;height:100px\"><div id=abs style=\"position:absolute;bottom:0;right:0;\
+         width:100px;height:100px\"></div></div>",
+        &[
+            ("p", [8.0, 10.0, 784.0, 10.0]),
+            ("cap", [8.0, 30.0, 100.0, 100.0]),
+            ("abs", [8.0, 30.0, 100.0, 100.0]),
         ],
     );
 }

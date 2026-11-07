@@ -1,6 +1,7 @@
 //! Layout-only anonymous table boxes, without changing the source DOM:
 //! cells that wrap loose content in tables, rows and row groups, and tables
-//! that wrap rows and row groups outside any table.
+//! that wrap the table parts (rows, row groups, cells, captions and columns)
+//! outside any table.
 
 use crate::Document;
 use crate::node::arena::BoxKey;
@@ -395,14 +396,59 @@ fn rows(
     Ok(sections.into_iter().flat_map(|(_, rows)| rows).collect())
 }
 
-fn is_row_or_group(display: DisplayValue) -> bool {
+/// Whether a box of this display type only exists inside a table: a row, a
+/// row group, a cell, a caption or a column (group). Outside a table, a run of
+/// them gets an anonymous table around it (CSS 2.1 §17.2.1, CSS Tables 3
+/// §3.9).
+fn is_table_internal(display: DisplayValue) -> bool {
     matches!(
         display,
         DisplayValue::TableRow
             | DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+            | DisplayValue::TableColumn
+            | DisplayValue::TableColumnGroup
     )
+}
+
+/// Whether `node` generates a `::before` or `::after` box.
+fn generates_pseudo_box(cascade: &CascadeResult, node: usize) -> bool {
+    [PseudoElem::Before, PseudoElem::After]
+        .into_iter()
+        .any(|pseudo| {
+            cascade
+                .pseudo
+                .get(&(raikiri_style::StyleNodeId::new(node as u64), pseudo))
+                .is_some_and(|cv| cv.display != DisplayValue::None && !cv.content.is_empty())
+        })
+}
+
+/// The children of `parent` that stand in its box tree, with a
+/// `display: contents` child replaced by its own children, at any depth.
+/// `None` when such a child generates a `::before` or `::after` box, whose
+/// inline content then sits among the children of `parent`.
+fn flattened_children(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+) -> Option<Vec<usize>> {
+    let mut out = Vec::new();
+    let mut pending: Vec<usize> = doc.nodes[parent].children.iter().rev().copied().collect();
+    while let Some(id) = pending.pop() {
+        let node = doc.ifc_layout_node(id).unwrap();
+        if node.is_in_document() && node.display() == DisplayValue::Contents {
+            if generates_pseudo_box(cascade, id) {
+                return None;
+            }
+            pending.extend(node.children.iter().rev().copied());
+        } else {
+            out.push(id);
+        }
+    }
+    Some(out)
 }
 
 /// Whether `parent` lays its children out as block-level boxes, so that a
@@ -412,7 +458,15 @@ fn is_row_or_group(display: DisplayValue) -> bool {
 /// inline engine lays out instead; its rows remain blocks there. List items,
 /// whose markers sit on their first line, and vertical and multicol
 /// containers keep their rows as blocks as well.
-fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
+///
+/// `children` are the children of `parent` with `display: contents` boxes
+/// looked through.
+fn holds_only_block_level_boxes(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    children: &[usize],
+) -> bool {
     let node = doc.ifc_layout_node(parent).unwrap();
     let cv = &cascade.computed[parent];
     if !matches!(
@@ -431,16 +485,10 @@ fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent:
     {
         return false;
     }
-    let generates = |pseudo| {
-        cascade
-            .pseudo
-            .get(&(raikiri_style::StyleNodeId::new(parent as u64), pseudo))
-            .is_some_and(|cv| cv.display != DisplayValue::None && !cv.content.is_empty())
-    };
-    if generates(PseudoElem::Before) || generates(PseudoElem::After) {
+    if generates_pseudo_box(cascade, parent) {
         return false;
     }
-    node.children.iter().all(|&child| {
+    children.iter().all(|&child| {
         let child_node = doc.ifc_layout_node(child).unwrap();
         !child_node.is_in_document()
             || child_node.is_non_rendered_html_element()
@@ -450,35 +498,38 @@ fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent:
             } else {
                 // Only text and elements are in the document.
                 let display = child_node.display();
-                display == DisplayValue::None
-                    || (!display.is_inline_level() && display != DisplayValue::Contents)
+                display == DisplayValue::None || !display.is_inline_level()
             }
     })
 }
 
-/// Group the rows and row groups outside any table into the runs that one
+/// Group the table-internal boxes outside any table into the runs that one
 /// anonymous table each wraps. White space and boxes that generate nothing
-/// between two parts do not end a run.
+/// between two parts do not end a run, and a `display: contents` box is
+/// looked through.
 fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<AnonymousTable> {
     let mut tables = Vec::new();
     for parent in 0..doc.nodes.len() {
         let node = doc.ifc_layout_node(parent).unwrap();
-        if !node.is_in_document()
-            || node.kind() != NodeKind::Element
-            || !node
-                .children
-                .iter()
-                .any(|&child| is_row_or_group(doc.nodes[child].display()))
-            || !holds_only_block_level_boxes(doc, cascade, parent)
+        if !node.is_in_document() || node.kind() != NodeKind::Element {
+            continue;
+        }
+        let Some(children) = flattened_children(doc, cascade, parent) else {
+            continue;
+        };
+        if !children
+            .iter()
+            .any(|&child| is_table_internal(doc.nodes[child].display()))
+            || !holds_only_block_level_boxes(doc, cascade, parent, &children)
         {
             continue;
         }
         let mut run = Vec::new();
-        for &child in &node.children {
+        for child in children {
             let child_node = doc.ifc_layout_node(child).unwrap();
             if child_node.kind() == NodeKind::Element
                 && child_node.is_in_document()
-                && is_row_or_group(child_node.display())
+                && is_table_internal(child_node.display())
             {
                 run.push(child);
             } else if child_node.kind() == NodeKind::Element
