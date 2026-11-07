@@ -178,7 +178,8 @@ impl Document {
                             }
                         }
                         structure.line_boxes = Arc::new(boxes);
-                        let beside_lines: HashSet<_> = root_node.ifc_boxes().into_iter().collect();
+                        let beside_lines: HashSet<_> =
+                            self.ifc_source_boxes(root_node).into_iter().collect();
                         let mut pending = vec![None];
                         while let Some(group) = pending.pop() {
                             let first = group.unwrap_or(root);
@@ -222,7 +223,7 @@ impl Document {
                     let blocks: HashSet<_> = structure.blocks.iter().copied().collect();
                     for id in self
                         .ifc_layout_node(root)
-                        .map(|node| node.ifc_boxes())
+                        .map(|node| self.ifc_source_boxes(node))
                         .unwrap_or_default()
                     {
                         #[cfg(test)]

@@ -120,20 +120,198 @@ fn a_block_between_rows_starts_another_table() {
     assert_eq!(absolute_rect(&doc, cells[1]), (0.0, 15.0, 10.0, 10.0));
 }
 
-#[test]
-fn rows_beside_inline_content_stay_blocks() {
-    let mut row = 0;
+/// A `div` in the Ahem body (10px font, 10px line height) that `build` fills,
+/// laid out. Returns the document and the `div`.
+fn in_paragraph(
+    paragraph_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, usize) {
+    let mut paragraph = 0;
     let doc = laid_out(
         "font-family:Ahem;font-size:10px;line-height:10px",
         |doc, body| {
-            doc.append_text(body, "A");
-            row = div(doc, body, "display:table-row");
-            div(doc, row, "display:table-cell;width:10px;height:10px");
+            paragraph = div(doc, body, &format!("display:block;{paragraph_css}"));
+            build(doc, paragraph);
         },
     );
-    // The inline engine lays out the body's children, rows included.
-    assert!(doc.table_objects.tables.is_empty());
-    assert_eq!(absolute_rect(&doc, row).2, 200.0);
+    (doc, paragraph)
+}
+
+fn cell(doc: &mut Document, parent: usize, width: u32) -> usize {
+    div(
+        doc,
+        parent,
+        &format!("display:table-cell;width:{width}px;height:10px"),
+    )
+}
+
+#[test]
+fn a_row_between_lines_is_a_block_level_table_between_them() {
+    let mut ids = [0; 2];
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        doc.append_text(paragraph, "A");
+        ids[0] = div(doc, paragraph, "display:table-row");
+        ids[1] = cell(doc, ids[0], 10);
+        doc.append_text(paragraph, "B");
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    // The table is as wide as its cell, between the lines of "A" and "B".
+    assert_eq!(absolute_rect(&doc, ids[0]), (0.0, 10.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, ids[1]), (0.0, 10.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph), (0.0, 0.0, 200.0, 30.0));
+}
+
+#[test]
+fn rows_between_lines_share_the_columns_of_one_table() {
+    let mut rows = [0; 2];
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        doc.append_text(paragraph, "A");
+        rows[0] = div(doc, paragraph, "display:table-row");
+        cell(doc, rows[0], 20);
+        rows[1] = div(doc, paragraph, "display:table-row");
+        cell(doc, rows[1], 10);
+        doc.append_text(paragraph, "B");
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    assert_eq!(absolute_rect(&doc, rows[0]), (0.0, 10.0, 20.0, 10.0));
+    assert_eq!(absolute_rect(&doc, rows[1]), (0.0, 20.0, 20.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 40.0);
+}
+
+#[test]
+fn a_line_between_rows_starts_another_table() {
+    let mut rows = [0; 2];
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        rows[0] = div(doc, paragraph, "display:table-row");
+        cell(doc, rows[0], 20);
+        doc.append_text(paragraph, "A");
+        rows[1] = div(doc, paragraph, "display:table-row");
+        cell(doc, rows[1], 10);
+    });
+    assert_eq!(doc.table_objects.tables.len(), 2);
+    assert_eq!(absolute_rect(&doc, rows[0]), (0.0, 0.0, 20.0, 10.0));
+    assert_eq!(absolute_rect(&doc, rows[1]), (0.0, 20.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 30.0);
+}
+
+#[test]
+fn collapsible_white_space_around_a_row_makes_no_line() {
+    let mut row = 0;
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        doc.append_text(paragraph, "   ");
+        row = div(doc, paragraph, "display:table-row");
+        cell(doc, row, 10);
+        doc.append_text(paragraph, "   ");
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    assert_eq!(absolute_rect(&doc, row), (0.0, 0.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 10.0);
+}
+
+#[test]
+fn preserved_white_space_before_a_row_is_a_line_above_the_table() {
+    let mut row = 0;
+    let (doc, paragraph) = in_paragraph("white-space:pre", |doc, paragraph| {
+        doc.append_text(paragraph, "\n");
+        row = div(doc, paragraph, "display:table-row");
+        cell(doc, row, 10);
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    assert_eq!(absolute_rect(&doc, row), (0.0, 10.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 20.0);
+}
+
+#[test]
+fn a_row_after_a_line_and_before_another_keeps_the_lines_either_side() {
+    let (mut inline, mut row, mut after) = (0, 0, 0);
+    let (doc, _) = in_paragraph("", |doc, paragraph| {
+        inline = doc.append_element(Some(paragraph), "b", Some("display:inline"));
+        doc.append_text(inline, "A");
+        row = div(doc, paragraph, "display:table-row");
+        cell(doc, row, 10);
+        after = doc.append_element(Some(paragraph), "i", Some("display:inline"));
+        doc.append_text(after, "B");
+    });
+    assert_eq!(absolute_rect(&doc, inline), (0.0, 0.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, row), (0.0, 10.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, after), (0.0, 20.0, 10.0, 10.0));
+}
+
+#[test]
+fn a_row_group_and_bare_cells_between_lines_are_wrapped_too() {
+    let (mut group, mut cells) = (0, [0; 2]);
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        doc.append_text(paragraph, "A");
+        group = div(doc, paragraph, "display:table-row-group");
+        let row = div(doc, group, "display:table-row");
+        cell(doc, row, 10);
+        doc.append_text(paragraph, "B");
+        doc.append_text(paragraph, "C");
+        cells[0] = cell(doc, paragraph, 10);
+        cells[1] = cell(doc, paragraph, 20);
+    });
+    assert_eq!(doc.table_objects.tables.len(), 2);
+    assert_eq!(absolute_rect(&doc, group), (0.0, 10.0, 10.0, 10.0));
+    // "BC" is one line between the tables; the cells fall in a row of their own.
+    assert_eq!(absolute_rect(&doc, cells[0]), (0.0, 30.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, cells[1]), (10.0, 30.0, 20.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 40.0);
+}
+
+#[test]
+fn a_column_between_lines_is_an_empty_table_between_them() {
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        doc.append_text(paragraph, "aa");
+        div(doc, paragraph, "display:table-column;width:30px");
+        doc.append_text(paragraph, "bb");
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    // The table has no height, but it is a block-level box: it ends the line.
+    assert_eq!(absolute_rect(&doc, paragraph).3, 20.0);
+}
+
+#[test]
+fn comments_and_boxes_that_generate_nothing_between_rows_leave_one_table() {
+    let mut rows = [0; 2];
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        doc.append_text(paragraph, "A");
+        rows[0] = div(doc, paragraph, "display:table-row");
+        cell(doc, rows[0], 20);
+        doc.append_comment(Some(paragraph), "gap");
+        doc.append_text(paragraph, "  ");
+        div(doc, paragraph, "display:none");
+        rows[1] = div(doc, paragraph, "display:table-row");
+        cell(doc, rows[1], 10);
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    assert_eq!(absolute_rect(&doc, rows[1]), (0.0, 20.0, 20.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 30.0);
+}
+
+#[test]
+fn a_row_before_the_only_line_leaves_the_line_below_it() {
+    let mut row = 0;
+    let (doc, paragraph) = in_paragraph("", |doc, paragraph| {
+        row = div(doc, paragraph, "display:table-row");
+        cell(doc, row, 10);
+        doc.append_text(paragraph, "A");
+    });
+    assert_eq!(absolute_rect(&doc, row), (0.0, 0.0, 10.0, 10.0));
+    assert_eq!(absolute_rect(&doc, paragraph).3, 20.0);
+}
+
+#[test]
+fn rows_in_an_inline_block_beside_text_make_a_table_in_it() {
+    let (mut inline_block, mut row) = (0, 0);
+    let (doc, _) = in_paragraph("", |doc, paragraph| {
+        inline_block = div(doc, paragraph, "display:inline-block");
+        doc.append_text(inline_block, "A");
+        row = div(doc, inline_block, "display:table-row");
+        cell(doc, row, 20);
+    });
+    assert_eq!(doc.table_objects.tables.len(), 1);
+    assert_eq!(absolute_rect(&doc, inline_block), (0.0, 0.0, 20.0, 20.0));
+    assert_eq!(absolute_rect(&doc, row), (0.0, 10.0, 20.0, 10.0));
 }
 
 #[test]
@@ -146,20 +324,6 @@ fn the_anonymous_table_inherits_border_spacing_from_its_parent() {
     });
     assert_eq!(absolute_rect(&doc, cells[0]), (4.0, 2.0, 10.0, 10.0));
     assert_eq!(absolute_rect(&doc, cells[1]), (18.0, 2.0, 10.0, 10.0));
-}
-
-#[test]
-fn preserved_white_space_beside_rows_keeps_them_blocks() {
-    let doc = laid_out(
-        "font-family:Ahem;font-size:10px;line-height:10px;white-space:pre",
-        |doc, body| {
-            doc.append_text(body, "\n");
-            let row = div(doc, body, "display:table-row");
-            div(doc, row, "display:table-cell;width:10px;height:10px");
-        },
-    );
-    // The newline forms a line, so the inline engine lays the rows out.
-    assert!(doc.table_objects.tables.is_empty());
 }
 
 #[test]
@@ -267,19 +431,29 @@ fn anonymous_tables_around_a_row(sheet: &str, body_css: &str) -> usize {
 }
 
 #[test]
-fn multicol_inside_marker_and_generated_content_parents_keep_rows_blocks() {
+fn multicol_and_inside_marker_parents_keep_rows_blocks() {
     for (sheet, body_css) in [
         ("", "column-count:2"),
         ("", "column-width:100px"),
         // The marker sits on the first line of the item.
         ("", "display:list-item;list-style:inside disc"),
-        ("body::before{content:'X';display:block}", ""),
     ] {
         assert_eq!(
             anonymous_tables_around_a_row(sheet, body_css),
             0,
             "{sheet}{body_css}"
         );
+    }
+}
+
+#[test]
+fn a_parent_with_generated_content_wraps_its_rows() {
+    for sheet in [
+        "body::before{content:'X';display:block}",
+        "body::after{content:'X';display:block}",
+        "body::before{content:'X'}body::after{content:'Y'}",
+    ] {
+        assert_eq!(anonymous_tables_around_a_row(sheet, ""), 1, "{sheet}");
     }
 }
 

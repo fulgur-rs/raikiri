@@ -453,16 +453,15 @@ fn flattened_children(
     Some(out)
 }
 
-/// Whether `parent` is a block container whose children are laid out as
-/// block-level boxes unless they are inline content, so that a run of table
-/// parts among them can be wrapped in an anonymous block-level table.
+/// Whether `parent` is a block container in which a run of table parts can be
+/// wrapped in an anonymous block-level table.
 ///
-/// Inline content would make the parent a paragraph root, whose children the
-/// inline engine lays out instead; its rows remain blocks there. A list item
-/// with an inside marker that has something to draw is one of those: the
-/// marker is inline content on its first line. A multicol container also
-/// keeps its rows as blocks, since the column machinery walks the source
-/// children of the container.
+/// Inline content among the parts makes the parent a paragraph root, whose
+/// projection places the table between the lines around it like any other
+/// block-level child. A list item with an inside marker that has something to
+/// draw keeps its rows as blocks: the marker is inline content on its first
+/// line. So does a multicol container, since the column machinery walks the
+/// source children of the container.
 fn lays_out_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
     let node = doc.ifc_layout_node(parent).unwrap();
     let cv = &cascade.computed[parent];
@@ -470,6 +469,7 @@ fn lays_out_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: u
         node.display(),
         DisplayValue::Block
             | DisplayValue::FlowRoot
+            | DisplayValue::InlineBlock
             | DisplayValue::TableCell
             | DisplayValue::TableCaption
             | DisplayValue::ListItem
@@ -479,30 +479,6 @@ fn lays_out_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: u
     ) && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto)
         && !crate::generated_content::is_in_flow_generated_text(cascade, parent, PseudoElem::Marker)
         && !node.is_inline_svg_root()
-        && !generates_pseudo_box(cascade, parent)
-}
-
-/// Whether none of `children` is inline content: they are the children of a
-/// parent with `display: contents` boxes looked through, and each is nothing,
-/// a block-level box, or white space that forms no line.
-fn holds_only_block_level_boxes(
-    doc: &Document,
-    cascade: &CascadeResult,
-    children: &[usize],
-) -> bool {
-    children.iter().all(|&child| {
-        let child_node = doc.ifc_layout_node(child).unwrap();
-        !child_node.is_in_document()
-            || child_node.is_non_rendered_html_element()
-            || if child_node.kind() == NodeKind::Text {
-                // White space that `white-space` preserves forms a line.
-                !crate::layout::ifc::assign::text_makes_a_line(doc, cascade, child)
-            } else {
-                // Only text and elements are in the document.
-                let display = child_node.display();
-                display == DisplayValue::None || !display.is_inline_level()
-            }
-    })
 }
 
 /// Whether no block-level child of `children` outside the table parts can
@@ -547,6 +523,28 @@ fn blocks_beside_parts_hold_no_lines(
     true
 }
 
+/// Whether `child`, which is no table part, ends a run of parts: text that
+/// forms a line, or a box that generates one. White space and boxes that
+/// generate nothing do not, so the parts around them stay one table.
+fn ends_run(doc: &Document, cascade: &CascadeResult, child: usize) -> bool {
+    let node = doc.ifc_layout_node(child).unwrap();
+    match node.kind() {
+        // Text that forms a line is content of the paragraph around the table,
+        // so the parts on either side of it are two tables.
+        NodeKind::Text => {
+            node.is_in_document()
+                && crate::layout::ifc::assign::text_makes_a_line(doc, cascade, child)
+        }
+        NodeKind::Element => {
+            node.is_in_document()
+                && !node.is_non_rendered_html_element()
+                && node.display() != DisplayValue::None
+        }
+        // Comments and the like are not in the document.
+        _ => false,
+    }
+}
+
 /// Group the table-internal boxes outside any table into the runs that one
 /// anonymous table each wraps. White space and boxes that generate nothing
 /// between two parts do not end a run, and a `display: contents` box is
@@ -569,7 +567,6 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
         if !children
             .iter()
             .any(|&child| is_table_internal(doc.nodes[child].display()))
-            || !holds_only_block_level_boxes(doc, cascade, &children)
             || (cascade.computed[parent].cssom_writing_mode.is_vertical()
                 && !blocks_beside_parts_hold_no_lines(doc, cascade, &children))
         {
@@ -583,12 +580,7 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
                 && is_table_internal(child_node.display())
             {
                 run.push(child);
-            } else if child_node.kind() == NodeKind::Element
-                && child_node.is_in_document()
-                && !child_node.is_non_rendered_html_element()
-                && child_node.display() != DisplayValue::None
-                && !run.is_empty()
-            {
+            } else if !run.is_empty() && ends_run(doc, cascade, child) {
                 tables.push(AnonymousTable {
                     parent,
                     parts: std::mem::take(&mut run),
@@ -900,6 +892,32 @@ impl Document {
             Some(BoxKey::AnonymousTable(index)) => Some(&self.table_objects.tables[index].parts),
             _ => None,
         }
+    }
+
+    /// The box `node` of a paragraph and, when it is an anonymous table, the
+    /// rows and row groups that its box lays out: they are children of the
+    /// paragraph root, but belong to the table's box rather than to its lines.
+    pub(crate) fn box_with_table_parts(&self, node: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(node).chain(
+            self.anonymous_table_parts(node)
+                .unwrap_or_default()
+                .iter()
+                .copied(),
+        )
+    }
+
+    /// The boxes that paragraph `root` lays out beside its lines, as source
+    /// boxes: the rows and row groups of an anonymous table stand for the
+    /// table, which is no source box and paints nothing of its own.
+    #[doc(hidden)]
+    pub fn ifc_source_boxes(&self, root: &Node) -> Vec<usize> {
+        root.ifc_boxes()
+            .into_iter()
+            .flat_map(|box_| match self.anonymous_table_parts(box_) {
+                Some(parts) => parts.to_vec(),
+                None => vec![box_],
+            })
+            .collect()
     }
 
     /// Record the used boxes of an anonymous table's parts relative to the

@@ -785,7 +785,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 // The paragraph's own text and inline elements are drawn
                 // from the lines; only the boxes laid out beside them are
                 // visited like ordinary children.
-                node.ifc_boxes()
+                document.ifc_source_boxes(node)
             } else if let Some(children) = document.anonymous_table_paint_sequence(node_id) {
                 children
             } else {

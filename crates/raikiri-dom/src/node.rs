@@ -1314,6 +1314,11 @@ impl Node {
     /// Children of an ifc root that it lays out as boxes of their own
     /// (floats and atomic inlines), in document order. Empty for any other
     /// node.
+    ///
+    /// The parts of an anonymous table appear as the layout key of that table,
+    /// which names no source node and has no computed style. The readers of
+    /// source boxes use `Document::ifc_source_boxes`, which lists the parts
+    /// instead.
     #[doc(hidden)]
     pub fn ifc_boxes(&self) -> Vec<usize> {
         self.ifc
