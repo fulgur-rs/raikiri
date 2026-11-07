@@ -113,7 +113,7 @@ pub(crate) struct LayoutContext {
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     /// The room the flex line of each baseline-aligned item gives it, by item,
     /// for each column flex container that wraps its items and was laid out
-    /// last (see `inline_baseline::align_flex`).
+    /// last (see `inline_baseline::align_flex` in [`crate::layout::dispatch`]).
     pub(crate) flex_baseline_lines: HashMap<usize, HashMap<usize, LineRoom>>,
     pub(super) table_item_captures: Vec<super::dispatch::table_items::Capture>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
