@@ -143,6 +143,26 @@ fn a_max_height_of_the_container_is_the_height_a_vertical_box_fits_its_lines_in(
 }
 
 #[test]
+fn a_max_height_of_a_table_cell_is_the_height_a_vertical_box_fits_its_lines_in() {
+    // The cell is laid out in a row of a table, or in the anonymous table that
+    // wraps it, and still bounds the room of the lines.
+    let cell = container("max-height:300px;display:table-cell", "div", "");
+    for body in [
+        format!("<div style=\"display:table\">{cell}</div>"),
+        format!("<div style=\"display:table\"><div style=\"display:table-row\">{cell}</div></div>"),
+        format!("<div style=\"display:table-row\">{cell}</div>"),
+    ] {
+        assert_boxes(
+            &body,
+            &[
+                ("p", [0.0, 0.0, 300.0, 300.0]),
+                ("o", [0.0, 0.0, 100.0, 300.0]),
+            ],
+        );
+    }
+}
+
+#[test]
 fn text_before_an_inline_block_does_not_change_the_height_it_fits_its_lines_in() {
     assert_boxes(
         &format!(

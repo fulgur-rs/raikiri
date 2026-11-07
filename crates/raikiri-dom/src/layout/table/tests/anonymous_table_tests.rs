@@ -1,5 +1,5 @@
-//! Rows and row groups outside any table, which an anonymous table wraps
-//! (CSS 2.1 §17.2.1 rule 3, CSS Tables 3 §3.9).
+//! Table parts outside any table (rows, row groups, cells and captions), which
+//! an anonymous table wraps (CSS 2.1 §17.2.1 rule 3, CSS Tables 3 §3.9).
 
 use crate::document::Document;
 use crate::layout::test_support::absolute_rect;
@@ -187,6 +187,63 @@ fn an_empty_row_group_keeps_its_place_across_layout_passes() {
         tops.push(absolute_rect(&doc, group).1);
     }
     assert_eq!(tops, vec![50.0; 3]);
+}
+
+#[test]
+fn bare_cells_captions_and_columns_keep_their_places_across_layout_passes() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;width:200px"),
+    );
+    div(&mut doc, body, "display:block;height:50px");
+    let wrapper = div(&mut doc, body, "display:contents");
+    let parts = [
+        div(&mut doc, wrapper, "display:table-column;width:20px"),
+        div(
+            &mut doc,
+            wrapper,
+            "display:table-caption;width:30px;height:10px",
+        ),
+        div(
+            &mut doc,
+            body,
+            "display:table-caption;width:30px;height:10px",
+        ),
+        div(&mut doc, body, "display:table-cell;width:10px;height:10px"),
+        div(&mut doc, body, "display:table-row-group"),
+    ];
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = raikiri_traits::PageBox::new();
+    page.width = 200.0;
+    page.height = 200.0;
+    let mut passes = Vec::new();
+    for _ in 0..3 {
+        crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
+        passes.push(parts.map(|part| absolute_rect(&doc, part)));
+    }
+    assert_eq!(passes[0], passes[1]);
+    assert_eq!(passes[1], passes[2]);
+    // The caption sits below the block above the table, and so does the cell.
+    assert_eq!(passes[0][1].1, 50.0);
+}
+
+#[test]
+fn a_contents_wrapper_with_generated_content_keeps_the_cells_around_it_blocks() {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", Some("display:none"));
+    doc.append_text(style, "main::before{content:'X'}");
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "main", Some("display:contents"));
+    div(&mut doc, wrapper, "display:table-cell");
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    assert!(doc.table_objects.tables.is_empty());
 }
 
 #[test]

@@ -42,6 +42,30 @@ fn deep_contents_wrappers_keep_source_order_on_a_small_stack() {
 }
 
 #[test]
+fn looking_through_a_chain_of_contents_wrappers_is_linear() {
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "div", Some("display:block"));
+    let mut parent = body;
+    for _ in 0..2048 {
+        parent = doc.append_element(Some(parent), "span", Some("display:contents"));
+    }
+    let cell = doc.append_element(Some(parent), "div", Some("display:table-cell"));
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    FLATTEN_VISITS.with(|visits| visits.set(0));
+    let tables = anonymous_table_runs(&doc, &computed);
+    let visited = FLATTEN_VISITS.with(|visits| visits.get());
+    assert_eq!(tables.len(), 1);
+    assert_eq!(
+        (tables[0].parent, tables[0].parts.as_slice()),
+        (body, &[cell][..])
+    );
+    // The wrappers are looked through once, from the block that holds them.
+    assert!(visited <= 2 * doc.nodes.len(), "{visited} visits");
+}
+
+#[test]
 fn owner_generated_cells_keep_source_children_and_shared_projection_limits() {
     use crate::layout::ifc::error::IfcError;
     use crate::layout::ifc::projection::{GeneratedCounters, project_anonymous_cell_builder};

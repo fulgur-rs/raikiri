@@ -91,6 +91,11 @@ pub(crate) struct LayoutContext {
     /// Authored cell content heights retained for replaced descendants while
     /// the row pass measures the cell with an automatic height.
     pub(crate) table_cell_replaced_height_bases: Vec<(usize, f32)>,
+    /// The `max-height` cap of each cell being laid out at its final width,
+    /// which the layout of its contents drops from the cell's style but a
+    /// vertical box in the cell still fits its lines in (see
+    /// `layout_cell_contents` in [`crate::layout::table`]).
+    pub(crate) table_cell_max_height_caps: Vec<(usize, f32)>,
     /// The vertical margins of the block children being laid out that their
     /// parent holds in, which a `stretch` height limit leaves out of its room
     /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).

@@ -47,6 +47,7 @@ use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::content_limits::ContentLimits;
+use crate::layout::ifc::boxes::max_height_cap;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId,
     OofCandidate, OofCandidates, OofPosition, OofPositioningArea, RequestedAxis, RunMode,
@@ -1120,6 +1121,10 @@ fn compute_table_layout_checked(
                 inputs.run_mode,
             );
             translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+            // The caption of an anonymous table is a box of its parent, so it
+            // moves with the table.
+            clear_unplaced_anonymous_parts(doc, table_idx, std::iter::empty());
+            doc.place_anonymous_table_parts(table_idx);
             return Ok(table_layout_output(
                 doc,
                 table_idx,
@@ -2362,6 +2367,31 @@ fn dispatch_table_part_oof(
     *candidates = pending;
 }
 
+/// A part of an anonymous table that this pass does not place, such as an empty
+/// row group or a column, must not keep a box from an earlier pass as its
+/// table-relative box. The cells in `grid_cells` and the caption were placed
+/// by this pass, and keep their boxes.
+fn clear_unplaced_anonymous_parts(
+    doc: &mut LayoutSession<'_>,
+    table: usize,
+    grid_cells: impl Iterator<Item = usize>,
+) {
+    let parts = doc
+        .anonymous_table_parts(table)
+        .unwrap_or_default()
+        .to_vec();
+    if parts.is_empty() {
+        return;
+    }
+    let placed: rustc_hash::FxHashSet<usize> =
+        grid_cells.chain(table_caption(doc, table)).collect();
+    for part in parts {
+        if !placed.contains(&part) {
+            doc.nodes[part].layout = BoxLayout::new();
+        }
+    }
+}
+
 /// Give source rows and groups used boxes, while cell placement remains
 /// measured in table coordinates until the final parent-relative projection.
 /// `parts` are the boxes of the rows and row groups in table coordinates, or
@@ -2376,15 +2406,7 @@ fn position_source_table_parts(
         return;
     };
     let boundary = doc.table_parts_boundary(table);
-    // A part the grid does not place, such as an empty row group, must not
-    // keep a box from an earlier pass as its table-relative box.
-    for part in doc
-        .anonymous_table_parts(table)
-        .unwrap_or_default()
-        .to_vec()
-    {
-        doc.nodes[part].layout = BoxLayout::new();
-    }
+    clear_unplaced_anonymous_parts(doc, table, grid.cells.iter().map(|cell| cell.node_id));
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
         // Only a part with some area can overlap a cell, so only those get a
         // slot; the others keep the empty list they start with.
@@ -4688,9 +4710,19 @@ fn layout_cell_contents(
         false,
     )
     .expect("physical cell maximum height");
-    doc.with_overrides(vec![(key, entry)], |doc| {
+    // The limit no longer reaches the cell's style, yet a vertical box in the
+    // cell still fits its lines in the height the limit leaves (CSS Writing
+    // Modes 4 §7.3.1), so the box reads the limit from here.
+    let cap = max_height_cap(doc, cell);
+    let capped = cap.map(|cap| (cell, cap));
+    doc.context.table_cell_max_height_caps.extend(capped);
+    let output = doc.with_overrides(vec![(key, entry)], |doc| {
         doc.compute_child_layout(NodeId::from(cell), inputs)
-    })
+    });
+    if capped.is_some() {
+        doc.context.table_cell_max_height_caps.pop();
+    }
+    output
 }
 
 struct CellPlacementTracks<'a> {
