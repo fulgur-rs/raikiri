@@ -2089,7 +2089,6 @@ css/css-break/ruby-001.html
 css/css-break/ruby-002.html
 css/css-break/table/break-inside-cell-001.html
 css/css-break/table/caption-margin-002.html
-css/css-break/table/caption-margin-005.html
 css/css-break/table/dynamic-caption-child-change-001.html
 css/css-break/table/monolithic-overflow-001.tentative.html
 css/css-break/table/monolithic-overflow-002.tentative.html
@@ -2102,7 +2101,6 @@ css/css-break/table/repeated-section/forced-break-before-repeated-footer-003.ten
 css/css-break/table/repeated-section/header-after-break.tentative.html
 css/css-break/table/repeated-section/multiple-row-groups.tentative.html
 css/css-break/table/section-with-overflow-001.html
-css/css-break/table/section-with-overflow-002.html
 css/css-break/table/specified-block-size-001.html
 css/css-break/table/specified-block-size-002.html
 css/css-break/table/specified-block-size-003.html

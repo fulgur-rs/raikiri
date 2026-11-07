@@ -9237,20 +9237,6 @@ fn container_item_tail(
             if document.anonymous_table_cells(node_id).next().is_some() {
                 return None;
             }
-            let mut captions = 0;
-            let mut bottom_caption = false;
-            for child in elements(node_id) {
-                if document.nodes[child].display() == DisplayValue::TableCaption {
-                    captions += 1;
-                    bottom_caption |= cascade.computed[child].caption_side
-                        == raikiri_style::property::CaptionSideValue::Bottom;
-                }
-            }
-            // Table layout currently gives only the first caption geometry.
-            // Do not mistake it for the visual tail when another follows it.
-            if captions > 1 && bottom_caption {
-                return None;
-            }
             // Each visual row or bottom caption, with its row group if any.
             let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
             for child in pagination_child_order(document, cascade, node_id)

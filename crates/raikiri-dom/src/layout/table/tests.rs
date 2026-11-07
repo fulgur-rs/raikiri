@@ -28,6 +28,7 @@ pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
 mod intrinsic_keyword_tests;
 mod known_wrapper_height_tests;
+mod multiple_caption_tests;
 mod orthogonal_baseline_tests;
 mod part_containing_block_tests;
 mod percent_column_width_tests;
