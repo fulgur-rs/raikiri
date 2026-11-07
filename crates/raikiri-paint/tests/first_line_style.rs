@@ -271,6 +271,168 @@ fn a_block_before_pseudo_holds_the_first_line_away_from_the_text() {
     assert_eq!(count(&rgba, RED), 100);
 }
 
+#[test]
+fn a_block_before_with_text_takes_the_first_line_and_the_text_does_not() {
+    // The first formatted line is the `::before` box's first line, so only
+    // its two glyphs take the color; the four of the text are on a later one.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:'XX';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(count(&rgba, RED), 400);
+    assert_eq!(pixel(&rgba, 5, 5), BLUE);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
+fn a_block_before_keeps_its_own_box_under_the_first_line() {
+    // Only the text of the box is on the `::first-line`, not the box itself:
+    // its background still shows around the glyphs.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:'XX';display:block;background:rgb(0,128,0)}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(count(&rgba, GREEN), 200);
+    assert_eq!(pixel(&rgba, 30, 5), GREEN);
+}
+
+#[test]
+fn the_first_line_background_is_drawn_over_the_text_of_a_block_before() {
+    // Over the glyphs of the box's first line, not its full width: the box's
+    // own background shows around them, and the text after it has none.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{background:blue;color:transparent} \
+         p::before{content:'XX';display:block;background:rgb(0,128,0)}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(pixel(&rgba, 5, 5), BLUE);
+    assert_eq!(pixel(&rgba, 25, 5), GREEN);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
+fn the_first_line_color_wins_over_the_own_color_of_a_block_before() {
+    // The `::first-line` box sits inside the block, so its declaration
+    // reaches the text before the block's own.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:'XX';display:block;color:rgb(0,128,0)}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(count(&rgba, GREEN), 0);
+}
+
+#[test]
+fn a_block_before_keeps_the_values_the_first_line_does_not_set() {
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:'X';display:block;font-size:20px;line-height:20px}",
+    );
+    assert_eq!(count(&rgba, BLUE), 400);
+    assert_eq!(pixel(&rgba, 15, 15), BLUE);
+    assert_eq!(pixel(&rgba, 5, 25), RED);
+}
+
+#[test]
+fn only_the_first_line_of_a_block_before_takes_the_first_line() {
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:'XX XX';display:block;width:20px}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(pixel(&rgba, 5, 5), BLUE);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
+fn a_block_before_of_a_counter_takes_the_first_line() {
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px;counter-reset:a} p::first-line{color:blue} \
+         p::before{content:counter(a);display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 100);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
+#[test]
+fn a_block_before_of_preserved_white_space_holds_the_first_line() {
+    // The preserved space makes a line, though nothing of it shows.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:' ';display:block;white-space:pre}",
+    );
+    assert_eq!(count(&rgba, BLUE), 0);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
+#[test]
+fn a_block_before_of_collapsing_white_space_makes_no_line() {
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:' ';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 0);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
+#[test]
+fn the_first_line_of_an_enclosing_block_reaches_a_block_before() {
+    let rgba = raster(
+        "<div><p>XXXX</p></div>",
+        "p{color:red;width:40px} div::first-line{color:blue} \
+         p::before{content:'XX';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
+#[test]
+fn a_block_after_takes_the_first_line_of_an_empty_paragraph() {
+    let rgba = raster(
+        "<p></p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::after{content:'XX';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 200);
+    assert_eq!(count(&rgba, RED), 0);
+}
+
+#[test]
+fn a_block_after_does_not_take_the_first_line_after_text() {
+    let rgba = raster(
+        "<p>X</p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::after{content:'XX';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 100);
+    assert_eq!(count(&rgba, RED), 200);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
+fn a_block_before_of_an_inline_element_is_not_the_first_line() {
+    // A block inside an inline keeps the first formatted line from the
+    // paragraph, which has none of its own to style.
+    let rgba = raster(
+        "<p><span>XX</span></p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         span::before{content:'XX';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 0);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
 /// The rows that hold a pixel `tint` is the strongest channel of, which is how
 /// a thin line shows once it is anti-aliased.
 fn tinted_rows(rgba: &[u8], tint: usize) -> Vec<usize> {
@@ -282,6 +444,37 @@ fn tinted_rows(rgba: &[u8], tint: usize) -> Vec<usize> {
         .collect();
     rows.dedup();
     rows
+}
+
+#[test]
+fn the_content_after_a_block_before_keeps_its_own_values() {
+    // Neither the content of the paragraph nor the boxes generated after the
+    // `::before` take the `::first-line`: they are on later lines.
+    let rgba = raster(
+        "<p><span>XX</span></p>",
+        "p{color:red;width:40px} p::first-line{color:blue} \
+         p::before{content:'X';display:block} span::before{content:'X';display:block} \
+         span::after{content:'X'}",
+    );
+    assert_eq!(count(&rgba, BLUE), 100);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
+#[test]
+fn the_first_line_decoration_reaches_the_text_of_a_block_before() {
+    // A line-through is drawn over the text of the line it belongs to, so it
+    // shows on the first line rather than under the text after it.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{text-decoration:line-through blue} \
+         p::before{content:'X';display:block}",
+    );
+    let rows = tinted_rows(&rgba, 2);
+    assert!(!rows.is_empty(), "the first line is struck through");
+    assert!(
+        rows.iter().all(|&y| y < 10),
+        "only the first line is struck through: {rows:?}"
+    );
 }
 
 #[test]

@@ -148,6 +148,36 @@ impl CascadeResult {
         )
     }
 
+    /// The computed values the text of the block-level `pseudo` of `element`
+    /// has when that box holds the first formatted line of the blocks
+    /// `line_origins`, outermost first. The box is a block of its own, so the
+    /// innermost `::first-line` sits inside it: its declarations apply over
+    /// the box's ordinary values, which they inherit, and the box's own
+    /// declarations do not override them. Outer `::first-line` boxes do not
+    /// reach the line.
+    ///
+    /// `None` when `line_origins` is empty, has no first-line style, or the
+    /// box has no style of its own.
+    pub fn first_line_block_pseudo_style(
+        &self,
+        line_origins: &[StyleNodeId],
+        element: StyleNodeId,
+        pseudo: crate::PseudoElem,
+    ) -> Option<ComputedValues> {
+        let context = self.first_line_contexts.get(line_origins.first()?)?;
+        let &origin = line_origins.last()?;
+        let ordinary = self.pseudo.get(&(element, pseudo))?;
+        let mut computed = self.recompute_typographic_child(
+            origin,
+            Some(crate::PseudoElem::FirstLine),
+            ordinary,
+            context,
+        );
+        computed.custom_properties = ordinary.custom_properties.clone();
+        computed.local_custom_properties = ordinary.local_custom_properties.clone();
+        Some(computed)
+    }
+
     /// Resolve a paragraph's first-line values and visit each enclosing
     /// first-line origin's values in the same outer-to-inner walk.
     ///
