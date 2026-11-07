@@ -478,6 +478,51 @@ fn the_first_line_decoration_reaches_the_text_of_a_block_before() {
 }
 
 #[test]
+fn the_first_line_background_in_currentcolor_takes_the_color_of_a_block_before() {
+    // The `::first-line` box sits inside the block, so `currentColor` is the
+    // green of the block and not the red of the paragraph. The space between
+    // the glyphs has no ink, so only the background shows there.
+    let rgba = raster(
+        "<p>XXXX</p>",
+        "p{color:red;width:40px} p::first-line{background:currentColor} \
+         p::before{content:'X X';display:block;color:rgb(0,128,0)}",
+    );
+    assert_eq!(pixel(&rgba, 15, 5), GREEN);
+    assert_eq!(count(&rgba, RED), 400);
+}
+
+#[test]
+fn the_first_line_decoration_in_currentcolor_takes_the_color_of_a_block_before() {
+    // The underline lies 12px below the baseline of the `::before` line, past
+    // its glyphs. Its default color is the green of the block, not the red of
+    // the paragraph.
+    let rgba = raster(
+        "<p></p>",
+        "p{color:red} p::first-line{text-decoration:underline;text-underline-offset:12px} \
+         p::before{content:'X';display:block;color:rgb(0,128,0)}",
+    );
+    let green = tinted_rows(&rgba, 1);
+    assert!(
+        green.iter().any(|&y| (19..24).contains(&y)),
+        "the line is underlined in green: {green:?}"
+    );
+    assert!(tinted_rows(&rgba, 0).is_empty(), "no red is drawn");
+}
+
+#[test]
+fn a_decoration_of_an_outer_first_line_does_not_reach_a_block_before() {
+    // The `::first-line` of the paragraph is the one inside the block; the one
+    // of the `div` around it does not reach the line.
+    let rgba = raster(
+        "<div><p></p></div>",
+        "div::first-line{text-decoration:underline blue;text-underline-offset:12px} \
+         p{color:red} p::first-line{background:rgb(0,128,0)} \
+         p::before{content:'X';display:block}",
+    );
+    assert!(tinted_rows(&rgba, 2).is_empty(), "no underline is drawn");
+}
+
+#[test]
 fn a_decoration_on_the_first_line_of_the_block_itself_is_drawn() {
     // The underline sits 12px below the baseline of its line, so below the
     // first line when it is drawn on that line and below the second when it
