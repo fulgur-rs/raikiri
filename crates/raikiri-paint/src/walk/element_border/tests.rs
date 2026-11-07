@@ -74,6 +74,58 @@ fn green() -> Color {
     Color::from_rgba8(0, 128, 0, 255)
 }
 
+/// The corner points of every fill of the border of a 100 × 50 box at (10, 20),
+/// with its color, in the order it fills them. A strip that ends in a diagonal is
+/// a trapezoid, and one that ends in a point a triangle.
+fn outlines(
+    border: &Sides<raikiri_style::resolve::ComputedBorder>,
+    paint_top: bool,
+) -> Vec<(Vec<(f64, f64)>, Color)> {
+    outlines_of(100.0, 50.0, border, paint_top)
+}
+
+/// Like [`outlines`], for a box of the given size at (10, 20).
+fn outlines_of(
+    width: f32,
+    height: f32,
+    border: &Sides<raikiri_style::resolve::ComputedBorder>,
+    paint_top: bool,
+) -> Vec<(Vec<(f64, f64)>, Color)> {
+    let mut scene = Scene::new();
+    if let Some(border) = ElementBorder::new(width, height, 10.0, 20.0, border, TEXT, paint_top) {
+        border.paint(&mut scene);
+    }
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| {
+            let RenderCommand::Fill(fill) = command else {
+                return None;
+            };
+            let anyrender::Paint::Solid(color) = fill.brush else {
+                panic!("expected a solid brush, got {:?}", fill.brush);
+            };
+            let mut corners: Vec<(f64, f64)> = Vec::new();
+            for element in fill.shape.elements() {
+                if let kurbo::PathEl::MoveTo(point) | kurbo::PathEl::LineTo(point) = element
+                    && corners.last() != Some(&(point.x, point.y))
+                {
+                    corners.push((point.x, point.y));
+                }
+            }
+            if corners.len() > 1 && corners.first() == corners.last() {
+                corners.pop();
+            }
+            Some((corners, color))
+        })
+        .collect()
+}
+
+/// The corners of a rectangle, clockwise from the top left one.
+fn rect_corners(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<(f64, f64)> {
+    vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+}
+
 #[test]
 fn a_solid_border_fills_a_strip_per_side_top_bottom_left_right() {
     assert_eq!(
@@ -129,20 +181,44 @@ fn a_double_border_leaves_the_middle_third_of_each_side_empty() {
     assert_eq!(
         fills(&all_sides(6.0, BorderStyle::Double), true),
         [
-            // Top: the outer and the inner third.
+            // The outer third, a ring of its own: top, bottom, left, right.
             (Rect::new(10.0, 20.0, 110.0, 22.0), green),
-            (Rect::new(10.0, 24.0, 110.0, 26.0), green),
-            // Bottom.
-            (Rect::new(10.0, 64.0, 110.0, 66.0), green),
             (Rect::new(10.0, 68.0, 110.0, 70.0), green),
-            // Left, between the top and the bottom strips.
-            (Rect::new(10.0, 26.0, 12.0, 64.0), green),
+            (Rect::new(10.0, 22.0, 12.0, 68.0), green),
+            (Rect::new(108.0, 22.0, 110.0, 68.0), green),
+            // The inner third, a ring inside the empty middle one.
+            (Rect::new(14.0, 24.0, 106.0, 26.0), green),
+            (Rect::new(14.0, 64.0, 106.0, 66.0), green),
             (Rect::new(14.0, 26.0, 16.0, 64.0), green),
-            // Right.
             (Rect::new(104.0, 26.0, 106.0, 64.0), green),
-            (Rect::new(108.0, 26.0, 110.0, 64.0), green),
         ]
     );
+}
+
+#[test]
+fn the_thirds_of_a_double_border_round_down_from_a_third_of_one_more_pixel() {
+    // Chromium draws a 10px double as 3, 4 and 3 pixels, a 7px one as 2, 3 and
+    // 2, and a 4px one as 1, 2 and 1.
+    for (width, third) in [(10.0_f32, 3.0_f64), (7.0, 2.0), (4.0, 1.0), (12.0, 4.0)] {
+        let width = f64::from(width);
+        let fills = fills(&all_sides(width as f32, BorderStyle::Double), true);
+        assert_eq!(fills.len(), 8, "{width}px");
+        assert_eq!(
+            fills[0].0,
+            Rect::new(10.0, 20.0, 110.0, 20.0 + third),
+            "outer top, {width}px"
+        );
+        assert_eq!(
+            fills[4].0,
+            Rect::new(
+                10.0 + width - third,
+                20.0 + width - third,
+                110.0 - (width - third),
+                20.0 + width
+            ),
+            "inner top, {width}px"
+        );
+    }
 }
 
 #[test]
@@ -164,10 +240,14 @@ fn a_side_without_a_style_or_a_visible_color_paints_nothing() {
         left: green_side,
     };
     // A side with no style has no used width, so the left strip starts at the
-    // top of the box; the bottom side keeps its width without painting.
+    // top of the box. The bottom side keeps its width without painting, and its
+    // corner with the left side is still cut along the diagonal.
     assert_eq!(
-        fills(&borders, true),
-        [(Rect::new(10.0, 20.0, 14.0, 66.0), green())]
+        outlines(&borders, true),
+        [(
+            vec![(10.0, 20.0), (10.0, 70.0), (14.0, 66.0), (14.0, 20.0)],
+            green()
+        )]
     );
 }
 
@@ -650,54 +730,31 @@ fn colored_sides(
 }
 
 #[test]
-fn a_bevel_shades_a_color_the_way_chromium_does() {
-    // (color, dark side, light side), as Chromium draws `inset` and `outset`.
-    let table = [
-        (rgb(128, 128, 128), rgb(44, 44, 44), rgb(212, 212, 212)),
-        (rgb(255, 255, 255), rgb(171, 171, 171), rgb(255, 255, 255)),
-        (rgb(255, 0, 0), rgb(171, 0, 0), rgb(255, 0, 0)),
-        (rgb(0, 128, 0), rgb(0, 44, 0), rgb(0, 212, 0)),
-        (rgb(10, 20, 30), rgb(38, 76, 114), rgb(66, 132, 198)),
-        // Black cannot get darker, so its dark side is lightened.
-        (rgb(0, 0, 0), rgb(84, 84, 84), rgb(168, 168, 168)),
-        // A gray at the dark limit is still too dark to darken...
-        (rgb(32, 32, 32), rgb(116, 116, 116), rgb(200, 200, 200)),
-        // ...and one just above it darkens to black.
-        (rgb(33, 33, 33), rgb(0, 0, 0), rgb(117, 117, 117)),
-        // A gray at the light limit still lightens to white, and one above it
-        // keeps its light side.
-        (rgb(235, 235, 235), rgb(151, 151, 151), rgb(255, 255, 255)),
-        (rgb(240, 240, 240), rgb(156, 156, 156), rgb(240, 240, 240)),
-    ];
-    for (input, dark, light) in table {
-        assert_eq!(bevel::shade(input, true), dark, "dark side of {input:?}");
-        assert_eq!(bevel::shade(input, false), light, "light side of {input:?}");
-    }
-}
-
-#[test]
-fn a_shade_keeps_the_alpha_of_its_color() {
-    let translucent = CssColor { a: 99, ..GRAY };
-    assert_eq!(bevel::shade(translucent, true).a, 99);
-    assert_eq!(bevel::shade(translucent, false).a, 99);
-    let black = CssColor {
-        a: 7,
-        ..rgb(0, 0, 0)
-    };
-    assert_eq!(bevel::shade(black, true).a, 7);
-}
-
-#[test]
 fn an_outset_border_is_light_on_its_top_and_left_and_dark_on_its_bottom_and_right() {
     let light = color(rgb(212, 212, 212));
     let dark = color(rgb(44, 44, 44));
+    // The light and dark shades meet in the top right and the bottom left
+    // corners, which are cut along their diagonal; the top left and bottom
+    // right ones have a shade on both sides and are not.
     assert_eq!(
-        fills(&colored_sides(4.0, BorderStyle::Outset, GRAY), true),
+        outlines(&colored_sides(4.0, BorderStyle::Outset, GRAY), true),
         [
-            (Rect::new(10.0, 20.0, 110.0, 24.0), light),
-            (Rect::new(10.0, 66.0, 110.0, 70.0), dark),
-            (Rect::new(10.0, 24.0, 14.0, 66.0), light),
-            (Rect::new(106.0, 24.0, 110.0, 66.0), dark),
+            (
+                vec![(10.0, 20.0), (110.0, 20.0), (106.0, 24.0), (10.0, 24.0)],
+                light
+            ),
+            (
+                vec![(14.0, 66.0), (110.0, 66.0), (110.0, 70.0), (10.0, 70.0)],
+                dark
+            ),
+            (
+                vec![(10.0, 24.0), (10.0, 70.0), (14.0, 66.0), (14.0, 24.0)],
+                light
+            ),
+            (
+                vec![(106.0, 24.0), (106.0, 66.0), (110.0, 66.0), (110.0, 20.0)],
+                dark
+            ),
         ]
     );
 }
@@ -707,12 +764,24 @@ fn an_inset_border_is_dark_on_its_top_and_left_and_light_on_its_bottom_and_right
     let light = color(rgb(212, 212, 212));
     let dark = color(rgb(44, 44, 44));
     assert_eq!(
-        fills(&colored_sides(4.0, BorderStyle::Inset, GRAY), true),
+        outlines(&colored_sides(4.0, BorderStyle::Inset, GRAY), true),
         [
-            (Rect::new(10.0, 20.0, 110.0, 24.0), dark),
-            (Rect::new(10.0, 66.0, 110.0, 70.0), light),
-            (Rect::new(10.0, 24.0, 14.0, 66.0), dark),
-            (Rect::new(106.0, 24.0, 110.0, 66.0), light),
+            (
+                vec![(10.0, 20.0), (110.0, 20.0), (106.0, 24.0), (10.0, 24.0)],
+                dark
+            ),
+            (
+                vec![(14.0, 66.0), (110.0, 66.0), (110.0, 70.0), (10.0, 70.0)],
+                light
+            ),
+            (
+                vec![(10.0, 24.0), (10.0, 70.0), (14.0, 66.0), (14.0, 24.0)],
+                dark
+            ),
+            (
+                vec![(106.0, 24.0), (106.0, 66.0), (110.0, 66.0), (110.0, 20.0)],
+                light
+            ),
         ]
     );
 }
@@ -722,16 +791,42 @@ fn a_groove_is_an_inset_band_around_an_outset_one() {
     let light = color(rgb(212, 212, 212));
     let dark = color(rgb(44, 44, 44));
     assert_eq!(
-        fills(&colored_sides(4.0, BorderStyle::Groove, GRAY), true),
+        outlines(&colored_sides(4.0, BorderStyle::Groove, GRAY), true),
         [
-            (Rect::new(10.0, 20.0, 110.0, 22.0), dark),
-            (Rect::new(10.0, 68.0, 110.0, 70.0), light),
-            (Rect::new(10.0, 22.0, 12.0, 68.0), dark),
-            (Rect::new(108.0, 22.0, 110.0, 68.0), light),
-            (Rect::new(12.0, 22.0, 108.0, 24.0), light),
-            (Rect::new(12.0, 66.0, 108.0, 68.0), dark),
-            (Rect::new(12.0, 24.0, 14.0, 66.0), light),
-            (Rect::new(106.0, 24.0, 108.0, 66.0), dark),
+            // The outer ring.
+            (
+                vec![(10.0, 20.0), (110.0, 20.0), (108.0, 22.0), (10.0, 22.0)],
+                dark
+            ),
+            (
+                vec![(12.0, 68.0), (110.0, 68.0), (110.0, 70.0), (10.0, 70.0)],
+                light
+            ),
+            (
+                vec![(10.0, 22.0), (10.0, 70.0), (12.0, 68.0), (12.0, 22.0)],
+                dark
+            ),
+            (
+                vec![(108.0, 22.0), (108.0, 68.0), (110.0, 68.0), (110.0, 20.0)],
+                light
+            ),
+            // The inner ring, on the same diagonals.
+            (
+                vec![(12.0, 22.0), (108.0, 22.0), (106.0, 24.0), (12.0, 24.0)],
+                light
+            ),
+            (
+                vec![(14.0, 66.0), (108.0, 66.0), (108.0, 68.0), (12.0, 68.0)],
+                dark
+            ),
+            (
+                vec![(12.0, 24.0), (12.0, 68.0), (14.0, 66.0), (14.0, 24.0)],
+                light
+            ),
+            (
+                vec![(106.0, 24.0), (106.0, 66.0), (108.0, 66.0), (108.0, 22.0)],
+                dark
+            ),
         ]
     );
 }
@@ -740,27 +835,28 @@ fn a_groove_is_an_inset_band_around_an_outset_one() {
 fn a_ridge_is_an_outset_band_around_an_inset_one() {
     let light = color(rgb(212, 212, 212));
     let dark = color(rgb(44, 44, 44));
-    assert_eq!(
-        fills(&colored_sides(4.0, BorderStyle::Ridge, GRAY), true),
-        [
-            (Rect::new(10.0, 20.0, 110.0, 22.0), light),
-            (Rect::new(10.0, 68.0, 110.0, 70.0), dark),
-            (Rect::new(10.0, 22.0, 12.0, 68.0), light),
-            (Rect::new(108.0, 22.0, 110.0, 68.0), dark),
-            (Rect::new(12.0, 22.0, 108.0, 24.0), dark),
-            (Rect::new(12.0, 66.0, 108.0, 68.0), light),
-            (Rect::new(12.0, 24.0, 14.0, 66.0), dark),
-            (Rect::new(106.0, 24.0, 108.0, 66.0), light),
-        ]
-    );
+    // The same bands as a groove, in the other shades.
+    let colors: Vec<Color> = outlines(&colored_sides(4.0, BorderStyle::Ridge, GRAY), true)
+        .into_iter()
+        .map(|(_, color)| color)
+        .collect();
+    assert_eq!(colors, [light, dark, light, dark, dark, light, dark, light]);
 }
 
 #[test]
-fn an_odd_groove_gives_its_outer_band_the_larger_half() {
+fn an_odd_groove_leaves_the_extra_pixel_to_the_band_nearer_the_top_left() {
+    // Chromium gives a 3px groove two pixels on the outside of the top and
+    // left sides and on the inside of the bottom and right ones, and a pixel
+    // on the other bands.
     let rects = shapes(&colored_sides(3.0, BorderStyle::Groove, GRAY));
     assert_eq!(rects[0], Rect::new(10.0, 20.0, 110.0, 22.0), "outer top");
+    assert_eq!(rects[1], Rect::new(10.0, 69.0, 110.0, 70.0), "outer bottom");
+    assert_eq!(rects[2], Rect::new(10.0, 22.0, 12.0, 70.0), "outer left");
+    assert_eq!(rects[3], Rect::new(109.0, 20.0, 110.0, 69.0), "outer right");
     assert_eq!(rects[4], Rect::new(12.0, 22.0, 108.0, 23.0), "inner top");
-    assert_eq!(rects[7], Rect::new(107.0, 23.0, 108.0, 67.0), "inner right");
+    assert_eq!(rects[5], Rect::new(11.0, 67.0, 109.0, 69.0), "inner bottom");
+    assert_eq!(rects[6], Rect::new(12.0, 23.0, 13.0, 68.0), "inner left");
+    assert_eq!(rects[7], Rect::new(107.0, 21.0, 109.0, 67.0), "inner right");
 }
 
 #[test]
@@ -779,15 +875,29 @@ fn a_one_pixel_groove_or_ridge_is_a_single_band_in_the_plain_color() {
 fn the_bands_of_a_continuation_leave_out_the_top_of_the_box() {
     let light = color(rgb(212, 212, 212));
     let dark = color(rgb(44, 44, 44));
+    // With no top there are no top corners: the side strips start at the top
+    // of the box, square.
     assert_eq!(
-        fills(&colored_sides(4.0, BorderStyle::Groove, GRAY), false),
+        outlines(&colored_sides(4.0, BorderStyle::Groove, GRAY), false),
         [
-            (Rect::new(10.0, 68.0, 110.0, 70.0), light),
-            (Rect::new(10.0, 20.0, 12.0, 68.0), dark),
-            (Rect::new(108.0, 20.0, 110.0, 68.0), light),
-            (Rect::new(12.0, 66.0, 108.0, 68.0), dark),
-            (Rect::new(12.0, 20.0, 14.0, 66.0), light),
-            (Rect::new(106.0, 20.0, 108.0, 66.0), dark),
+            (
+                vec![(12.0, 68.0), (110.0, 68.0), (110.0, 70.0), (10.0, 70.0)],
+                light
+            ),
+            (
+                vec![(10.0, 20.0), (10.0, 70.0), (12.0, 68.0), (12.0, 20.0)],
+                dark
+            ),
+            (rect_corners(108.0, 20.0, 110.0, 68.0), light),
+            (
+                vec![(14.0, 66.0), (108.0, 66.0), (108.0, 68.0), (12.0, 68.0)],
+                dark
+            ),
+            (
+                vec![(12.0, 20.0), (12.0, 68.0), (14.0, 66.0), (14.0, 20.0)],
+                light
+            ),
+            (rect_corners(106.0, 20.0, 108.0, 66.0), dark),
         ]
     );
 }
@@ -802,15 +912,102 @@ fn the_inner_band_of_a_groove_sits_inside_the_full_width_of_the_other_sides() {
         bottom: solid,
         left: groove,
     };
+    // The outer band of the groove is dark and the solid sides are not shaded,
+    // so both corners the groove shares with them are cut, and the inner band
+    // follows the diagonal of the outer one.
     assert_eq!(
-        fills(&borders, true),
+        outlines(&borders, true),
         [
-            (Rect::new(10.0, 20.0, 110.0, 24.0), color(GRAY)),
-            (Rect::new(10.0, 66.0, 110.0, 70.0), color(GRAY)),
-            (Rect::new(10.0, 24.0, 12.0, 66.0), color(rgb(44, 44, 44))),
-            (Rect::new(106.0, 24.0, 110.0, 66.0), color(GRAY)),
-            (Rect::new(12.0, 24.0, 14.0, 66.0), color(rgb(212, 212, 212))),
+            (
+                vec![(10.0, 20.0), (110.0, 20.0), (110.0, 24.0), (14.0, 24.0)],
+                color(GRAY)
+            ),
+            (
+                vec![(14.0, 66.0), (110.0, 66.0), (110.0, 70.0), (10.0, 70.0)],
+                color(GRAY)
+            ),
+            (
+                vec![(10.0, 20.0), (10.0, 70.0), (12.0, 68.0), (12.0, 22.0)],
+                color(rgb(44, 44, 44))
+            ),
+            (rect_corners(106.0, 24.0, 110.0, 66.0), color(GRAY)),
+            (
+                vec![(12.0, 22.0), (12.0, 68.0), (14.0, 66.0), (14.0, 24.0)],
+                color(rgb(212, 212, 212))
+            ),
         ]
+    );
+}
+
+/// The corners of the border of a 100 × 50 box that are cut along a diagonal.
+fn miters_of(border: &Sides<raikiri_style::resolve::ComputedBorder>) -> Miters {
+    ElementBorder::new(100.0, 50.0, 10.0, 20.0, border, TEXT, true)
+        .expect("a box with a border")
+        .miters
+}
+
+#[test]
+fn a_groove_or_ridge_too_thin_to_divide_is_plain_and_has_no_cut_corner() {
+    for style in [BorderStyle::Groove, BorderStyle::Ridge] {
+        let borders = colored_sides(1.0, style, GRAY);
+        assert_eq!(miters_of(&borders), Miters::default(), "{style:?}");
+        assert_eq!(
+            fills(&borders, true),
+            [
+                (Rect::new(10.0, 20.0, 110.0, 21.0), color(GRAY)),
+                (Rect::new(10.0, 69.0, 110.0, 70.0), color(GRAY)),
+                (Rect::new(10.0, 21.0, 11.0, 69.0), color(GRAY)),
+                (Rect::new(109.0, 21.0, 110.0, 69.0), color(GRAY)),
+            ],
+            "{style:?}"
+        );
+    }
+}
+
+#[test]
+fn two_bevels_are_cut_where_the_shades_they_paint_differ() {
+    // An outset side is light on the top and left and dark on the bottom and
+    // right, and an inset one the other way round. The top outset and the left
+    // inset sides are light and dark, which differ; the top outset and the right
+    // inset ones are both light, and so are the bottom outset and left inset ones
+    // both dark.
+    let outset = side(4.0, BorderStyle::Outset, BorderColor::Resolved(GRAY));
+    let inset = side(4.0, BorderStyle::Inset, BorderColor::Resolved(GRAY));
+    let borders = Sides {
+        top: outset,
+        right: inset,
+        bottom: outset,
+        left: inset,
+    };
+    assert_eq!(
+        miters_of(&borders),
+        Miters {
+            top_left: true,
+            top_right: false,
+            bottom_right: true,
+            bottom_left: false,
+        }
+    );
+}
+
+#[test]
+fn a_bevel_next_to_a_plain_side_of_its_color_is_cut_at_both_its_corners() {
+    let solid = side(4.0, BorderStyle::Solid, BorderColor::Resolved(GRAY));
+    let inset = side(4.0, BorderStyle::Inset, BorderColor::Resolved(GRAY));
+    let borders = Sides {
+        top: inset,
+        right: solid,
+        bottom: solid,
+        left: solid,
+    };
+    assert_eq!(
+        miters_of(&borders),
+        Miters {
+            top_left: true,
+            top_right: true,
+            bottom_right: false,
+            bottom_left: false,
+        }
     );
 }
 
@@ -825,11 +1022,19 @@ fn a_groove_wider_than_its_box_has_no_inner_band() {
         ElementBorder::new(width, height, 0.0, 0.0, &border, TEXT, true)
             .expect("a box with a border")
             .paint(&mut scene);
-        assert_eq!(
-            scene.commands.len(),
-            2,
-            "{width} x {height}: top and bottom"
-        );
+        let box_edges = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+        let fills = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(fills.len(), 4, "{width} x {height}: the outer ring only");
+        for fill in fills {
+            assert_eq!(fill.intersect(box_edges), fill, "{width} x {height}");
+        }
     }
 }
 
@@ -863,4 +1068,278 @@ fn a_bevel_without_a_color_takes_its_shades_from_the_text_color() {
     // TEXT is (10, 20, 30).
     assert_eq!(fills[0].1, color(rgb(66, 132, 198)));
     assert_eq!(fills[1].1, color(rgb(38, 76, 114)));
+}
+
+const RED: CssColor = CssColor {
+    r: 255,
+    g: 0,
+    b: 0,
+    a: 255,
+};
+
+const BLUE: CssColor = CssColor {
+    r: 0,
+    g: 0,
+    b: 255,
+    a: 255,
+};
+
+const ORANGE: CssColor = CssColor {
+    r: 255,
+    g: 165,
+    b: 0,
+    a: 255,
+};
+
+/// A border with a solid side of each color: top, right, bottom and left.
+fn four_colors(width: f32, colors: [CssColor; 4]) -> Sides<raikiri_style::resolve::ComputedBorder> {
+    let side = |color| side(width, BorderStyle::Solid, BorderColor::Resolved(color));
+    Sides {
+        top: side(colors[0]),
+        right: side(colors[1]),
+        bottom: side(colors[2]),
+        left: side(colors[3]),
+    }
+}
+
+#[test]
+fn sides_of_different_colors_meet_on_the_diagonal_of_their_corner() {
+    // Each side keeps the half of every corner that is nearer to it, cut from
+    // the outer corner to the inner one.
+    assert_eq!(
+        outlines(&four_colors(4.0, [RED, BLUE, GREEN, ORANGE]), true),
+        [
+            (
+                vec![(10.0, 20.0), (110.0, 20.0), (106.0, 24.0), (14.0, 24.0)],
+                color(RED)
+            ),
+            (
+                vec![(14.0, 66.0), (106.0, 66.0), (110.0, 70.0), (10.0, 70.0)],
+                color(GREEN)
+            ),
+            (
+                vec![(10.0, 20.0), (10.0, 70.0), (14.0, 66.0), (14.0, 24.0)],
+                color(ORANGE)
+            ),
+            (
+                vec![(106.0, 24.0), (106.0, 66.0), (110.0, 70.0), (110.0, 20.0)],
+                color(BLUE)
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_diagonal_follows_the_widths_of_the_two_sides_it_joins() {
+    // A 10px side next to a 30px one: the diagonal runs from the outer corner
+    // to the inner one, three times as far across as down.
+    let thin = side(10.0, BorderStyle::Solid, BorderColor::Resolved(RED));
+    let wide = side(30.0, BorderStyle::Solid, BorderColor::Resolved(BLUE));
+    let borders = Sides {
+        top: thin,
+        right: wide,
+        bottom: thin,
+        left: wide,
+    };
+    let outlines = outlines_of(100.0, 50.0, &borders, true);
+    assert_eq!(
+        outlines[0].0,
+        [(10.0, 20.0), (110.0, 20.0), (80.0, 30.0), (40.0, 30.0)]
+    );
+    assert_eq!(
+        outlines[1].0,
+        [(40.0, 60.0), (80.0, 60.0), (110.0, 70.0), (10.0, 70.0)]
+    );
+}
+
+#[test]
+fn a_side_that_is_not_visible_still_cuts_the_corner_of_the_one_next_to_it() {
+    // A triangle is the bottom side of a box with no size, between two sides
+    // that are transparent.
+    let clear = CssColor { a: 0, ..RED };
+    let borders = Sides {
+        top: side(0.0, BorderStyle::Solid, BorderColor::Resolved(RED)),
+        right: side(20.0, BorderStyle::Solid, BorderColor::Resolved(clear)),
+        bottom: side(30.0, BorderStyle::Solid, BorderColor::Resolved(RED)),
+        left: side(20.0, BorderStyle::Solid, BorderColor::Resolved(clear)),
+    };
+    assert_eq!(
+        outlines_of(40.0, 30.0, &borders, true),
+        [(vec![(30.0, 20.0), (50.0, 50.0), (10.0, 50.0)], color(RED))]
+    );
+}
+
+#[test]
+fn a_corner_next_to_a_side_without_a_width_is_not_cut() {
+    // Only the top left corner has a side with a width on each side of it: the
+    // others stay square.
+    let borders = Sides {
+        top: side(4.0, BorderStyle::Solid, BorderColor::Resolved(RED)),
+        right: side(0.0, BorderStyle::Solid, BorderColor::Resolved(BLUE)),
+        bottom: side(0.0, BorderStyle::None, BorderColor::Resolved(BLUE)),
+        left: side(4.0, BorderStyle::Solid, BorderColor::Resolved(BLUE)),
+    };
+    assert_eq!(
+        outlines(&borders, true),
+        [
+            (
+                vec![(10.0, 20.0), (110.0, 20.0), (110.0, 24.0), (14.0, 24.0)],
+                color(RED)
+            ),
+            (
+                vec![(10.0, 20.0), (10.0, 70.0), (14.0, 70.0), (14.0, 24.0)],
+                color(BLUE)
+            ),
+        ]
+    );
+}
+
+#[test]
+fn sides_of_the_same_color_share_a_corner_with_no_seam_between_them() {
+    // The top side runs over the corner and the side strips stop at it, however
+    // the widths differ and whether or not the color is translucent.
+    let translucent = CssColor { a: 128, ..RED };
+    let thin = side(2.0, BorderStyle::Solid, BorderColor::Resolved(translucent));
+    let wide = side(6.0, BorderStyle::Solid, BorderColor::Resolved(translucent));
+    let borders = Sides {
+        top: wide,
+        right: thin,
+        bottom: thin,
+        left: wide,
+    };
+    let rects = outlines(&borders, true)
+        .into_iter()
+        .map(|(corners, _)| corners)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rects,
+        [
+            rect_corners(10.0, 20.0, 110.0, 26.0),
+            rect_corners(10.0, 68.0, 110.0, 70.0),
+            rect_corners(10.0, 26.0, 16.0, 68.0),
+            rect_corners(108.0, 26.0, 110.0, 68.0),
+        ]
+    );
+}
+
+#[test]
+fn sides_of_the_same_color_and_a_different_alpha_meet_on_a_diagonal() {
+    let translucent = CssColor { a: 128, ..RED };
+    let mut borders = four_colors(4.0, [RED; 4]);
+    borders.left = side(4.0, BorderStyle::Solid, BorderColor::Resolved(translucent));
+    let outlines = outlines(&borders, true);
+    // Both the top and the bottom corner of the left side are cut.
+    assert_eq!(
+        outlines[2].0,
+        [(10.0, 20.0), (10.0, 70.0), (14.0, 66.0), (14.0, 24.0)]
+    );
+    assert_eq!(outlines[2].1, Color::from_rgba8(255, 0, 0, 128));
+}
+
+#[test]
+fn a_current_color_side_matches_a_side_of_the_text_color() {
+    let text = CssColor {
+        r: TEXT.r,
+        g: TEXT.g,
+        b: TEXT.b,
+        a: TEXT.a,
+    };
+    let mut borders = four_colors(4.0, [text; 4]);
+    borders.top = side(4.0, BorderStyle::Solid, BorderColor::CurrentColor);
+    assert_eq!(outlines(&borders, true).len(), 4);
+    assert!(
+        outlines(&borders, true)
+            .iter()
+            .all(|(corners, _)| corners.len() == 4 && corners[0].0 <= corners[1].0),
+        "no side has a corner cut off"
+    );
+    let rects = outlines(&borders, true)
+        .into_iter()
+        .map(|(corners, _)| corners)
+        .collect::<Vec<_>>();
+    assert_eq!(rects[0], rect_corners(10.0, 20.0, 110.0, 24.0));
+    assert_eq!(rects[2], rect_corners(10.0, 24.0, 14.0, 66.0));
+}
+
+#[test]
+fn a_continuation_has_no_top_corners_to_cut() {
+    assert_eq!(
+        outlines(&four_colors(4.0, [RED, BLUE, GREEN, ORANGE]), false),
+        [
+            (
+                vec![(14.0, 66.0), (106.0, 66.0), (110.0, 70.0), (10.0, 70.0)],
+                color(GREEN)
+            ),
+            (
+                vec![(10.0, 20.0), (10.0, 70.0), (14.0, 66.0), (14.0, 20.0)],
+                color(ORANGE)
+            ),
+            (
+                vec![(106.0, 20.0), (106.0, 66.0), (110.0, 70.0), (110.0, 20.0)],
+                color(BLUE)
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_dashes_of_a_side_are_cut_with_its_corner() {
+    // The top side is solid and the left one dashed in another color: the left
+    // dashes are clipped to the half of the corner that is the left side's, at
+    // both its ends.
+    let mut borders = four_colors(4.0, [RED; 4]);
+    borders.left = side(4.0, BorderStyle::Dashed, BorderColor::Resolved(BLUE));
+    let mut scene = Scene::new();
+    ElementBorder::new(100.0, 50.0, 10.0, 20.0, &borders, TEXT, true)
+        .expect("a box with a border")
+        .paint(&mut scene);
+    let clips = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(
+                clip.clip
+                    .elements()
+                    .iter()
+                    .filter_map(|element| match element {
+                        kurbo::PathEl::MoveTo(point) | kurbo::PathEl::LineTo(point) => {
+                            Some((point.x, point.y))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        clips,
+        [vec![(10.0, 20.0), (10.0, 70.0), (14.0, 66.0), (14.0, 24.0)]]
+    );
+}
+
+#[test]
+fn a_double_side_reaches_the_diagonal_of_a_corner_inside_the_other_side() {
+    // A 12px double left side, whose inner third is 8px in, next to a solid top
+    // side of another color: the inner third starts on the diagonal and not
+    // under the top side.
+    let double = side(12.0, BorderStyle::Double, BorderColor::Resolved(BLUE));
+    let solid = side(12.0, BorderStyle::Solid, BorderColor::Resolved(RED));
+    let borders = Sides {
+        top: solid,
+        right: solid,
+        bottom: solid,
+        left: double,
+    };
+    let outlines = outlines(&borders, true);
+    // Top, bottom, then the left outer and inner thirds, then the right side.
+    let inner_left = outlines
+        .iter()
+        .find(|(corners, _)| corners.iter().all(|(x, _)| (18.0..=22.0).contains(x)))
+        .expect("the inner third of the left side");
+    assert_eq!(
+        inner_left.0,
+        [(18.0, 28.0), (18.0, 62.0), (22.0, 58.0), (22.0, 32.0)]
+    );
+    assert_eq!(inner_left.1, color(BLUE));
 }

@@ -1,9 +1,10 @@
-//! The lighter and darker shades of a color in which an `inset`, `outset`,
-//! `groove` or `ridge` border is drawn (CSS Backgrounds 3 §3.2). The spec leaves
-//! the shades to the user agent; these are the ones Chromium computes, so that a
+//! How `inset`, `outset`, `groove`, `ridge` and `double` borders are divided and
+//! shaded, shared by the borders of boxes and the rules between columns (CSS
+//! Backgrounds 3 §3.2, §5.6). The spec leaves the shades and the rounding of the
+//! divisions to the user agent; these are the ones Chromium computes, so that a
 //! bevel looks the same in both.
 
-use raikiri_style::property::CssColor;
+use raikiri_style::property::{BorderStyle, CssColor};
 use std::sync::LazyLock;
 
 /// The multiplier that scales a channel in `0.0..=1.0` to `0..=255` with no
@@ -30,13 +31,42 @@ static LIMIT_LUMINANCES: LazyLock<(f64, f64)> = LazyLock::new(|| {
 /// How much `darker` and `lighter` take from or add to the brightest channel.
 const STEP: f32 = 0.33;
 
+/// Whether a `groove` or `ridge` border `width` pixels thick is drawn as two
+/// bands, a lighter and a darker one. A thinner one is a single band of its own
+/// color.
+pub(crate) fn has_two_bands(style: BorderStyle, width: f64) -> bool {
+    matches!(style, BorderStyle::Groove | BorderStyle::Ridge) && width >= 2.0
+}
+
+/// Whether a `double` border `width` pixels thick is drawn as two lines with a
+/// gap between them. A thinner one is solid.
+pub(crate) fn has_two_lines(style: BorderStyle, width: f64) -> bool {
+    style == BorderStyle::Double && width >= 3.0
+}
+
+/// The width of the half of a `groove` or `ridge` that is nearer the top left of
+/// its box (the outer half on the top and left sides, the left half of a column
+/// rule), for a border `width` pixels thick. An odd width leaves the extra pixel
+/// to this half.
+pub(crate) fn nearer_half(width: f64) -> f64 {
+    (width / 2.0).ceil()
+}
+
+/// The width of each of the two lines of a `double` border `width` pixels
+/// thick, the middle gap being what is left. It rounds as `(width + 1) / 3`
+/// down, so the gap is a pixel wider or narrower than the lines when the width
+/// is not a multiple of three.
+pub(crate) fn third(width: f64) -> f64 {
+    ((width + 1.0) / 3.0).floor()
+}
+
 /// The shade of `color` for the dark side of a bevel when `dark`, and for the
 /// light side otherwise. The alpha channel is kept.
 ///
 /// A very dark color cannot get darker, so its dark side is the lighter shade
 /// and its light side a lighter one still; a very light color cannot get
 /// lighter, so its light side is the color itself.
-pub(super) fn shade(color: CssColor, dark: bool) -> CssColor {
+pub(crate) fn shade(color: CssColor, dark: bool) -> CssColor {
     let luminance = luminance(color);
     let (dark_limit, light_limit) = *LIMIT_LUMINANCES;
     if luminance <= dark_limit {
@@ -112,3 +142,6 @@ fn luminance_of_gray(gray: u8) -> f64 {
         a: 255,
     })
 }
+
+#[cfg(test)]
+mod tests;
