@@ -354,3 +354,51 @@ fn vertical_and_outside_marker_list_item_parents_wrap_their_rows() {
         assert_eq!(anonymous_tables_around_a_row("", body_css), 1, "{body_css}");
     }
 }
+
+#[test]
+fn a_row_belongs_to_the_anonymous_table_around_it_not_to_a_table_further_out() {
+    let (mut loose, mut grouped, mut nested, mut in_table, mut inner, mut outer) =
+        (0, 0, 0, 0, 0, 0);
+    let (mut group, mut inline_row) = (0, 0);
+    let doc = laid_out("", |doc, body| {
+        // A row beside rows, and a row inside a row group, outside any table.
+        loose = div(doc, body, "display:table-row");
+        div(doc, loose, "display:table-cell;height:10px");
+        div(doc, body, "display:block;height:5px");
+        group = div(doc, body, "display:table-row-group");
+        grouped = div(doc, group, "display:table-row");
+        div(doc, grouped, "display:table-cell;height:10px");
+        div(doc, body, "display:block;height:5px");
+        // A table whose cell holds rows outside any table.
+        outer = div(doc, body, "display:table");
+        let outer_row = div(doc, outer, "display:table-row");
+        in_table = div(doc, outer, "display:table-row");
+        div(doc, in_table, "display:table-cell;height:10px");
+        let cell = div(doc, outer_row, "display:table-cell");
+        nested = div(doc, cell, "display:table-row");
+        div(doc, nested, "display:table-cell;height:10px");
+        // A table in another cell keeps its own rows.
+        let other = div(doc, outer_row, "display:table-cell");
+        inner = div(doc, other, "display:inline-table");
+        inline_row = div(doc, inner, "display:table-row");
+        div(doc, inline_row, "display:table-cell;height:10px");
+    });
+    let anonymous = |row: usize| doc.table_of_row(row).filter(|&t| doc.is_anonymous_table(t));
+    // The anonymous tables are not DOM ancestors of the rows they wrap.
+    assert_eq!(
+        doc.anonymous_table_parts(anonymous(loose).unwrap()),
+        Some(&[loose][..])
+    );
+    assert_eq!(anonymous(grouped), doc.anonymous_table_of(group));
+    assert!(anonymous(grouped).is_some());
+    assert_ne!(anonymous(loose), anonymous(grouped));
+    // The rows in the cell are wrapped apart from the table around the cell.
+    assert!(anonymous(nested).is_some());
+    assert_eq!(
+        doc.table_parts_boundary(anonymous(nested).unwrap()),
+        doc.parent_of(nested).unwrap()
+    );
+    // Rows of source tables belong to those tables.
+    assert_eq!(doc.table_of_row(in_table), Some(outer));
+    assert_eq!(doc.table_of_row(inline_row), Some(inner));
+}

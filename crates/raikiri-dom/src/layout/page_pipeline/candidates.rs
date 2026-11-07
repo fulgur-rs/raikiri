@@ -1984,6 +1984,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             parent_height: node.layout.size.height.max(0.0),
                             inherited_page_name: child_page_name,
                             inside_table: inside_table
+                                || document.anonymous_table_of(child_id).is_some()
                                 || matches!(
                                     document.nodes[node_id].display(),
                                     DisplayValue::Table

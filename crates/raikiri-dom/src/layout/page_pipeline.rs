@@ -794,7 +794,17 @@ fn block_border_box_end(
         if nested {
             continue;
         }
-        let border_end = offset + layout.location.y - relative_shift + layout.size.height;
+        let mut border_end = offset + layout.location.y - relative_shift + layout.size.height;
+        // The parts of an anonymous table are children of the root, which
+        // encloses the table's own box too: the table ends below its last
+        // part by the half of the collapsed border that hangs under it.
+        if let Some(table) = document
+            .anonymous_table_of(child)
+            .filter(|&table| document.table_parts_boundary(table) == flow_root)
+        {
+            let table = &document.nodes[table].layout;
+            border_end = border_end.max(offset + table.location.y + table.size.height);
+        }
         let end = border_end + layout.margin.bottom;
         if end.is_finite() {
             // A reverse column flex container's source order need not end
@@ -4286,16 +4296,7 @@ fn paginate_flow(
         if !candidate.context.is_table_row() || edges <= 0.0 {
             continue;
         }
-        let footer = document
-            .inclusive_ancestors(candidate.node_id)
-            .take_while(|&id| {
-                !matches!(
-                    document.nodes[id].display(),
-                    DisplayValue::Table | DisplayValue::InlineTable
-                )
-            })
-            .find(|&id| document.nodes[id].display() == DisplayValue::TableFooterGroup);
-        if let Some(footer) = footer {
+        if let Some(footer) = footer_group_of_row(document, candidate.node_id) {
             let tail_end = candidate.raw_y + candidate.height + edges;
             footer_tail_ends
                 .entry(footer)
@@ -4542,7 +4543,7 @@ fn table_row_leads(
             .iter()
             .filter(|candidate| candidate.context.is_table_row())
         {
-            if let Some(table) = table_of_row(document, candidate.node_id) {
+            if let Some(table) = document.table_of_row(candidate.node_id) {
                 let first = table_first_rows
                     .entry(table)
                     .or_insert((candidate.node_id, candidate.raw_y));
@@ -4552,7 +4553,9 @@ fn table_row_leads(
             }
         }
         for (table, (row, row_y)) in table_first_rows {
-            if !rows_start_the_grid(document, cascade, table) {
+            if !rows_start_the_grid(document, cascade, table)
+                || starts_with_loose_cells(document, table)
+            {
                 continue;
             }
             let table_y = candidate_y
@@ -4565,14 +4568,31 @@ fn table_row_leads(
     table_row_leads
 }
 
-/// The table, block or inline, that the row `row` belongs to.
-fn table_of_row(document: &Document, row: usize) -> Option<usize> {
-    document.ancestors(row).find(|&id| {
-        matches!(
-            document.nodes[id].display(),
-            DisplayValue::Table | DisplayValue::InlineTable
-        )
-    })
+/// The footer group of the table that the row `row` belongs to, when the row
+/// is in one. A footer group around the table itself is not the row's.
+fn footer_group_of_row(document: &Document, row: usize) -> Option<usize> {
+    let boundary = document
+        .table_of_row(row)
+        .map(|table| document.table_parts_boundary(table));
+    document
+        .inclusive_ancestors(row)
+        .take_while(|&id| {
+            Some(id) != boundary
+                && !matches!(
+                    document.nodes[id].display(),
+                    DisplayValue::Table | DisplayValue::InlineTable
+                )
+        })
+        .find(|&id| document.nodes[id].display() == DisplayValue::TableFooterGroup)
+}
+
+/// Whether the anonymous table `table` starts with cells outside any row,
+/// which table fixup puts into an anonymous row of their own before the rows.
+fn starts_with_loose_cells(document: &Document, table: usize) -> bool {
+    document
+        .anonymous_table_parts(table)
+        .and_then(|parts| parts.first())
+        .is_some_and(|&first| document.nodes[first].display() == DisplayValue::TableCell)
 }
 
 /// Whether the rows of `table` start the table's grid: nothing comes before
@@ -4623,7 +4643,7 @@ fn first_row_ends(
     {
         // The rows of an inline table, nested in a cell or not, are not rows
         // of a block table: the plain-table filter below drops that table.
-        if let Some(table) = table_of_row(document, candidate.node_id) {
+        if let Some(table) = document.table_of_row(candidate.node_id) {
             let end = candidate.raw_y + candidate.height;
             first_rows
                 .entry(table)
@@ -4633,6 +4653,33 @@ fn first_row_ends(
                     }
                 })
                 .or_insert((candidate.node_id, end));
+        }
+    }
+    // Cells outside any row: table fixup puts the ones that start an
+    // anonymous table into an anonymous row, which ends where the last of
+    // them does.
+    let row_tables: Vec<usize> = candidates
+        .iter()
+        .filter_map(|candidate| {
+            let table = document.anonymous_table_of(candidate.node_id)?;
+            (starts_with_loose_cells(document, table)
+                && document.anonymous_table_parts(table)?.first() == Some(&candidate.node_id))
+            .then_some(table)
+        })
+        .collect();
+    if !row_tables.is_empty() {
+        let ends: HashMap<usize, f32> = candidates
+            .iter()
+            .map(|candidate| (candidate.node_id, candidate.raw_y + candidate.height))
+            .collect();
+        for table in row_tables {
+            let parts = document.anonymous_table_parts(table).unwrap_or_default();
+            let end = parts
+                .iter()
+                .take_while(|&&part| document.nodes[part].display() == DisplayValue::TableCell)
+                .filter_map(|part| ends.get(part).copied())
+                .fold(f32::NEG_INFINITY, f32::max);
+            first_rows.insert(table, (parts[0], end));
         }
     }
     first_rows
@@ -4651,7 +4698,14 @@ fn first_row_ends(
             let group_end = row_groups
                 .get(&row)
                 .map_or(end, |&(group_end, _)| group_end);
-            (table, end.max(group_end))
+            // An anonymous table has no box of its own among the candidates:
+            // its first part stands for it, and so does that part's own
+            // `break-inside`, since the table has none.
+            let key = document
+                .anonymous_table_parts(table)
+                .and_then(|parts| parts.first().copied())
+                .unwrap_or(table);
+            (key, end.max(group_end))
         })
         .collect()
 }
@@ -4666,9 +4720,10 @@ fn forced_break_before_first_row(
     table: usize,
     row: usize,
 ) -> bool {
+    let boundary = document.table_parts_boundary(table);
     [
         Some(row),
-        document.parent_of(row).filter(|&group| group != table),
+        document.parent_of(row).filter(|&group| group != boundary),
     ]
     .into_iter()
     .flatten()

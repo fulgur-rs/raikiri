@@ -451,6 +451,103 @@ fn a_table_avoiding_a_break_before_it_takes_the_box_before_it_to_the_next_page()
     );
 }
 
+/// Rows outside any table, `rows` of them, each with one cell styled with
+/// `cell_css`: table fixup wraps them in an anonymous table. Returns the first
+/// cell.
+fn loose_rows(doc: &mut Document, parent: usize, rows: usize, cell_css: &str) -> usize {
+    let first_cell = row_with_cell(doc, parent, cell_css);
+    for _ in 1..rows {
+        row_with_cell(doc, parent, cell_css);
+    }
+    first_cell
+}
+
+#[test]
+fn a_heading_moves_with_the_first_row_outside_a_table() {
+    // The rows form an anonymous table, which holds its first row with the
+    // heading as any table does (compare the table above).
+    for (spacer, expected) in [
+        (70, (70.0, 80.0)),
+        (80, (80.0, 90.0)),
+        (85, (100.0, 110.0)),
+        (88, (100.0, 110.0)),
+    ] {
+        assert_eq!(
+            heading_then(spacer, |doc, body| loose_rows(doc, body, 1, "")),
+            expected,
+            "{spacer}"
+        );
+    }
+}
+
+#[test]
+fn a_heading_stays_when_the_first_row_outside_a_table_fits() {
+    assert_eq!(
+        heading_then(80, |doc, body| loose_rows(doc, body, 4, "")),
+        (80.0, 90.0)
+    );
+}
+
+#[test]
+fn a_heading_moves_with_the_first_row_of_a_row_group_outside_a_table() {
+    let in_group = |spacer, avoid| {
+        heading_then(spacer, |doc, body| {
+            let group = block(doc, body, &format!("display:table-row-group;{avoid}"));
+            loose_rows(doc, group, 3, "")
+        })
+    };
+    // Only the first row of the group stays with the heading ...
+    assert_eq!(in_group(80, ""), (80.0, 90.0));
+    assert_eq!(in_group(85, ""), (100.0, 110.0));
+    // ... but a group that the page cannot break inside moves whole.
+    assert_eq!(in_group(80, "break-inside:avoid"), (100.0, 110.0));
+}
+
+/// A cell outside any row, one 30px Ahem word tall, with its text.
+fn loose_cell(doc: &mut Document, parent: usize) -> usize {
+    let cell = block(
+        doc,
+        parent,
+        "display:table-cell;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+    );
+    doc.append_text(cell, "aaa");
+    cell
+}
+
+#[test]
+fn a_heading_moves_with_cells_outside_a_row() {
+    // The cells share one anonymous row, which holds with the heading.
+    for (spacer, expected) in [(70, (70.0, 80.0)), (85, (100.0, 110.0))] {
+        assert_eq!(
+            heading_then(spacer, |doc, body| {
+                let first = loose_cell(doc, body);
+                loose_cell(doc, body);
+                first
+            }),
+            expected,
+            "{spacer}"
+        );
+    }
+}
+
+#[test]
+fn the_first_row_after_cells_outside_a_row_carries_no_table_spacing() {
+    // The cells form the first row of the anonymous table, so the row after
+    // them is not its first: it starts the next page at its top, and the
+    // table's spacing above the first row does not come with it.
+    let (mut cells, mut row) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:85px");
+        cells = loose_cell(doc, body);
+        loose_cell(doc, body);
+        row = row_with_cell(doc, body, "");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, cells), page_flow_y(&doc, row)),
+        (85.0, 100.0)
+    );
+}
+
 #[test]
 fn a_heading_moves_with_a_first_row_group_that_the_page_cannot_break_inside() {
     // The first row alone fits after the heading, but its group moves whole.

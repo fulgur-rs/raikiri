@@ -857,6 +857,33 @@ impl Document {
             .map(|index| self.nodes.anonymous_table_key(index))
     }
 
+    /// The table, block or inline, that the row `row` belongs to: the
+    /// anonymous table that wraps the row or its row group, otherwise the
+    /// nearest table among its ancestors.
+    ///
+    /// The anonymous table is not a DOM ancestor of the rows it wraps, so a
+    /// walk up the DOM would go past it to a table around it, such as the one
+    /// whose cell holds the rows. Only the row and its row groups can be
+    /// wrapped parts of its table: a part further out, a cell, holds the row
+    /// in a box of its own.
+    pub(crate) fn table_of_row(&self, row: usize) -> Option<usize> {
+        self.inclusive_ancestors(row).find_map(|id| {
+            let display = self.nodes[id].display();
+            if matches!(
+                display,
+                DisplayValue::TableRow
+                    | DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            ) && let Some(table) = self.anonymous_table_of(id)
+            {
+                return Some(table);
+            }
+            (id != row && matches!(display, DisplayValue::Table | DisplayValue::InlineTable))
+                .then_some(id)
+        })
+    }
+
     /// The box at which table structure ends above the parts of `table`:
     /// the table itself, or the parent of an anonymous table, which is not
     /// a DOM ancestor of the parts it wraps.

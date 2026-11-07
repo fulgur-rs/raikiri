@@ -497,6 +497,9 @@ pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
 /// background. `gap` is the spacing kept below the last row.
 pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32) {
     let table_origin = absolute_position(document, table);
+    // The parts of an anonymous table are children of its parent, which is
+    // not one of the boxes they grow.
+    let boundary = document.table_parts_boundary(table);
     let mut parts = Vec::new();
     let mut pending = document.nodes[table].children.clone();
     while let Some(id) = pending.pop() {
@@ -547,7 +550,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
                 let owners: Vec<usize> = document
                     .inclusive_ancestors(part)
                     .skip(1)
-                    .take_while(|&id| id != table)
+                    .take_while(|&id| id != boundary)
                     .collect();
                 for id in owners {
                     let top = absolute_position(document, id).1;
@@ -563,7 +566,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
         // change below, so their positions are taken once.
         let owners: Vec<(usize, (f32, f32))> = document
             .inclusive_ancestors(part)
-            .take_while(|&id| id != table)
+            .take_while(|&id| id != boundary)
             .map(|id| (id, absolute_position(document, id)))
             .collect();
         for (x, y, size, hidden) in cells {

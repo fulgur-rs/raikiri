@@ -391,3 +391,185 @@ fn a_footer_inside_a_contents_wrapper_moves_without_the_body_rows() {
     assert_eq!(span(&doc, body_row), (62.0, 82.0));
     assert_eq!(span(&doc, footer_row), (100.0, 120.0));
 }
+
+/// A 10px row with one cell, outside any table, in `parent`.
+fn loose_row(doc: &mut Document, parent: usize) -> usize {
+    append_row(doc, parent, "", 10.0).0
+}
+
+#[test]
+fn rows_outside_a_table_move_whole_to_the_next_page() {
+    // Table fixup wraps the rows in an anonymous table, whose rows move to
+    // the next page whole, as the rows of a table do: the sixth ends at 95
+    // and the seventh would cross the page edge.
+    let mut rows = Vec::new();
+    let (doc, pages) = paged_body(|doc, body| {
+        doc.append_element(Some(body), "div", Some("display:block;height:35px"));
+        for _ in 0..8 {
+            rows.push(loose_row(doc, body));
+        }
+    });
+    assert_eq!(pages, 2);
+    let spans: Vec<_> = rows.iter().map(|&row| span(&doc, row)).collect();
+    assert_eq!(
+        spans,
+        [35.0, 45.0, 55.0, 65.0, 75.0, 85.0, 100.0, 110.0].map(|top| (top, top + 10.0))
+    );
+}
+
+#[test]
+fn a_row_group_outside_a_table_grows_over_its_row_moved_to_the_next_page() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let group = doc.append_element(Some(body), "div", Some("display:table-row-group"));
+        ids.push(group);
+        for height in [20.0, 30.0] {
+            ids.push(append_row(doc, group, "", height).0);
+        }
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
+    });
+    let [group, first, last, after] = ids[..] else {
+        unreachable!()
+    };
+    assert_eq!(span(&doc, first), (60.0, 80.0));
+    assert_eq!(span(&doc, last), (100.0, 130.0));
+    // The group ends with the moved row, and its background is clipped to
+    // the cells where they are now.
+    assert_eq!(span(&doc, group), (60.0, 130.0));
+    assert_eq!(span(&doc, after), (130.0, 140.0));
+    let clips = &doc.table_objects.part_background_cells[&group];
+    assert!(
+        clips
+            .iter()
+            .any(|cell| (cell.y - 40.0).abs() < 0.001 && (cell.height - 30.0).abs() < 0.001),
+        "{clips:?}"
+    );
+}
+
+#[test]
+fn a_row_group_outside_a_table_starts_with_its_first_row_on_the_next_page() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(Some(body), "div", Some("display:block;height:95px"));
+        let group = doc.append_element(Some(body), "div", Some("display:table-row-group"));
+        ids.push(group);
+        for _ in 0..3 {
+            ids.push(loose_row(doc, group));
+        }
+    });
+    let [group, first, _, last] = ids[..] else {
+        unreachable!()
+    };
+    // No empty fragment of the group stays behind on the first page.
+    assert_eq!(span(&doc, group), (100.0, 130.0));
+    assert_eq!(span(&doc, first), (100.0, 110.0));
+    assert_eq!(span(&doc, last), (120.0, 130.0));
+}
+
+#[test]
+fn a_later_row_group_outside_a_table_follows_the_row_moved_by_an_earlier_one() {
+    let mut groups = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(Some(body), "div", Some("display:block;height:75px"));
+        for rows in [2, 3] {
+            let group = doc.append_element(Some(body), "div", Some("display:table-row-group"));
+            for _ in 0..rows {
+                loose_row(doc, group);
+            }
+            groups.push(group);
+        }
+    });
+    // The first group fits on the first page. The first row of the second
+    // would cross its edge, so the group starts the next page.
+    assert_eq!(span(&doc, groups[0]), (75.0, 95.0));
+    assert_eq!(span(&doc, groups[1]), (100.0, 130.0));
+}
+
+#[test]
+fn the_rows_of_a_table_in_a_cell_do_not_move_the_boxes_of_the_cell() {
+    // The rows of the anonymous table in the cell belong to it, not to the
+    // table around the cell: the outer table keeps its own row and cell.
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let outer = doc.append_element(Some(body), "div", Some("display:table;border-spacing:0"));
+        let outer_row = doc.append_element(Some(outer), "div", Some("display:table-row"));
+        let cell = doc.append_element(Some(outer_row), "div", Some("display:table-cell;padding:0"));
+        let group = doc.append_element(Some(cell), "div", Some("display:table-row-group"));
+        ids.extend([outer, outer_row, cell, group]);
+        for _ in 0..3 {
+            ids.push(append_row(doc, group, "", 20.0).0);
+        }
+    });
+    let [outer, outer_row, cell, group, first, second, third] = ids[..] else {
+        unreachable!()
+    };
+    // The whole cell moves to the next page, the group and rows within it.
+    assert_eq!(span(&doc, first), (100.0, 120.0));
+    assert_eq!(span(&doc, second), (120.0, 140.0));
+    assert_eq!(span(&doc, third), (140.0, 160.0));
+    for part in [outer, outer_row, cell, group] {
+        assert_eq!(span(&doc, part), (100.0, 160.0), "{part}");
+    }
+}
+
+#[test]
+fn a_block_encloses_the_collapsed_border_that_hangs_below_the_rows_in_it() {
+    // The rows are in a block, or in a table that is written out. Either
+    // way the cells' 3px bottom border lies half below the last row, in the
+    // box of the table, which the block encloses.
+    let spans = |explicit: bool| {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(Some(body), "div", Some("display:block;height:70px"));
+            let display = if explicit { "table" } else { "block" };
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("display:{display};border-collapse:collapse")),
+            );
+            for _ in 0..6 {
+                let row = doc.append_element(Some(wrapper), "div", Some("display:table-row"));
+                doc.append_element(
+                    Some(row),
+                    "div",
+                    Some("display:table-cell;padding:0;height:10px;border-bottom:3px solid"),
+                );
+            }
+            ids.push(wrapper);
+            ids.push(doc.append_element(Some(body), "div", Some("display:block;height:5px")));
+        });
+        ids.iter()
+            .map(|&id| {
+                let (_, y, _, height) = absolute_rect(&doc, id);
+                (y, y + height)
+            })
+            .collect::<Vec<_>>()
+    };
+    let (loose, explicit) = (spans(false), spans(true));
+    assert_eq!(loose, explicit);
+    // The six rows end at 70 + 6 * 13 = 148 less what the page edge cut, and
+    // the block follows right below the table's box.
+    assert_eq!(loose[0].1, loose[1].0);
+}
+
+#[test]
+fn a_footer_group_belongs_to_the_rows_of_its_own_table() {
+    let (mut footer, mut in_footer, mut in_cell, mut loose_footer, mut loose) = (0, 0, 0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let table = doc.append_element(Some(body), "div", Some("display:table"));
+        footer = doc.append_element(Some(table), "div", Some("display:table-footer-group"));
+        in_footer = loose_row(doc, footer);
+        let row = doc.append_element(Some(footer), "div", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "div", Some("display:table-cell"));
+        // A row in the footer's cell, outside any table of its own, belongs
+        // to the anonymous table around it, which has no footer group.
+        in_cell = loose_row(doc, cell);
+        loose_footer = doc.append_element(Some(body), "div", Some("display:table-footer-group"));
+        loose = loose_row(doc, loose_footer);
+    });
+    assert_eq!(footer_group_of_row(&doc, in_footer), Some(footer));
+    assert_eq!(footer_group_of_row(&doc, in_cell), None);
+    assert_eq!(footer_group_of_row(&doc, loose), Some(loose_footer));
+}
