@@ -1035,3 +1035,205 @@ fn container_type_style_containment_scopes_quote_depth() {
         assert_eq!(snapshots.quote_depth(probe, Before), expected, "{kind}");
     }
 }
+
+// ── style containment ────────────────────────────────────────
+
+/// The `step` counter at a `span` that has `directive`, inside a `div` that
+/// has `container` in a `section` that resets it to 4, and at the paragraph
+/// after the `div`.
+fn counters_around_a_scope(container: &str, directive: &str) -> (Vec<i32>, Vec<i32>) {
+    let mut doc = Document::new();
+    let section = doc.append_element(Some(0), "section", Some("counter-reset: step 4"));
+    let scoped = doc.append_element(Some(section), "div", Some(container));
+    let inner = doc.append_element(Some(scoped), "span", Some(directive));
+    let after = doc.append_element(Some(section), "p", None::<&str>);
+    doc.mark_in_document_flags();
+    (stack_at(&doc, inner, "step"), stack_at(&doc, after, "step"))
+}
+
+#[test]
+fn style_containment_keeps_the_counters_of_its_subtree_apart() {
+    for container in [
+        "contain: style",
+        "contain: content",
+        "contain: strict",
+        "container-type: inline-size",
+        "container-type: size",
+    ] {
+        // The descendants start a counter of their own, which the elements
+        // after the subtree do not see.
+        assert_eq!(
+            counters_around_a_scope(container, "counter-increment: step"),
+            (vec![4, 1], vec![4]),
+            "{container}"
+        );
+        assert_eq!(
+            counters_around_a_scope(container, "counter-set: step 9"),
+            (vec![4, 9], vec![4]),
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn counters_run_through_a_box_without_style_containment() {
+    for container in [
+        "contain: layout",
+        "contain: paint",
+        "contain: size",
+        "container-type: normal",
+        "display: block",
+        // A box that is not generated has no scope to open.
+        "contain: style; display: contents",
+    ] {
+        assert_eq!(
+            counters_around_a_scope(container, "counter-increment: step"),
+            (vec![5], vec![5]),
+            "{container}"
+        );
+        assert_eq!(
+            counters_around_a_scope(container, "counter-set: step 9"),
+            (vec![9], vec![9]),
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn the_directives_of_a_contained_element_belong_to_the_scope_around_it() {
+    let mut doc = styled_document(
+        "article { contain: style; counter-increment: n } \
+         article::before { content: counters(n, '.') ' ' } \
+         article::after { content: counters(n, '.') ' '; counter-increment: n 2 }",
+    );
+    let item =
+        |doc: &mut Document, parent| doc.append_element(Some(parent), "article", None::<&str>);
+    let root = doc.root_index();
+    let first = item(&mut doc, root);
+    let nested_first = item(&mut doc, first);
+    let nested_second = item(&mut doc, first);
+    let second = item(&mut doc, root);
+    let third = item(&mut doc, root);
+    doc.mark_in_document_flags();
+    // A contained element, its siblings and the elements around it share the
+    // counter its own increments change, while its descendants start another.
+    assert_eq!(stack_at(&doc, first, "n"), [1]);
+    assert_eq!(stack_at(&doc, nested_first, "n"), [1, 1]);
+    assert_eq!(stack_at(&doc, nested_second, "n"), [1, 2]);
+    assert_eq!(stack_at(&doc, second, "n"), [2]);
+    assert_eq!(stack_at(&doc, third, "n"), [3]);
+    // The generated content of the element is inside its scope too: the
+    // increment of `::after` starts a counter of its own, nested in the one
+    // of the element.
+    assert_eq!(
+        pseudo_text(&doc, second, raikiri_style::PseudoElem::Before),
+        "2 "
+    );
+    assert_eq!(
+        pseudo_text(&doc, second, raikiri_style::PseudoElem::After),
+        "2.2 "
+    );
+}
+
+#[test]
+fn descendants_do_not_change_what_a_contained_element_instantiates() {
+    let mut doc = Document::new();
+    let scoped = doc.append_element(
+        Some(0),
+        "div",
+        Some("contain: style; counter-increment: c 123"),
+    );
+    let first = doc.append_element(Some(scoped), "span", Some("counter-increment: c"));
+    let second = doc.append_element(Some(scoped), "span", Some("counter-increment: c"));
+    doc.mark_in_document_flags();
+    assert_eq!(stack_at(&doc, scoped, "c"), [123]);
+    assert_eq!(stack_at(&doc, first, "c"), [123, 1]);
+    assert_eq!(stack_at(&doc, second, "c"), [123, 2]);
+}
+
+#[test]
+fn a_reset_and_an_increment_of_one_contained_element_work_on_one_counter() {
+    let mut doc = Document::new();
+    let scoped = doc.append_element(
+        Some(0),
+        "div",
+        Some("contain: style; counter-reset: c 5; counter-increment: c 2; counter-set: d 3"),
+    );
+    let inner = doc.append_element(Some(scoped), "span", Some("counter-increment: c d"));
+    doc.mark_in_document_flags();
+    assert_eq!(stack_at(&doc, scoped, "c"), [7]);
+    assert_eq!(stack_at(&doc, scoped, "d"), [3]);
+    assert_eq!(stack_at(&doc, inner, "c"), [7, 1]);
+    assert_eq!(stack_at(&doc, inner, "d"), [3, 1]);
+}
+
+#[test]
+fn contained_scopes_nest() {
+    let mut doc = Document::new();
+    let outer = doc.append_element(Some(0), "div", Some("contain: style"));
+    let first = doc.append_element(Some(outer), "p", Some("counter-increment: c"));
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Some("contain: style; counter-increment: c"),
+    );
+    let deep = doc.append_element(Some(inner), "p", Some("counter-increment: c"));
+    let last = doc.append_element(Some(outer), "p", Some("counter-increment: c"));
+    let outside = doc.append_element(Some(0), "p", Some("counter-increment: c"));
+    doc.mark_in_document_flags();
+    // The element of the inner scope changes the counter that the elements of
+    // the outer scope share, and its descendants cannot.
+    assert_eq!(stack_at(&doc, first, "c"), [1]);
+    assert_eq!(stack_at(&doc, inner, "c"), [2]);
+    assert_eq!(stack_at(&doc, deep, "c"), [2, 1]);
+    assert_eq!(stack_at(&doc, last, "c"), [3]);
+    // Nothing outside the outer scope has the counter of its subtree.
+    assert_eq!(stack_at(&doc, outside, "c"), [1]);
+}
+
+#[test]
+fn a_contained_subtree_numbers_its_list_items_apart() {
+    let mut doc = Document::new();
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Some("counter-reset: reversed(list-item) 11"),
+    );
+    let item = |doc: &mut Document, parent| {
+        doc.append_element(Some(parent), "li", Some("display: list-item"))
+    };
+    let first = item(&mut doc, list);
+    let second = item(&mut doc, list);
+    let scoped = doc.append_element(Some(list), "div", Some("contain: style"));
+    let inner_first = item(&mut doc, scoped);
+    let inner_second = item(&mut doc, scoped);
+    let third = item(&mut doc, list);
+    let fourth = item(&mut doc, list);
+    doc.mark_in_document_flags();
+    // The items in the subtree count up from one, whatever the list does,
+    // and the list goes on from where it stopped.
+    assert_eq!(
+        innermost_values(
+            &doc,
+            &[first, second, inner_first, inner_second, third, fourth],
+            "list-item"
+        ),
+        [10, 9, 1, 2, 8, 7]
+    );
+    // A list item that is contained itself belongs to the list around it.
+    let mut doc = Document::new();
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Some("counter-reset: list-item"),
+    );
+    let plain = item(&mut doc, list);
+    let contained =
+        doc.append_element(Some(list), "li", Some("display: list-item; contain: style"));
+    let after = item(&mut doc, list);
+    doc.mark_in_document_flags();
+    assert_eq!(
+        innermost_values(&doc, &[plain, contained, after], "list-item"),
+        [1, 2, 3]
+    );
+}

@@ -39,6 +39,21 @@
 //! to record into (`pending_pops` starts empty) and is therefore never
 //! popped — inert, since a [`CounterScopes`] value never outlives the
 //! single walk that owns it.
+//!
+//! # Style containment
+//!
+//! An element with style containment and a box of its own scopes the counters
+//! of its subtree (CSS Containment 2 §3.3): what its descendants and its
+//! generated content increment or set never changes a counter that was
+//! instantiated outside that subtree. [`CounterScopes`] counts the contained
+//! ancestors of the element whose directives it applies (`depth`) and stamps
+//! every level with the count of its instantiating element. An increment or
+//! set only changes the innermost level when that level has the same count;
+//! otherwise it instantiates a level of its own in the subtree, which goes
+//! away with the subtree. The directives of the contained element itself
+//! belong to the scope around it, so its siblings and the elements around it
+//! see them, but its descendants cannot change what it instantiated. The
+//! levels that were open before the subtree stay visible inside it.
 
 use std::collections::HashMap;
 
@@ -292,6 +307,9 @@ struct CounterScopes {
     /// [`CounterLevel::calculated`] tally, so elements outside every such
     /// scope skip the tally bookkeeping.
     live_calculated: usize,
+    /// How many ancestors of the element whose directives are being applied
+    /// scope the counters of their subtree (style containment).
+    depth: usize,
 }
 
 /// Whether one counter level is reversed, and which calculated starting
@@ -299,6 +317,9 @@ struct CounterScopes {
 #[derive(Clone, Copy, Debug, Default)]
 struct CounterLevel {
     reversed: bool,
+    /// The [`CounterScopes::depth`] of the element that instantiated the
+    /// level: only an element at the same depth changes its value.
+    scope: usize,
     /// While [`ReversedStarts::Collect`] runs, the index of this level's
     /// tally when it is a reversed counter without a given starting value.
     calculated: Option<usize>,
@@ -452,7 +473,7 @@ impl CounterScopes {
             }
             let mut level = CounterLevel {
                 reversed: reset.is_reversed(),
-                calculated: None,
+                ..CounterLevel::default()
             };
             let value = match reset.starting_value() {
                 Some(value) => value,
@@ -470,15 +491,17 @@ impl CounterScopes {
         // -1 on every list item instead.
         let implicit_list_item =
             implicit_list_item_increment(cv, list_item).map(|(name, delta)| {
+                // A level that style containment keeps out of reach is not
+                // the one this item increments, so its direction does not
+                // count.
                 let reversed = self
-                    .levels
-                    .get(&Symbol::new(LIST_ITEM_COUNTER))
-                    .and_then(|levels| levels.last())
+                    .changeable_level(&Symbol::new(LIST_ITEM_COUNTER))
                     .is_some_and(|level| level.reversed);
                 (name, if reversed { -delta } else { delta })
             });
         for (name, delta) in cv.counter_increment.iter().chain(implicit_list_item.iter()) {
             let sym = Symbol::new(name.clone());
+            let changeable = self.changeable_level(&sym).is_some();
             let stack = self.stacks.entry(sym.clone()).or_default();
             match stack.last_mut() {
                 // Saturating, not wrapping/panicking, on overflow — the
@@ -488,14 +511,15 @@ impl CounterScopes {
                 // unbounded `+=` bug. `counter-reset: c 2147483647; counter-increment:
                 // c 1` is spec-legal CSS and would panic (debug) or
                 // silently wrap to `i32::MIN` (release) on plain `+=`.
-                Some(top) => {
+                Some(top) if changeable => {
                     *top = top.saturating_add(*delta);
                     if let Some(builder) = &self.compact {
                         builder.borrow_mut().change(&sym, Some(*top), false);
                     }
                 }
-                None => {
-                    // No active scope for `name` yet anywhere in scope —
+                _ => {
+                    // No active scope for `name` yet anywhere in scope, or
+                    // only one that style containment keeps out of reach —
                     // local auto-instantiation (CSS Lists 3 §4.4.2), tracked
                     // into `parent_bucket` exactly like a counter-reset's
                     // own push so it too survives across following
@@ -509,15 +533,16 @@ impl CounterScopes {
         }
         for (name, value) in cv.counter_set.iter() {
             let sym = Symbol::new(name.clone());
+            let changeable = self.changeable_level(&sym).is_some();
             let stack = self.stacks.entry(sym.clone()).or_default();
             match stack.last_mut() {
-                Some(top) => {
+                Some(top) if changeable => {
                     *top = *value;
                     if let Some(builder) = &self.compact {
                         builder.borrow_mut().change(&sym, Some(*top), false);
                     }
                 }
-                None => {
+                _ => {
                     self.push_level(sym.clone(), *value, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
                         bucket.register(sym);
@@ -598,8 +623,20 @@ impl CounterScopes {
         }
     }
 
+    /// The innermost level of the counter `name`, when the element whose
+    /// directives are being applied may change it: style containment keeps a
+    /// level that an element outside the contained subtree, or the contained
+    /// element itself, instantiated out of reach of the descendants.
+    fn changeable_level(&self, name: &Symbol) -> Option<&CounterLevel> {
+        self.levels
+            .get(name)
+            .and_then(|levels| levels.last())
+            .filter(|level| level.scope == self.depth)
+    }
+
     /// Push one new innermost level for `name`.
-    fn push_level(&mut self, name: Symbol, value: i32, level: CounterLevel) {
+    fn push_level(&mut self, name: Symbol, value: i32, mut level: CounterLevel) {
+        level.scope = self.depth;
         if let Some(builder) = &self.compact {
             builder.borrow_mut().change(&name, Some(value), true);
         }
@@ -813,13 +850,13 @@ fn content_has_quotes(cv: &raikiri_style::ComputedValues) -> bool {
         .any(|component| matches!(component, ContentComponent::Quote(_)))
 }
 
-/// Whether the element `idx` scopes the quote depth to its subtree: it has
-/// style containment and a box of its own (CSS Containment 2, style
-/// containment scopes `open-quote` and `close-quote` like counters). The
-/// quotes inside start at the depth the element is at, and the depth is back
-/// to that value after the element, whatever the quotes of its subtree opened
-/// or closed.
-fn scopes_quote_depth(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+/// Whether the element `idx` scopes the counters and the quote depth of its
+/// subtree: it has style containment and a box of its own (CSS Containment 2
+/// §3.3). The quotes inside start at the depth the element is at, and the
+/// depth is back to that value after the element, whatever the quotes of its
+/// subtree opened or closed. The counters of the subtree are kept apart as
+/// the module doc says.
+fn scopes_style_containment(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     cascade.computed.get(idx).is_some_and(|cv| {
         cv.effective_containment()
             .contains(raikiri_style::property::Contain::STYLE)
@@ -1038,8 +1075,11 @@ fn walk_counter_scopes(
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(CounterScopeBucket::default());
-                if scopes_quote_depth(doc, cascade, idx) {
+                // The directives of the element itself were applied outside
+                // the scope it opens here.
+                if scopes_style_containment(doc, cascade, idx) {
                     quote_scopes.push(quote_depth);
+                    scopes.depth += 1;
                 }
                 if draws_no_boxes_below(node, cv) {
                     unrendered += 1;
@@ -1102,10 +1142,11 @@ fn walk_counter_scopes(
                         )?;
                     }
                 }
-                if scopes_quote_depth(doc, cascade, idx)
-                    && let Some(entered) = quote_scopes.pop()
-                {
-                    quote_depth = entered;
+                if scopes_style_containment(doc, cascade, idx) {
+                    scopes.depth -= 1;
+                    if let Some(entered) = quote_scopes.pop() {
+                        quote_depth = entered;
+                    }
                 }
                 if draws_no_boxes_below(&doc.nodes[idx], cascade.computed.get(idx)) {
                     unrendered -= 1;

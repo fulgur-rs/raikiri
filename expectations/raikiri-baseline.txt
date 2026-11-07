@@ -5562,3 +5562,13 @@ css/css-contain/contain-html-bg-001.html
 css/css-contain/contain-html-bg-002.html
 css/css-contain/contain-html-bg-003.html
 css/css-contain/contain-html-bg-004.html
+
+# --- Style containment scopes the counters of its subtree (WPT pin 97ea26e2, EXACT, Linux, 2026-11-07) ---
+# An element with `contain: style` (or `container-type: size` or `inline-size`) and a box of its own keeps what its descendants and its generated content increment or set apart from the counters outside (CSS Containment 2 section 3.3): they start a counter of their own, which the elements after the subtree do not see, and the directives of the contained element itself belong to the scope around it. Each of these tests was an expected failure before the change, by 512 to 2,352 pixels of text, and audit-vacuous-passes reports KEEP for all seven in a run. contain-style-dynamic-002 passed before as well; it joins them because the audit now finds it depends on the feature.
+css/css-contain/contain-style-counters-001.html
+css/css-contain/contain-style-counters-005.html
+css/css-contain/contain-style-dynamic-002.html
+css/css-contain/contain-style-ol-ordinal-pseudo.html
+css/css-contain/counter-scoping-001.html
+css/css-contain/counter-scoping-002.html
+css/css-contain/counter-scoping-003.html
