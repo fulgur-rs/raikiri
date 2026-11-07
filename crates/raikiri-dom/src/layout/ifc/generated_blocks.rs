@@ -87,6 +87,13 @@ pub(crate) struct GeneratedBlock {
     min_height: ComputedLengthPercentageOrAuto,
     max_height: ComputedLengthPercentageOrAuto,
     border_box: bool,
+    /// Whether size containment sizes the box as if it had no content along
+    /// its width and along its height: an `auto` size then does not follow
+    /// the box's lines. On the axes of [`Self::width`] and [`Self::height`].
+    contained: (bool, bool),
+    /// What `contain-intrinsic-width` and `-height` give the empty content
+    /// of a size-contained box, in the same axes.
+    contain_intrinsic: (Option<f32>, Option<f32>),
     clear: Clear,
     /// Whether the box establishes an independent formatting context, which
     /// keeps margins from collapsing through it.
@@ -149,6 +156,11 @@ impl GeneratedBlock {
             min_height: cv.min_height.clone(),
             max_height: cv.max_height.clone(),
             border_box: cv.box_sizing == BoxSizing::BorderBox,
+            contained: contained_axes(cv),
+            contain_intrinsic: (
+                cv.contain_intrinsic_width.length.map(|length| length.px()),
+                cv.contain_intrinsic_height.length.map(|length| length.px()),
+            ),
             // Logical sides are not mapped, as for an element's box (see the
             // taffy bridge).
             clear: match cv.clear {
@@ -193,6 +205,8 @@ impl GeneratedBlock {
             height: self.width,
             min_height: self.min_width,
             max_height: self.max_width,
+            contained: (self.contained.1, self.contained.0),
+            contain_intrinsic: (self.contain_intrinsic.1, self.contain_intrinsic.0),
             on_root_axes: true,
             ..self
         }
@@ -253,7 +267,19 @@ impl GeneratedBlock {
     /// containing block (CSS 2.1 10.5).
     fn used_height(&self, content: f32, edges: f32, definite_height: Option<f32>) -> f32 {
         let sizes = [&self.height, &self.min_height, &self.max_height];
+        let content = self.auto_size(self.contained.1, self.contain_intrinsic.1, content);
         self.used_size(sizes, content, edges, definite_height)
+    }
+
+    /// What the content gives an `auto` size along one axis: `content` when
+    /// the box is not size-contained there, else the size an empty box has,
+    /// which `contain-intrinsic-*` may state (CSS Containment 2 §3.1).
+    fn auto_size(&self, contained: bool, intrinsic: Option<f32>, content: f32) -> f32 {
+        if contained {
+            intrinsic.unwrap_or(0.0)
+        } else {
+            content
+        }
     }
 
     /// The content-box size along one axis, from that axis's `[size, min,
@@ -293,20 +319,23 @@ impl GeneratedBlock {
     pub(crate) fn separates_margins(&self, inline_size: f32, vertical: bool) -> bool {
         let edges = self.edges(inline_size);
         // A box on the root's axes has its block-axis sides on top and bottom.
-        let (block_edges, sizes) = if vertical && !self.on_root_axes {
+        let (block_edges, sizes, (contained, intrinsic)) = if vertical && !self.on_root_axes {
             (
                 edges.left + edges.right,
                 [&self.width, &self.min_width, &self.max_width],
+                (self.contained.0, self.contain_intrinsic.0),
             )
         } else {
             (
                 edges.top + edges.bottom,
                 [&self.height, &self.min_height, &self.max_height],
+                (self.contained.1, self.contain_intrinsic.1),
             )
         };
+        let empty = self.auto_size(contained, intrinsic, 0.0);
         self.formatting_root
             || block_edges > 0.0
-            || self.used_size(sizes, 0.0, block_edges, None) > 0.0
+            || self.used_size(sizes, empty, block_edges, None) > 0.0
     }
 
     /// The line options of the box's own lines, with the `text-indent`
@@ -454,7 +483,8 @@ impl GeneratedBlock {
         // height of its own is known before the lines are laid out; an `auto`
         // height follows the lines the box has at that width; lines that
         // cannot be measured on their own leave only its minimum height.
-        let own_height = length_or_auto(&self.height, flow.definite_height).is_some();
+        let own_height =
+            self.contained.1 || length_or_auto(&self.height, flow.definite_height).is_some();
         let mut height = |width: f32| {
             let content = if own_height {
                 0.0
@@ -998,6 +1028,25 @@ pub(crate) fn close(
         first_line: open.lines_before,
         end_line: flow.lines.len(),
     })
+}
+
+/// The physical axes, as (width, height), in which size containment sizes
+/// the box styled by `cv` as if it had no content (CSS Containment 2 §3.1,
+/// §3.2). Inline-size containment acts on the inline axis of the box's own
+/// writing mode. A display that size containment does not apply to has none.
+fn contained_axes(cv: &ComputedValues) -> (bool, bool) {
+    if !crate::layout::style_views::metadata::size_containment_display(cv.display) {
+        return (false, false);
+    }
+    let contain = cv.effective_containment();
+    if contain.contains(Contain::SIZE) {
+        (true, true)
+    } else if contain.contains(Contain::INLINE_SIZE) {
+        let vertical = cv.cssom_writing_mode.is_vertical();
+        (!vertical, vertical)
+    } else {
+        (false, false)
+    }
 }
 
 /// Whether a block-level box styled by `cv` establishes an independent

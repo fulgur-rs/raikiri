@@ -1437,3 +1437,125 @@ fn container_type_generated_empty_block_does_not_collapse_through_its_margins() 
         }
     }
 }
+
+#[test]
+fn size_containment_sizes_an_auto_height_generated_block_as_if_it_were_empty() {
+    // Chromium draws the border box of each of these `::after` boxes after a
+    // 20x30 float, and the lines of the box are where they were.
+    let normal = rect(0.0, 0.0, 40.0, 40.0);
+    for (css, line, expected) in [
+        ("width:40px", (30.0, 0.0), normal),
+        // The auto height follows no line.
+        (
+            "width:40px;contain:size",
+            (30.0, 0.0),
+            rect(0.0, 0.0, 40.0, 0.0),
+        ),
+        // Inline-size containment leaves the block axis to the content.
+        ("width:40px;contain:inline-size", (30.0, 0.0), normal),
+        // The empty box has the height `contain-intrinsic-height` states, and
+        // its minimum height, padding and border still apply.
+        (
+            "width:40px;contain:size;contain-intrinsic-height:25px",
+            (30.0, 0.0),
+            rect(0.0, 0.0, 40.0, 25.0),
+        ),
+        (
+            "width:40px;contain:size;min-height:15px",
+            (30.0, 0.0),
+            rect(0.0, 0.0, 40.0, 15.0),
+        ),
+        (
+            "width:40px;contain:size;padding:5px",
+            (30.0, 5.0),
+            rect(0.0, 0.0, 50.0, 10.0),
+        ),
+        (
+            "width:40px;contain:size;box-sizing:border-box;padding:5px",
+            (30.0, 5.0),
+            rect(0.0, 0.0, 40.0, 10.0),
+        ),
+        // A height of its own wins over containment.
+        (
+            "width:40px;contain:size;height:12px",
+            (30.0, 0.0),
+            rect(0.0, 0.0, 40.0, 12.0),
+        ),
+    ] {
+        assert_eq!(
+            block_after_float("block", css, TEN_PX),
+            (vec![line], expected),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_size_contained_formatting_root_block_goes_beside_the_float_without_its_lines() {
+    // The lines of an `auto` height do not push the box below the float: it
+    // is set beside it, with no height.
+    assert_eq!(
+        block_after_float("flow-root", "width:40px;contain:size", TEN_PX),
+        (vec![(0.0, 20.0)], rect(20.0, 0.0, 40.0, 0.0))
+    );
+    // A size query container has no height of its own either, along the axes
+    // that its containment covers.
+    for (kind, height) in [("size", 0.0), ("inline-size", 10.0)] {
+        let (_, border_box) = block_after_float(
+            "block",
+            &format!("width:40px;container-type:{kind}"),
+            TEN_PX,
+        );
+        assert_eq!(border_box.height, height, "{kind}");
+    }
+    assert_eq!(
+        block_after_float(
+            "flow-root",
+            "width:40px;contain:size;contain-intrinsic-height:25px",
+            TEN_PX
+        ),
+        (vec![(0.0, 20.0)], rect(20.0, 0.0, 40.0, 25.0))
+    );
+}
+
+#[test]
+fn an_empty_size_contained_block_with_an_intrinsic_height_does_not_collapse_through_its_margins() {
+    for (css, collapses) in [
+        ("contain:size", true),
+        ("contain:size;contain-intrinsic-height:4px", false),
+    ] {
+        let (_, blocks) = placed(
+            &format!("div::after {{content:'';display:block;margin:5px;{css}}}"),
+            TEN_PX,
+            "A",
+        );
+        assert_eq!(blocks.is_empty(), collapses, "{css}");
+    }
+}
+
+#[test]
+fn size_containment_follows_the_display_and_the_axes_of_the_root() {
+    // A display that size containment does not apply to has none.
+    assert_eq!(contained("contain:size;display:block"), (true, true));
+    assert_eq!(contained("contain:size;display:table"), (false, false));
+    // Inline-size containment is on the inline axis of the box's own writing
+    // mode.
+    assert_eq!(contained("contain:inline-size"), (true, false));
+    assert_eq!(
+        contained("contain:inline-size;writing-mode:vertical-rl"),
+        (false, true)
+    );
+    // A vertical root lays the box out on its own axes: width and height swap.
+    let vertical = block("contain:size;contain-intrinsic-height:7px")
+        .on_root_axes(shodo::geometry::WritingMode::VerticalRl, false);
+    assert_eq!(vertical.contain_intrinsic, (Some(7.0), None));
+    let vertical =
+        block("contain:inline-size").on_root_axes(shodo::geometry::WritingMode::VerticalRl, false);
+    assert_eq!(vertical.contained, (false, true));
+}
+
+/// The axes, as (width, height), in which the generated block styled by `css`
+/// is size-contained.
+fn contained(css: &str) -> (bool, bool) {
+    block(css).contained
+}
