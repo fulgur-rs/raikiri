@@ -43,6 +43,7 @@ fn every_value_of_the_range_survives_in_every_field() {
         assert_round_trip(Baselines {
             first: Some(value),
             last: Some(value),
+            no_last: false,
         });
     }
 }

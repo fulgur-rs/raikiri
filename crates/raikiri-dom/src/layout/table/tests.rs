@@ -26,6 +26,7 @@ mod cell_index_tests;
 mod cell_maximum_tests;
 pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
+mod inline_block_baseline_tests;
 mod intrinsic_keyword_tests;
 mod known_wrapper_height_tests;
 mod multiple_caption_tests;

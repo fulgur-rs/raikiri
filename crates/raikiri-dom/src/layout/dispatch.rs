@@ -1511,12 +1511,16 @@ impl LayoutSession<'_> {
         // An ifc root measured its baseline from the lines of this very call;
         // the stored lines may be those of another width.
         if !vertical
+            && self.nodes[usize::from(node_id)].display() == DisplayValue::InlineBlock
             && !self.nodes[usize::from(node_id)]
                 .flags
                 .contains(NodeFlags::IS_IFC_ROOT)
-            && let Some(baseline) = first_inline_baseline(self, usize::from(node_id))
         {
-            output.baselines.first = Some(baseline);
+            // The baseline of an inline-block comes from its last line, then
+            // from the last baseline of its content; a table gives it none, so
+            // a box that holds nothing but a table has no baseline to sit on.
+            output.baselines.first = first_inline_baseline(self, usize::from(node_id))
+                .or(output.baselines.last_or_first());
         }
         // A scroll container exports baselines clamped to its border box
         // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
@@ -2980,6 +2984,13 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
             continue;
         }
         if node.kind() == raikiri_traits::NodeKind::Text {
+            continue;
+        }
+        // The lines in a table say nothing about the baseline of the
+        // inline-block around it: a table gives a block container the
+        // baseline of its first row for the boxes that align by a first
+        // baseline, and none to sit on.
+        if node.display() == DisplayValue::Table || doc.anonymous_table_of(idx).is_some() {
             continue;
         }
         for &child in node.children.iter().rev() {

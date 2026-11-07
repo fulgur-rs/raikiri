@@ -5,13 +5,13 @@ use crate::document::Document;
 use crate::layout::test_support::absolute_rect;
 use raikiri_style::{build_rule_tree, cascade};
 
-fn div(doc: &mut Document, parent: usize, css: &str) -> usize {
+pub(super) fn div(doc: &mut Document, parent: usize, css: &str) -> usize {
     doc.append_element(Some(parent), "div", Some(css))
 }
 
 /// `html > body(display:block; body_css)`, with `build` filling the body,
 /// laid out on one 200px by 200px page.
-fn laid_out(body_css: &str, build: impl FnOnce(&mut Document, usize)) -> Document {
+pub(super) fn laid_out(body_css: &str, build: impl FnOnce(&mut Document, usize)) -> Document {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", Some("display:block"));

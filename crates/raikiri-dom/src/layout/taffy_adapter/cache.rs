@@ -19,6 +19,8 @@ pub(crate) struct LayoutCache {
     cache: taffy::Cache,
     // Taffy keeps one full final output; size entries reconstruct zero overflow.
     final_overflow_origin: OverflowOrigin,
+    // Taffy's outputs have no flag for a box without a last baseline either.
+    final_no_last_baseline: bool,
     widths: Vec<(LayoutInput, f32)>,
     /// Whether the final layout it holds no longer stands for the boxes inside
     /// the box (see [`LayoutCache::forget_final_layout`]).
@@ -32,6 +34,7 @@ impl LayoutCache {
         Self {
             cache: taffy::Cache::new(),
             final_overflow_origin: OverflowOrigin::ScrollOrigin,
+            final_no_last_baseline: false,
             widths: Vec::new(),
             final_layout_stale: false,
         }
@@ -47,6 +50,7 @@ impl LayoutCache {
             let mut output = LayoutOutput::from_taffy(cached);
             if input.run_mode == RunMode::PerformLayout {
                 output.overflow_origin = self.final_overflow_origin;
+                output.baselines.no_last = self.final_no_last_baseline;
             }
             output
         })
@@ -58,6 +62,7 @@ impl LayoutCache {
         if input.run_mode == RunMode::PerformLayout {
             self.final_layout_stale = false;
             self.final_overflow_origin = output.overflow_origin;
+            self.final_no_last_baseline = output.baselines.no_last;
         }
         self.cache
             .store(&(*input).into_taffy(), output.into_taffy());
@@ -108,6 +113,7 @@ impl LayoutCache {
     pub(crate) fn clear(&mut self) {
         self.cache.clear();
         self.final_overflow_origin = OverflowOrigin::ScrollOrigin;
+        self.final_no_last_baseline = false;
         self.widths.clear();
         self.final_layout_stale = false;
     }

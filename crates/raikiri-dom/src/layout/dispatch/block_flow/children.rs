@@ -928,12 +928,14 @@ pub(super) fn layout(
         if let Some(baseline) = output.baselines.first {
             flow.baselines.first.get_or_insert(top + baseline);
         }
+        // A child without a last baseline passes none up, where its first
+        // baseline stands in for a missing last one otherwise.
         flow.baselines.last = output
             .baselines
-            .last
-            .or(output.baselines.first)
+            .last_or_first()
             .map(|baseline| top + baseline)
             .or(flow.baselines.last);
+        flow.baselines.no_last = flow.baselines.first.is_some() && flow.baselines.last.is_none();
         if inputs.run_mode == RunMode::PerformLayout {
             commit(tree, child, order, child_metrics, &output, location, margin);
             flow.placed.push(child);

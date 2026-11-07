@@ -230,6 +230,7 @@ fn transposed_output() -> LayoutOutput {
         baselines: Baselines {
             first: Some(3.0),
             last: None,
+            no_last: false,
         },
         ..LayoutOutput::HIDDEN
     };
@@ -269,7 +270,8 @@ fn a_transposed_output_returns_to_physical_axes_from_the_block_start_edge() {
         output.baselines,
         Baselines {
             first: Some(3.0),
-            last: None
+            last: None,
+            no_last: false,
         }
     );
 }

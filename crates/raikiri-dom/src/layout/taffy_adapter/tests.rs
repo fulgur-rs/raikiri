@@ -176,7 +176,7 @@ impl Bits for AvailableSpace {
 
 impl Bits for Baselines {
     fn bits(&self, out: &mut Vec<u32>) {
-        let Baselines { first, last } = self;
+        let Baselines { first, last, .. } = self;
         first.bits(out);
         last.bits(out);
     }
@@ -424,6 +424,7 @@ fn layout_output(floats: &mut Floats) -> LayoutOutput {
         baselines: Baselines {
             first: floats.option(),
             last: floats.option(),
+            no_last: false,
         },
         top_margin: CollapsibleMarginSet::from_margin(floats.next()).collapse_with_margin(-3.5),
         bottom_margin: CollapsibleMarginSet::from_margin(-1e7).collapse_with_margin(1e7),
