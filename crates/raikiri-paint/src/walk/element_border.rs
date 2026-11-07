@@ -381,10 +381,10 @@ const MAX_SIDE_DASHES: f64 = 4096.0;
 
 /// The dashes of a side: their length, the gap between two, and their count.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Dashes {
-    dash: f64,
-    gap: f64,
-    count: usize,
+pub(super) struct Dashes {
+    pub(super) dash: f64,
+    pub(super) gap: f64,
+    pub(super) count: usize,
 }
 
 /// The dashes of a dashed or dotted side `length` long and `thickness` thick,
@@ -398,8 +398,29 @@ struct Dashes {
 /// that holds just two shrinks the dashes with the gap, and only the gap between
 /// two dots. These are the lengths Chromium draws, which matter when a page is
 /// compared with its render.
-fn dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
-    let (dash, gap) = match (dotted, thickness >= 3.0) {
+pub(super) fn dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
+    pattern_lengths(length, thickness, dotted, false)
+}
+
+/// The dashes of a closed outline `length` long, such as the centerline of a
+/// rounded border, or `None` when it is filled solid instead.
+///
+/// The pattern starts with a dash and ends with a gap, so that it fits the
+/// outline end to end: the gap between two dashes is stretched or shrunk to
+/// whichever of the two nearest dash counts leaves it closest to its natural
+/// length, as for a side, but an outline has as many gaps as dashes. The square
+/// dots of a dotted outline up to 3px thick are not fitted: they keep their
+/// size and gap, and the last one is cut off where the outline ends. An outline
+/// between two and three dashes long gets two shorter dashes that fill it, and
+/// one no longer than two dashes is filled solid.
+pub(super) fn closed_dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
+    pattern_lengths(length, thickness, dotted, true)
+}
+
+/// The dashes of a side or of a closed outline; see [`dash_lengths`] and
+/// [`closed_dash_lengths`].
+fn pattern_lengths(length: f64, thickness: f64, dotted: bool, closed: bool) -> Option<Dashes> {
+    let (mut dash, mut gap) = match (dotted, thickness >= 3.0) {
         (true, _) => (thickness, thickness),
         (false, true) => (2.0 * thickness, thickness),
         (false, false) => (3.0 * thickness, 2.0 * thickness),
@@ -407,7 +428,14 @@ fn dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
     if !length.is_finite() || !thickness.is_finite() || length <= 2.0 * dash {
         return None;
     }
-    if length <= 2.0 * dash + gap {
+    if closed && !dotted && length < 3.0 * dash {
+        // Chromium draws two dashes and two gaps, in the ratio of the natural
+        // ones, around an outline between two and three dashes long.
+        let scale = length / (3.0 * dash);
+        dash *= scale;
+        gap *= scale;
+    }
+    if !closed && length <= 2.0 * dash + gap {
         // Exactly two. Dots keep their size and only the gap between them
         // shrinks, so they never reach past the ends of the side; dashes shrink
         // with the gap, in proportion.
@@ -425,12 +453,25 @@ fn dash_lengths(length: f64, thickness: f64, dotted: bool) -> Option<Dashes> {
             count: 2,
         });
     }
-    let fewer = ((length + 2.0 * gap) / (dash + gap)).floor();
+    if closed && dotted && thickness <= 3.0 {
+        let count = (length / (dash + gap)).ceil();
+        return (count <= MAX_SIDE_DASHES).then_some(Dashes {
+            dash,
+            gap,
+            count: count as usize,
+        });
+    }
+    // A side has one gap fewer than it has dashes, an outline as many.
+    let spare = if closed { gap } else { 2.0 * gap };
+    let fewer = ((length + spare) / (dash + gap)).floor();
     let more = fewer + 1.0;
     if more > MAX_SIDE_DASHES {
         return None;
     }
-    let gap_for = |dashes: f64| (length - dashes * dash) / (dashes - 1.0);
+    let gap_for = |dashes: f64| {
+        let gaps = if closed { dashes } else { dashes - 1.0 };
+        (length - dashes * dash) / gaps
+    };
     let (fewer_gap, more_gap) = (gap_for(fewer), gap_for(more));
     let (count, gap) = if more_gap <= 0.0 || (fewer_gap - gap).abs() < (more_gap - gap).abs() {
         (fewer, fewer_gap)

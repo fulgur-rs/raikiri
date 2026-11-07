@@ -334,6 +334,62 @@ fn two_dots_keep_their_size_and_only_the_gap_between_them_shrinks() {
 }
 
 #[test]
+fn a_closed_outline_has_as_many_gaps_as_dashes() {
+    // Around 297.58px of outline, Chromium fits 25 dashes of 8px: the gap is the
+    // rest of the outline divided among them, and the pattern ends where it
+    // began.
+    let Dashes { dash, gap, count } = closed_dash_lengths(297.58, 4.0, false).expect("dashes");
+    assert!(close(dash, 8.0) && count == 25, "{dash} {count}");
+    assert!(close(gap, (297.58 - 200.0) / 25.0), "{gap}");
+    assert!(close(count as f64 * (dash + gap), 297.58));
+    // The same for the dots of a wide dotted outline.
+    let Dashes { dash, gap, count } = closed_dash_lengths(100.0, 6.0, true).expect("dots");
+    assert!(close(dash, 6.0) && count == 8, "{dash} {count}");
+    assert!(close(count as f64 * (dash + gap), 100.0), "{gap}");
+}
+
+#[test]
+fn the_square_dots_of_a_thin_outline_are_not_fitted() {
+    assert_eq!(
+        closed_dash_lengths(100.0, 2.0, true),
+        Some(Dashes {
+            dash: 2.0,
+            gap: 2.0,
+            count: 25
+        })
+    );
+    // The last dot is cut off where the outline ends.
+    assert_eq!(
+        closed_dash_lengths(101.0, 2.0, true),
+        Some(Dashes {
+            dash: 2.0,
+            gap: 2.0,
+            count: 26
+        })
+    );
+}
+
+#[test]
+fn a_closed_outline_of_two_to_three_dashes_gets_shorter_dashes() {
+    // Two dashes of 8px do not fit 16px.
+    assert_eq!(closed_dash_lengths(16.0, 4.0, false), None);
+    // Between two and three dashes long, two dashes and two gaps fill it in the
+    // ratio of the natural ones.
+    let Dashes { dash, gap, count } = closed_dash_lengths(18.0, 4.0, false).expect("two dashes");
+    assert!(
+        close(dash, 6.0) && close(gap, 3.0) && count == 2,
+        "{dash} {gap} {count}"
+    );
+}
+
+#[test]
+fn an_outline_with_too_many_dashes_has_none() {
+    assert_eq!(closed_dash_lengths(1.0e9, 4.0, false), None);
+    assert_eq!(closed_dash_lengths(1.0e9, 2.0, true), None);
+    assert_eq!(closed_dash_lengths(f64::NAN, 4.0, false), None);
+}
+
+#[test]
 fn the_dots_of_a_short_dotted_side_stay_inside_the_box() {
     // The 25px top and bottom sides of the border-box hold two 10px dots.
     let box_edges = Rect::new(10.0, 20.0, 35.0, 100.0);
