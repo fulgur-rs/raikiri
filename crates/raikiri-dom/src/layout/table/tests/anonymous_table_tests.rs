@@ -333,6 +333,9 @@ fn a_vertical_parent_whose_blocks_hold_lines_keeps_rows_blocks() {
             div(doc, block, "display:block");
             let hidden = div(doc, block, "display:none");
             doc.append_text(hidden, "x");
+            // A script generates no box, whatever its text or display.
+            let script = doc.append_element(Some(block), "script", Some("display:block"));
+            doc.append_text(script, "x");
         }),
         1
     );
