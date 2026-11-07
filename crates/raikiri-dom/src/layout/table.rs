@@ -777,14 +777,21 @@ fn compute_table_layout_checked(
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
+    // Whether the main axis of the flex container that holds the table runs
+    // down the page (a column in a horizontal writing mode, a row in a
+    // vertical one), or `None` where no flex container sizes the table as an
+    // item.
+    let flex_main_axis_vertical = doc
+        .taffy_parent_of(table_idx)
+        .filter(|_| !absolute_table)
+        .filter(|&parent| doc.nodes[parent].formatting_context == FormattingContext::Flex)
+        .map(|parent| {
+            doc.physical_style(parent).flex_direction_is_row()
+                == super::dispatch::used_writing_mode(doc, parent).is_vertical()
+        });
     // A flex column is the one parent that sizes its item by a stated height
     // (a definite `flex-basis`, or else the `height`) before it flexes it.
-    let flex_column_parent = !absolute_table
-        && doc.taffy_parent_of(table_idx).is_some_and(|parent| {
-            doc.nodes[parent].formatting_context == FormattingContext::Flex
-                && (doc.physical_style(parent).flex_direction_is_row()
-                    == super::dispatch::used_writing_mode(doc, parent).is_vertical())
-        });
+    let flex_column_parent = flex_main_axis_vertical == Some(true);
     // The height a flex or grid parent assigns is that of the whole wrapper
     // box, caption included, except when a definite `flex-basis` sizes the
     // item along a column: like an authored height, it sizes the grid box
@@ -806,6 +813,10 @@ fn compute_table_layout_checked(
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
+    // A flex row sizes its table item along the table's inline axis by the
+    // item's flex base size, the columns' own widths, and takes the width
+    // keywords of the table for that size as well.
+    let flex_row_item = flex_main_axis_vertical == Some(false) && !vertical_writing;
     let table_style = doc.table_style(table_idx);
     let used_padding = table_style.padding();
     let intrinsic_padding = table_style.intrinsic_table_padding();
@@ -1332,8 +1343,49 @@ fn compute_table_layout_checked(
                 },
                 ..inputs
             };
-            let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
-                if vertical_writing {
+            let measure_intrinsic_grid =
+                |doc: &mut LayoutSession<'_>, available_space, through_containers: bool| {
+                    if vertical_writing {
+                        let probe = LayoutInput {
+                            available_space: Size {
+                                width: available_space,
+                                height: intrinsic_inputs.available_space.height,
+                            },
+                            ..intrinsic_inputs
+                        };
+                        let (_, cell_max) = measure_cell_widths(
+                            doc,
+                            &intrinsic_grid,
+                            probe,
+                            table_column_available_space(&probe, distrib_insets.width),
+                            border_spacing.0,
+                            true,
+                        );
+                        let rows = VerticalRows::new(
+                            vertical_row_widths(&intrinsic_grid, &cell_max, border_spacing.0),
+                            &groups,
+                            collapsed_rows,
+                            border_spacing.0,
+                            0.0,
+                        );
+                        return rows.outer_width(border_spacing.0) + padding_border_size.width;
+                    }
+                    if fixed_intrinsic {
+                        let insets = pad.left
+                            + pad.right
+                            + columns_in_place.as_ref().map_or_else(
+                                || collapsed.inline_border_width(),
+                                |columns| columns.border_width,
+                            )
+                            + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+                        return fixed_intrinsic_width(
+                            doc,
+                            &intrinsic_grid,
+                            border_spacing.0,
+                            insets,
+                            matches!(available_space, AvailableSpace::MaxContent),
+                        );
+                    }
                     let probe = LayoutInput {
                         available_space: Size {
                             width: available_space,
@@ -1341,79 +1393,71 @@ fn compute_table_layout_checked(
                         },
                         ..intrinsic_inputs
                     };
-                    let (_, cell_max) = measure_cell_widths(
+                    resolve_column_widths(
                         doc,
                         &intrinsic_grid,
                         probe,
-                        table_column_available_space(&probe, distrib_insets.width),
+                        Size {
+                            width: distrib_insets.width,
+                            height: 0.0,
+                        },
                         border_spacing.0,
-                        true,
-                    );
-                    let rows = VerticalRows::new(
-                        vertical_row_widths(&intrinsic_grid, &cell_max, border_spacing.0),
-                        &groups,
-                        collapsed_rows,
-                        border_spacing.0,
-                        0.0,
-                    );
-                    return rows.outer_width(border_spacing.0) + padding_border_size.width;
-                }
-                if fixed_intrinsic {
-                    let insets = pad.left
-                        + pad.right
-                        + columns_in_place.as_ref().map_or_else(
-                            || collapsed.inline_border_width(),
-                            |columns| columns.border_width,
-                        )
-                        + border_spacing.0 * (grid.n_cols as f32 + 1.0);
-                    return fixed_intrinsic_width(
-                        doc,
-                        &intrinsic_grid,
-                        border_spacing.0,
-                        insets,
-                        matches!(available_space, AvailableSpace::MaxContent),
-                    );
-                }
-                let probe = LayoutInput {
-                    available_space: Size {
-                        width: available_space,
-                        height: intrinsic_inputs.available_space.height,
-                    },
-                    ..intrinsic_inputs
+                        // A `min-width` or `max-width` keyword stands for the
+                        // width a box that shrinks to fit would give the table.
+                        PercentWidening {
+                            cap: None,
+                            max_content_of: Some(table_idx),
+                            through_containers,
+                            room_widens: true,
+                        },
+                        vertical_writing,
+                    )
+                    .widths
+                    .iter()
+                    .sum::<f32>()
+                        + distrib_insets.width
                 };
-                resolve_column_widths(
-                    doc,
-                    &intrinsic_grid,
-                    probe,
-                    Size {
-                        width: distrib_insets.width,
-                        height: 0.0,
-                    },
-                    border_spacing.0,
-                    // A `min-width` or `max-width` keyword stands for the
-                    // width a box that shrinks to fit would give the table.
-                    PercentWidening {
-                        cap: None,
-                        max_content_of: Some(table_idx),
-                    },
-                    vertical_writing,
-                )
-                .widths
-                .iter()
-                .sum::<f32>()
-                    + distrib_insets.width
-            };
             let grid_minimum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-                measure_intrinsic_grid(doc, AvailableSpace::MinContent)
+                measure_intrinsic_grid(doc, AvailableSpace::MinContent, false)
             });
             let grid_maximum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-                measure_intrinsic_grid(doc, AvailableSpace::MaxContent)
+                measure_intrinsic_grid(doc, AvailableSpace::MaxContent, false)
             });
             let intrinsic_minimum = grid_minimum.max(caption_minimum);
             let intrinsic_maximum = grid_maximum.max(caption_minimum).max(intrinsic_minimum);
+            // The max-content width that a `min-width` or `max-width` keyword
+            // of the table stands for counts the widening wherever the table
+            // is but in a flex row (see `PercentWidening::through_containers`),
+            // when the table is laid out in a room. A query of the containers
+            // above, answered by `intrinsic_maximum`, counts the columns' own
+            // widths, and the keyword is held to that in it. A limit that is
+            // a length does not name the max-content width at all.
+            let names_max_content = |limit: Dimension| {
+                matches!(
+                    limit.expand(),
+                    ExpandedDimension::MaxContent
+                        | ExpandedDimension::FitContent
+                        | ExpandedDimension::FitContentPx(_)
+                        | ExpandedDimension::FitContentPercent(_)
+                        | ExpandedDimension::FitContentCalc(_)
+                )
+            };
+            let keyword_maximum = if flex_row_item
+                || !(names_max_content(wrapper_limits.min.width)
+                    || names_max_content(wrapper_limits.max.width))
+                || !matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+                || max_content_counts_percentages(doc, table_idx)
+            {
+                intrinsic_maximum
+            } else {
+                let grid_maximum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+                    measure_intrinsic_grid(doc, AvailableSpace::MaxContent, true)
+                });
+                grid_maximum.max(caption_minimum).max(intrinsic_minimum)
+            };
             let wrapper_context = IntrinsicSizeContext {
                 min_content: intrinsic_minimum,
-                max_content: intrinsic_maximum,
+                max_content: keyword_maximum,
                 inputs: &inputs,
                 // The layout caller caps the available width at the authored
                 // width. A wrapper's fit-content limit uses its containing
@@ -1442,7 +1486,7 @@ fn compute_table_layout_checked(
             let authored_wrapper_maximum =
                 resolve_intrinsic_limit(doc, table_idx, wrapper_limits.max.width, wrapper_context);
             let wrapper_maximum = authored_wrapper_maximum
-                .map(|maximum| maximum.min(intrinsic_maximum).max(intrinsic_minimum));
+                .map(|maximum| maximum.min(keyword_maximum).max(intrinsic_minimum));
             let wrapper_maximum = if wrapper_minimum
                 .zip(authored_wrapper_maximum)
                 .is_some_and(|(minimum, maximum)| minimum > maximum)
@@ -1565,6 +1609,17 @@ fn compute_table_layout_checked(
             max_content_of: (!vertical_writing
                 && !matches!(table_size.width.expand(), ExpandedDimension::MaxContent))
             .then_some(table_idx),
+            // A flex row measures the `fit-content` width of its item as the
+            // item's max-content width held to the room, which has no
+            // widening in it.
+            room_widens: !(flex_row_item
+                && matches!(
+                    table_size.width.expand(),
+                    ExpandedDimension::FitContent
+                        | ExpandedDimension::FitContentPx(_)
+                        | ExpandedDimension::FitContentPercent(_)
+                        | ExpandedDimension::FitContentCalc(_)
+                )),
         };
         // A collapsed column leaves the table, but its cells still count toward
         // the row heights, which keep the widths the columns had before the
@@ -3353,6 +3408,9 @@ struct ColumnPass {
     /// The table, when a max-content query of it can count the width its
     /// percentage columns ask for (see [`PercentWidening::max_content_of`]).
     max_content_of: Option<usize>,
+    /// Whether a definite room widens the table (see
+    /// [`PercentWidening::room_widens`]).
+    room_widens: bool,
 }
 
 /// How the percentage columns of an auto-width table widen it.
@@ -3371,6 +3429,18 @@ struct PercentWidening {
     /// `max-content` keyword of the table itself, count the columns' own
     /// widths alone.
     max_content_of: Option<usize>,
+    /// Whether that max-content width counts the widening whatever lies above
+    /// the table. A `min-width` or `max-width` keyword that the table states
+    /// itself does, in Chromium, when the table is laid out in a room: it is
+    /// the table's own width that the keyword names, not a size that a flex or
+    /// grid container asks it for. Only a flex row, which sizes its item by
+    /// the plain total, leaves it out.
+    through_containers: bool,
+    /// Whether a definite room, offered to a table that states no width,
+    /// widens it. It does not where a flex row measures the `fit-content`
+    /// width of its item: that is the item's max-content width, capped by the
+    /// room, and the widening is not part of it.
+    room_widens: bool,
 }
 
 /// The width that stands in for an unbounded one when the percentage columns
@@ -3444,6 +3514,8 @@ fn resolve_table_columns(
             .reduce(f32::min)
             .map(|limit| f32_max_compat(limit - insets_width, 0.0)),
         max_content_of: pass.max_content_of,
+        through_containers: false,
+        room_widens: pass.room_widens,
     };
     if pass.table_layout != TableLayoutValue::Fixed {
         return resolve_column_widths(
@@ -3856,7 +3928,11 @@ fn resolve_column_widths(
             AvailableSpace::MinContent => col_min_full,
             AvailableSpace::MaxContent => widening
                 .max_content_of
-                .filter(|&table| has_percent && max_content_counts_percentages(doc, table))
+                .filter(|&table| {
+                    has_percent
+                        && (widening.through_containers
+                            || max_content_counts_percentages(doc, table))
+                })
                 .and_then(|_| {
                     // Only a box that shrinks to fit counts the width the
                     // percentage columns ask for, which a `max-width` still
@@ -3881,7 +3957,7 @@ fn resolve_column_widths(
                 // max-content widths add up to. The room and a `max-width`
                 // still cap that, but never below the natural total.
                 let limit = avail.min(widening.cap.unwrap_or(f32::INFINITY));
-                if let Some(widened) = has_percent
+                if let Some(widened) = (has_percent && widening.room_widens)
                     .then(|| {
                         widened_percent_columns(
                             &col_min_full,

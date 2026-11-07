@@ -747,8 +747,9 @@ fn percentages_that_take_everything_fill_the_room_of_a_shrink_wrapping_box() {
 fn a_max_width_or_min_width_keyword_of_the_table_takes_the_widened_max_content_width() {
     let columns = [column(10.0, Some(50.0)), column(30.0, None)];
     // The keyword stands for the width the table has in a wide room, so it
-    // does not hold the table to the plain total. In a flex item or a table
-    // cell the plain total is that width.
+    // does not hold the table to the plain total. In a flex row item the
+    // plain total is that width, and a table cell is only as wide as the
+    // plain total.
     for table_css in [
         "display:table;float:left;max-width:max-content",
         "display:table;float:left;max-width:fit-content",
@@ -770,4 +771,141 @@ fn a_max_width_or_min_width_keyword_of_the_table_takes_the_widened_max_content_w
         &columns,
     );
     assert_eq!(laid.table(), (0.0, 0.0, 40.0, 10.0));
+}
+
+const FLEX_COLUMN: &str = "display:flex;flex-direction:column;align-items:flex-start";
+
+#[test]
+fn a_flex_row_measures_the_fit_content_width_of_a_table_item_at_the_plain_total() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    // The item's max-content width, held to the room, has no widening in it,
+    // whatever the room of the container is.
+    for (wrapper, table_css) in [
+        ("display:flex", "display:table;width:fit-content"),
+        (
+            "display:flex;flex-wrap:wrap",
+            "display:table;width:fit-content",
+        ),
+        ("display:inline-flex", "display:table;width:fit-content"),
+        ("display:flex;width:50px", "display:table;width:fit-content"),
+        ("display:flex", "display:table;width:fit-content(100px)"),
+    ] {
+        let laid = lay_out_in("", Some(wrapper), table_css, &columns);
+        assert_eq!(
+            laid.table(),
+            (0.0, 0.0, 40.0, 10.0),
+            "{wrapper} {table_css}"
+        );
+        assert_eq!(laid.cells(), PLAIN_CELLS, "{wrapper} {table_css}");
+    }
+    // Across a flex column, a grid and a block, the table lays out in a room
+    // and takes the width its percentages ask for.
+    for wrapper in [
+        Some(FLEX_COLUMN),
+        Some("display:grid;justify-items:start"),
+        None,
+    ] {
+        let laid = lay_out_in("", wrapper, "display:table;width:fit-content", &columns);
+        assert_eq!(laid.table(), (0.0, 0.0, 60.0, 10.0), "{wrapper:?}");
+        assert_eq!(laid.cells(), WIDENED_CELLS, "{wrapper:?}");
+    }
+}
+
+#[test]
+fn a_max_width_or_min_width_keyword_of_the_table_is_widened_outside_a_flex_row() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    // The keyword names the width of the table itself, which the percentages
+    // widen wherever it lies but in a flex row.
+    for table_css in [
+        "display:table;max-width:max-content",
+        "display:table;max-width:fit-content",
+        "display:table;min-width:max-content",
+    ] {
+        for wrapper in [FLEX_COLUMN, "display:grid;justify-items:start"] {
+            let laid = lay_out_in("", Some(wrapper), table_css, &columns);
+            assert_eq!(
+                laid.table(),
+                (0.0, 0.0, 60.0, 10.0),
+                "{wrapper} {table_css}"
+            );
+            assert_eq!(laid.cells(), WIDENED_CELLS, "{wrapper} {table_css}");
+        }
+        // An item of a row that has the room, and one that a flex column holds.
+        for chain in [
+            vec!["display:flex", "display:block;width:300px"],
+            vec![FLEX_COLUMN, "display:block;width:300px"],
+        ] {
+            let laid = lay_out_chain(&chain, table_css, &columns);
+            assert_eq!(
+                laid.table(),
+                (0.0, 0.0, 60.0, 10.0),
+                "{chain:?} {table_css}"
+            );
+        }
+        // The row sizes its item by the plain total.
+        let laid = lay_out_in("", Some("display:flex"), table_css, &columns);
+        assert_eq!(laid.table(), (0.0, 0.0, 40.0, 10.0), "{table_css}");
+        assert_eq!(laid.cells(), PLAIN_CELLS, "{table_css}");
+    }
+}
+
+#[test]
+fn a_min_width_keyword_does_not_grow_the_box_that_shrinks_around_the_table() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    // The inline-block takes the table at the plain total, as a query of a
+    // flex container does, while the table lays out at the width its keyword
+    // names and overflows it.
+    let laid = lay_out_chain(
+        &["display:inline-block", FLEX_COLUMN],
+        "display:table;min-width:max-content",
+        &columns,
+    );
+    assert_eq!(laid.wrapper().2, 40.0);
+    assert_eq!(laid.table(), (0.0, 0.0, 60.0, 10.0));
+    assert_eq!(laid.cells(), WIDENED_CELLS);
+}
+
+#[test]
+fn a_length_limit_bounds_the_widened_table_like_the_room_does() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    let cell = [
+        "display:table",
+        "display:table-row",
+        "display:table-cell;width:150px",
+    ];
+    for (limit, width) in [
+        ("max-width:300px", 60.0),
+        ("max-width:50px", 50.0),
+        ("min-width:30px", 60.0),
+        ("min-width:100px", 100.0),
+        ("min-width:50px;max-width:80px", 60.0),
+    ] {
+        let table_css = format!("display:table;{limit}");
+        for chain in [
+            vec![FLEX_COLUMN],
+            vec!["display:grid;justify-items:start"],
+            cell.to_vec(),
+        ] {
+            let laid = lay_out_chain(&chain, &table_css, &columns);
+            assert_eq!(laid.table().2, width, "{chain:?} {limit}");
+        }
+    }
+    // A limit below the narrowest the columns can be stops at that width.
+    for chain in [vec![FLEX_COLUMN], cell.to_vec()] {
+        let laid = lay_out_chain(&chain, "display:table;max-width:30px", &columns);
+        assert_eq!(laid.table().2, 40.0, "{chain:?}");
+    }
+    // A flex row sizes the item by the plain total, which a length limit
+    // bounds only when it states a larger or smaller one.
+    for (limit, width) in [
+        ("max-width:300px", 40.0),
+        ("max-width:30px", 40.0),
+        ("min-width:30px", 40.0),
+        ("min-width:100px", 100.0),
+        ("min-width:50px;max-width:80px", 50.0),
+    ] {
+        let table_css = format!("display:table;{limit}");
+        let laid = lay_out_chain(&["display:flex"], &table_css, &columns);
+        assert_eq!(laid.table().2, width, "flex row {limit}");
+    }
 }
