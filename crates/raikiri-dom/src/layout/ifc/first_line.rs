@@ -102,7 +102,9 @@ impl FirstLine {
             .map(|&id| StyleNodeId::new(id as u64))
             .collect();
         // Resolve the root and each decorating origin in one inheritance walk.
-        // The ordinary pseudo decides whether a box paints a decoration.
+        // The ordinary pseudo decides whether a box paints a decoration. When
+        // the line is that of a block box, its decoration and background are
+        // known only once the box's content is: see `generated_block`.
         let mut decorating = Vec::new();
         let mut background = None;
         let root_values =
@@ -117,21 +119,6 @@ impl FirstLine {
                     background = Some((origin.0 as usize, style.clone()));
                 }
             })?;
-        // The line belongs to the block box, and the innermost `::first-line`
-        // sits inside it: the decoration and the background are those of that
-        // box alone, resolved over the values of the block (so `currentColor`
-        // is the block's color), and the boxes around do not reach the line.
-        if let Some(pseudo) = own_block
-            && let Some(&origin) = origins.last()
-            && let Some(style) = cascade.first_line_block_pseudo_style(&origins, root_id, pseudo)
-        {
-            if decorates(cascade, origin) {
-                decorating.push((origin.0 as usize, style.clone()));
-            }
-            if paints_background(&style) {
-                background = Some((origin.0 as usize, style));
-            }
-        }
         Some(Self {
             root: root_id,
             origins,
@@ -198,13 +185,23 @@ impl FirstLine {
 
     /// The values the text of the block-level `pseudo` of `element` has on
     /// the first line, when the first line is the first line of that very box.
+    /// `text` is the content of the box once resolved, and `has_images`
+    /// whether it holds any image: a box whose content collapses to nothing
+    /// has no line, and so no first line.
     pub(crate) fn generated_block(
         &self,
         cascade: &CascadeResult,
         element: usize,
         pseudo: PseudoElem,
+        text: &str,
+        has_images: bool,
     ) -> Option<ComputedValues> {
-        if self.own_block != Some(pseudo) || StyleNodeId::new(element as u64) != self.root {
+        let element = StyleNodeId::new(element as u64);
+        if self.own_block != Some(pseudo) || element != self.root {
+            return None;
+        }
+        let ordinary = cascade.pseudo.get(&(element, pseudo))?;
+        if !has_images && is_collapsed_white_space(text, ordinary.effective_white_space_collapse) {
             return None;
         }
         cascade.first_line_block_pseudo_style(&self.origins, self.root, pseudo)
@@ -236,7 +233,27 @@ impl FirstLine {
     /// Record `values`, those the text of the block-level generated box `id`
     /// has on the first line. The box itself keeps its own style: only the
     /// text inside it is on the `::first-line`.
-    pub(crate) fn note_generated_block_text(&mut self, id: usize, values: ComputedValues) {
+    ///
+    /// The line belongs to the block box and the innermost `::first-line`
+    /// sits inside it, so its decoration and background are those of that
+    /// box alone, resolved over the values of the block (`currentColor` is
+    /// the block's color), and the boxes around do not reach the line.
+    pub(crate) fn note_generated_block_text(
+        &mut self,
+        cascade: &CascadeResult,
+        id: usize,
+        values: ComputedValues,
+    ) {
+        if let Some(&origin) = self.origins.last() {
+            if decorates(cascade, origin) {
+                self.styles
+                    .decorating
+                    .push((origin.0 as usize, values.clone()));
+            }
+            if paints_background(&values) {
+                self.styles.background = Some((origin.0 as usize, values.clone()));
+            }
+        }
         self.styles.texts.insert(id, values);
     }
 
@@ -268,7 +285,7 @@ fn collapses_blank_text(cv: &ComputedValues) -> bool {
 /// Whether the block-level generated box with `cv` holds content a line can
 /// show. A `content` that is resolved while the paragraph is laid out, such
 /// as a counter, a quote or an attribute, is not judged here and counts as
-/// content.
+/// content; [`FirstLine::generated_block`] judges it once it is resolved.
 fn holds_lines(cv: &ComputedValues) -> bool {
     !cv.content.iter().all(|part| {
         matches!(part, ContentComponent::Literal(text)

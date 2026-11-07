@@ -387,6 +387,41 @@ fn a_block_before_of_collapsing_white_space_makes_no_line() {
 }
 
 #[test]
+fn a_block_before_whose_resolved_content_collapses_makes_no_line() {
+    // The content is known only when the paragraph is laid out. With no line
+    // in the box nothing is on the `::first-line`: not the text of the
+    // paragraph, and neither a background nor an underline.
+    for body in [
+        "<p>X X</p>",
+        "<p data-prefix=''>X X</p>",
+        "<p data-prefix='  '>X X</p>",
+    ] {
+        let rgba = raster(
+            body,
+            "p{color:red;width:40px} \
+             p::first-line{background:blue;text-decoration:underline blue;text-underline-offset:12px} \
+             p::before{content:attr(data-prefix);display:block}",
+        );
+        assert_eq!(count(&rgba, BLUE), 0, "{body}");
+        assert!(tinted_rows(&rgba, 2).is_empty(), "{body}");
+        assert_eq!(count(&rgba, RED), 200, "{body}");
+    }
+}
+
+#[test]
+fn a_block_before_whose_resolved_content_is_preserved_white_space_holds_the_first_line() {
+    // The preserved space makes a line, and the background covers its advance.
+    let rgba = raster(
+        "<p data-prefix=' '>XX</p>",
+        "p{color:red;width:40px} p::first-line{background:blue} \
+         p::before{content:attr(data-prefix);display:block;white-space:pre}",
+    );
+    assert_eq!(pixel(&rgba, 5, 5), BLUE);
+    assert_eq!(count(&rgba, BLUE), 100);
+    assert_eq!(count(&rgba, RED), 200);
+}
+
+#[test]
 fn the_first_line_of_an_enclosing_block_reaches_a_block_before() {
     let rgba = raster(
         "<div><p>XXXX</p></div>",

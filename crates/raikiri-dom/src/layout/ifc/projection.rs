@@ -515,11 +515,10 @@ fn push_generated(
                 .and_then(|first_line| first_line.generated(doc, cascade, element, pseudo))
         } else {
             // A block-level box of the paragraph itself has the first line
-            // when it comes first.
-            first_letter
-                .first_line
-                .as_ref()
-                .and_then(|first_line| first_line.generated_block(cascade, element, pseudo))
+            // when it comes first and its content makes a line.
+            first_letter.first_line.as_ref().and_then(|first_line| {
+                first_line.generated_block(cascade, element, pseudo, &text, has_images)
+            })
         };
         match first_line {
             Some(values) if inline_level => {
@@ -534,7 +533,7 @@ fn push_generated(
                 // shodo has no first line to style: only its paint takes the
                 // values, and only for the text, not the box around it.
                 if let Some(first_line) = first_letter.first_line.as_mut() {
-                    first_line.note_generated_block_text(id.0 as usize, values);
+                    first_line.note_generated_block_text(cascade, id.0 as usize, values);
                 }
                 builder.open_inline(id, &inline_style, edges)
             }
