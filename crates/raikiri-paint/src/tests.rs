@@ -3150,6 +3150,219 @@ fn first_line_of_ancestor_blocks() {
     );
 }
 
+/// The solid fills of `scene` with their bounding boxes, in paint order, as
+/// ([red, green, blue, alpha], [left, top, right, bottom]); the page's own
+/// fill is left out.
+fn solid_fills(scene: &Scene) -> Vec<([u8; 4], [f64; 4])> {
+    use kurbo::Shape;
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => {
+                let anyrender::Paint::Solid(color) = &fill.brush else {
+                    return None;
+                };
+                let bounds = fill.shape.bounding_box();
+                Some((
+                    color.to_rgba8().to_u8_array(),
+                    [bounds.x0, bounds.y0, bounds.x1, bounds.y1],
+                ))
+            }
+            _ => None,
+        })
+        .skip(1)
+        .collect()
+}
+
+/// The fills of the page `html` paints, with the Ahem font and no body
+/// margin; the glyphs are transparent, so only boxes show.
+fn first_line_fills(css: &str, body: &str) -> Vec<([u8; 4], [f64; 4])> {
+    let html = format!(
+        "<html><head><style>body{{margin:0}}p,div,section{{margin:0;width:100px;font:10px/10px Ahem;color:transparent}}{css}</style></head><body>{body}</body></html>"
+    );
+    solid_fills(&painted_html_with_ahem(html.as_bytes()))
+}
+
+const FIRST_LINE_RED: [u8; 4] = [255, 0, 0, 255];
+
+/// A `::first-line` background covers the content of the first line as an
+/// inline box around it would, as Chromium draws it (CSS Pseudo 4 §2.1.2):
+/// the content area of the line's font along the block axis, and the text
+/// along the inline axis without the space that hangs at the line end.
+#[test]
+fn first_line_background_covers_the_content_of_the_first_line() {
+    let red = "p::first-line{background:rgb(255,0,0)}";
+    // (css, body, the box of the red fill)
+    let cases: [(&str, &str, [f64; 4]); 11] = [
+        ("", "<p>XXXX XXXX XXXX</p>", [0.0, 0.0, 90.0, 10.0]),
+        // The content area, not the line box.
+        (
+            "p{line-height:20px}",
+            "<p>XXXX XXXX XXXX</p>",
+            [0.0, 5.0, 90.0, 15.0],
+        ),
+        // The font of the `::first-line`, centered on the line.
+        (
+            "p::first-line{font-size:20px}",
+            "<p>XX XXXX XXXX</p>",
+            [0.0, -5.0, 40.0, 15.0],
+        ),
+        (
+            "p{text-align:center}",
+            "<p>XXXX XXXX XXXX</p>",
+            [5.0, 0.0, 95.0, 10.0],
+        ),
+        (
+            "p{text-indent:20px}",
+            "<p>XXXX XXXX XXXX</p>",
+            [20.0, 0.0, 60.0, 10.0],
+        ),
+        ("", "<p>XX<br>XXXX</p>", [0.0, 0.0, 20.0, 10.0]),
+        (
+            "p{padding:5px 7px}",
+            "<p>XXXX XXXX XXXX</p>",
+            [7.0, 5.0, 97.0, 15.0],
+        ),
+        // The hanging space is at the other end of a right-to-left line.
+        (
+            "p{direction:rtl}",
+            "<p>XXXX XXXX XXXX</p>",
+            [10.0, 0.0, 100.0, 10.0],
+        ),
+        // The font's content area sits on the baseline, under an inline
+        // block that is taller than the line.
+        (
+            "",
+            "<p>X<i style=\"display:inline-block;width:10px;height:30px\"></i>X XXXX XXXX</p>",
+            [0.0, 22.0, 80.0, 32.0],
+        ),
+        (
+            "p{width:auto;height:100px;writing-mode:vertical-rl}",
+            "<p>XXXX XXXX XXXX</p>",
+            [10.0, 0.0, 20.0, 90.0],
+        ),
+        (
+            "p{width:auto;height:100px;writing-mode:vertical-lr}",
+            "<p>XXXX XXXX XXXX</p>",
+            [0.0, 0.0, 10.0, 90.0],
+        ),
+    ];
+    for (css, body, expected) in cases {
+        let fills = first_line_fills(&format!("{red}{css}"), body);
+        assert_eq!(fills, [(FIRST_LINE_RED, expected)], "{css} {body}");
+    }
+}
+
+/// A first line with no content has nothing to cover.
+#[test]
+fn first_line_background_skips_an_empty_first_line() {
+    let fills = first_line_fills("p::first-line{background:rgb(255,0,0)}", "<p><br>XX</p>");
+    assert_eq!(fills, []);
+}
+
+/// The background is only on the first line, and each paragraph has one.
+#[test]
+fn first_line_background_is_on_the_first_line_of_each_block() {
+    let fills = first_line_fills(
+        "p::first-line{background:rgb(255,0,0)}",
+        "<p>XXXX XXXX XXXX</p><p style=\"margin-top:10px\">XX</p>",
+    );
+    assert_eq!(
+        fills,
+        [
+            (FIRST_LINE_RED, [0.0, 0.0, 90.0, 10.0]),
+            (FIRST_LINE_RED, [0.0, 30.0, 20.0, 40.0]),
+        ]
+    );
+}
+
+/// The `::first-line` is an inline box around the line, so the boxes of the
+/// inline elements on it paint above its background.
+#[test]
+fn first_line_background_is_below_inline_boxes() {
+    let fills = first_line_fills(
+        "p::first-line{background:rgb(255,0,0)}span{background:rgb(0,0,255)}",
+        "<p>X<span>XX</span>X XXXX XXXX</p>",
+    );
+    assert_eq!(
+        fills,
+        [
+            (FIRST_LINE_RED, [0.0, 0.0, 90.0, 10.0]),
+            ([0, 0, 255, 255], [10.0, 0.0, 30.0, 10.0]),
+        ]
+    );
+}
+
+/// The `::first-line` of the innermost block that has one paints alone, as in
+/// Chromium: it shadows the backgrounds of the blocks around it, even when it
+/// sets none itself.
+#[test]
+fn nested_first_lines_paint_only_the_innermost_background() {
+    let translucent_red = ([255, 0, 0, 128], [0.0, 0.0, 90.0, 10.0]);
+    let translucent_blue = ([0, 0, 255, 128], [0.0, 0.0, 90.0, 10.0]);
+    let translucent_green = ([0, 255, 0, 128], [0.0, 0.0, 90.0, 10.0]);
+    let outer = "div::first-line{background:rgba(255,0,0,.5)}";
+    for (css, body, expected) in [
+        (
+            outer,
+            "<div><p>XXXX XXXX XXXX</p></div>",
+            vec![translucent_red],
+        ),
+        (
+            "div::first-line{background:rgba(255,0,0,.5)}p::first-line{background:rgba(0,0,255,.5)}",
+            "<div><p>XXXX XXXX XXXX</p></div>",
+            vec![translucent_blue],
+        ),
+        (
+            "div::first-line{background:rgba(255,0,0,.5)}p::first-line{color:transparent}",
+            "<div><p>XXXX XXXX XXXX</p></div>",
+            vec![],
+        ),
+        (
+            "div::first-line{background:rgba(255,0,0,.5)}section::first-line{background:rgba(0,255,0,.5)}",
+            "<div><section><p>XXXX XXXX XXXX</p></section></div>",
+            vec![translucent_green],
+        ),
+    ] {
+        assert_eq!(first_line_fills(css, body), expected, "{css}");
+    }
+}
+
+/// A translucent `::first-line` composites its background with the rest of
+/// its first line.
+#[test]
+fn translucent_first_line_holds_its_background() {
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>body{margin:0}p{width:100px;font:10px/10px Ahem} p::first-line{opacity:.5;background:red}</style></head><body><p>XXXX XXXX XXXX</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "glyphs 4", "push 0.5", "fill", "glyphs 10", "pop"]
+    );
+}
+
+/// An image background is laid out over the box of the first line.
+#[test]
+fn first_line_gradient_fills_the_box_of_the_first_line() {
+    use kurbo::Shape;
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>body{margin:0}p{width:100px;font:10px/10px Ahem;color:transparent} p::first-line{background:linear-gradient(red,blue)}</style></head><body><p>XXXX XXXX XXXX</p></body></html>"#,
+    );
+    let gradients: Vec<[f64; 4]> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if !matches!(fill.brush, anyrender::Paint::Solid(_)) => {
+                let bounds = fill.shape.bounding_box();
+                Some([bounds.x0, bounds.y0, bounds.x1, bounds.y1])
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gradients, [[0.0, 0.0, 90.0, 10.0]]);
+}
+
 /// The fragments of a `::first-letter` composite with the opacity of the
 /// style they retain for the text they wrap; one resolving it to 1 is no
 /// group, even when the pseudo-element's own opacity is below one.
