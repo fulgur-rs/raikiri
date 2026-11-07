@@ -1065,6 +1065,12 @@ impl Node {
             .map_or(&[], |ifc| ifc.first_line_decorating())
     }
 
+    /// The `::first-line` box whose background covers the first formatted
+    /// line of an ifc root, paired with the id of the block it belongs to.
+    pub fn ifc_first_line_background(&self) -> Option<&(usize, raikiri_style::ComputedValues)> {
+        self.ifc.as_ref()?.first_line_background()
+    }
+
     /// Enclosing typographic pseudo box, when ancestor block letters nest.
     pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
         self.ifc.as_ref()?.typographic_parent(box_id)

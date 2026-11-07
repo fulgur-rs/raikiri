@@ -32,6 +32,9 @@ pub(crate) struct FirstLineStyles {
     /// The `::first-line` boxes that decorate the line, by the block they
     /// belong to, outermost first.
     decorating: Vec<(usize, ComputedValues)>,
+    /// The `::first-line` box whose background covers the line, with the
+    /// block it belongs to.
+    background: Option<(usize, ComputedValues)>,
 }
 
 impl FirstLineStyles {
@@ -52,6 +55,17 @@ impl FirstLineStyles {
     /// the first line.
     pub(crate) fn decorating(&self) -> &[(usize, ComputedValues)] {
         &self.decorating
+    }
+
+    /// The `::first-line` box whose background covers the content of the
+    /// first line, below the boxes of the inline elements on it, with the
+    /// block it belongs to.
+    ///
+    /// Only the innermost block that has a `::first-line` of its own paints
+    /// one, as Chromium does: it shadows the backgrounds of the blocks around
+    /// it, even when it sets none itself.
+    pub(crate) fn background(&self) -> Option<&(usize, ComputedValues)> {
+        self.background.as_ref()
     }
 }
 
@@ -81,12 +95,18 @@ impl FirstLine {
         // Resolve the root and each decorating origin in one inheritance walk.
         // The ordinary pseudo decides whether a box paints a decoration.
         let mut decorating = Vec::new();
+        let mut background = None;
         let root_values =
             cascade.first_line_block_style(doc, &origins, root_id, |origin, style| {
                 if let Some(ordinary) = cascade.pseudo.get(&(origin, PseudoElem::FirstLine))
                     && has_paintable_line(ordinary.text_decoration_line)
                 {
                     decorating.push((origin.0 as usize, style.clone()));
+                }
+                if origins.last() == Some(&origin)
+                    && (style.background_color.a > 0 || style.has_background_image())
+                {
+                    background = Some((origin.0 as usize, style.clone()));
                 }
             })?;
         Some(Self {
@@ -95,6 +115,7 @@ impl FirstLine {
             root_values,
             styles: FirstLineStyles {
                 decorating,
+                background,
                 ..FirstLineStyles::default()
             },
         })

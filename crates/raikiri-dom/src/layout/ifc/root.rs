@@ -553,6 +553,12 @@ impl IfcRoot {
         self.first_line_styles.decorating()
     }
 
+    /// The `::first-line` box whose background covers the first formatted
+    /// line, with the block it belongs to.
+    pub(crate) fn first_line_background(&self) -> Option<&(usize, raikiri_style::ComputedValues)> {
+        self.first_line_styles.background()
+    }
+
     pub(crate) fn typographic_fragment(
         &self,
         box_id: usize,
