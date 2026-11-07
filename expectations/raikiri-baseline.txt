@@ -5577,3 +5577,4 @@ css/css-text/line-breaking/line-breaking-atomic-002.html
 css/css-text/line-breaking/line-breaking-atomic-009.html
 css/css-text/line-breaking/line-breaking-replaced-001.html
 css/css-text/line-breaking/line-breaking-replaced-006.html
+css/css-flexbox/align-baseline.html

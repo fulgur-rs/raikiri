@@ -2,20 +2,25 @@
 //!
 //! Authored dimensions are measured by the table itself. This pass handles
 //! external stretch assignments which still overwrite the returned grid size
-//! or leave a reversed flex cross-start at the old position.
+//! or leave a reversed flex cross-start at the old position. It also records
+//! the room that each line of a wrapping column container gives the items that
+//! align by a baseline, for the container to align them in.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::inline_baseline;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{LayoutInput, LayoutOutput, NodeId, RunMode};
 use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::algorithms::{
-    FlexReplayCall, flex_baseline_source, wrap_reverse,
+    FlexReplayCall, baseline_lines, flex_baseline_source, wrap_reverse,
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Point, Size};
-use raikiri_layout_style::values::{AlignItemsKeyword, Direction, Position, ResolveOrZero};
+use raikiri_layout_style::values::{
+    AlignContent, AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, Direction, Position,
+    ResolveOrZero,
+};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
@@ -97,8 +102,17 @@ pub(super) fn layout(
             ReadRole::GridContainer
         },
     );
+    // The items of a column container that wraps its items and align by a
+    // baseline: the container aligns them after the flex algorithm, in the
+    // room each of its lines gives them.
+    let wrapped_baselines = if flex {
+        super::inline_baseline::wrapped_members(tree, idx)
+    } else {
+        HashSet::new()
+    };
     let replay = flex
         && (wrap_reverse::required(tree, node)
+            || !wrapped_baselines.is_empty()
             || (parent.flex_direction_is_row()
                 && super::TaffyChildIter::new_for_session(tree, idx).any(|child| {
                     let margin = tree.query_style(child, ReadRole::FlexItem).margin();
@@ -120,6 +134,8 @@ pub(super) fn layout(
         .pop()
         .expect("table capture was pushed before layout");
     if flex {
+        tree.context.flex_baseline_lines.remove(&idx);
+        let mut flex_start_lines = false;
         if let Some(correction) = capture.calls.as_deref().and_then(|calls| {
             wrap_reverse::candidate(tree, node, inputs, calls, &output, |child| {
                 Some(tree.nodes[child].layout)
@@ -130,6 +146,29 @@ pub(super) fn layout(
                 tree.install_root_static_position_overrides(NodeId::from(child));
             }
             output = correction.output;
+            flex_start_lines = true;
+        }
+        if let Some(calls) = capture
+            .calls
+            .as_deref()
+            .filter(|_| !wrapped_baselines.is_empty())
+        {
+            // The correction placed the lines at the start of the container.
+            let content = flex_start_lines.then_some(AlignContent {
+                keyword: AlignContentKeyword::FlexStart,
+                safety: AlignmentSafety::Unsafe,
+            });
+            if let Some(rooms) = baseline_lines::rooms(
+                tree,
+                node,
+                inputs,
+                calls,
+                output.size,
+                &wrapped_baselines,
+                content,
+            ) {
+                tree.context.flex_baseline_lines.insert(idx, rooms);
+            }
         }
         super::flex_cross_margins::normalize(
             tree,

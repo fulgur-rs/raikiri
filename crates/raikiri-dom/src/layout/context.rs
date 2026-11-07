@@ -7,6 +7,7 @@ use crate::fragment::FragmentationContext;
 use crate::layout::LayoutWarn;
 use crate::layout::protocol::{self, LayoutInput};
 use crate::layout::taffy_adapter::GridInfo;
+use crate::layout::taffy_adapter::algorithms::baseline_lines::LineRoom;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Point, Size};
 
@@ -110,6 +111,10 @@ pub(crate) struct LayoutContext {
     /// What the grid algorithm reported for each grid container laid out so
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
+    /// The room the flex line of each baseline-aligned item gives it, by item,
+    /// for each column flex container that wraps its items and was laid out
+    /// last (see `inline_baseline::align_flex` in [`crate::layout::dispatch`]).
+    pub(crate) flex_baseline_lines: HashMap<usize, HashMap<usize, LineRoom>>,
     pub(super) table_item_captures: Vec<super::dispatch::table_items::Capture>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     /// The root whose out-of-flow candidates are being recorded, and the
@@ -290,6 +295,7 @@ impl<'doc> LayoutSession<'doc> {
             self.scoped_overrides.assert_inactive();
             self.document.layout_cache_context.publish_metadata();
             self.context.grid_layout_info.clear();
+            self.context.flex_baseline_lines.clear();
             self.context.taffy_hoisted_children.clear();
             self.context.safe_static_positions.clear();
             self.context.vertical_block_size_seeds.clear();

@@ -233,6 +233,29 @@ fn owned_and_borrowed_projections_agree() {
 }
 
 #[test]
+fn a_flex_line_probe_replaces_the_item_alignment_and_drops_its_inset() {
+    let mut cv = ComputedValues::initial();
+    cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
+    cv.position = PositionValue::Relative;
+    cv.left = L::Px(4.0);
+    query(&cv, |v| {
+        let plain = TaffyStyle::new(v);
+        assert_eq!(FI::align_self(&plain), Some(taffy::AlignSelf::CENTER));
+        assert_eq!(
+            CS::inset(&plain).left,
+            taffy::LengthPercentageAuto::length(4.0)
+        );
+        let probe = plain.with_flex_line_probe(values::AlignSelf::END);
+        assert_eq!(FI::align_self(&probe), Some(taffy::AlignSelf::END));
+        assert_eq!(CS::inset(&probe), taffy::Rect::auto());
+        // Everything else the item answers stays as it was.
+        assert_eq!(CS::position(&probe), CS::position(&plain));
+        assert_eq!(CS::margin(&probe), CS::margin(&plain));
+        assert_eq!(FC::align_content(&probe), FC::align_content(&plain));
+    });
+}
+
+#[test]
 fn flex_alignment_hint_leaves_block_and_grid_alignment_unchanged() {
     query(&ComputedValues::initial(), |view| {
         let plain = TaffyStyle::new(view);

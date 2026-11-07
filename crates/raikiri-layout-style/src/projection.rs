@@ -32,19 +32,38 @@ use taffy::{
 /// A [`LayoutStyleView`] as the style Taffy's algorithms read.
 #[derive(Clone, Copy)]
 #[doc(hidden)]
-pub struct TaffyStyle<'a>(LayoutStyleView<'a>, Option<crate::values::AlignContent>);
+pub struct TaffyStyle<'a>(
+    /// The style that is projected.
+    LayoutStyleView<'a>,
+    /// The alignment of flex lines that replaces the style's own, for an
+    /// algorithm replay.
+    Option<crate::values::AlignContent>,
+    /// The alignment of a flex item that replaces the style's own, for an
+    /// algorithm replay that finds the room its line gives it. The item's
+    /// inset is dropped as well.
+    Option<crate::values::AlignSelf>,
+);
 
 impl<'a> TaffyStyle<'a> {
     /// Project `view` onto Taffy's style traits.
     #[inline]
     pub const fn new(view: LayoutStyleView<'a>) -> Self {
-        Self(view, None)
+        Self(view, None, None)
     }
 
     /// Override only flex line alignment for an algorithm replay.
     #[inline]
     pub const fn with_flex_align_content(mut self, alignment: crate::values::AlignContent) -> Self {
         self.1 = Some(alignment);
+        self
+    }
+
+    /// Place a flex item for an algorithm replay that finds the room its line
+    /// gives it: aligned by `alignment`, and without the offset of a relative
+    /// box, which moves the item and not the line.
+    #[inline]
+    pub const fn with_flex_line_probe(mut self, alignment: crate::values::AlignSelf) -> Self {
+        self.2 = Some(alignment);
         self
     }
 }
@@ -175,10 +194,17 @@ impl CoreStyle for TaffyStyle<'_> {
         min_size -> taffy::Size<taffy::LengthPercentageAuto>,
         max_size -> taffy::Size<taffy::LengthPercentageAuto>,
         margin -> taffy::Rect<taffy::LengthPercentageAuto>,
-        inset -> taffy::Rect<taffy::LengthPercentageAuto>,
         padding -> taffy::Rect<taffy::LengthPercentage>,
         border -> taffy::Rect<taffy::LengthPercentage>,
         contain -> taffy::Contain,
+    }
+    #[inline]
+    fn inset(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
+        if self.2.is_some() {
+            taffy::Rect::auto()
+        } else {
+            self.0.inset().to_taffy()
+        }
     }
 }
 
@@ -241,7 +267,10 @@ impl FlexboxItemStyle for TaffyStyle<'_> {
     }
     convert! {
         flex_basis -> taffy::Dimension,
-        align_self -> Option<taffy::AlignSelf>,
+    }
+    #[inline]
+    fn align_self(&self) -> Option<taffy::AlignSelf> {
+        self.2.or_else(|| self.0.align_self()).to_taffy()
     }
 }
 
