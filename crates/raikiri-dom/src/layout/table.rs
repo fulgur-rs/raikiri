@@ -36,7 +36,7 @@
 
 use raikiri_layout_style::values::{
     BoxSizing, ContainingBlockClaims, Dimension, Direction, ExpandedDimension, Float,
-    LengthPercentage, MaybeResolve, Position, ResolveOrZero,
+    LengthPercentage, MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
@@ -4762,6 +4762,110 @@ fn cell_replaced_height_basis(
     })
 }
 
+/// Whether `dimension` is a percentage, or a `calc()` with a percentage in it.
+fn is_percentage(dimension: Dimension) -> bool {
+    match dimension.expand() {
+        ExpandedDimension::Percent(_) => true,
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
+        _ => false,
+    }
+}
+
+/// The in-flow children of `cell` that pass `keep`, whose heights can ask for
+/// a percentage of the cell. A vertical cell has none.
+fn cell_children_where(
+    doc: &LayoutSession<'_>,
+    cell: usize,
+    keep: impl Fn(&LayoutSession<'_>, usize) -> bool,
+) -> Vec<usize> {
+    if table_writing_mode(doc, cell).is_vertical() {
+        return Vec::new();
+    }
+    doc.ifc_layout_node(cell)
+        .expect("table cell layout view")
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| doc.nodes[child].layout_position() != Position::Absolute)
+        .filter(|&child| keep(doc, child))
+        .collect()
+}
+
+/// Whether `child` is a block-level box: a block, a flow-root or a list item,
+/// a flex or grid container with block outer display, or a float.
+fn is_block_level_child(doc: &LayoutSession<'_>, child: usize) -> bool {
+    let display = doc.nodes[child].display();
+    matches!(
+        display,
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) || display.is_block_flex_or_grid_container()
+        || doc.table_style(child).float().is_floated()
+}
+
+/// The children of `cell` that a row measure leaves out of the height of a
+/// cell with a stated height: block-level boxes with a percentage `height`
+/// that scroll in the block direction (`overflow-y: auto | scroll`). Such a box
+/// asks its row for nothing beyond its margins, padding, border and
+/// `min-height` length, so a scrollable box sized to its cell does not stretch
+/// the cell to its own content, as in Chromium. A float, an inline-level box
+/// or a box deeper in the cell is not left out, and neither is a replaced box
+/// (see [`percentage_height_replaced_children`]) or any box in a cell without a
+/// stated height.
+fn restricted_scroller_children(doc: &LayoutSession<'_>, cell: usize) -> Vec<usize> {
+    cell_children_where(doc, cell, |doc, child| {
+        let style = doc.table_style(child);
+        is_block_level_child(doc, child)
+            && !style.float().is_floated()
+            && !crate::paint_rules::is_replaced_element(doc.document, child)
+            && style.overflow().y == Overflow::Scroll
+            && is_percentage(style.size().height)
+    })
+}
+
+/// The replaced children of `cell` with a percentage `height`, which take it of
+/// the height the cell states even when the row is taller (see
+/// [`cell_replaced_height_basis`]).
+fn percentage_height_replaced_children(doc: &LayoutSession<'_>, cell: usize) -> Vec<usize> {
+    cell_children_where(doc, cell, |doc, child| {
+        crate::paint_rules::is_replaced_element(doc.document, child)
+            && is_percentage(doc.table_style(child).size().height)
+    })
+}
+
+/// Whether a child of `cell` that is not a replaced box asks for a percentage
+/// of the cell's height with its `height`, `min-height` or `max-height`. Such
+/// a box fills the row of a cell that states a height, also when its own
+/// content set the row; a replaced box takes the stated height instead.
+fn has_percentage_height_child(doc: &LayoutSession<'_>, cell: usize) -> bool {
+    !cell_children_where(doc, cell, |doc, child| {
+        let style = doc.table_style(child);
+        !crate::paint_rules::is_replaced_element(doc.document, child)
+            && (is_percentage(style.size().height)
+                || is_percentage(style.min_size().height.into())
+                || is_percentage(style.max_size().height.into()))
+    })
+    .is_empty()
+}
+
+/// A scoped `height` of `height` pixels for `child`.
+fn child_height_override(
+    doc: &LayoutSession<'_>,
+    child: usize,
+    height: f32,
+) -> (
+    crate::node::arena::BoxKey,
+    raikiri_layout_style::OwnedPropertyOverride,
+) {
+    let key = doc.nodes.box_key(child).expect("child has a box key");
+    let entry = raikiri_layout_style::OwnedPropertyOverride::length(
+        raikiri_layout_style::LengthProperty::Height,
+        raikiri_style::ComputedLengthPercentageOrAuto::Px(height.max(0.0)),
+        true,
+    )
+    .expect("physical child height");
+    (key, entry)
+}
+
 /// Lay `cell` out at `cell_width` with no definite height, and record what the
 /// rows and the final placement need of it: the lines it can keep, its height
 /// and its baseline. Returns the height it asks of its rows.
@@ -4816,7 +4920,15 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
                 false,
             )
             .expect("physical cell height");
-            doc.with_overrides(vec![(key, entry)], |doc| {
+            let mut entries = vec![(key, entry)];
+            // A cell that states a length height measures its scrollable
+            // children with a percentage height as empty boxes.
+            if resolve_dimension(authored_height, None).is_some() {
+                for child in restricted_scroller_children(doc, cell.node_id) {
+                    entries.push(child_height_override(doc, child, 0.0));
+                }
+            }
+            doc.with_overrides(entries, |doc| {
                 doc.table_layout_node_mut(cell.node_id).cache.clear();
                 measure(doc)
             })
@@ -5106,49 +5218,94 @@ fn place_cells(
                 (rect, OofCandidates::new(), None)
             } else {
                 // A row-derived height resolves percentage and stretch children
-                // only when it adds room beyond the cell's natural content.
-                // Feeding a content-determined height back into that content
-                // would grow it again. Vertical tables retain their inline-axis
-                // basis, which final column placement can change later.
-                // Summing fractional row tracks can add roundoff to a span
-                // whose content has not gained any independent room.
+                // only when it adds room beyond the cell's natural content, or
+                // when the cell states a height itself (see below). Vertical
+                // tables retain their inline-axis basis, which final column
+                // placement can change later. Summing fractional row tracks
+                // can add roundoff to a span whose content has not gained any
+                // independent room.
                 let grew = cell_height > cell.natural_height + SAME_EDGE_TOLERANCE;
                 let table_height_is_definite = vertical_writing
                     || ((height_is_definite || stretch_height_is_resolved) && grew);
                 let cell_has_authored_height =
                     resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
-                let cell_height_is_definite =
-                    table_height_is_definite || (grew && cell_has_authored_height);
+                // A cell that states a height gives the boxes in it that ask for
+                // a percentage of it the row height as that basis, also when
+                // its own content set that height: a box that asked for a
+                // percentage of the stated height meanwhile (see
+                // `restricted_scroller_children`) or that took its content
+                // height for it fills the row, which Chromium does too. A cell
+                // without a stated height leaves them auto, as the row is not a
+                // height it was given. A replaced box keeps taking its share of
+                // the stated height (see below).
+                let feeds_row_height =
+                    cell_has_authored_height && has_percentage_height_child(doc, cell.node_id);
+                let cell_height_is_definite = table_height_is_definite
+                    || (cell_has_authored_height && (grew || feeds_row_height));
+                let has_left_out_scrollers = cell_has_authored_height
+                    && !restricted_scroller_children(doc, cell.node_id).is_empty();
                 // Only the layout of this pass may leave the height the content
                 // has: a cached one, or a cell that is not a block container,
                 // leaves none, and the height measured before stands.
                 doc.nodes[cell.node_id].auto_block_size = None;
-                let output = layout_cell_contents(
-                    doc,
-                    cell.node_id,
-                    LayoutInput {
-                        run_mode: RunMode::PerformLayout,
-                        sizing_mode: SizingMode::InherentSize,
-                        axis: RequestedAxis::Horizontal,
-                        known_dimensions: Size {
-                            width: Some(cell_width),
-                            height: Some(cell_height),
+                // Replaced boxes in the cell keep taking their percentage of the
+                // height the cell states, as in the row measure: a descendant
+                // through the basis stack, a child of the cell by a length.
+                let stated_basis = cell_has_authored_height
+                    .then(|| cell_replaced_height_basis(doc, cell.node_id, cell_width))
+                    .flatten();
+                let basis_depth = doc.context.table_cell_replaced_height_bases.len();
+                let mut replaced_heights = Vec::new();
+                if let Some(basis) = stated_basis {
+                    doc.context
+                        .table_cell_replaced_height_bases
+                        .push((cell.node_id, basis));
+                    replaced_heights.extend(
+                        percentage_height_replaced_children(doc, cell.node_id)
+                            .into_iter()
+                            .filter_map(|child| {
+                                let style = doc.table_style(child);
+                                let height = resolve_dimension(style.size().height, Some(basis))?;
+                                Some(child_height_override(doc, child, height))
+                            }),
+                    );
+                }
+                let lay_out = |doc: &mut LayoutSession<'_>| {
+                    layout_cell_contents(
+                        doc,
+                        cell.node_id,
+                        LayoutInput {
+                            run_mode: RunMode::PerformLayout,
+                            sizing_mode: SizingMode::InherentSize,
+                            axis: RequestedAxis::Horizontal,
+                            known_dimensions: Size {
+                                width: Some(cell_width),
+                                height: Some(cell_height),
+                            },
+                            parent_size: Size {
+                                width: Some(cell_width),
+                                height: table_height_is_definite.then_some(cell_height),
+                            },
+                            available_space: Size {
+                                width: AvailableSpace::Definite(cell_width),
+                                height: AvailableSpace::Definite(cell_height),
+                            },
+                            known_dimensions_are_definite: Size {
+                                width: true,
+                                height: cell_height_is_definite,
+                            },
+                            vertical_margins_are_collapsible: Line::FALSE,
                         },
-                        parent_size: Size {
-                            width: Some(cell_width),
-                            height: table_height_is_definite.then_some(cell_height),
-                        },
-                        available_space: Size {
-                            width: AvailableSpace::Definite(cell_width),
-                            height: AvailableSpace::Definite(cell_height),
-                        },
-                        known_dimensions_are_definite: Size {
-                            width: true,
-                            height: cell_height_is_definite,
-                        },
-                        vertical_margins_are_collapsible: Line::FALSE,
-                    },
-                );
+                    )
+                };
+                let output = if replaced_heights.is_empty() {
+                    lay_out(doc)
+                } else {
+                    doc.with_overrides(replaced_heights, lay_out)
+                };
+                doc.context
+                    .table_cell_replaced_height_bases
+                    .truncate(basis_depth);
                 // The height the content has now that the row height made a
                 // percentage height of a child definite, which the alignment
                 // below follows.
@@ -5161,7 +5318,7 @@ fn place_cells(
                 // An authored cell height remains an independent basis even
                 // when its contents determined the row's final height.
                 resolved_natural_height = ((cell_height_is_definite || cell_has_authored_height)
-                    && aligned_by_its_end)
+                    && (aligned_by_its_end || has_left_out_scrollers))
                     .then(|| horizontal_cell_alignment_height(doc, cell.node_id, cell_width))
                     .flatten();
                 (
