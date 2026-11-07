@@ -351,7 +351,8 @@ fn a_font_relative_stroke_length_in_a_used_definition_stays_relative() {
 #[test]
 fn a_stroke_length_inherited_in_a_used_definition_is_left_for_the_use_element() {
     // The definition inherits from the `use` element, not from the `defs`
-    // element above it in the source.
+    // element above it in the source. The renderer finds that element by
+    // itself, so no length is written for the path.
     let html = "<style>defs{font-size:5px;stroke-width:3em}use{stroke:black;stroke-width:2em;font-size:20px}\
          path{font-size:10px;stroke-width:inherit}</style>\
          <svg width=50 height=50><defs><path id=p /></defs><use href='#p' /></svg>";
@@ -362,7 +363,7 @@ fn a_stroke_length_inherited_in_a_used_definition_is_left_for_the_use_element() 
     );
     assert_eq!(
         declaration_of(&elements, 2),
-        Some("font-size:10px!important;stroke-width:inherit!important;")
+        Some("font-size:10px!important;")
     );
     assert_eq!(
         declaration_of(&elements, 3),
@@ -383,7 +384,7 @@ fn a_stroke_length_inherited_in_a_used_definition_is_left_for_the_use_element() 
 fn a_stroke_length_inherited_in_a_nested_use_target_is_left_for_the_nearest_use_element() {
     // The path is a target of its own as well as part of the group that another
     // `use` element instantiates. The copy under its own `use` element has no
-    // `g` above it, so it takes the length from there.
+    // `g` above it, so the renderer takes the length from there.
     let elements = declarations(
         "<style>.a{font-size:20px;stroke-width:2em}.p{font-size:10px;stroke-width:inherit}</style>\
          <svg width=50 height=50><defs><g id=o><g class=a><path id=i class=p /></g></g></defs>\
@@ -395,19 +396,22 @@ fn a_stroke_length_inherited_in_a_nested_use_target_is_left_for_the_nearest_use_
     );
     assert_eq!(
         declaration_of(&elements, 4),
-        Some("font-size:10px!important;stroke-width:inherit!important;")
+        Some("font-size:10px!important;")
     );
 }
 
 #[test]
-fn a_stroke_length_inherited_from_inside_a_used_definition_is_written_in_px() {
+fn a_stroke_length_inherited_from_inside_a_used_definition_is_left_to_the_renderer() {
+    // The group's font size is 20px in this source, but a `use` element may
+    // give it another one, so the renderer resolves the length at the group of
+    // each instance.
     let elements = declarations(
         "<style>g{font-size:20px;stroke-width:2em}path{font-size:10px;stroke-width:inherit}</style>\
          <svg width=50 height=50><defs><g id=d><path /></g></defs><use href='#d' /></svg>",
     );
     assert_eq!(
         declaration_of(&elements, 3),
-        Some("font-size:10px!important;stroke-width:40px!important;")
+        Some("font-size:10px!important;")
     );
 }
 

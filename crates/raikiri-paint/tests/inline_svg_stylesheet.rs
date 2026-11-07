@@ -1261,3 +1261,70 @@ fn native_svg_geometry_that_a_page_stylesheet_gives_as_math_functions_paints_as_
         );
     }
 }
+
+#[test]
+fn a_font_relative_stroke_width_attribute_in_a_used_definition_follows_each_instance() {
+    assert_paints_like(
+        "<svg width=50 height=50><defs><path id=p d='M0 10h50' stroke=black stroke-width=1em /></defs><use href='#p' style='font-size:10px' /><use href='#p' y='30' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 40h50' stroke=black stroke-width=20 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_from_a_declarer_in_the_definition_takes_the_font_size_of_the_use() {
+    assert_paints_like(
+        "<style>.a{stroke:black;stroke-width:2em}.p{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=o class=a><path class=p d='M0 25h50' /></g></defs><use href='#o' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 25h50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn a_font_relative_dash_array_attribute_in_a_used_definition_follows_each_instance() {
+    assert_paints_like(
+        "<svg width=50 height=50><defs><path id=p d='M0 10h50' stroke=black stroke-width=4 stroke-dasharray='1em 1em' /></defs><use href='#p' style='font-size:5px' /><use href='#p' y='30' style='font-size:10px' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=4 stroke-dasharray='5 5' /><path d='M0 40h50' stroke=black stroke-width=4 stroke-dasharray='10 10' /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_from_an_attribute_in_a_used_definition_takes_the_font_size_of_the_use()
+{
+    assert_paints_like(
+        "<style>.p{font-size:5px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=o stroke=black stroke-width=2em><path class=p d='M0 25h50' /></g></defs><use href='#o' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 25h50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn an_inheriting_child_with_a_smaller_font_size_still_gets_the_width_at_the_font_size_of_the_use() {
+    // The group has no font size of its own, so the 10px of the page is the
+    // size it has outside the instance, and the child's 5px is another one.
+    assert_paints_like(
+        "<style>.a{stroke:black;stroke-width:2em}.p{font-size:5px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=o class=a><path class=p d='M0 25h50' /></g></defs><use href='#o' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 25h50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn each_instance_of_a_definition_inherits_the_width_at_its_own_font_size() {
+    assert_paints_like(
+        "<style>.a{stroke:black;stroke-width:1em}.p{font-size:5px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=o class=a><path class=p d='M0 10h50' /></g></defs><use href='#o' style='font-size:10px' /><use href='#o' y='30' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 40h50' stroke=black stroke-width=20 /></svg>",
+    );
+}
+
+#[test]
+fn an_attribute_of_the_inheriting_child_does_not_win_over_the_inherited_width() {
+    assert_paints_like(
+        "<style>.a{stroke:black;font-size:20px;stroke-width:2em}.p{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=o class=a><path class=p stroke-width=3 d='M0 25h50' /></g></defs><use href='#o' /></svg>",
+        "<svg width=50 height=50><path d='M0 25h50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn a_definition_drawn_in_place_and_by_a_use_resolves_a_stroke_width_attribute_in_each_place() {
+    assert_paints_like(
+        "<svg width=50 height=50><path id=p d='M0 10h50' stroke=black stroke-width=1em /><use href='#p' y='30' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 40h50' stroke=black stroke-width=20 /></svg>",
+    );
+}

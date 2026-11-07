@@ -101,8 +101,20 @@ struct StyledElement<'a> {
     style: &'a ComputedValues,
     properties: &'a [SvgStyleProperty],
     relative_attributes: &'a [SvgStyleProperty],
-    /// Whether the element is part of a subtree a `use` element instantiates.
-    in_instance: bool,
+    placement: Placement,
+}
+
+/// Where an element sits among the subtrees that `use` elements instantiate.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Placement {
+    /// Not in such a subtree.
+    Tree,
+    /// In such a subtree, which each instance reads with its own font size.
+    Instance,
+    /// In such a subtree, and nothing in the SVG source sets a stroke length
+    /// for the element, so that a stroke length it inherits can be left to
+    /// the renderer.
+    InstanceInheritingByItself,
 }
 
 impl StyledElement<'_> {
@@ -113,7 +125,7 @@ impl StyledElement<'_> {
             self.style,
             self.properties,
             self.relative_attributes,
-            self.in_instance,
+            self.placement,
             &mut work.remaining_bytes,
             &mut work.value,
             out,
@@ -146,7 +158,10 @@ fn walk_styled_elements(
         remaining_bytes: DECLARATION_BYTE_LIMIT,
         value: String::new(),
     };
-    let use_targets = use_targets(document, root);
+    let SourceScan {
+        use_targets,
+        stroke_style,
+    } = scan_source(document, root);
     // Whether an inherited value comes from inside an instance is asked per
     // property of each element that an instance holds, so the elements above
     // the one at hand are kept to answer that without climbing to the
@@ -222,7 +237,14 @@ fn walk_styled_elements(
                     style,
                     properties: &properties,
                     relative_attributes,
-                    in_instance: instance_root.is_some(),
+                    placement: match instance_root {
+                        None => Placement::Tree,
+                        // A stylesheet of the SVG itself, or the source of the
+                        // element, may set a stroke length that the cascade
+                        // gave another winner.
+                        Some(_) if stroke_style || sets_stroke_length(node) => Placement::Instance,
+                        Some(_) => Placement::InstanceInheritingByItself,
+                    },
                 };
                 if !visit(element, &mut work)? {
                     return Ok(false);
@@ -241,9 +263,20 @@ fn walk_styled_elements(
     Ok(true)
 }
 
-/// The ids that the `use` elements of the SVG rooted at `root` reference.
-fn use_targets(document: &Document, root: usize) -> HashSet<&str> {
-    let mut targets = HashSet::new();
+/// What the source of an inline SVG tells before its elements are walked.
+struct SourceScan<'a> {
+    /// The ids that the `use` elements reference.
+    use_targets: HashSet<&'a str>,
+    /// Whether a `style` element of the SVG may set a stroke property.
+    stroke_style: bool,
+}
+
+/// Reads the source of the SVG rooted at `root` once.
+fn scan_source(document: &Document, root: usize) -> SourceScan<'_> {
+    let mut scan = SourceScan {
+        use_targets: HashSet::new(),
+        stroke_style: false,
+    };
     let mut stack: Vec<_> = document.get_node(root).into_iter().collect();
     while let Some(node) = stack.pop() {
         if node.kind() == NodeKind::Element
@@ -254,7 +287,15 @@ fn use_targets(document: &Document, root: usize) -> HashSet<&str> {
                 .or_else(|| node.attribute_ns(XLINK_NAMESPACE, "href"))
                 .and_then(iri_fragment)
         {
-            targets.insert(id);
+            scan.use_targets.insert(id);
+        }
+        if node.kind() == NodeKind::Element && node.tag_name() == Some("style") {
+            scan.stroke_style |= node.children.iter().any(|&child| {
+                document
+                    .get_node(child)
+                    .and_then(|child| child.text_content())
+                    .is_none_or(names_a_stroke_property)
+            });
         }
         stack.extend(
             node.children
@@ -262,7 +303,28 @@ fn use_targets(document: &Document, root: usize) -> HashSet<&str> {
                 .filter_map(|&child| document.get_node(child)),
         );
     }
-    targets
+    scan
+}
+
+/// Whether the source of `node` sets a stroke length by itself: by one of the
+/// presentation attributes, or by a `style` attribute that may name a stroke
+/// property.
+fn sets_stroke_length(node: &crate::Node) -> bool {
+    ["stroke-width", "stroke-dasharray", "stroke-dashoffset"]
+        .into_iter()
+        .any(|name| node.attribute(name).is_some())
+        || node.attribute("style").is_some_and(names_a_stroke_property)
+}
+
+/// Whether the declarations or rules in `css` may name a stroke property. A
+/// name can be spelled with an escape or split by a comment, so any text with
+/// a backslash or a slash is taken to.
+fn names_a_stroke_property(css: &str) -> bool {
+    css.contains(['\\', '/'])
+        || css
+            .as_bytes()
+            .windows("stroke".len())
+            .any(|window| window.eq_ignore_ascii_case(b"stroke"))
 }
 
 /// The id of a local reference such as `#shape`, read as the renderer reads
@@ -619,12 +681,35 @@ fn node_declarations(
     in_instance: bool,
     remaining_bytes: &mut usize,
 ) -> Result<String, String> {
+    let placement = if in_instance {
+        Placement::Instance
+    } else {
+        Placement::Tree
+    };
+    node_declarations_at(
+        style,
+        properties,
+        relative_attributes,
+        placement,
+        remaining_bytes,
+    )
+}
+
+/// [`node_declarations`] for an element at `placement`.
+#[cfg(test)]
+fn node_declarations_at(
+    style: &ComputedValues,
+    properties: &[SvgStyleProperty],
+    relative_attributes: &[SvgStyleProperty],
+    placement: Placement,
+    remaining_bytes: &mut usize,
+) -> Result<String, String> {
     let mut css = String::new();
     write_node_declarations(
         style,
         properties,
         relative_attributes,
-        in_instance,
+        placement,
         remaining_bytes,
         &mut String::new(),
         &mut css,
@@ -633,7 +718,7 @@ fn node_declarations(
 }
 
 /// Writes the declarations of one element to `out`, and says `false` when
-/// `out` stopped taking them. `in_instance` tells that the element is part of
+/// `out` stopped taking them. `placement` tells whether the element is part of
 /// a subtree a `use` element instantiates, and `value` is room for computed
 /// values.
 ///
@@ -642,16 +727,25 @@ fn node_declarations(
 /// the text of an `inherit` and resolves it at the inheriting element, which
 /// has another font size when it is instantiated below the `use` element.
 /// Inside an instantiated subtree the length is left as written, so that each
-/// instance resolves it against its own font size.
+/// instance resolves it against its own font size, and so is a presentation
+/// attribute, which stays in the source.
+///
+/// What the element inherits there cannot be written in px either, for the
+/// font size of the declaring ancestor is another one in each instance. When
+/// the placement says that no other text of the source sets the length, the
+/// declaration is left out: a renderer that finds no value resolves the one an
+/// ancestor declares at that ancestor, as inheritance does, where it copies
+/// the text of an `inherit` to the element.
 fn write_node_declarations(
     style: &ComputedValues,
     properties: &[SvgStyleProperty],
     relative_attributes: &[SvgStyleProperty],
-    in_instance: bool,
+    placement: Placement,
     remaining_bytes: &mut usize,
     value: &mut String,
     out: &mut impl Declarations,
 ) -> Result<bool, String> {
+    let in_instance = placement != Placement::Tree;
     // Bound metadata before allocating repeated declarations from the host CSS.
     let mut consume = |bytes: usize| {
         *remaining_bytes = remaining_bytes
@@ -680,6 +774,9 @@ fn write_node_declarations(
             128
         };
         consume(size)?;
+        if placement == Placement::InstanceInheritingByItself && inherits_stroke_length(property) {
+            continue;
+        }
         let Some((name, text)) = declared(style, property, value) else {
             continue;
         };
@@ -698,6 +795,13 @@ fn write_node_declarations(
             return Ok(false);
         }
     }
+    // The attribute of an element that is instantiated is resolved by each
+    // instance, from the source.
+    let relative_attributes = if in_instance {
+        &[]
+    } else {
+        relative_attributes
+    };
     for attribute in relative_attributes {
         let Some(expression) = &attribute.expression else {
             continue;
@@ -719,6 +823,15 @@ fn write_node_declarations(
         }
     }
     Ok(true)
+}
+
+/// Whether `property` takes a stroke length from an ancestor: it inherits it,
+/// or the cascade wrote the length of the ancestor in its place.
+fn inherits_stroke_length(property: &SvgStyleProperty) -> bool {
+    matches!(
+        property.property,
+        PropertyKey::StrokeWidth | PropertyKey::StrokeDasharray | PropertyKey::StrokeDashoffset
+    ) && (property.inherited || property.inherited_from.is_some())
 }
 
 fn resolve_relative_svg_presentation_value(

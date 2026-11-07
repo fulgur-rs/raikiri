@@ -469,18 +469,15 @@ fn parent_steps_for_a_chain_of_levels(levels: usize) -> usize {
     INLINE_SVG_PARENT_STEPS.with(|steps| steps.set(0));
     let elements = inline_svg_element_declarations(&fixture.doc, &fixture.cascade, svg).unwrap();
     let steps = INLINE_SVG_PARENT_STEPS.with(|steps| steps.get());
-    // Every path takes its length from a group inside the instance, written in
-    // px for the 10px of the path.
+    // Every path takes its length from a group inside the instance, which the
+    // renderer finds by itself: only the font size of the path is written.
     for path in paths {
         let index = path_index(&fixture.doc, svg, path);
         let listed = elements
             .iter()
             .find(|element| element.element_index == index)
             .unwrap_or_else(|| panic!("no declarations for the path at index {index}"));
-        assert_eq!(
-            listed.declarations,
-            "font-size:10px!important;stroke-width:40px!important;"
-        );
+        assert_eq!(listed.declarations, "font-size:10px!important;");
     }
     steps
 }
@@ -547,4 +544,163 @@ fn the_ancestors_of_an_element_tell_where_other_elements_are_without_climbing() 
     assert!(ancestors.is_within(&doc, left_child, left));
     assert!(!ancestors.is_within(&doc, left_child, right));
     assert!(INLINE_SVG_PARENT_STEPS.with(|steps| steps.get()) > 0);
+}
+
+#[test]
+fn relative_presentation_attributes_of_an_instantiated_element_stay_in_the_source() {
+    let attributes = [
+        SvgStyleProperty::new(PropertyKey::StrokeWidth, false, Some("2em".into()), None),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeDasharray,
+            false,
+            Some("2em 1ex".into()),
+            None,
+        ),
+    ];
+    let mut style = ComputedValues::initial();
+    style.font_size.0 = 20.0;
+    let mut budget = 4096;
+    // Each instance resolves the text of the attribute at its own font size.
+    assert_eq!(
+        node_declarations(&style, &[], &attributes, true, &mut budget).unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn a_stroke_length_an_instantiated_element_inherits_is_left_to_the_renderer() {
+    let declarer = Some(StyleNodeId(7));
+    let properties = [
+        SvgStyleProperty::new(PropertyKey::StrokeWidth, true, None, None),
+        // The cascade wrote the length of an ancestor in px.
+        SvgStyleProperty::new(
+            PropertyKey::StrokeDasharray,
+            false,
+            Some("40px 10px".into()),
+            declarer,
+        ),
+        SvgStyleProperty::new(PropertyKey::StrokeDashoffset, true, None, None),
+        // Only a stroke length is left out: the others are copied as they are.
+        SvgStyleProperty::new(PropertyKey::Fill, true, None, None),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeLinecap,
+            false,
+            Some("round".into()),
+            None,
+        ),
+    ];
+    let style = ComputedValues::initial();
+    let mut budget = 4096;
+    assert_eq!(
+        node_declarations_at(
+            &style,
+            &properties,
+            &[],
+            Placement::InstanceInheritingByItself,
+            &mut budget
+        )
+        .unwrap(),
+        "fill:inherit!important;stroke-linecap:round!important;"
+    );
+    // Without the permission, the declarations stay.
+    let mut budget = 4096;
+    assert_eq!(
+        node_declarations_at(&style, &properties, &[], Placement::Instance, &mut budget).unwrap(),
+        "stroke-width:inherit!important;stroke-dasharray:40px 10px!important;stroke-dashoffset:inherit!important;fill:inherit!important;stroke-linecap:round!important;"
+    );
+}
+
+/// The declarations listed for the `path` of an SVG whose group `g#d` declares
+/// a stroke width of 2em at 20px and holds the `path`, which inherits it at
+/// 10px, with an `!important` rule that the source of the `path` cannot beat.
+/// The `path` has `path_attributes` and the `style` attribute `path_style`. A `use` element instantiates the group when `instantiated` is
+/// set, and the SVG holds a `style` element with the text `inner_style` when
+/// there is one.
+fn declarations_of_a_path_inheriting_a_stroke_width(
+    path_attributes: &[(&str, &str)],
+    path_style: Option<&str>,
+    inner_style: Option<&str>,
+    instantiated: bool,
+) -> String {
+    let mut path = 0;
+    let fixture = sheet_fixture(
+        "g{font-size:20px;stroke-width:2em}path{font-size:10px;stroke-width:inherit!important}",
+        "",
+        |doc, root| {
+            let svg = doc.append_element(Some(root), "svg", None::<&str>);
+            svg_element(doc, svg, &[("width", "50"), ("height", "50")]);
+            if let Some(text) = inner_style {
+                let style = doc.append_element(Some(svg), "style", None::<&str>);
+                svg_element(doc, style, &[]);
+                doc.append_text(style, text);
+            }
+            let group = doc.append_element(Some(svg), "g", None::<&str>);
+            svg_element(doc, group, &[("id", "d")]);
+            path = doc.append_element(Some(group), "path", path_style);
+            svg_element(doc, path, path_attributes);
+            if instantiated {
+                let instance = doc.append_element(Some(svg), "use", None::<&str>);
+                svg_element(doc, instance, &[("href", "#d")]);
+            }
+        },
+    );
+    let svg = fixture.doc.get_node(fixture.root).unwrap().children[0];
+    let elements = inline_svg_element_declarations(&fixture.doc, &fixture.cascade, svg).unwrap();
+    let index = path_index(&fixture.doc, svg, path);
+    elements
+        .into_iter()
+        .find(|element| element.element_index == index)
+        .map(|element| element.declarations)
+        .unwrap_or_default()
+}
+
+#[test]
+fn an_inherited_stroke_width_is_left_out_only_where_the_source_sets_none() {
+    let declarations = declarations_of_a_path_inheriting_a_stroke_width;
+    // The renderer finds the width of the group, at the font size of the
+    // group in each instance.
+    assert_eq!(
+        declarations(&[], None, None, true),
+        "font-size:10px!important;"
+    );
+    // Outside an instance the width is written in px, as the font size of the
+    // group is known.
+    assert_eq!(
+        declarations(&[], None, None, false),
+        "font-size:10px!important;stroke-width:40px!important;"
+    );
+    // Text of the source that sets a stroke length would win over a width that
+    // is not written.
+    for (attributes, style) in [
+        (&[("stroke-width", "3")][..], None),
+        (&[("stroke-dasharray", "1")], None),
+        (&[("stroke-dashoffset", "1")], None),
+    ] {
+        assert!(
+            declarations(attributes, style, None, true).contains("stroke-width:40px!important;"),
+            "{attributes:?} {style:?}"
+        );
+    }
+    // The text that can name a stroke property is not read closely: an escape
+    // or a comment may spell the name.
+    for style in [
+        Some("Stroke-Linecap: round"),
+        Some("\\73troke-width: 3px"),
+        Some("stro/**/ke-width: 3px"),
+    ] {
+        assert!(
+            declarations(&[], style, None, true).contains("stroke-width:40px!important;"),
+            "{style:?}"
+        );
+    }
+    // So would a style sheet in the SVG.
+    for sheet in ["path { stroke-width: 3px }", "path { STROKE-DASHARRAY: 1 }"] {
+        assert!(
+            declarations(&[], None, Some(sheet), true).contains("stroke-width:40px!important;"),
+            "{sheet}"
+        );
+    }
+    // Text about something else changes nothing.
+    assert!(!declarations(&[], Some("fill: red"), None, true).contains("stroke-width"));
+    assert!(!declarations(&[], None, Some("path { fill: red }"), true).contains("stroke-width"));
 }
