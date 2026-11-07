@@ -4165,3 +4165,24 @@ fn a_final_avoided_group_can_split_its_tail_after_moving_to_a_shorter_page() {
         assert_eq!(ys, [200.0, 200.0 + next_step]);
     }
 }
+
+#[test]
+fn moved_rows_check_their_table_for_spanning_cells_once() {
+    use crate::layout::table::row_moves::ROW_MOVE_WORK;
+
+    // Rows of 30px on 100px pages: every row after the first page break
+    // moves, and all of them belong to one table.
+    ROW_MOVE_WORK.with(|work| work.set((0, 0)));
+    let mut ids = Vec::new();
+    let (doc, pages) = paged_body(|doc, body| {
+        ids = table_of_rows(doc, body, true, 12, 30);
+    });
+    let (moved_rows, table_checks) = ROW_MOVE_WORK.with(|work| work.get());
+    assert!(pages > 3, "{pages} pages");
+    assert!(moved_rows > 3, "{moved_rows} moved rows");
+    assert_eq!(table_checks, 1);
+    // Three rows fit a page, so the twelfth row is the third on the fourth
+    // page.
+    let last_row = ids[ids.len() - 2];
+    assert_eq!(page_flow_y(&doc, last_row), 360.0);
+}
