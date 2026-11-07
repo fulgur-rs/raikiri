@@ -134,12 +134,13 @@ fn a_square_corner_keeps_the_start_at_the_edge_of_the_box() {
 
 #[test]
 fn a_border_too_short_for_two_dashes_is_solid() {
-    // The centerline of this circle is 25px long, less than two 16px dashes, so
-    // the border is a plain ring.
-    let dashed = boxed(0, 0, "border:8px dashed green;border-radius:8px");
-    let solid = boxed(0, 0, "border:8px solid green;border-radius:8px");
+    // The centerline of this circle is 38px long, less than two 20px dashes, so
+    // the border is a plain ring around a hole of 1px radius.
+    let dashed = boxed(2, 2, "border:10px dashed green;border-radius:11px");
+    let solid = boxed(2, 2, "border:10px solid green;border-radius:11px");
     assert!(dashed == solid);
-    assert_eq!(mark(&dashed, 18, 18), '#');
+    assert_eq!(mark(&dashed, 12, 21), '#');
+    assert_eq!(mark(&dashed, 21, 12), '#');
 }
 
 #[test]
