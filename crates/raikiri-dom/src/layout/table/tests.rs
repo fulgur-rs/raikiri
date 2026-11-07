@@ -110,7 +110,10 @@ fn resolve_column_widths_in_session(
             inputs,
             padding_border_size,
             spacing,
-            None,
+            super::PercentWidening {
+                cap: None,
+                max_content_of: None,
+            },
             false,
         )
         .widths
