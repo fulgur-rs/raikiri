@@ -114,6 +114,8 @@ fn resolve_column_widths_in_session(
             super::PercentWidening {
                 cap: None,
                 max_content_of: None,
+                through_containers: false,
+                room_widens: true,
             },
             false,
         )
