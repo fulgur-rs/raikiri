@@ -660,7 +660,7 @@ fn first_page_name_reads_the_body_before_a_footer_inside_a_contents_wrapper() {
 }
 
 #[test]
-fn first_page_name_skips_a_second_caption_that_table_layout_drops() {
+fn first_page_name_takes_a_second_caption_above_the_grid_ahead_of_the_rows() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -688,7 +688,10 @@ fn first_page_name_skips_a_second_caption_that_table_layout_drops() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
 
-    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("body"));
+    // The caption above the grid comes first in the table's visual order
+    // even though it is the second caption in source order; the caption below
+    // the grid follows the rows.
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("caption"));
 }
 
 #[test]
@@ -717,8 +720,8 @@ fn first_page_name_takes_a_caption_inside_a_contents_wrapper_as_the_first_captio
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
 
-    // Table layout renders only the first caption, the wrapped one, so the
-    // direct caption after it has no box to take a page name from.
+    // Both captions have a box, and the wrapped one comes first in source
+    // order, so it names the page.
     assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("wrapped"));
 }
 

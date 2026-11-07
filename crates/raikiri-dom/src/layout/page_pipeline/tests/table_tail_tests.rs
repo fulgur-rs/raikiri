@@ -153,7 +153,7 @@ fn printed_table_with_followers(
             "caption",
             Some("display:table-caption;caption-side:bottom;height:100px"),
         );
-        doc.append_text(extra, "IGNORED");
+        doc.append_text(extra, "second");
     }
     if reverse_source {
         doc.nodes[table].children.reverse();
@@ -497,15 +497,19 @@ fn table_tail_selection_rejects_relative_vertical_and_breakable_captions() {
 }
 
 #[test]
-fn unsupported_multiple_bottom_captions_do_not_move_the_first_caption_as_the_visual_tail() {
-    // The table engine currently lays out only its first caption. Chromium
-    // renders both (RAIKIRI-1495); preserve this limitation instead of moving a
-    // caption which is not the visual last one in the complete table.
-    let (doc, holder, _, rows, after, _) = printed_table(Tail::MultipleCaptions, 30, false);
+fn a_second_bottom_caption_follows_the_first_and_runs_over_the_page_end() {
+    // Chromium puts both captions below the grid, in source order: the second
+    // one, 100px high, starts at the end of the page and runs over onto the
+    // next, where the wrapper's padding and the following block come after it.
+    // The first caption is not the table's visual tail, so it stays where it is.
+    let (doc, holder, table, rows, after, pages) = printed_table(Tail::MultipleCaptions, 30, false);
     let actual: Vec<_> = rows.into_iter().map(|row| page_flow_y(&doc, row)).collect();
     assert_eq!(actual, [160.0, 170.0, 180.0]);
-    assert_eq!(doc.nodes[holder].layout.size.height, 230.0);
-    assert_eq!(page_flow_y(&doc, after), 230.0);
+    let second = *doc.nodes[table].children.last().unwrap();
+    assert_eq!(page_flow_y(&doc, second), 190.0);
+    assert_eq!(doc.nodes[holder].layout.size.height, 320.0);
+    assert_eq!(page_flow_y(&doc, after), 320.0);
+    assert_eq!(pages, 2);
 }
 
 #[test]

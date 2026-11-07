@@ -29,8 +29,9 @@
 //!   remain out of scope.
 //! - The separate model applies horizontal and vertical `border-spacing`
 //!   between cells and at the table edges; collapse ignores those gaps.
-//! - Only the first caption receives native table placement; multiple caption
-//!   boxes remain tracked by `raikiri-spike-0vv.121`.
+//! - Every caption receives native table placement: those above the grid stack
+//!   in source order from the block start, and those below it stack in source
+//!   order after the grid.
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
 use raikiri_layout_style::values::{
@@ -241,12 +242,19 @@ fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
     doc.nodes[doc.ifc_source_owner(table_idx)].used_writing_mode
 }
 
-/// The first `table-caption` box of `table`, looking through the
+/// The `table-caption` boxes of `table` in source order, looking through the
 /// `display: contents` children whose own children take their place.
-fn table_caption(doc: &Document, table: usize) -> Option<usize> {
+fn table_captions(doc: &Document, table: usize) -> Vec<usize> {
     doc.children_through_contents(table)
         .into_iter()
-        .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
+        .filter(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
+        .collect()
+}
+
+/// Whether the caption `caption` takes up room around the grid; an absolutely
+/// positioned one does not.
+fn is_in_flow_caption(doc: &Document, caption: usize) -> bool {
+    doc.nodes[caption].layout_position() != Position::Absolute
 }
 
 /// How far two edges of a vertical cell's content may be apart and still be the
@@ -258,11 +266,12 @@ const SAME_EDGE_TOLERANCE: f32 = 0.01;
 /// item states and still count as that height: layout units are 1/64px.
 const FLEXED_HEIGHT_TOLERANCE: f32 = 0.02;
 
-/// Whether the caption of `table` takes up room around the grid; an absolutely
+/// Whether a caption of `table` takes up room around the grid; an absolutely
 /// positioned one does not.
 fn caption_in_flow(doc: &Document, table: usize) -> bool {
-    table_caption(doc, table)
-        .is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute)
+    doc.children_through_contents(table).into_iter().any(|id| {
+        doc.nodes[id].display() == DisplayValue::TableCaption && is_in_flow_caption(doc, id)
+    })
 }
 
 /// Whether the layout library places an absolutely positioned `table` by the
@@ -270,12 +279,12 @@ fn caption_in_flow(doc: &Document, table: usize) -> bool {
 ///
 /// A stated `height` is that of the grid box, and a caption in flow comes on
 /// top of it, so the wrapper is taller than the `height` and the library, which
-/// cannot tell the caption's share, would place the box by the wrong extent
-/// (a `bottom` inset anchors the grid's end instead of the caption's). The
+/// cannot tell the captions' share, would place the box by the wrong extent
+/// (a `bottom` inset anchors the grid's end instead of the captions'). The
 /// style it reads leaves the `height` out (see
 /// [`LayoutStyleView::with_hidden_table_height`]), so it measures the wrapper and
 /// gives that height back as the known one, which the layout of the table
-/// then splits into the caption's share and the grid's.
+/// then splits into the captions' share and the grid's.
 ///
 /// A numeric grid height with an in-flow caption is always measured, including
 /// when both vertical insets are stated. A stretch height is always measured:
@@ -305,46 +314,54 @@ pub(crate) fn wrapper_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool
 }
 
 /// The height left for the grid box of a horizontal table when a flex or grid
-/// parent assigns `wrapper_height` to the whole wrapper box: the caption above
-/// or below the grid keeps its own share. `caption` is the laid-out caption.
-fn grid_height_in_wrapper(
-    doc: &Document,
-    table: usize,
-    wrapper_height: f32,
-    caption: Option<&(Size<f32>, OofCandidates)>,
-) -> f32 {
-    let caption_height = caption
-        .filter(|_| caption_in_flow(doc, table))
-        .map_or(0.0, |(size, _)| size.height);
+/// parent assigns `wrapper_height` to the whole wrapper box: the captions above
+/// and below the grid keep their own share. `captions` are the laid-out
+/// captions.
+fn grid_height_in_wrapper(doc: &Document, wrapper_height: f32, captions: &CaptionBoxes) -> f32 {
+    let caption_height: f32 = captions
+        .in_flow(doc)
+        .map(|caption| caption.size.height)
+        .sum();
     f32_max_compat(wrapper_height - caption_height, 0.0)
 }
 
 /// The `min-height` that bounds the grid box of a table whose flex column
 /// grew or shrank it: the container bounds the item, the whole wrapper box, so
-/// the grid has what the caption leaves of the minimum. Any other minimum bounds
-/// the grid box itself.
+/// the grid has what the captions leave of the minimum. Any other minimum
+/// bounds the grid box itself.
 fn min_h_outer_of_grid(
     doc: &Document,
-    table: usize,
     min_h_outer: Option<f32>,
     item_is_flexed: bool,
-    caption: Option<&(Size<f32>, OofCandidates)>,
+    captions: &CaptionBoxes,
 ) -> Option<f32> {
     min_h_outer.map(|minimum| {
         if item_is_flexed {
-            grid_height_in_wrapper(doc, table, minimum, caption)
+            grid_height_in_wrapper(doc, minimum, captions)
         } else {
             minimum
         }
     })
 }
 
+/// The widest min-content inline size among the captions of `table` that are in
+/// flow, margins included: the table is at least as wide as each of them.
 fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
-    let Some(caption) = table_caption(doc, table)
-        .filter(|&id| doc.nodes[id].layout_position() != Position::Absolute)
-    else {
-        return 0.0;
-    };
+    let in_flow: Vec<usize> = table_captions(doc, table)
+        .into_iter()
+        .filter(|&caption| is_in_flow_caption(doc, caption))
+        .collect();
+    in_flow
+        .into_iter()
+        .map(|caption| single_caption_minimum_inline_size(doc, caption, vertical))
+        .fold(0.0, f32::max)
+}
+
+fn single_caption_minimum_inline_size(
+    doc: &mut LayoutSession<'_>,
+    caption: usize,
+    vertical: bool,
+) -> f32 {
     let probe = |available_space| LayoutInput {
         run_mode: RunMode::ComputeSize,
         sizing_mode: SizingMode::InherentSize,
@@ -420,13 +437,81 @@ fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertic
         + super::used_style_length_percentage_auto(end, 0.0).unwrap_or(0.0)
 }
 
-fn layout_table_caption(
+/// A caption laid out inside its table.
+struct CaptionBox {
+    id: usize,
+    /// The outer size of the caption, margins included.
+    size: Size<f32>,
+    /// The candidates of the caption's out-of-flow descendants, in the
+    /// caption's own coordinates.
+    candidates: OofCandidates,
+}
+
+/// The captions of a table in source order. Those above the grid stack in
+/// source order from the block start, and those below it stack in source order
+/// from the grid's block end.
+#[derive(Default)]
+struct CaptionBoxes {
+    boxes: Vec<CaptionBox>,
+}
+
+impl CaptionBoxes {
+    /// The captions that take up room around the grid.
+    fn in_flow<'c>(&'c self, doc: &Document) -> impl Iterator<Item = &'c CaptionBox> {
+        self.boxes
+            .iter()
+            .filter(move |caption| is_in_flow_caption(doc, caption.id))
+    }
+
+    /// The widest outer width among the captions in flow.
+    fn widest_in_flow(&self, doc: &Document) -> f32 {
+        self.in_flow(doc)
+            .map(|caption| caption.size.width)
+            .fold(0.0, f32::max)
+    }
+
+    /// The out-of-flow candidates of every caption, in the coordinates of the
+    /// table's wrapper box: each caption's own list moves by where the caption
+    /// ended up, so this follows [`position_table_captions`].
+    fn into_candidates(self, doc: &Document) -> OofCandidates {
+        let mut all = OofCandidates::new();
+        for mut caption in self.boxes {
+            if !caption.candidates.is_empty() {
+                caption
+                    .candidates
+                    .translate(doc.nodes[caption.id].layout.location);
+            }
+            all.append(&mut caption.candidates);
+        }
+        all
+    }
+}
+
+/// Lay out every caption of `table_idx` against `parent_width` and, for a
+/// vertical table, `parent_height`.
+fn layout_table_captions(
     doc: &mut LayoutSession<'_>,
     table_idx: usize,
     parent_width: f32,
     parent_height: Option<f32>,
-) -> Option<(Size<f32>, OofCandidates)> {
-    let caption_id = table_caption(doc, table_idx)?;
+) -> CaptionBoxes {
+    CaptionBoxes {
+        boxes: table_captions(doc, table_idx)
+            .into_iter()
+            .map(|caption| {
+                layout_table_caption(doc, table_idx, caption, parent_width, parent_height)
+            })
+            .collect(),
+    }
+}
+
+fn layout_table_caption(
+    doc: &mut LayoutSession<'_>,
+    table_idx: usize,
+    caption_id: usize,
+    parent_width: f32,
+    parent_height: Option<f32>,
+) -> CaptionBox {
     let (size, margin, padding, border) = {
         let style = doc.table_style(caption_id);
         (
@@ -544,89 +629,104 @@ fn layout_table_caption(
         },
     };
     doc.store_layout(caption_id, &layout);
-    Some((
-        Size {
+    CaptionBox {
+        id: caption_id,
+        size: Size {
             width: output.size.width + margin_left + margin_right,
             height: output.size.height + margin_top + margin_bottom,
         },
-        output.oof_candidates,
-    ))
-}
-
-fn translate_table_caption_candidates(
-    doc: &Document,
-    table_idx: usize,
-    candidates: &mut OofCandidates,
-) {
-    if candidates.is_empty() {
-        return;
-    }
-    if let Some(caption) = table_caption(doc, table_idx) {
-        candidates.translate(doc.nodes[caption].layout.location);
+        candidates: output.oof_candidates,
     }
 }
 
-fn position_table_caption(
+/// Place the captions around the grid and give the size of the wrapper box
+/// that holds them all, together with the grid's origin in it.
+///
+/// The captions above the grid come first along the block axis in source
+/// order, then the grid, then the captions below it in source order. A
+/// vertical table runs that stack across: from the left edge, or from the right
+/// edge in `vertical-rl`. A caption that is not in flow keeps the layout and
+/// ink it was given, but takes no room.
+fn position_table_captions(
     doc: &mut LayoutSession<'_>,
     table_idx: usize,
     grid_size: Size<f32>,
-    caption_size: Option<Size<f32>>,
+    captions: &CaptionBoxes,
     run_mode: RunMode,
 ) -> (Size<f32>, Point<f32>) {
-    let caption_id = table_caption(doc, table_idx);
-    // Keep the legacy positioned caption layout and ink, but exclude it from flow.
-    let in_flow = caption_in_flow(doc, table_idx);
-    let caption_size = if in_flow {
-        caption_size.unwrap_or(Size::ZERO)
-    } else {
-        Size::ZERO
-    };
+    if captions.boxes.is_empty() {
+        return (grid_size, Point::ZERO);
+    }
     let mode = table_writing_mode(doc, table_idx);
     let vertical = mode.is_vertical();
-    let before =
-        caption_id.is_some_and(|id| doc.nodes[id].caption_side != CaptionSideValue::Bottom);
     let right_to_left = matches!(mode, WritingMode::VerticalRl | WritingMode::SidewaysRl);
+    // The extent of a box along the block axis of the stack.
+    let extent = |size: Size<f32>| if vertical { size.width } else { size.height };
+    let in_flow: Vec<&CaptionBox> = captions.in_flow(doc).collect();
+    let (before, after): (Vec<&CaptionBox>, Vec<&CaptionBox>) = in_flow
+        .iter()
+        .copied()
+        .partition(|caption| doc.nodes[caption.id].caption_side != CaptionSideValue::Bottom);
+    // The stack in block order; `None` stands for the grid. A `vertical-rl`
+    // table starts its block axis at the right edge, so the physical order
+    // from the left edge is the reverse.
+    let mut stack: Vec<Option<&CaptionBox>> = before
+        .into_iter()
+        .map(Some)
+        .chain([None])
+        .chain(after.into_iter().map(Some))
+        .collect();
+    if vertical && right_to_left {
+        stack.reverse();
+    }
+    let mut cursor = 0.0;
+    let mut grid_offset = 0.0;
+    for entry in stack {
+        let Some(caption) = entry else {
+            grid_offset = cursor;
+            cursor += extent(grid_size);
+            continue;
+        };
+        let mut layout = doc.nodes[caption.id].layout;
+        if vertical {
+            layout.location.x += cursor;
+        } else {
+            layout.location.y += cursor;
+        }
+        doc.store_layout(caption.id, &layout);
+        cursor += extent(caption.size);
+    }
     let grid_origin = if vertical {
         Point {
-            x: if before != right_to_left {
-                caption_size.width
-            } else {
-                0.0
-            },
+            x: grid_offset,
             y: 0.0,
         }
     } else {
         Point {
             x: 0.0,
-            y: if before { caption_size.height } else { 0.0 },
+            y: grid_offset,
         }
     };
-    if let Some(id) = caption_id.filter(|_| in_flow) {
-        let mut layout = doc.nodes[id].layout;
-        if vertical {
-            layout.location.x += if before == right_to_left {
-                grid_size.width
-            } else {
-                0.0
-            };
-        } else {
-            layout.location.y += if before { 0.0 } else { grid_size.height };
-        }
-        doc.store_layout(id, &layout);
-    }
-    if run_mode == RunMode::PerformLayout && in_flow {
+    if run_mode == RunMode::PerformLayout && !in_flow.is_empty() {
         doc.store_table_grid_box(table_idx, grid_origin, grid_size);
     }
+    let caption_extent: f32 = in_flow.iter().map(|caption| extent(caption.size)).sum();
     (
         if vertical {
             Size {
-                width: grid_size.width + caption_size.width,
-                height: grid_size.height.max(caption_size.height),
+                width: grid_size.width + caption_extent,
+                height: in_flow
+                    .iter()
+                    .map(|caption| caption.size.height)
+                    .fold(grid_size.height, f32::max),
             }
         } else {
             Size {
-                width: grid_size.width.max(caption_size.width),
-                height: grid_size.height + caption_size.height,
+                width: in_flow
+                    .iter()
+                    .map(|caption| caption.size.width)
+                    .fold(grid_size.width, f32::max),
+                height: grid_size.height + caption_extent,
             }
         },
         grid_origin,
@@ -688,7 +788,7 @@ fn compute_table_layout_checked(
     // The height a flex or grid parent assigns is that of the whole wrapper
     // box, caption included, except when a definite `flex-basis` sizes the
     // item along a column: like an authored height, it sizes the grid box
-    // alone, with the caption on top of it, for as long as the container has
+    // alone, with the captions on top of it, for as long as the container has
     // not grown or shrunk the item (see `item_is_flexed` below).
     let parent_assigns_wrapper_height = parent_is_flex_or_grid
         && !(flex_column_parent
@@ -943,10 +1043,10 @@ fn compute_table_layout_checked(
         };
         // A flex column gives the item the height it states (see above) while
         // it has not grown or shrunk it, and that height is the grid box's
-        // alone: the caption comes on top of it. Once the container has moved
+        // alone: the captions come around it. Once the container has moved
         // the item off that height, the height is the whole wrapper box's, as
         // for any other flex or grid item, and the grid box takes what the
-        // caption leaves. A `min-height` or `max-height` clamps the item the
+        // captions leave. A `min-height` or `max-height` clamps the item the
         // same way, which is why it counts as flexing. (An item flexed to land
         // on the stated height cannot be told from one that was not.)
         let item_is_flexed = flex_column_parent
@@ -1048,19 +1148,14 @@ fn compute_table_layout_checked(
             width = width.max(caption_minimum);
             // The caption of a horizontal table needs only the width, so it is
             // laid out before the height: a flex or grid parent assigns the
-            // height of the whole wrapper box, which the caption shares.
-            let mut early_caption = if vertical_writing {
-                None
+            // height of the whole wrapper box, which the captions share.
+            let mut early_captions = if vertical_writing {
+                CaptionBoxes::default()
             } else {
-                layout_table_caption(doc, table_idx, width, inputs.parent_size.height)
+                layout_table_captions(doc, table_idx, width, inputs.parent_size.height)
             };
-            let min_h_outer = min_h_outer_of_grid(
-                doc,
-                table_idx,
-                min_h_outer,
-                item_is_flexed,
-                early_caption.as_ref(),
-            );
+            let min_h_outer =
+                min_h_outer_of_grid(doc, min_h_outer, item_is_flexed, &early_captions);
             // A content-size measure of a flex column item has no height to
             // state: it reports the content, so the container can shrink the
             // item below its `height`.
@@ -1081,12 +1176,7 @@ fn compute_table_layout_checked(
                     .or(stretch_wrapper_room.filter(|_| absolute_table))
                     .map(|wrapper_height| {
                         if wrapper_height_is_assigned && !vertical_writing {
-                            grid_height_in_wrapper(
-                                doc,
-                                table_idx,
-                                wrapper_height,
-                                early_caption.as_ref(),
-                            )
+                            grid_height_in_wrapper(doc, wrapper_height, &early_captions)
                         } else {
                             wrapper_height
                         }
@@ -1102,25 +1192,22 @@ fn compute_table_layout_checked(
             if vertical_writing {
                 height = height.max(caption_inline_minimum);
             }
-            let caption_layout = if vertical_writing {
-                layout_table_caption(doc, table_idx, width, Some(height))
+            let captions = if vertical_writing {
+                layout_table_captions(doc, table_idx, width, Some(height))
             } else {
-                early_caption.take()
+                std::mem::take(&mut early_captions)
             };
-            let (caption_size, mut caption_candidates) = caption_layout
-                .map(|(size, candidates)| (Some(size), candidates))
-                .unwrap_or_else(|| (None, OofCandidates::new()));
-            if !vertical_writing && let Some(size) = caption_size {
-                width = width.max(size.width);
+            if !vertical_writing {
+                width = width.max(captions.widest_in_flow(doc));
             }
-            let (wrapper_size, _) = position_table_caption(
+            let (wrapper_size, _) = position_table_captions(
                 doc,
                 table_idx,
                 Size { width, height },
-                caption_size,
+                &captions,
                 inputs.run_mode,
             );
-            translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+            let caption_candidates = captions.into_candidates(doc);
             // The caption of an anonymous table is a box of its parent, so it
             // moves with the table.
             clear_unplaced_anonymous_parts(doc, table_idx, std::iter::empty());
@@ -1595,9 +1682,9 @@ fn compute_table_layout_checked(
             .or_else(|| column_sizing.vertical_rows.take());
         let column_widths = column_sizing.widths;
 
-        // Settle physical width before natural heights: the caption wraps
+        // Settle physical width before natural heights: the captions wrap
         // at that width, and a
-        // flex or grid parent's height has to give up the caption's share
+        // flex or grid parent's height has to give up the captions' share
         // before the rows can use the rest.
         // Content extents net of collapsed-line overlaps, plus the separated
         // spacing (one of the two is always zero).
@@ -1681,27 +1768,20 @@ fn compute_table_layout_checked(
         // The caption of a horizontal table sits above or below the grid and
         // needs only the table's width. A vertical table's caption needs the
         // grid's height as well, so that one is laid out after the rows.
-        let mut early_caption = if vertical_writing {
-            None
+        let mut early_captions = if vertical_writing {
+            CaptionBoxes::default()
         } else {
-            layout_table_caption(doc, table_idx, final_width, inputs.parent_size.height)
+            layout_table_captions(doc, table_idx, final_width, inputs.parent_size.height)
         };
-        let min_h_outer = min_h_outer_of_grid(
-            doc,
-            table_idx,
-            min_h_outer,
-            item_is_flexed,
-            early_caption.as_ref(),
-        );
+        let min_h_outer = min_h_outer_of_grid(doc, min_h_outer, item_is_flexed, &early_captions);
         // A flex or grid parent assigns the table the height of the whole
         // wrapper box, caption included, and the grid box takes what is left of
         // it; so does the layout of an absolutely positioned table. This does
         // not hold for an authored height, which sizes the grid box alone (the
-        // wrapper is that much and the caption), unless the height is the
+        // wrapper is that much and the captions), unless the height is the
         // wrapper's that a flex column gave a table it grew or shrank.
         let stretch_grid_height = stretch_wrapper_room.map(|wrapper| {
-            let grid_height =
-                grid_height_in_wrapper(doc, table_idx, wrapper, early_caption.as_ref());
+            let grid_height = grid_height_in_wrapper(doc, wrapper, &early_captions);
             let capped = max_h_outer.map_or(grid_height, |maximum| {
                 grid_height.min(maximum.max(padding_border_size.height))
             });
@@ -1715,9 +1795,7 @@ fn compute_table_layout_checked(
                         && !vertical_writing
                         && (specified_height.is_none() || known_is_wrapper_height)
                 })
-                .map(|wrapper_height| {
-                    grid_height_in_wrapper(doc, table_idx, wrapper_height, early_caption.as_ref())
-                })
+                .map(|wrapper_height| grid_height_in_wrapper(doc, wrapper_height, &early_captions))
         });
 
         // Row heights
@@ -1824,7 +1902,7 @@ fn compute_table_layout_checked(
         // vertical spacing applies between and around those inline tracks.
         // Preferred heights grow proportionally, or shrink toward their true
         // inline minima when a definite height or maximum requires it.
-        // A minimum height and the caption only floor the available room.
+        // A minimum height and the captions only floor the available room.
         let vertical_tracks = if vertical_writing {
             let columns = usize::from(grid.n_cols);
             let rows = vertical_row_layout
@@ -1903,7 +1981,7 @@ fn compute_table_layout_checked(
                         // for the main size it gives a table whose
                         // `flex-basis` is definite, as long as it has not
                         // grown or shrunk it: the height of the grid box
-                        // alone, with the caption on top of it. (Once it is
+                        // alone, with the captions around it. (Once it is
                         // flexed the height is the wrapper's, which the
                         // assigned height above takes care of.) Other auto
                         // tables retain the legacy known-height normalization
@@ -1928,17 +2006,14 @@ fn compute_table_layout_checked(
             },
         };
 
-        let caption_layout = if vertical_writing {
-            layout_table_caption(doc, table_idx, final_size.width, Some(final_size.height))
+        let captions = if vertical_writing {
+            layout_table_captions(doc, table_idx, final_size.width, Some(final_size.height))
         } else {
-            early_caption.take()
+            std::mem::take(&mut early_captions)
         };
-        let (caption_size, mut caption_candidates) = caption_layout
-            .map(|(size, candidates)| (Some(size), candidates))
-            .unwrap_or_else(|| (None, OofCandidates::new()));
         let (wrapper_size, grid_origin) =
-            position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
-        translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+            position_table_captions(doc, table_idx, final_size, &captions, inputs.run_mode);
+        let mut caption_candidates = captions.into_candidates(doc);
         oof_candidates.append(&mut caption_candidates);
         if inputs.run_mode == RunMode::ComputeSize {
             return Ok(LayoutOutput::from_outer_size(wrapper_size));
@@ -2379,7 +2454,7 @@ fn dispatch_table_part_oof(
 
 /// A part of an anonymous table that this pass does not place, such as an empty
 /// row group or a column, must not keep a box from an earlier pass as its
-/// table-relative box. The cells in `grid_cells` and the caption were placed
+/// table-relative box. The cells in `grid_cells` and the captions were placed
 /// by this pass, and keep their boxes.
 fn clear_unplaced_anonymous_parts(
     doc: &mut LayoutSession<'_>,
@@ -2394,7 +2469,7 @@ fn clear_unplaced_anonymous_parts(
         return;
     }
     let placed: rustc_hash::FxHashSet<usize> =
-        grid_cells.chain(table_caption(doc, table)).collect();
+        grid_cells.chain(table_captions(doc, table)).collect();
     for part in parts {
         if !placed.contains(&part) {
             doc.nodes[part].layout = BoxLayout::new();

@@ -463,9 +463,7 @@
           }
         ],
         "xAdvance": 7.9998931884765625
-      },
-      "existing_unresolved_difference": "Existing first-caption-only layout differs from Chromium rendering both captions.",
-      "followup": "RAIKIRI-1495"
+      }
     },
     {
       "name": "footer-fit",

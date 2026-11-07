@@ -1243,18 +1243,12 @@ fn table_pagination_child_order(
     };
     let header = first(DisplayValue::TableHeaderGroup);
     let footer = first(DisplayValue::TableFooterGroup);
-    // Table layout renders only the first caption among the table's own
-    // children, those of `display: contents` wrappers included, so other
-    // captions have no box to paginate or to take a page name from.
-    let caption = children
-        .iter()
-        .copied()
-        .find(|&id| boxes.identity(id).display() == DisplayValue::TableCaption);
     // Columns and column groups only size the grid and generate no box.
-    children.retain(|&id| match boxes.identity(id).display() {
-        DisplayValue::TableCaption => Some(id) == caption,
-        DisplayValue::TableColumn | DisplayValue::TableColumnGroup => false,
-        _ => true,
+    children.retain(|&id| {
+        !matches!(
+            boxes.identity(id).display(),
+            DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+        )
     });
     children.sort_by_key(|&id| {
         let computed = &cascade.computed[id];
