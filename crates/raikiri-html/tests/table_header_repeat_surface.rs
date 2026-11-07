@@ -266,38 +266,45 @@ fn header_only_and_oversized_header_tables_keep_ordinary_placements() {
 }
 
 #[test]
-fn spanning_rows_and_bottom_captions_keep_the_existing_geometry() {
-    let caption = table(5).replace(
+fn spanning_rows_keep_the_existing_geometry() {
+    let body = table(5).replace("id='r0'", "id='r0' rowspan='2'");
+    let actual = lay_out(&body);
+    let reference = lay_out_with_css(&body, "thead{display:table-row-group}");
+    assert_eq!(actual.page_count(), reference.page_count());
+    for index in 0..actual.page_count() {
+        for id in ["h", "r0", "r1", "r4"] {
+            let placements = |document: &DocumentLayout| {
+                let page = document.page(index).unwrap();
+                let dom = page.dom();
+                let node = find_by_id(dom.root(), &dom, id).unwrap();
+                page.fragments()
+                    .filter(|fragment| fragment.node() == node)
+                    .map(|fragment| fragment.rect())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                placements(&actual),
+                placements(&reference),
+                "{id} page {index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_bottom_caption_follows_the_repeated_header_and_the_rows() {
+    let body = table(5).replace(
         "<table>",
         "<table><caption id='cap' style='caption-side:bottom;height:10px'>C</caption>",
     );
-    let span = table(5).replace("id='r0'", "id='r0' rowspan='2'");
-    for (body, ids) in [
-        (caption, vec!["h", "r0", "r4", "cap"]),
-        (span, vec!["h", "r0", "r1", "r4"]),
-    ] {
-        let actual = lay_out(&body);
-        let reference = lay_out_with_css(&body, "thead{display:table-row-group}");
-        assert_eq!(actual.page_count(), reference.page_count());
-        for index in 0..actual.page_count() {
-            for id in &ids {
-                let placements = |document: &DocumentLayout| {
-                    let page = document.page(index).unwrap();
-                    let dom = page.dom();
-                    let node = find_by_id(dom.root(), &dom, id).unwrap();
-                    page.fragments()
-                        .filter(|fragment| fragment.node() == node)
-                        .map(|fragment| fragment.rect())
-                        .collect::<Vec<_>>()
-                };
-                assert_eq!(
-                    placements(&actual),
-                    placements(&reference),
-                    "{id} page {index}"
-                );
-            }
-        }
-    }
+    let document = lay_out(&body);
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(header_count(&document, 0), 1);
+    assert_eq!(header_count(&document, 1), 1);
+    assert_eq!(rect(&document, "h", 1).y, 0.0);
+    assert_eq!(rect(&document, "r3", 0).y, 70.0);
+    assert_eq!(rect(&document, "r4", 1).y, 10.0);
+    assert_eq!(rect(&document, "cap", 1).y, 30.0);
 }
 
 #[test]

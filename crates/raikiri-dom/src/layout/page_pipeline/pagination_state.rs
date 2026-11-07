@@ -22,8 +22,8 @@ use super::{
     is_unfixed_absolute_box, lead_below_ancestor, lead_below_edges, leading_edges_move,
     leading_holder, line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
+    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
@@ -912,16 +912,43 @@ impl PaginationState {
         let candidate = grown.as_ref().unwrap_or(candidate);
         let height = candidate.height;
 
-        let header_delta = make_room_for_table_header(
-            document,
-            &mut self.table_headers,
-            node_id,
-            effective_y,
-            height,
-            self.current_page,
-            page_origins,
-        );
+        let header_delta = if page_break.overflow.tail_caption {
+            make_room_for_caption_header(
+                document,
+                &mut self.table_headers,
+                node_id,
+                effective_y,
+                height,
+                self.current_page,
+                page_origins,
+            )
+        } else {
+            make_room_for_table_header(
+                document,
+                &mut self.table_headers,
+                node_id,
+                effective_y,
+                height,
+                self.current_page,
+                page_origins,
+            )
+        };
         effective_y += header_delta;
+        if header_delta > 0.001 && page_break.overflow.tail_caption {
+            // A row's table is finished around its moved cells with the
+            // header copies; a caption has no cell, so the boxes around it
+            // follow it down here.
+            grow_ancestors_for_shift(
+                document,
+                cascade,
+                node_id,
+                header_delta,
+                env.body_id,
+                &mut self.subtree_shifts,
+                page_before_candidate,
+                &IfcBoxShifts::default(),
+            );
+        }
         let page_start = page_origins.origin(self.current_page);
         if page_break.keeps_margin_at_break
             && page_break.margin_top > 0.0
