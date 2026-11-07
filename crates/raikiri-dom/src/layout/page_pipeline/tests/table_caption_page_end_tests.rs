@@ -306,3 +306,55 @@ fn a_caption_of_a_table_in_a_cell_follows_its_row() {
     assert_eq!(page_flow_y(&doc, row), 200.0);
     assert_eq!(page_flow_y(&doc, caption), 200.0);
 }
+
+/// The grid box of a bordered table with one row and a bottom caption, which
+/// starts `before` px down the first page, and the caption's flow position.
+fn grid_box_with_a_bottom_caption(before: u32) -> (raikiri_traits::PaintRect, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;width:200px;font-family:Ahem;font-size:8px;line-height:10px"),
+    );
+    let lead = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;height:{before}px")),
+    );
+    doc.append_text(lead, "A");
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Some("display:table;border-spacing:0;border-collapse:collapse;border:2px solid"),
+    );
+    let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Some("display:table-cell;padding:0;height:10px"),
+    );
+    doc.append_text(cell, "c");
+    let caption = doc.append_element(
+        Some(table),
+        "caption",
+        Some("display:table-caption;caption-side:bottom"),
+    );
+    doc.append_text(caption, "t1");
+    paginate(&mut doc);
+    let grid = doc.nodes[table].table_grid_box.expect("a grid box");
+    (grid, page_flow_y(&doc, caption))
+}
+
+#[test]
+fn a_bottom_caption_that_moves_alone_leaves_the_grid_box_as_it_was() {
+    // The bordered grid ends just above the page end and stays; the caption
+    // under it moves. The grid box does not grow over the caption: it is as
+    // high as when the whole table fits.
+    let (whole, caption) = grid_box_with_a_bottom_caption(100);
+    assert_eq!(caption, 112.0 + 2.0);
+    let (grid, caption) = grid_box_with_a_bottom_caption(185);
+    assert_eq!(caption, 200.0);
+    assert_eq!(grid.height, whole.height);
+}
