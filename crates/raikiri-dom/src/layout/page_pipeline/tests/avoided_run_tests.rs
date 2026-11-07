@@ -613,7 +613,7 @@ fn a_heading_stays_before_a_table_that_does_not_start_with_its_first_row() {
     assert_eq!(
         heading_then(85, |doc, body| {
             let table = collapsed_table(doc, body, "");
-            let header = block(doc, table, "display:table-header-group");
+            let header = block(doc, table, "display:table-header-group;break-inside:avoid");
             row_with_cell(doc, header, "");
             let group = block(doc, table, "display:table-row-group");
             let first = row_with_cell(doc, group, "");
@@ -1116,7 +1116,7 @@ fn a_heading_in_a_wrapper_stays_before_a_table_that_does_not_start_with_its_firs
     assert_eq!(
         heading_in_wrapper_then(85, "", |doc, wrapper| {
             let table = collapsed_table(doc, wrapper, "");
-            let header = block(doc, table, "display:table-header-group");
+            let header = block(doc, table, "display:table-header-group;break-inside:avoid");
             row_with_cell(doc, header, "");
             let group = block(doc, table, "display:table-row-group");
             let first = row_with_cell(doc, group, "");

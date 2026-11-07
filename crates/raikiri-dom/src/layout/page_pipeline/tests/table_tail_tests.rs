@@ -103,7 +103,11 @@ fn printed_table_with_followers(
         tail,
         Tail::Header | Tail::HeaderCaption | Tail::HeaderFirstBody
     ) {
-        let header = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+        let header = doc.append_element(
+            Some(table),
+            "thead",
+            Some("display:table-header-group;break-inside:avoid"),
+        );
         rows.push(row(&mut doc, header, "h", 10));
     }
     let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
@@ -118,10 +122,10 @@ fn printed_table_with_followers(
             | Tail::DirectFooterTwoAvoid
             | Tail::FooterTwoAvoid
     ) {
-        let footer_css = if matches!(tail, Tail::FooterTwoAvoid | Tail::DirectFooterTwoAvoid) {
-            "display:table-footer-group;break-inside:avoid"
-        } else {
+        let footer_css = if matches!(tail, Tail::FooterTwoAuto | Tail::DirectFooterTwoAuto) {
             "display:table-footer-group;break-inside:auto"
+        } else {
+            "display:table-footer-group;break-inside:avoid"
         };
         let footer = doc.append_element(Some(table), "tfoot", Some(footer_css));
         rows.push(row(&mut doc, footer, "f", 10));
