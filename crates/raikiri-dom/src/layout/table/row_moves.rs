@@ -45,7 +45,7 @@ pub(crate) fn follow_moved_rows(
     // a table for spanning cells walks all of its cells.
     let tables: BTreeSet<usize> = moved_rows
         .keys()
-        .filter_map(|&row| table_of(document, row))
+        .filter_map(|&row| document.table_of_row(row))
         .collect();
     #[cfg(test)]
     ROW_MOVE_WORK.with(|work| {
@@ -107,8 +107,11 @@ pub(crate) fn follow_moved_rows(
         if repeated_header {
             continue;
         }
+        // An anonymous table has no box of its own to draw: its row groups and
+        // rows, which stand in the table's parent, are all that moves.
         if !top_caption
             && !anonymous_rows
+            && !document.is_anonymous_table(table)
             && let Some((first, _)) = table_first
             && let Some(&delta) = moved_rows.get(&first)
         {
@@ -122,15 +125,6 @@ pub(crate) fn follow_moved_rows(
         };
         super::headers::finish_table_boxes(document, table, gap);
     }
-}
-
-fn table_of(document: &Document, row: usize) -> Option<usize> {
-    document.inclusive_ancestors(row).skip(1).find(|&id| {
-        matches!(
-            document.nodes[id].display(),
-            DisplayValue::Table | DisplayValue::InlineTable
-        )
-    })
 }
 
 /// The topmost rendered row among the direct children of `part`.
