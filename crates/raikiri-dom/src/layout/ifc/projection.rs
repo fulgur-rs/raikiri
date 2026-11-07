@@ -1262,6 +1262,23 @@ fn project_children_builder(
             NodeKind::Comment | NodeKind::ProcessingInstruction => {}
             NodeKind::Element => {
                 let cv = cascade.computed.get(id).ok_or(IfcError::InvalidNode(id))?;
+                // The parts of an anonymous table are one block-level box
+                // between the lines around them: the first stands for the
+                // table, and the others are laid out inside it.
+                if let Some(table) = doc.anonymous_table_of(id) {
+                    if doc.anonymous_table_parts(table).and_then(<[usize]>::first) == Some(&id) {
+                        first_letter.stop();
+                        builder.push_block_in_inline(NodeId(table as u64));
+                        boxes.push(IfcBox {
+                            node: table,
+                            kind: IfcBoxKind::Block,
+                        });
+                        if let Some(error) = builder.error() {
+                            return Err(IfcError::Limit(error));
+                        }
+                    }
+                    continue;
+                }
                 // `<style>`, `<script>` and friends render nothing even when
                 // an author rule gives them a display type.
                 // Columns and column groups render nothing of their own

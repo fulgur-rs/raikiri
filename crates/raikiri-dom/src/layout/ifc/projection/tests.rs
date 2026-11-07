@@ -837,7 +837,9 @@ fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
         ("display:table-cell", Some(IfcBoxKind::Block)),
         ("display:table-caption", Some(IfcBoxKind::Block)),
         ("display:table-row-group", Some(IfcBoxKind::Block)),
-        ("display:table-column", None),
+        // The column is a part of an anonymous table, which is a block-level
+        // box even though it holds no row.
+        ("display:table-column", Some(IfcBoxKind::Block)),
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");
@@ -867,6 +869,32 @@ fn generated_first_letter_retains_the_originating_elements_language() {
     );
     assert_eq!(lines[0].text(), "İx");
     assert_eq!(projected.paragraph.text(), "ix");
+}
+
+#[test]
+fn an_anonymous_table_in_a_paragraph_enforces_the_item_limit() {
+    let fixture = block_fixture("", |doc, root| {
+        let row = span(doc, root, "display:table-row");
+        span(doc, row, "display:table-cell");
+        doc.append_text(root, "aa");
+    });
+    let limits = Limits {
+        max_items: Some(0),
+        ..Limits::default()
+    };
+    let error = match project_ifc_builder(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &ahem_fonts(),
+        &limits,
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("the table is an item of the paragraph"),
+    };
+    assert!(
+        matches!(error, IfcError::Limit(limit) if limit.kind == shodo::limits::LimitKind::Items)
+    );
 }
 
 #[test]

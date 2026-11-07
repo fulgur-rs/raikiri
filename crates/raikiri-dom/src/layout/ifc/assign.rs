@@ -566,11 +566,11 @@ fn collect_candidates(
             .meta
             .boxes
             .iter()
-            .map(|box_| {
+            .flat_map(|box_| {
                 #[cfg(test)]
                 crate::layout::test_support::IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS
                     .with(|steps| steps.set(steps.get() + 1));
-                box_.node
+                doc.box_with_table_parts(box_.node)
             })
             .collect::<HashSet<_>>();
         let mut stack = doc.nodes[idx].children.clone();
@@ -795,15 +795,17 @@ fn build_all(
 fn write_roots(doc: &mut Document, built: Vec<(usize, IfcRoot)>) {
     for (idx, paragraph) in built {
         // Boxes are laid out and painted as nodes of their own, so neither
-        // they nor their content belong to the paragraph's subtree.
+        // they nor their content belong to the paragraph's subtree. The parts
+        // of an anonymous table are the children of the root that its box
+        // lays out.
         let boxes = paragraph
             .boxes
             .iter()
-            .map(|box_| {
+            .flat_map(|box_| {
                 #[cfg(test)]
                 crate::layout::test_support::IFC_ROOT_BOX_MEMBERSHIP_STEPS
                     .with(|steps| steps.set(steps.get() + 1));
-                box_.node
+                doc.box_with_table_parts(box_.node)
             })
             .collect::<HashSet<_>>();
         let root = doc.table_layout_node_mut(idx);

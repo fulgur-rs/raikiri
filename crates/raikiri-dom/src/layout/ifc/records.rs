@@ -34,7 +34,7 @@ fn inline_elements(tree: &Document, root: usize, ifc: &IfcRoot) -> Vec<usize> {
         #[cfg(test)]
         crate::layout::test_support::IFC_INLINE_ELEMENT_BOX_VISITS
             .with(|count| count.set(count.get() + 1));
-        box_nodes.insert(item.node);
+        box_nodes.extend(tree.box_with_table_parts(item.node));
     }
     let is_box = |id| {
         #[cfg(test)]

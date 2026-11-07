@@ -791,7 +791,7 @@ impl Document {
     /// [`paint_rules::paints_before_paragraph_lines`]), in tree order.
     fn uncached_paragraph_blocks(&self, cascade: &CascadeResult, root: usize) -> Vec<usize> {
         self.get_node(root)
-            .map(|node| node.ifc_boxes())
+            .map(|node| self.ifc_source_boxes(node))
             .unwrap_or_default()
             .into_iter()
             .filter(|&id| paint_rules::paints_before_paragraph_lines(self, cascade, root, id))

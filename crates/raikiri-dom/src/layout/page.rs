@@ -1053,7 +1053,11 @@ pub(crate) fn is_floating_box_for_pagination(
 }
 
 fn floating_box_with_boxes(cascade: &CascadeResult, node_id: usize, boxes: BoxTree<'_>) -> bool {
-    let computed = &cascade.computed[node_id];
+    // An anonymous table, which a paragraph lists among its boxes, has no
+    // computed style and floats nothing.
+    let Some(computed) = cascade.computed.get(node_id) else {
+        return false;
+    };
     // Layout floats only the physical sides; a logical `inline-start` or
     // `inline-end` box stays in normal flow there.
     matches!(

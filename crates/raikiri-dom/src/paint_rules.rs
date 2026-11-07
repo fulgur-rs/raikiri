@@ -816,7 +816,8 @@ pub fn pseudo_stack_level(cascade: &CascadeResult, id: usize) -> i32 {
 ///
 /// The parts of a table in such a block defer too: the table's, rows' and
 /// cells' backgrounds are block backgrounds of the layer, below the text of
-/// every cell.
+/// every cell. So do the parts of an anonymous table, wherever their parent
+/// is.
 ///
 /// A block that groups, transforms, fragments into columns, floats or is
 /// positioned paints its content in place: deferring past it would move the
@@ -892,9 +893,27 @@ fn defers_unless_clipped(document: &Document, cascade: &CascadeResult, node_id: 
     let Some(cv) = cascade.computed.get(node_id) else {
         return false;
     };
-    let parent_display = box_parent(document, cascade, node_id, BoxParentScope::Document)
-        .and_then(|parent| cascade.computed.get(parent))
-        .map(|parent| parent.display);
+    // The parts an anonymous table wraps stand in that table, whatever box
+    // their parent is.
+    let in_anonymous_table = document.anonymous_table_of(node_id).is_some();
+    let parent_display = if in_anonymous_table {
+        Some(DisplayValue::Table)
+    } else {
+        box_parent(document, cascade, node_id, BoxParentScope::Document)
+            .and_then(|parent| cascade.computed.get(parent))
+            .map(|parent| parent.display)
+    };
+    // Rows, and cells outside a row, stand directly in a table or in a row
+    // group.
+    let in_table_body = matches!(
+        parent_display,
+        Some(
+            DisplayValue::Table
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+        )
+    );
     let fits_parent = match cv.display {
         DisplayValue::Block
         | DisplayValue::FlowRoot
@@ -904,16 +923,9 @@ fn defers_unless_clipped(document: &Document, cascade: &CascadeResult, node_id: 
         | DisplayValue::TableRowGroup
         | DisplayValue::TableHeaderGroup
         | DisplayValue::TableFooterGroup => parent_display == Some(DisplayValue::Table),
-        DisplayValue::TableRow => matches!(
-            parent_display,
-            Some(
-                DisplayValue::Table
-                    | DisplayValue::TableRowGroup
-                    | DisplayValue::TableHeaderGroup
-                    | DisplayValue::TableFooterGroup
-            )
-        ),
-        DisplayValue::TableCell => parent_display == Some(DisplayValue::TableRow),
+        DisplayValue::TableRow => in_table_body,
+        // A cell outside a row stands in an anonymous row.
+        DisplayValue::TableCell => in_table_body || parent_display == Some(DisplayValue::TableRow),
         _ => false,
     };
     fits_parent
@@ -1754,13 +1766,15 @@ pub fn paints_before_paragraph_lines(
     id: usize,
 ) -> bool {
     cascade.computed.get(id).is_some_and(|cv| {
-        matches!(
+        // The rows an anonymous table wraps paint as the table's block does.
+        (matches!(
             cv.display,
             DisplayValue::Block
                 | DisplayValue::FlowRoot
                 | DisplayValue::ListItem
                 | DisplayValue::Table
-        ) && matches!(cv.position, PositionValue::Static)
+        ) || document.anonymous_table_of(id).is_some())
+            && matches!(cv.position, PositionValue::Static)
             && matches!(cv.float, FloatValue::None)
             && !establishes_stacking_context(document, id, cv)
     }) && document
