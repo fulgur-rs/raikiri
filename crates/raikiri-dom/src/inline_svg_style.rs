@@ -728,7 +728,7 @@ fn node_declarations_at(
 /// has another font size when it is instantiated below the `use` element.
 /// Inside an instantiated subtree the length is left as written, so that each
 /// instance resolves it against its own font size, and so is a presentation
-/// attribute, which stays in the source.
+/// attribute, which is written as the cascade normalized it.
 ///
 /// What the element inherits there cannot be written in px either, for the
 /// font size of the declaring ancestor is another one in each instance. When
@@ -795,30 +795,33 @@ fn write_node_declarations(
             return Ok(false);
         }
     }
-    // The attribute of an element that is instantiated is resolved by each
-    // instance, from the source.
-    let relative_attributes = if in_instance {
-        &[]
-    } else {
-        relative_attributes
-    };
     for attribute in relative_attributes {
         let Some(expression) = &attribute.expression else {
             continue;
         };
-        let Some(value) = resolve_relative_svg_presentation_value(
-            attribute.property,
-            expression,
-            style.font_size.0,
-        ) else {
-            continue;
+        // An instantiated element keeps the length as written, normalized, so
+        // that each instance resolves it at its own font size. The source
+        // text is not left to the renderer, which reads fewer spellings.
+        let in_px;
+        let text = if in_instance {
+            expression.as_str()
+        } else {
+            let Some(value) = resolve_relative_svg_presentation_value(
+                attribute.property,
+                expression,
+                style.font_size.0,
+            ) else {
+                continue;
+            };
+            in_px = value;
+            in_px.as_str()
         };
         consume(
             128usize
                 .saturating_add(expression.len())
-                .saturating_add(value.len().saturating_mul(2)),
+                .saturating_add(text.len().saturating_mul(2)),
         )?;
-        if !push_declaration(out, svg_presentation_name(attribute.property), &value) {
+        if !push_declaration(out, svg_presentation_name(attribute.property), text) {
             return Ok(false);
         }
     }

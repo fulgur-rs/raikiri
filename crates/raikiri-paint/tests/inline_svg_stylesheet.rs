@@ -1328,3 +1328,17 @@ fn a_definition_drawn_in_place_and_by_a_use_resolves_a_stroke_width_attribute_in
         "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 40h50' stroke=black stroke-width=20 /></svg>",
     );
 }
+
+#[test]
+fn a_stroke_width_attribute_with_an_upper_case_unit_follows_each_instance() {
+    // The unit is read without regard to case, as a browser reads it; the
+    // renderer reads only lower case, so the attribute is not left to it.
+    assert_paints_like(
+        "<svg width=50 height=50><defs><path id=p d='M0 10h50' stroke=black stroke-width=1EM /></defs><use href='#p' style='font-size:10px' /><use href='#p' y='30' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 40h50' stroke=black stroke-width=20 /></svg>",
+    );
+    assert_paints_like(
+        "<svg width=50 height=50><path id=p d='M0 10h50' stroke=black stroke-width=1EM /><use href='#p' y='30' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 40h50' stroke=black stroke-width=20 /></svg>",
+    );
+}

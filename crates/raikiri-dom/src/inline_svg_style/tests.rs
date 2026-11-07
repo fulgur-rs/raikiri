@@ -547,7 +547,7 @@ fn the_ancestors_of_an_element_tell_where_other_elements_are_without_climbing() 
 }
 
 #[test]
-fn relative_presentation_attributes_of_an_instantiated_element_stay_in_the_source() {
+fn relative_presentation_attributes_of_an_instantiated_element_stay_relative() {
     let attributes = [
         SvgStyleProperty::new(PropertyKey::StrokeWidth, false, Some("2em".into()), None),
         SvgStyleProperty::new(
@@ -560,11 +560,15 @@ fn relative_presentation_attributes_of_an_instantiated_element_stay_in_the_sourc
     let mut style = ComputedValues::initial();
     style.font_size.0 = 20.0;
     let mut budget = 4096;
-    // Each instance resolves the text of the attribute at its own font size.
+    // Each instance resolves the text at its own font size. The text is the
+    // normalized one the cascade holds, not the spelling of the source.
     assert_eq!(
         node_declarations(&style, &[], &attributes, true, &mut budget).unwrap(),
-        ""
+        "stroke-width:2em!important;stroke-dasharray:2em 1ex!important;"
     );
+    // The element's own 128 bytes, then for each attribute 128 and three
+    // times its text: the text, and the two copies of what is written.
+    assert_eq!(budget, 4096 - 128 - (128 + 3 * 3) - (128 + 3 * 7));
 }
 
 #[test]
