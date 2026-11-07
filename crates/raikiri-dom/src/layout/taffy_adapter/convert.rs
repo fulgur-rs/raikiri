@@ -453,7 +453,7 @@ impl IntoTaffy for Baselines {
 
     #[inline]
     fn into_taffy(self) -> taffy::Baselines {
-        let Baselines { first, last } = self;
+        let Baselines { first, last, .. } = self;
         taffy::Baselines { first, last }
     }
 }
@@ -464,7 +464,11 @@ impl FromTaffy for Baselines {
     #[inline]
     fn from_taffy(value: taffy::Baselines) -> Self {
         let taffy::Baselines { first, last } = value;
-        Baselines { first, last }
+        Baselines {
+            first,
+            last,
+            no_last: false,
+        }
     }
 }
 

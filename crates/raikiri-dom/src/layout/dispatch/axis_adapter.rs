@@ -216,6 +216,7 @@ impl AxisAdapter {
         output.baselines = Baselines {
             first: Some(baseline),
             last: None,
+            no_last: false,
         };
         output
     }

@@ -89,3 +89,36 @@ fn physical_and_legacy_overflow_keep_empty_rectangles_and_padding_extent() {
     output.encode_overflow(100.0, true);
     assert_eq!(output.scrollable_overflow_rect, Edges::ZERO);
 }
+
+#[test]
+fn the_final_cache_keeps_a_box_without_a_last_baseline() {
+    let final_input = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        ..LayoutInput::HIDDEN
+    };
+    let size_input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        ..final_input
+    };
+    let size = Size {
+        width: 20.0,
+        height: 10.0,
+    };
+    let mut table = LayoutOutput::from_outer_size(size);
+    table.baselines.first = Some(8.0);
+    table.baselines.no_last = true;
+    let mut cache = LayoutCache::new();
+    cache.store(&final_input, table.clone());
+    cache.store(&size_input, LayoutOutput::from_outer_size(size));
+    assert_eq!(cache.get(&final_input), Some(table.clone()));
+    assert!(!cache.get(&size_input).unwrap().baselines.no_last);
+    assert_eq!(
+        cache.get(&final_input).unwrap().baselines.last_or_first(),
+        None
+    );
+    cache.clear();
+    let mut plain = table;
+    plain.baselines.no_last = false;
+    cache.store(&final_input, plain.clone());
+    assert_eq!(cache.get(&final_input), Some(plain));
+}

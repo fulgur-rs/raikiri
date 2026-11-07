@@ -247,6 +247,7 @@ fn output_on_layout_axes() -> LayoutOutput {
         baselines: Baselines {
             first: Some(1.0),
             last: Some(2.0),
+            no_last: false,
         },
         ..LayoutOutput::HIDDEN
     };
@@ -273,7 +274,8 @@ fn a_container_output_swaps_the_sizes_for_either_block_direction() {
             output.baselines,
             Baselines {
                 first: Some(1.0),
-                last: Some(2.0)
+                last: Some(2.0),
+                no_last: false,
             }
         );
     }
@@ -616,7 +618,8 @@ fn a_child_output_enters_the_layout_axes_and_leaves_them_unchanged() {
             on_layout_axes.baselines,
             Baselines {
                 first: Some(3.5),
-                last: None
+                last: None,
+                no_last: false,
             }
         );
 

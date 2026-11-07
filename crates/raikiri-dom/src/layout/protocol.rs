@@ -317,6 +317,13 @@ pub(crate) struct Baselines {
     pub first: Option<f32>,
     /// The last baseline, if any.
     pub last: Option<f32>,
+    /// Whether the box has no last baseline although it has a first one, which
+    /// a container that stands in for a missing last baseline by the first
+    /// one must not do: a table, and a block container whose only baseline is
+    /// a table's. A table gives the flex container, grid or table cell around
+    /// it the baseline of its first row, but it gives a block container, and
+    /// the inline-block that holds it, none to sit on.
+    pub no_last: bool,
 }
 
 impl Baselines {
@@ -324,7 +331,15 @@ impl Baselines {
     pub(crate) const NONE: Self = Self {
         first: None,
         last: None,
+        no_last: false,
     };
+
+    /// The baseline that stands for the last one of the box: its last
+    /// baseline, else its first one, unless it has no last baseline by
+    /// [`no_last`](Self::no_last).
+    pub(crate) fn last_or_first(&self) -> Option<f32> {
+        self.last.or(if self.no_last { None } else { self.first })
+    }
 }
 
 /// The physical alignment of the margin box of an out-of-flow box within its

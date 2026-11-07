@@ -2286,6 +2286,10 @@ fn table_layout_output(
     if !table_writing_mode(doc, table).is_vertical() {
         output.baselines.first = doc.nodes[table].table_first_baseline;
     }
+    // A table has no last baseline: the block container around it takes its
+    // first row for a first baseline only, so an inline-block that holds
+    // nothing else sits on its bottom margin edge, as in Chromium.
+    output.baselines.no_last = true;
     append_direct_table_oof_candidates(doc, table, &mut candidates);
     if candidates.is_empty() {
         return output;
