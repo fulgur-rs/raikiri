@@ -24,6 +24,7 @@ mod border_state_tests;
 mod cache_tests;
 mod cell_index_tests;
 mod cell_maximum_tests;
+mod cell_percent_height_tests;
 pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
 mod inline_block_baseline_tests;
