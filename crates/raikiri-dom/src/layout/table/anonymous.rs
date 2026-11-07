@@ -458,9 +458,11 @@ fn flattened_children(
 /// parts among them can be wrapped in an anonymous block-level table.
 ///
 /// Inline content would make the parent a paragraph root, whose children the
-/// inline engine lays out instead; its rows remain blocks there. List items,
-/// whose markers sit on their first line, and vertical and multicol
-/// containers keep their rows as blocks as well.
+/// inline engine lays out instead; its rows remain blocks there. A list item
+/// with an inside marker that has something to draw is one of those: the
+/// marker is inline content on its first line. A multicol container also
+/// keeps its rows as blocks, since the column machinery walks the source
+/// children of the container.
 fn lays_out_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
     let node = doc.ifc_layout_node(parent).unwrap();
     let cv = &cascade.computed[parent];
@@ -470,12 +472,12 @@ fn lays_out_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: u
             | DisplayValue::FlowRoot
             | DisplayValue::TableCell
             | DisplayValue::TableCaption
-    ) && !cv.cssom_writing_mode.is_vertical()
-        && matches!(
-            cv.column_count,
-            raikiri_style::property::ColumnCountValue::Auto
-        )
-        && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto)
+            | DisplayValue::ListItem
+    ) && matches!(
+        cv.column_count,
+        raikiri_style::property::ColumnCountValue::Auto
+    ) && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto)
+        && !crate::generated_content::is_in_flow_generated_text(cascade, parent, PseudoElem::Marker)
         && !node.is_inline_svg_root()
         && !generates_pseudo_box(cascade, parent)
 }

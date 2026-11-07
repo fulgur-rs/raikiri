@@ -855,6 +855,9 @@ pub(super) fn compute_vertical_block(
             .physical(layout.scrollable_overflow_rect);
         *layout = physical_layout(layout, output.size.width, right_to_left);
         layout.scrollable_overflow_rect = overflow;
+        // The rows an anonymous table wraps follow the table, and were
+        // offset by the location it had on the transposed axes.
+        tree.offset_anonymous_table_parts(child);
     }
     output
 }

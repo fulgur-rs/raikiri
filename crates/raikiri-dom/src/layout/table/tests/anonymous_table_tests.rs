@@ -246,27 +246,53 @@ fn a_contents_wrapper_with_generated_content_keeps_the_cells_around_it_blocks() 
     assert!(doc.table_objects.tables.is_empty());
 }
 
+/// The number of anonymous tables built for a row in a `body` with `body_css`
+/// and the style sheet `sheet`.
+fn anonymous_tables_around_a_row(sheet: &str, body_css: &str) -> usize {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", Some("display:none"));
+    doc.append_text(style, sheet);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some(&format!("display:block;{body_css}")),
+    );
+    let row = div(&mut doc, body, "display:table-row");
+    div(&mut doc, row, "display:table-cell");
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.table_objects.tables.len()
+}
+
 #[test]
-fn multicol_and_generated_content_parents_keep_rows_blocks() {
+fn multicol_inside_marker_and_generated_content_parents_keep_rows_blocks() {
     for (sheet, body_css) in [
         ("", "column-count:2"),
-        ("", "writing-mode:vertical-rl"),
+        ("", "column-width:100px"),
+        // The marker sits on the first line of the item.
+        ("", "display:list-item;list-style:inside disc"),
         ("body::before{content:'X';display:block}", ""),
     ] {
-        let mut doc = Document::new();
-        let style = doc.append_element(Some(0), "style", Some("display:none"));
-        doc.append_text(style, sheet);
-        let html = doc.append_element(Some(0), "html", Some("display:block"));
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Some(&format!("display:block;{body_css}")),
+        assert_eq!(
+            anonymous_tables_around_a_row(sheet, body_css),
+            0,
+            "{sheet}{body_css}"
         );
-        let row = div(&mut doc, body, "display:table-row");
-        div(&mut doc, row, "display:table-cell");
-        doc.mark_in_document_flags();
-        let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-        assert!(doc.table_objects.tables.is_empty(), "{sheet}{body_css}");
+    }
+}
+
+#[test]
+fn vertical_and_outside_marker_list_item_parents_wrap_their_rows() {
+    for body_css in [
+        "writing-mode:vertical-rl",
+        "writing-mode:vertical-lr",
+        "display:list-item;list-style:outside disc",
+        "display:list-item;list-style:none",
+        // No marker is drawn, so nothing sits on the first line.
+        "display:list-item;list-style:inside none",
+    ] {
+        assert_eq!(anonymous_tables_around_a_row("", body_css), 1, "{body_css}");
     }
 }
