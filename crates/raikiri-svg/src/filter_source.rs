@@ -15,6 +15,11 @@
 //!   attribute as in a declaration, which `usvg` does not read. What the
 //!   function comes to is written into the attribute, for the ones that come
 //!   to the same length wherever they are used.
+//! - The `x`, `y`, `width` and `height` of a filter primitive are fractions of
+//!   the bounding box of the element when the filter says `primitiveUnits` is
+//!   `objectBoundingBox`, but `usvg` takes them for fractions of the filter
+//!   region, except for `feFlood` and `feImage`. The primitive gets the clip
+//!   that its subregion is.
 //!
 //! All are mended in the XML before `usvg` reads it: the parsed tree no
 //! longer tells an empty `g`, whose filter does draw, from a shape that was
@@ -23,6 +28,7 @@
 //! everything that looks at them, such as a `use`, a `switch` or a selector.
 
 mod geometry;
+mod subregion;
 
 use crate::{MAX_INITIAL_PARSE_XML_NODES, SVG_NAMESPACE, XLINK_NAMESPACE};
 use geometry::{Declared, math};
@@ -102,6 +108,7 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     let filters = source.contains("<filter") || source.contains(":filter");
     let styled_geometry = geometry::may_declare(source);
     let calculated = math::may_hold(source);
+    let clipped = filters && subregion::may_hold(source);
     if !filters && !styled_geometry && !calculated {
         return Cow::Borrowed(source);
     }
@@ -123,6 +130,11 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     // selector matches.
     let (mut tests_style, mut tests_divisor, mut tests_geometry, mut tests_length) =
         (false, false, false, false);
+    // What the clips of the subregions add is a primitive of its own among the
+    // siblings, the `result` of a primitive moves to the clip, the clip only
+    // carries along the attributes of the primitive, and the flood of the clip
+    // is as black and opaque as the rules of the sheet leave a flood.
+    let mut tests_primitives = false;
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
         if node
             .attribute("type")
@@ -138,6 +150,7 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
                 tests_length |= LENGTH_ATTRIBUTES
                     .iter()
                     .any(|attribute| tests_attribute(css, attribute));
+                tests_primitives |= reaches_primitives(css);
             }
         }
     }
@@ -164,11 +177,7 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
                 && svgtypes::Number::from_str(divisor.value())
                     .is_ok_and(|number| is_zero_divisor(number.0))
             {
-                // The space before the attribute goes with it.
-                let start = source[..divisor.range().start]
-                    .trim_end_matches([' ', '\t', '\r', '\n'])
-                    .len();
-                edits.push((start..divisor.range().end, Cow::Borrowed("")));
+                edits.push(remove_attribute(source, divisor));
             }
             continue;
         }
@@ -241,6 +250,9 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     if calculated && !tests_length {
         calculate_lengths(&xml, &mut edits);
     }
+    if clipped && !tests_length && !tests_primitives {
+        subregion::clip_subregions(source, &xml, &mut edits);
+    }
     if edits.is_empty() {
         Cow::Borrowed(source)
     } else {
@@ -305,6 +317,31 @@ fn tests_attribute(css: &str, name: &str) -> bool {
     })
 }
 
+/// Whether the stylesheet `css` may say something about a filter primitive
+/// that a clip written next to it does not share: a selector that tests its
+/// `result`, or that tells one sibling from another by its place (a
+/// pseudo-class that counts, a combinator that relates siblings), or a
+/// declaration of its color space, or of the color or the opacity of a flood,
+/// which an important declaration of the sheet keeps the clip from setting
+/// for its own flood. The text is only searched, so a `+` in a function or a
+/// `~` in a string counts too, which leaves the sheet alone.
+fn reaches_primitives(css: &str) -> bool {
+    let lowered = css.to_ascii_lowercase();
+    tests_attribute(css, "result")
+        || lowered.contains(['+', '~'])
+        || [
+            ":nth",
+            ":first",
+            ":last",
+            ":only",
+            "color-interpolation-filters",
+            "flood-color",
+            "flood-opacity",
+        ]
+        .iter()
+        .any(|text| lowered.contains(text))
+}
+
 /// Whether `usvg` takes `number` for a zero: it reads a single precision float
 /// and drops the primitive for a divisor within four units in the last place of
 /// zero, which holds for a number that underflows.
@@ -361,9 +398,8 @@ fn attribute_bytes(name: &str, value: &str) -> usize {
         .saturating_add(name.len() + " =\"\"".len() + std::mem::size_of::<Edit>())
 }
 
-/// The edit that gives the attribute `name` of `node` the value `value`, which
-/// it adds if the element has none.
-fn set_attribute(source: &str, node: roxmltree::Node<'_, '_>, name: &str, value: &str) -> Edit {
+/// `value` as the text of a quoted attribute.
+fn escape(value: &str) -> String {
     let mut text = String::with_capacity(escaped_len(value));
     for c in value.chars() {
         match entity(c) {
@@ -371,6 +407,21 @@ fn set_attribute(source: &str, node: roxmltree::Node<'_, '_>, name: &str, value:
             None => text.push(c),
         }
     }
+    text
+}
+
+/// The edit that leaves out `attribute`, and the space before it.
+fn remove_attribute(source: &str, attribute: roxmltree::Attribute<'_, '_>) -> Edit {
+    let start = source[..attribute.range().start]
+        .trim_end_matches([' ', '\t', '\r', '\n'])
+        .len();
+    (start..attribute.range().end, Cow::Borrowed(""))
+}
+
+/// The edit that gives the attribute `name` of `node` the value `value`, which
+/// it adds if the element has none.
+fn set_attribute(source: &str, node: roxmltree::Node<'_, '_>, name: &str, value: &str) -> Edit {
+    let text = escape(value);
     if let Some(attribute) = node.attribute_node(name) {
         return (attribute.range_value(), Cow::Owned(text));
     }
@@ -515,9 +566,10 @@ fn is_not_rendered(node: roxmltree::Node<'_, '_>, declared: &[(&str, Declared)])
 }
 
 /// `source` with each of `edits` put in the place of its range. The ranges
-/// do not overlap, and the edits at one place go in the order they come in.
+/// do not overlap, an insertion goes before the range that starts where it
+/// does, and the edits at one place go in the order they come in.
 fn apply(source: &str, mut edits: Vec<Edit>) -> String {
-    edits.sort_by_key(|(range, _)| range.start);
+    edits.sort_by_key(|(range, _)| (range.start, range.end));
     let mut out = String::with_capacity(source.len());
     let mut at = 0;
     for (range, text) in edits {

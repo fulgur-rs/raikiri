@@ -1130,6 +1130,36 @@ fn unitless_inline_svg_invalid_variables_do_not_revive_presentation_sizes() {
 }
 
 #[test]
+fn native_svg_filter_subregions_in_bounding_box_units_paint_as_the_box_they_name() {
+    // A quarter and a half of the 20 by 20 box at 4, 4 is the square from 9 of
+    // 10 by 10, whatever primitive it is the subregion of.
+    for (fractions, user_space) in [
+        (
+            "<feColorMatrix type=matrix values='0 0 0 0 1  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0' x=25% y=25% width=50% height=50% />",
+            "<feColorMatrix type=matrix values='0 0 0 0 1  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0' x=9 y=9 width=10 height=10 />",
+        ),
+        (
+            "<feGaussianBlur stdDeviation=0 x=0.25 y=0.25 width=0.5 height=0.5 />",
+            "<feGaussianBlur stdDeviation=0 x=9 y=9 width=10 height=10 />",
+        ),
+        (
+            // The values that are left out are the ones of the filter region.
+            "<feFlood flood-color=red x=25% y=25% />",
+            "<feFlood flood-color=red x=9 y=9 width=24 height=24 />",
+        ),
+    ] {
+        assert_both_svg_paths_paint_like(
+            &format!(
+                "<svg width=40 height=30><filter id=f primitiveUnits=objectBoundingBox>{fractions}</filter><rect x=4 y=4 width=20 height=20 fill=green filter='url(#f)' /></svg>"
+            ),
+            &format!(
+                "<svg width=40 height=30><filter id=f primitiveUnits=userSpaceOnUse>{user_space}</filter><rect x=4 y=4 width=20 height=20 fill=green filter='url(#f)' /></svg>"
+            ),
+        );
+    }
+}
+
+#[test]
 fn native_svg_geometry_attributes_that_are_math_functions_paint_as_their_value() {
     for (calculated, plain) in [
         (

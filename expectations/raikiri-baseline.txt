@@ -5542,6 +5542,10 @@ css/CSS2/pagination/table-page-break-inside-avoid-4-print.html
 # A `calc()` for word-spacing, letter-spacing, text-indent and tab-size may multiply or divide a term by a number (CSS Values 4 section 10.1), so `calc(100% + 6em + 50%*4 - 12em/2)` is 300% of the space width. The test was an expected failure before the change because the mixed row was dropped, and audit-vacuous-passes reports KEEP.
 css/css-text/word-spacing/word-spacing-001.html
 
+# --- Filter primitive subregions in the units of the bounding box (WPT pin 97ea26e2, EXACT, Linux, 2026-11-06) ---
+# The `x`, `y`, `width` and `height` of a filter primitive are fractions of the bounding box of the filtered element when `primitiveUnits` is `objectBoundingBox` (Filter Effects 1 section 15.7.3), so the `feBlend` and `feMerge` tiles are clipped to the square the 25% and 50% name, as the `feFlood` tile was. The test was an expected failure before the change because the clip of those two tiles was taken from the filter region, and audit-vacuous-passes reports KEEP.
+css/filter-effects/filter-subregion-01.html
+
 # --- A dashed row border in a collapsed-border table (WPT pin 97ea26e2, EXACT, Linux, 2026-11-07) ---
 # The `.row` of these three tests has `border: dashed green 1pt` in a `border-collapse: collapse` table, with `display: contents` wrappers (static, and inserted or removed by script) around the cells; the reference has the same table without the wrappers. Each cell paints its own segment of a collapsed edge and starts the dash pattern again at its own edge, as Chromium does (crates/raikiri-paint/tests/collapsed_dashed_border.rs holds Chromium's pixels for a two-cell row). A render still differs from Chromium's by about 1,400 pixels, which comes from Chromium's widths, not from the dashes: it measures a cell of four Ahem glyphs as 65.016px wide with its collapsed borders, not 65px, so the columns here are 64.56px and 49.05px, the table is 0.61px wider than raikiri's and starts at x = 685.39. audit-vacuous-passes reports KEEP in a run.
 css/css-display/display-contents-dynamic-table-002-inline.html
