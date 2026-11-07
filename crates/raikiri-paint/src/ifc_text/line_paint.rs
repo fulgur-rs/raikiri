@@ -248,10 +248,12 @@ impl LineShapes {
     /// The empty paint of the paragraph's lines.
     pub(super) fn paint(&self) -> LineGroups {
         LineGroups {
-            first_line: self
-                .first_line
-                .as_ref()
-                .map(|(shape, opacity)| (TypographicPaint::on(shape), *opacity)),
+            first_line: self.first_line.as_ref().map(|(shape, opacity)| {
+                (
+                    TypographicPaint::on(shape).into_first_line_group(),
+                    *opacity,
+                )
+            }),
             rest: TypographicPaint::on(&self.rest),
         }
     }
@@ -486,7 +488,7 @@ impl<'a> LinePaint<'a, '_> {
         };
         crate::walk::paint_inline_box(
             self.image_cache,
-            paint.target(None),
+            paint.first_line_box_target(),
             cv,
             &piece,
             true,
@@ -713,30 +715,42 @@ fn piece_style<'c>(
 /// The box a `::first-line` has on `line`, in the paragraph's content box:
 /// the content area of the line's font along the block axis, and what an
 /// inline box around the content covers along the inline axis, without the
-/// trailing space that hangs. `None` when the line has no content.
+/// trailing space that hangs. The borders and padding of the inline elements
+/// at its ends are inside it. `None` when the line has no content.
 fn first_line_box(line: &PositionedLine<'_>) -> Option<raikiri_dom::BoxRect> {
     use shodo::Fragment;
-    let mut extent: Option<(f32, f32)> = None;
-    let mut include = |start: f32, size: f32| {
-        extent = Some(extent.map_or((start, start + size), |(low, high)| {
+    // The glyphs and atomic boxes, whose last one may hang past the line,
+    // and the border boxes of the inline elements, which end before the
+    // space that hangs.
+    let mut content: Option<(f32, f32)> = None;
+    let mut boxes: Option<(f32, f32)> = None;
+    let include = |extent: &mut Option<(f32, f32)>, start: f32, size: f32| {
+        *extent = Some(extent.map_or((start, start + size), |(low, high)| {
             (low.min(start), high.max(start + size))
         }));
     };
     for fragment in line.line.fragments() {
         match fragment {
-            Fragment::GlyphRun(run) => include(run.inline_start(), run.inline_size()),
-            Fragment::Atomic(atomic) => {
-                include(
-                    atomic.margin_rect.inline_start,
-                    atomic.margin_rect.inline_size,
-                );
-            }
-            Fragment::RubyAnnotation(_) | Fragment::InlineBox(_) | Fragment::OutOfFlowAnchor(_) => {
-            }
+            Fragment::GlyphRun(run) => include(&mut content, run.inline_start(), run.inline_size()),
+            Fragment::Atomic(atomic) => include(
+                &mut content,
+                atomic.margin_rect.inline_start,
+                atomic.margin_rect.inline_size,
+            ),
+            Fragment::InlineBox(inline_box) => include(
+                &mut boxes,
+                inline_box.rect.inline_start,
+                inline_box.rect.inline_size,
+            ),
+            Fragment::RubyAnnotation(_) | Fragment::OutOfFlowAnchor(_) => {}
         }
     }
+    let content = content.map(|(start, end)| (start, (end - line.line.hang_end()).max(start)));
+    let extent = match (content, boxes) {
+        (Some((a, b)), Some((c, d))) => Some((a.min(c), b.max(d))),
+        (only, None) | (None, only) => only,
+    };
     let (start, end) = extent?;
-    let end = end - line.line.hang_end();
     let metrics = line.line.metrics();
     let block_start = metrics.text_over.min(metrics.text_under);
     let rect = line.converter.rect(shodo::geometry::LogicalRect {

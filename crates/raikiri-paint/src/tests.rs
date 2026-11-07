@@ -3194,7 +3194,7 @@ const FIRST_LINE_RED: [u8; 4] = [255, 0, 0, 255];
 fn first_line_background_covers_the_content_of_the_first_line() {
     let red = "p::first-line{background:rgb(255,0,0)}";
     // (css, body, the box of the red fill)
-    let cases: [(&str, &str, [f64; 4]); 11] = [
+    let cases: [(&str, &str, [f64; 4]); 15] = [
         ("", "<p>XXXX XXXX XXXX</p>", [0.0, 0.0, 90.0, 10.0]),
         // The content area, not the line box.
         (
@@ -3246,6 +3246,28 @@ fn first_line_background_covers_the_content_of_the_first_line() {
             "p{width:auto;height:100px;writing-mode:vertical-lr}",
             "<p>XXXX XXXX XXXX</p>",
             [0.0, 0.0, 10.0, 90.0],
+        ),
+        // The padding of an inline element at either end is inside the box,
+        // even when nothing else is.
+        (
+            "",
+            "<p><span style=\"padding:0 10px\">XX</span></p>",
+            [0.0, 0.0, 40.0, 10.0],
+        ),
+        (
+            "",
+            "<p>X<span style=\"padding:0 10px\">XX</span></p>",
+            [0.0, 0.0, 50.0, 10.0],
+        ),
+        (
+            "",
+            "<p><span style=\"padding:0 10px\"></span></p>",
+            [0.0, 0.0, 20.0, 10.0],
+        ),
+        (
+            "",
+            "<p><span style=\"padding:0 10px\"></span>XX</p>",
+            [0.0, 0.0, 40.0, 10.0],
         ),
     ];
     for (css, body, expected) in cases {
@@ -3339,6 +3361,32 @@ fn translucent_first_line_holds_its_background() {
     assert_eq!(
         command_kinds(&scene),
         ["fill", "glyphs 4", "push 0.5", "fill", "glyphs 10", "pop"]
+    );
+}
+
+/// The box of a translucent `::first-line` is a stacking context: its
+/// background is below what is inside it, a positioned inline element with a
+/// negative `z-index` included. The box of an opaque one is not, and its
+/// background paints over that element, as Chromium draws it.
+#[test]
+fn translucent_first_line_background_is_below_negative_children() {
+    let blue = ([0, 0, 255, 255], [0.0, 0.0, 20.0, 10.0]);
+    let red = (FIRST_LINE_RED, [0.0, 0.0, 70.0, 10.0]);
+    let span = "span{position:relative;z-index:-1;background:rgb(0,0,255)}";
+    let body = "<p><span>XX</span> XXXX XXXX</p>";
+    assert_eq!(
+        first_line_fills(
+            &format!("p::first-line{{opacity:.5;background:rgb(255,0,0)}}{span}"),
+            body
+        ),
+        [red, blue]
+    );
+    assert_eq!(
+        first_line_fills(
+            &format!("p::first-line{{background:rgb(255,0,0)}}{span}"),
+            body
+        ),
+        [blue, red]
     );
 }
 

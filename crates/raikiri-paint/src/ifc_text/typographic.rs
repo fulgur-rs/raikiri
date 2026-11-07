@@ -455,6 +455,12 @@ fn element_group_in(
 
 pub(super) struct TypographicPaint {
     normal: Scene,
+    /// Whether this is the paint of a translucent `::first-line`, which
+    /// composites the first line as a group.
+    first_line_group: bool,
+    /// The background of that `::first-line` box: the group's own, below
+    /// everything inside it, the groups with negative stack levels included.
+    first_line_box: Scene,
     /// Boxes laid out beside the lines outside every group, placed in
     /// `normal` like groups.
     root_children: Vec<Child>,
@@ -479,11 +485,31 @@ impl TypographicPaint {
     pub(super) fn on(shape: &Rc<GroupShape>) -> Self {
         Self {
             normal: Scene::new(),
+            first_line_group: false,
+            first_line_box: Scene::new(),
             root_children: Vec::new(),
             blocks: Vec::new(),
             groups: shape.groups.iter().map(Group::of).collect(),
             shape: Rc::clone(shape),
             later_element_groups: HashMap::new(),
+        }
+    }
+
+    /// Make this the paint of a translucent `::first-line`'s group.
+    pub(super) fn into_first_line_group(mut self) -> Self {
+        self.first_line_group = true;
+        self
+    }
+
+    /// The scene the background of the `::first-line` around the first line
+    /// paints into. The box of a translucent one is a stacking context, so its
+    /// background paints below what is inside it; any other is inline content
+    /// of the paragraph's own paint.
+    pub(super) fn first_line_box_target(&mut self) -> &mut Scene {
+        if self.first_line_group {
+            &mut self.first_line_box
+        } else {
+            &mut self.normal
         }
     }
 
@@ -704,11 +730,14 @@ impl TypographicPaint {
         }
         left.sort_by_key(|&(index, _, _)| index);
         // Groups and boxes with negative stack levels outside every group
-        // paint below the blocks, at the start of the paragraph's paint.
+        // paint below the blocks, at the start of the paragraph's paint, above
+        // the background of a translucent `::first-line`'s own box.
         let (below, above): (Vec<_>, Vec<_>) =
             roots.into_iter().partition(|&(_, level, _, _)| level < 0);
+        let mut below_scene = self.first_line_box;
+        below_scene.append_scene(merge_children(Scene::new(), below), Affine::IDENTITY);
         (
-            merge_children(Scene::new(), below),
+            below_scene,
             self.blocks,
             merge_children(self.normal, above),
             left.into_iter()
