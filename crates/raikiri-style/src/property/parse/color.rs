@@ -998,15 +998,19 @@ impl ParsedColor {
     }
 
     /// The color with its own coordinates when it lies outside the sRGB
-    /// gamut, so interpolation can use it before any clipping. A color at the
-    /// black or white lightness boundary is fixed to that sRGB color instead,
-    /// and so is one further out than [`MAX_UNBOUNDED_SRGB`], whose
-    /// coordinates would overflow the arithmetic of interpolation.
+    /// gamut, so interpolation can use it before any clipping. One further
+    /// out than [`MAX_UNBOUNDED_SRGB`], whose coordinates would overflow the
+    /// arithmetic of interpolation, is fixed to its sRGB color instead.
+    ///
+    /// A color at the black or white lightness boundary counts by its own
+    /// coordinates too: only the 8-bit [`UnboundedColor::srgb`] it carries is
+    /// the boundary color, while a gradient interpolates from the
+    /// coordinates, as `lab(0% 125 125)` is not black to the colors it mixes
+    /// with.
     pub(crate) fn to_unbounded(self) -> Option<UnboundedColor> {
-        let srgb = self.to_srgb();
-        if self.lightness_boundary.is_some()
-            || srgb.iter().all(|component| (0.0..=1.0).contains(component))
-            || !srgb
+        let own = self.to_srgb_for_interpolation();
+        if own.iter().all(|component| (0.0..=1.0).contains(component))
+            || !own
                 .iter()
                 .all(|component| component.abs() <= MAX_UNBOUNDED_SRGB)
         {

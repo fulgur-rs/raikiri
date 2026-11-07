@@ -1408,6 +1408,150 @@ fn unbounded_stop_colors_keep_their_space() {
     }
 }
 
+/// Assert that `rgba` (`width` pixels per row) has, at each `(x, y)`, a color
+/// within `slack` of `expected` in every channel.
+fn assert_pixels_near(rgba: &[u8], width: u32, expected: &[((u32, u32), [u8; 3])], slack: u8) {
+    for &((x, y), want) in expected {
+        let got = pixel(rgba, width, x, y);
+        for channel in 0..3 {
+            assert!(
+                got[channel].abs_diff(want[channel]) <= slack,
+                "({x}, {y}): {got:?}, expected {want:?} +- {slack}"
+            );
+        }
+    }
+}
+
+/// Expected colors at a few x positions of a one-row ramp.
+type Ramp = [(u32, [u8; 3]); 5];
+
+#[test]
+fn stops_at_a_lightness_boundary_mix_from_their_own_coordinates() {
+    // `linear-gradient(to right, ...)` over 200px as Chromium draws it: the
+    // stop at a lightness boundary is not plain black or white to the color
+    // next to it, so `lab(0% 125 125)` runs through dark red, not gray.
+    let ramps: [(&str, Ramp); 7] = [
+        (
+            "to right in lab, lab(0% 125 125), white",
+            [
+                (0, [126, 0, 0]),
+                (50, [174, 0, 0]),
+                (100, [219, 56, 3]),
+                (150, [250, 162, 130]),
+                (198, [255, 252, 251]),
+            ],
+        ),
+        (
+            "to right in lab, lab(100% 100 -100), black",
+            [
+                (0, [255, 165, 255]),
+                (50, [255, 122, 255]),
+                (100, [165, 82, 204]),
+                (150, [80, 44, 96]),
+                (198, [4, 2, 4]),
+            ],
+        ),
+        (
+            "to right in lch, lch(0% 100 40), lch(95% 20 100)",
+            [
+                (0, [85, 0, 0]),
+                (50, [120, 0, 0]),
+                (100, [158, 98, 0]),
+                (150, [198, 171, 101]),
+                (198, [244, 240, 199]),
+            ],
+        ),
+        (
+            "to right in lch, lch(100% 100 40), lch(5% 20 260)",
+            [
+                (0, [255, 182, 134]),
+                (50, [255, 109, 180]),
+                (100, [188, 84, 178]),
+                (150, [66, 60, 124]),
+                (198, [0, 21, 45]),
+            ],
+        ),
+        (
+            "to right in oklab, oklab(0% 0.3 0.3), white",
+            [
+                (0, [26, 33, 0]),
+                (50, [126, 0, 0]),
+                (100, [187, 23, 0]),
+                (150, [230, 153, 118]),
+                (198, [254, 252, 251]),
+            ],
+        ),
+        (
+            "to right in oklab, oklab(100% 0.3 0.3), black",
+            [
+                (0, [255, 68, 0]),
+                (50, [255, 43, 0]),
+                (100, [185, 20, 0]),
+                (150, [69, 3, 0]),
+                (198, [0, 0, 0]),
+            ],
+        ),
+        // Without `in`, a modern color syntax makes the default Oklab.
+        (
+            "to right, lab(0% 125 125), white",
+            [
+                (0, [126, 0, 0]),
+                (50, [203, 0, 0]),
+                (100, [255, 0, 0]),
+                (150, [255, 81, 132]),
+                (198, [255, 250, 251]),
+            ],
+        ),
+    ];
+    for (stops, expected) in ramps {
+        let rgba = raster_layer(
+            &format!("background-image: linear-gradient({stops})"),
+            200,
+            1,
+        );
+        let expected: Vec<_> = expected.iter().map(|&(x, rgb)| ((x, 0), rgb)).collect();
+        assert_pixels_near(&rgba, 200, &expected, 4);
+    }
+}
+
+#[test]
+fn radial_and_conic_stops_at_a_lightness_boundary_mix_from_their_own_coordinates() {
+    // As Chromium draws them over 200px by 200px, centered at (100, 100).
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle farthest-side at 100px 100px in lab, \
+         lab(0% 125 125), white)",
+        200,
+        200,
+    );
+    assert_pixels_near(
+        &rgba,
+        200,
+        &[
+            ((150, 100), [219, 57, 5]),
+            ((101, 100), [129, 0, 0]),
+            ((190, 100), [255, 219, 205]),
+        ],
+        4,
+    );
+    for (stops, expected) in [
+        (
+            "in lab, lab(0% 125 125), white",
+            [((100, 150), [218, 54, 0]), ((100, 50), [126, 0, 0])],
+        ),
+        (
+            "in oklab, oklab(100% 0.3 0.3), black",
+            [((100, 150), [187, 21, 0]), ((100, 50), [255, 69, 0])],
+        ),
+    ] {
+        let rgba = raster_conic(
+            &format!("background-image: conic-gradient(from 0deg at 100px 100px {stops})"),
+            200,
+            200,
+        );
+        assert_pixels_near(&rgba, 200, &expected, 4);
+    }
+}
+
 #[test]
 fn out_of_gamut_srgb_stops_clip_after_interpolation() {
     // Red falls from 2 to 0, so it stays clipped at 1 for the first half.
