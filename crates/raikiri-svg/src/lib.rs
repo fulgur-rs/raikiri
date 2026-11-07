@@ -215,6 +215,15 @@ pub enum SvgFilterBudget {
     /// Elements one `<filter>` holds, which the parser reads in a time that
     /// grows with their square.
     Elements,
+    /// The largest number a filter primitive writes in the `x`, `y`, `width`
+    /// or `height` of its subregion, whatever the unit. `usvg` multiplies it
+    /// by the size of a region in `objectBoundingBox` units, and panics when
+    /// the product overflows.
+    SubregionNumber,
+    /// How far from the origin the subregion of a filter primitive reaches
+    /// on the canvas, in device pixels. `resvg` holds it in 32-bit integers
+    /// and panics when it does not fit.
+    SubregionReach,
 }
 
 impl SvgFilterBudget {
@@ -223,6 +232,8 @@ impl SvgFilterBudget {
             Self::Pixels => "pixels",
             Self::Work => "pixel operations",
             Self::Elements => "elements",
+            Self::SubregionNumber => "as the number of a subregion",
+            Self::SubregionReach => "pixels of subregion reach",
         }
     }
 }
@@ -2469,21 +2480,65 @@ fn check_image_references(
 /// size, once for each element that uses it.
 const MAX_FILTER_ELEMENTS: usize = 128;
 
+/// Whether `node` is an element that `usvg` reads as SVG: one in the SVG
+/// namespace, or in none.
+fn is_svg_element(node: roxmltree::Node<'_, '_>) -> bool {
+    node.is_element()
+        && node
+            .tag_name()
+            .namespace()
+            .is_none_or(|namespace| namespace == SVG_NAMESPACE)
+}
+
 /// Rejects the filters that `usvg` cannot be trusted to read: a `<filter>` with
 /// more elements than [`MAX_FILTER_ELEMENTS`], and an `feImage` that refers to
 /// an element of the document.
 fn check_filters(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
-    for node in root.descendants().filter(|node| {
-        node.is_element()
-            && node
-                .tag_name()
-                .namespace()
-                .is_none_or(|namespace| namespace == SVG_NAMESPACE)
-    }) {
+    for node in root.descendants().filter(|node| is_svg_element(*node)) {
         match node.tag_name().name() {
-            "filter" => check_filter_size(node)?,
+            "filter" => {
+                check_filter_size(node)?;
+                check_primitive_subregions(node)?;
+            }
             "feImage" => check_fe_image_target(node)?,
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The largest number a filter primitive may write in its `x`, `y`, `width` or
+/// `height`. `usvg` multiplies the number by the size of the filter region or
+/// of the bounding box when the primitive's units are `objectBoundingBox`,
+/// and unwraps a result that overflows `f32`. This keeps the product finite
+/// for any region and box of ordinary size, which is all a picture needs. A
+/// box so large that it overflows by itself is outside what this checks.
+const MAX_SUBREGION_NUMBER: f64 = 1e18;
+
+/// Rejects `filter` when a primitive of it writes a subregion number beyond
+/// [`MAX_SUBREGION_NUMBER`], before `usvg` reads it. A value that `usvg` does
+/// not read as a length is left alone, as it is left out there.
+fn check_primitive_subregions(filter: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
+    use std::str::FromStr;
+
+    for primitive in filter
+        .children()
+        .filter(|child| is_svg_element(*child) && child.tag_name().name().starts_with("fe"))
+    {
+        for name in ["x", "y", "width", "height"] {
+            let Some(length) = primitive
+                .attribute(name)
+                .and_then(|value| svgtypes::Length::from_str(value).ok())
+            else {
+                continue;
+            };
+            if length.number.abs() > MAX_SUBREGION_NUMBER {
+                return Err(SvgError::FilterLimitExceeded {
+                    budget: SvgFilterBudget::SubregionNumber,
+                    requested: length.number.abs() as u64,
+                    limit: MAX_SUBREGION_NUMBER as u64,
+                });
+            }
         }
     }
     Ok(())

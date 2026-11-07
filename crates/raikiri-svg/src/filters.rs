@@ -7,7 +7,9 @@
 //! of a convolution matrix, the octaves of turbulence. The output byte limit
 //! bounds neither, so a small document could ask for gigabytes or hours. The
 //! check estimates both from the parsed tree and the transform it is drawn with,
-//! and fails the picture over a budget instead of starting.
+//! and fails the picture over a budget instead of starting. It also fails a
+//! picture whose primitive subregions reach so far that resvg could not hold
+//! them in the integers it uses.
 
 use crate::{DEFAULT_MAX_OUTPUT_BYTES, SvgError, SvgFilterBudget};
 use usvg::filter::{EdgeMode, Filter, Kind};
@@ -22,6 +24,17 @@ const MAX_FILTER_WORK: u64 = 1 << 32;
 const OCTAVE_WORK: f64 = 16.0;
 /// How many canvases wide and high resvg lets a filter layer be.
 const LAYER_CANVASES: f64 = 5.0;
+/// How far a subregion edge may lie from the origin, in canvas pixels, before
+/// the rectangle of 32-bit integers that resvg makes of it can overflow: two
+/// edges this far apart on either side still differ by less than `i32::MAX`.
+const SUBREGION_REACH: f64 = (1u64 << 30) as f64;
+/// How many canvases from the origin of the layer around it resvg may start a
+/// layer: it keeps the layer within two canvases before the origin and three
+/// after.
+const LAYER_OFFSET_CANVASES: f64 = 3.0;
+/// Pixels a rounded rectangle may grow by: an edge rounds down and a size
+/// rounds up.
+const ROUNDING_SLACK: f64 = 4.0;
 
 /// Fails when the filters of `tree` drawn with `transform` on a canvas of
 /// `canvas` pixels would ask for more than their budgets.
@@ -33,6 +46,7 @@ pub(crate) fn check(
     Meter {
         canvas: (f64::from(canvas.0), f64::from(canvas.1)),
         work: 0.0,
+        layers: 0,
     }
     .group(tree.root(), transform)
 }
@@ -53,6 +67,9 @@ struct Meter {
     canvas: (f64, f64),
     /// What the filters met so far ask for, in pixel operations.
     work: f64,
+    /// How many groups around the one being charged, and it, resvg may draw
+    /// on a layer of their own.
+    layers: u32,
 }
 
 impl Meter {
@@ -64,6 +81,7 @@ impl Meter {
             // Only these kinds hold a filter on the raster path: it is given
             // no picture, and resvg draws a text as the paths it flattens to.
             if let usvg::Node::Group(inner) = node {
+                self.layers += 1;
                 // resvg draws all the filters of a group on one layer, the
                 // union of their regions, and each primitive handles the whole
                 // of it.
@@ -80,6 +98,7 @@ impl Meter {
                     self.group(link.root(), to_canvas)?;
                     mask = link.mask();
                 }
+                self.layers -= 1;
             }
             if let usvg::Node::Path(path) = node {
                 let paints = [
@@ -130,8 +149,41 @@ impl Meter {
         }
     }
 
+    /// Fails when a subregion of `filter` reaches too far for resvg to hold
+    /// it. resvg rounds the subregion of each primitive to a rectangle of
+    /// 32-bit integers on the layer, where the sum of an edge and a size, or a
+    /// size alone, that does not fit makes it panic. The layer is placed
+    /// within a few canvases of the one around it, so the rectangle is
+    /// shifted from where it lies on the canvas by that much for each layer
+    /// around it.
+    fn subregions(&self, filter: &Filter, to_canvas: usvg::Transform) -> Result<(), SvgError> {
+        let shift =
+            LAYER_OFFSET_CANVASES * self.canvas.0.max(self.canvas.1) * f64::from(self.layers);
+        let limit = SUBREGION_REACH - ROUNDING_SLACK - shift;
+        for primitive in filter.primitives() {
+            // A rectangle that cannot be placed is one that resvg declines
+            // without a panic.
+            let Some(rect) = primitive.rect().transform(to_canvas) else {
+                continue;
+            };
+            let reach = [rect.left(), rect.top(), rect.right(), rect.bottom()]
+                .into_iter()
+                .map(|edge| f64::from(edge).abs())
+                .fold(0.0, f64::max);
+            if reach > limit {
+                return Err(SvgError::FilterLimitExceeded {
+                    budget: SvgFilterBudget::SubregionReach,
+                    requested: reach as u64,
+                    limit: limit as u64,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Charges `filter`, which resvg applies to `layer`.
     fn filter(&mut self, filter: &Filter, layer: Layer) -> Result<(), SvgError> {
+        self.subregions(filter, layer.to_canvas)?;
         let area = layer.width * layer.height;
         let primitives = filter.primitives();
         // One buffer for each result, and one for the source graphic.

@@ -510,3 +510,238 @@ fn filters_in_the_pattern_that_paints_a_text_are_bounded_too() {
         "a text filled by a heavy filter must be over the work budget"
     );
 }
+
+/// The 40 by 40 green square the subregion tests draw through the filter `f`.
+const SQUARE: &str = "<rect x='20' y='20' width='40' height='40' fill='green' filter='url(#f)'/>";
+
+/// A filter `f` whose only primitive turns what it reads red and has the
+/// subregion `subregion` in `units`, and the square it filters.
+fn red_in_subregion(units: &str, subregion: &str) -> String {
+    format!(
+        "<filter id='f' primitiveUnits='{units}'>\
+         <feColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'{subregion}/>\
+         </filter>{SQUARE}"
+    )
+}
+
+/// What `error` asks for and the limit, when it is over the budget `wanted`.
+fn exceeded(error: &SvgError, wanted: SvgFilterBudget) -> Option<(u64, u64)> {
+    match error {
+        SvgError::FilterLimitExceeded {
+            budget,
+            requested,
+            limit,
+        } if *budget == wanted => Some((*requested, *limit)),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_subregion_number_beyond_the_parse_limit_is_refused_instead_of_overflowing_usvg() {
+    // `usvg` multiplies the numbers of an objectBoundingBox subregion by the
+    // size of the filter region or of the box and unwraps the result, which
+    // overflows `f32` for these.
+    let cases = [
+        ("userSpaceOnUse", " x='1e38' y='0' width='1e38' height='10'"),
+        (
+            "objectBoundingBox",
+            " x='1e38' y='0' width='1e38' height='1'",
+        ),
+        ("objectBoundingBox", " height='-2e19'"),
+        ("objectBoundingBox", " width='1e30mm'"),
+        ("userSpaceOnUse", " x='1e30%'"),
+    ];
+    for (units, subregion) in cases {
+        let body = red_in_subregion(units, subregion);
+        let error = SvgDocument::parse(
+            format!("<svg xmlns='{SVG_NAMESPACE}' width='100' height='100'>{body}</svg>")
+                .as_bytes(),
+        )
+        .unwrap_err();
+        let found = exceeded(&error, SvgFilterBudget::SubregionNumber);
+        assert!(
+            found.is_some_and(
+                |(requested, limit)| limit == 1_000_000_000_000_000_000 && requested > limit
+            ),
+            "{units}{subregion}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn only_a_primitive_of_a_filter_is_held_to_the_parse_limit() {
+    // A rectangle may be as far away as it likes, a value that is no length
+    // is left out by `usvg`, and a number at the limit is let through.
+    let bodies = [
+        "<rect x='1e30' y='0' width='1' height='1'/>".to_owned(),
+        red_in_subregion("userSpaceOnUse", " x='1e38 beyond'"),
+        red_in_subregion("userSpaceOnUse", " x='1e18'"),
+        red_in_subregion("objectBoundingBox", " width='-1e18'"),
+    ];
+    for body in bodies {
+        let source = format!("<svg xmlns='{SVG_NAMESPACE}' width='100' height='100'>{body}</svg>");
+        let document = SvgDocument::parse(source.as_bytes())
+            .unwrap_or_else(|error| panic!("{body}: {error:?}"));
+        // Drawing it does not panic. Either the picture comes out, or the
+        // subregion reaches too far for the raster path to hold.
+        if let Err(error) = rasterize(&document, 100, 100) {
+            assert!(
+                exceeded(&error, SvgFilterBudget::SubregionReach).is_some(),
+                "{body}: {error:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_subregion_that_reaches_too_far_for_resvg_is_refused_instead_of_panicking() {
+    // Each of these is within the parse limit, and resvg rounds the
+    // subregion to integers that they overflow.
+    let cases = [
+        ("userSpaceOnUse", " x='-1e9' y='0' width='1e10' height='10'"),
+        ("userSpaceOnUse", " x='20' y='0' width='1.1e9' height='10'"),
+        ("userSpaceOnUse", " x='0' y='-3e9' width='10' height='3e9'"),
+        ("objectBoundingBox", " x='0' y='0' width='1e12' height='1'"),
+        (
+            "objectBoundingBox",
+            " x='-1e8' y='0' width='2e8' height='1'",
+        ),
+    ];
+    for (units, subregion) in cases {
+        let error = rasterize(
+            &document(100, 100, &red_in_subregion(units, subregion)),
+            100,
+            100,
+        )
+        .expect_err(&format!("{units}{subregion} was drawn"));
+        let reach = exceeded(&error, SvgFilterBudget::SubregionReach);
+        assert!(
+            reach.is_some_and(|(requested, limit)| requested > limit),
+            "{units}{subregion}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_large_subregion_within_reach_is_drawn_as_a_browser_draws_it() {
+    let drawn = |units: &str, subregion: &str| {
+        rasterize(
+            &document(100, 100, &red_in_subregion(units, subregion)),
+            100,
+            100,
+        )
+        .unwrap()
+    };
+    let whole = drawn("userSpaceOnUse", "");
+    let red = count(&whole, pure_red);
+    assert!(red > 40 * 40 - 200, "{red} red pixels");
+    // A subregion that covers the filter region and much more changes nothing.
+    let covering = [
+        (
+            "userSpaceOnUse",
+            " x='-1e6' y='-1e6' width='2e6' height='2e6'",
+        ),
+        (
+            "userSpaceOnUse",
+            " x='-1e9' y='-1e9' width='1.9e9' height='1.9e9'",
+        ),
+        (
+            "objectBoundingBox",
+            " x='-1e6' y='-1e6' width='2e6' height='2e6'",
+        ),
+    ];
+    for (units, subregion) in covering {
+        assert_eq!(
+            drawn(units, subregion).rgba,
+            whole.rgba,
+            "{units}{subregion}"
+        );
+    }
+    // One that lies far from the picture clips all of it.
+    for (units, subregion) in [
+        ("userSpaceOnUse", " x='1e9' y='0' width='10' height='10'"),
+        ("objectBoundingBox", " x='1e6' y='0' width='1' height='1'"),
+    ] {
+        assert_eq!(
+            count(&drawn(units, subregion), visible),
+            0,
+            "{units}{subregion}"
+        );
+    }
+}
+
+#[test]
+fn the_reach_of_a_subregion_counts_in_canvas_pixels() {
+    // A unit of the user space is a hundred thousand pixels here, so a
+    // subregion of two hundred units is twenty million pixels, which is fine,
+    // and one of thirty thousand is three billion, which resvg cannot hold.
+    let svg = |subregion: &str| {
+        SvgDocument::parse(
+            format!(
+                "<svg xmlns='{SVG_NAMESPACE}' width='100' height='100' viewBox='0 0 0.001 0.001'>\
+                 <filter id='f' primitiveUnits='userSpaceOnUse'>\
+                 <feColorMatrix type='saturate'{subregion}/></filter>\
+                 <rect x='0.0002' y='0.0002' width='0.0004' height='0.0004' fill='green' filter='url(#f)'/>\
+                 </svg>"
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    };
+    rasterize(&svg(" x='0' y='0' width='200' height='0.001'"), 100, 100).unwrap();
+    let error = rasterize(&svg(" x='0' y='0' width='30000' height='0.001'"), 100, 100).unwrap_err();
+    assert!(
+        exceeded(&error, SvgFilterBudget::SubregionReach)
+            .is_some_and(|(requested, limit)| requested > limit),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_layer_inside_other_layers_has_less_room_for_its_subregion() {
+    // resvg places each layer within three canvases of the one around it, and
+    // the rectangle of a subregion follows, so a subregion that fits on a layer
+    // of its own can overflow a few layers deep. A canvas is a hundred pixels
+    // here, so each layer takes up to three hundred of the room.
+    let inside = |layers: usize| {
+        let body = format!(
+            "{}{}{}",
+            "<g opacity='0.5'>".repeat(layers),
+            // Six hundred and forty pixels short of 2^30.
+            red_in_subregion(
+                "userSpaceOnUse",
+                " x='0' y='0' width='1073741184' height='100'"
+            ),
+            "</g>".repeat(layers)
+        );
+        rasterize(&document(100, 100, &body), 100, 100)
+    };
+    // The layer of the filtered rectangle has room for it, and so has the one
+    // within a layer of opacity.
+    inside(0).unwrap();
+    inside(1).unwrap();
+    // Two more layers of opacity leave too little.
+    let error = inside(3).unwrap_err();
+    assert!(
+        exceeded(&error, SvgFilterBudget::SubregionReach).is_some(),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_subregion_that_the_transform_cannot_place_is_left_to_resvg() {
+    // At this scale a unit is 10^32 pixels, so the subregion has no finite
+    // place on the canvas. resvg declines such a rectangle without a panic,
+    // so the check has nothing to refuse.
+    let svg = SvgDocument::parse(
+        format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='100' height='100' viewBox='0 0 1e-30 1e-30'>\
+             <filter id='f' primitiveUnits='userSpaceOnUse'>\
+             <feColorMatrix type='saturate' x='0' y='0' width='1e10' height='1e10'/></filter>\
+             <rect width='5e-31' height='5e-31' fill='green' filter='url(#f)'/></svg>"
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    rasterize(&svg, 100, 100).unwrap();
+}
