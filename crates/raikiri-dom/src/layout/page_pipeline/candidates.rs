@@ -14,10 +14,11 @@ use super::{
     has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
     is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    leading_holder, leading_piece_end, lineless_leading_piece_end, lone_box_with_floats,
-    moves_later_siblings, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
-    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
-    pagination_child_parent_y, paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
+    lone_box_with_floats, moves_later_siblings, nested_run_units, normal_flow_bottom,
+    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
+    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -140,6 +141,9 @@ pub(super) struct ElementContext {
     pub(super) is_rendered_leaf: bool,
     pub(super) is_direct_body_element: bool,
     pub(super) is_table_row: bool,
+    /// A caption of a block table whose lines no page break goes between: it
+    /// moves to the next page whole when it would cross the page end.
+    pub(super) is_table_caption: bool,
     pub(super) is_flex_item: bool,
     pub(super) is_grid_item: bool,
     pub(super) is_named: bool,
@@ -274,6 +278,11 @@ impl BoxContext {
     pub(super) fn is_table_row(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.is_table_row)
+    }
+
+    pub(super) fn is_table_caption(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_table_caption)
     }
 
     pub(super) fn is_flex_item(self) -> bool {
@@ -1134,6 +1143,29 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && matches!(document.nodes[node_id].display(), DisplayValue::TableRow)
                     && !inside_float
                     && !inside_flex;
+                // A caption of a block table is a box of its own for the page
+                // break: with no good place to break between its lines, it
+                // moves to the next page whole (see `BoxOverflow`). Left to its
+                // text, the line that crosses the page end stays and the page
+                // cuts through it. A caption inside a table cell goes with its
+                // row.
+                let table_caption_candidate = inside_table
+                    && participates_in_flow
+                    && matches!(
+                        document.nodes[node_id].display(),
+                        DisplayValue::TableCaption
+                    )
+                    && !inside_float
+                    && !inside_flex
+                    && !out_of_flow_subtree
+                    && !node.used_writing_mode.is_vertical()
+                    && node.is_ifc_root()
+                    && document
+                        .layout_parent_of(node_id)
+                        .is_some_and(|table| is_plain_table_box(document, table))
+                    && !document.ancestors(node_id).any(|ancestor| {
+                        matches!(document.nodes[ancestor].display(), DisplayValue::TableCell)
+                    });
                 let flex_item_candidate =
                     flex_column_parent && !inside_float && !out_of_flow_subtree;
                 let grid_item_candidate =
@@ -1566,6 +1598,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || first_grid_row.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
+                        || table_caption_candidate
                         || extra_tail_candidate
                         || flex_item_candidate
                         || is_rendered_leaf
@@ -1597,6 +1630,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_rendered_leaf,
                                 is_direct_body_element: direct_body_child,
                                 is_table_row: table_row_candidate,
+                                is_table_caption: table_caption_candidate,
                                 is_flex_item: flex_item_candidate,
                                 is_grid_item: grid_item_candidate,
                                 is_named: own_page_name.is_some(),

@@ -590,13 +590,13 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
         }
     }
     let layout = &mut document.nodes[table].layout;
-    layout.size.height = layout
-        .size
-        .height
-        .max(table_bottom - table_origin.1 + gap + layout.padding.bottom + layout.border.bottom);
-    let table_height = layout.size.height;
+    let rows_height =
+        table_bottom - table_origin.1 + gap + layout.padding.bottom + layout.border.bottom;
+    layout.size.height = layout.size.height.max(rows_height);
+    // The grid ends with its rows: the height of the table around it also
+    // holds the captions below the grid, which the grid does not cover.
     if let Some(grid) = &mut document.nodes[table].table_grid_box {
-        grid.height = (table_height - grid.y).max(grid.height);
+        grid.height = (rows_height - grid.y).max(grid.height);
     }
     for (id, cells) in cells_by_part {
         if let Some(clips) = document.table_objects.part_background_cells.get_mut(&id) {

@@ -982,19 +982,27 @@ fn follow_moved_table_rows(
     row_origins: Vec<(usize, f32)>,
     table_headers: &HeaderRepeats,
 ) {
-    let moved_table_rows: HashMap<usize, f32> = row_origins
+    let moved: Vec<(usize, f32)> = row_origins
         .into_iter()
-        .filter_map(|(row, origin)| {
-            let delta = document.pagination_local_y(row) - origin;
-            (delta > 0.001).then_some((row, delta))
+        .filter_map(|(part, origin)| {
+            let delta = document.pagination_local_y(part) - origin;
+            (delta > 0.001).then_some((part, delta))
         })
         .collect();
-    super::table::row_moves::follow_moved_rows(document, &moved_table_rows, |table| {
-        table_headers
-            .headers
-            .values()
-            .any(|header| header.table == table && !header.footer)
-    });
+    let (moved_captions, moved_table_rows): (HashMap<usize, f32>, HashMap<usize, f32>) = moved
+        .into_iter()
+        .partition(|&(part, _)| document.nodes[part].display() == DisplayValue::TableCaption);
+    super::table::row_moves::follow_moved_rows(
+        document,
+        &moved_table_rows,
+        &moved_captions,
+        |table| {
+            table_headers
+                .headers
+                .values()
+                .any(|header| header.table == table && !header.footer)
+        },
+    );
 }
 
 /// Extend auto-height block and flex boxes around their committed paginated
@@ -2099,8 +2107,20 @@ fn paragraph_line_bounds(
     let first_top = positioned_owned_text_line_bounds(document, owned)?
         .first()?
         .0;
+    Some(
+        ifc_root_line_bounds(document, owned.root)?
+            .into_iter()
+            .map(|(top, bottom)| (top - first_top, bottom - first_top))
+            .collect(),
+    )
+}
+
+/// Block-start and block-end edges of every line of the ifc paragraph rooted
+/// at `root`, as they sit in the document, or `None` when the root has no
+/// positioned lines.
+fn ifc_root_line_bounds(document: &Document, root: usize) -> Option<Vec<(f32, f32)>> {
     let line_count = document
-        .ifc_layout_node(owned.root)?
+        .ifc_layout_node(root)?
         .ifc
         .as_ref()?
         .lines
@@ -2108,8 +2128,8 @@ fn paragraph_line_bounds(
         .lines
         .len();
     let paragraph = IfcTextLines {
-        root: owned.root,
-        width: owned.width,
+        root,
+        width: 0.0,
         lines: (0..line_count)
             .map(|line| IfcTextLine {
                 line,
@@ -2118,12 +2138,7 @@ fn paragraph_line_bounds(
             })
             .collect(),
     };
-    Some(
-        positioned_owned_text_line_bounds(document, &paragraph)?
-            .into_iter()
-            .map(|(top, bottom)| (top - first_top, bottom - first_top))
-            .collect(),
-    )
+    positioned_owned_text_line_bounds(document, &paragraph)
 }
 
 /// Whether the floats before the block `block_id` put the first line of its
@@ -4502,13 +4517,15 @@ fn page_slices(
         .collect()
 }
 
-/// Where each table row among `candidates` sits in its parent before
-/// pagination; the table boxes around the rows that moved follow them once
-/// every row is placed.
+/// Where each table row and caption among `candidates` sits in its parent
+/// before pagination; the table boxes around the ones that moved follow them
+/// once every one is placed.
 fn table_row_origins(document: &Document, candidates: &[PageCandidate]) -> Vec<(usize, f32)> {
     candidates
         .iter()
-        .filter(|candidate| candidate.context.is_table_row())
+        .filter(|candidate| {
+            candidate.context.is_table_row() || candidate.context.is_table_caption()
+        })
         .map(|candidate| {
             let row = candidate.node_id;
             (row, document.pagination_local_y(row))
@@ -5501,6 +5518,9 @@ struct BoxOverflow {
     avoided_run: bool,
     /// The box is a table row that would cross the page edge.
     table_row: bool,
+    /// The box is a table caption with no break between its lines that would
+    /// cross the page edge.
+    table_caption: bool,
     /// How far below its table's top edge the box starts when it is the
     /// first row of a table, or zero.
     table_row_lead: f32,
@@ -5520,6 +5540,7 @@ impl BoxOverflow {
         self.page
             || self.avoided_run
             || self.table_row
+            || self.table_caption
             || self.row_group_lead.is_some()
             || self.flex_item
             || self.grid_item
@@ -5729,6 +5750,14 @@ impl AvoidedBreaks {
         let flex_item = candidate.context.is_flex_item()
             && (item_tail || (!flex_item_is_last && item_overflow()));
         let grid_item = candidate.context.is_grid_item() && item_overflow();
+        // A caption moves to the next page whole unless a break between its
+        // lines leaves enough of them on either side (orphans and widows): a
+        // break between boxes beats one that leaves too few. It stays when it
+        // already starts its page or is taller than the next one.
+        let table_caption = candidate.context.is_table_caption()
+            && item_overflow()
+            && (avoids_break_inside
+                || !caption_lines_split_well(document, cascade, node_id, flow_y, page_end));
         BoxOverflow {
             page,
             unbreakable,
@@ -5736,6 +5765,7 @@ impl AvoidedBreaks {
             moved_for_avoided_break: avoids_break_inside && moves_for_avoided_end,
             avoided_run,
             table_row,
+            table_caption,
             table_row_lead,
             row_group_lead,
             flex_item,
@@ -9323,6 +9353,39 @@ fn break_between_is_avoided(
         || previous
             .iter()
             .any(|&previous| page_edge_constraint(document, cascade, previous, false).1)
+}
+
+/// Whether the caption `caption`, whose box starts at `flow_y` and crosses the
+/// page end `page_end`, is left where it is: all of its lines fit the page, or
+/// they can be broken between with at least `orphans` lines before the break and
+/// `widows` lines after it. A caption of fewer lines than both asks for has no
+/// such break. With enough lines, one exists as long as the `orphans` first
+/// lines fit the page: the break then goes after as many of them as leave the
+/// `widows` last ones. A caption without positioned lines stays: there is
+/// nothing to tell where it could be broken.
+fn caption_lines_split_well(
+    document: &Document,
+    cascade: &CascadeResult,
+    caption: usize,
+    flow_y: f32,
+    page_end: f32,
+) -> bool {
+    let computed = &cascade.computed[caption];
+    let orphans = computed.orphans.max(1) as usize;
+    let layout = &document.nodes[caption].layout;
+    let content_top = flow_y + layout.border.top + layout.padding.top;
+    ifc_root_line_bounds(document, caption).is_none_or(|bounds| {
+        let count = bounds.len();
+        let fitting = bounds
+            .iter()
+            .take_while(|&&(_, bottom)| content_top + bottom <= page_end + 0.001)
+            .count();
+        // Every line fits: only the box runs on past the page end, as the room
+        // a `height` leaves under the last line, and there is no line to move.
+        fitting == count
+            || (!lines_keep_together(count, computed.orphans, computed.widows)
+                && fitting >= orphans)
+    })
 }
 
 /// Whether `line_count` lines are too few for any break between them to leave
