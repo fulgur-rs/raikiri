@@ -104,6 +104,29 @@ pub struct RaikiriTreeSink {
     /// First open depth over `max_open_depth`, shared with the parser driver
     /// so it can stop reading at the next input chunk boundary.
     open_depth_limit_exceeded: Rc<Cell<Option<u64>>>,
+    /// The subtree a streaming layout watches, if any: see
+    /// [`RaikiriTreeSink::watch_subtree`].
+    subtree_watch: RefCell<Option<SubtreeWatch>>,
+}
+
+/// Whether the tree changed anywhere but inside one subtree since the watch
+/// started.
+struct SubtreeWatch {
+    /// The element the subtree starts at.
+    root: usize,
+    /// The nodes of the subtree other than `root`, including detached ones
+    /// that were in it.
+    inside: FxHashSet<usize>,
+    /// Whether a node outside the subtree, `root` included for its
+    /// attributes, gained or lost a child or an attribute.
+    outside_changed: bool,
+}
+
+impl SubtreeWatch {
+    /// Whether children added to `parent` land inside the subtree.
+    fn contains_parent(&self, parent: usize) -> bool {
+        parent == self.root || self.inside.contains(&parent)
+    }
 }
 
 impl RaikiriTreeSink {
@@ -163,6 +186,78 @@ impl RaikiriTreeSink {
             max_open_depth: None,
             open_depth: Cell::new(0),
             open_depth_limit_exceeded: Rc::new(Cell::new(None)),
+            subtree_watch: RefCell::new(None),
+        }
+    }
+
+    /// Start watching the subtree of `root`, replacing any earlier watch:
+    /// from now on, [`Self::only_watched_subtree_changed`] tells whether
+    /// every change to the tree added, moved or removed nodes inside it.
+    ///
+    /// Adding a child to `root` or to a node inside it, removing one from
+    /// there, and moving children between such nodes keep the watch. Any
+    /// other change ends it: a node added, removed or moved anywhere else
+    /// (foster parenting inserts content before an open table, outside it),
+    /// a node moved into the subtree from outside, attributes merged into an
+    /// element (repeated `<html>` and `<body>` tags), and character data
+    /// outside the subtree. Template contents count as outside.
+    pub(crate) fn watch_subtree(&self, root: usize) {
+        let document = self.document.borrow();
+        let inside = document.preorder(root).filter(|&id| id != root).collect();
+        *self.subtree_watch.borrow_mut() = Some(SubtreeWatch {
+            root,
+            inside,
+            outside_changed: false,
+        });
+    }
+
+    /// End the watch that [`Self::watch_subtree`] started.
+    pub(crate) fn stop_watching_subtree(&self) {
+        *self.subtree_watch.borrow_mut() = None;
+    }
+
+    /// The root of the watched subtree, when the tree has changed only
+    /// inside it since the watch started.
+    pub(crate) fn only_watched_subtree_changed(&self) -> Option<usize> {
+        self.subtree_watch
+            .borrow()
+            .as_ref()
+            .filter(|watch| !watch.outside_changed)
+            .map(|watch| watch.root)
+    }
+
+    /// Record that `node`, if any, is about to become a child of `parent`.
+    fn note_insertion(&self, parent: usize, node: Option<usize>) {
+        let mut watch = self.subtree_watch.borrow_mut();
+        let Some(watch) = watch.as_mut().filter(|watch| !watch.outside_changed) else {
+            return;
+        };
+        if !watch.contains_parent(parent) {
+            watch.outside_changed = true;
+            return;
+        }
+        let Some(node) = node else {
+            return;
+        };
+        let document = self.document.borrow();
+        // A node moved in from outside changes the tree outside as well.
+        if document
+            .parent_of(node)
+            .is_some_and(|old| !watch.contains_parent(old))
+        {
+            watch.outside_changed = true;
+            return;
+        }
+        watch.inside.extend(document.preorder(node));
+    }
+
+    /// Record a change to the children or the attributes of `id`.
+    fn note_change_of(&self, id: usize, attributes: bool) {
+        if let Some(watch) = self.subtree_watch.borrow_mut().as_mut()
+            && (attributes && !watch.inside.contains(&id)
+                || !attributes && !watch.contains_parent(id))
+        {
+            watch.outside_changed = true;
         }
     }
 
@@ -338,6 +433,10 @@ impl RaikiriTreeSink {
         if self.dom_node_limit_exceeded.get().is_some() {
             return;
         }
+        let parent = match target {
+            TextTarget::Append(parent) | TextTarget::Before { parent, .. } => parent,
+        };
+        self.note_insertion(parent, None);
         let previous = {
             let mut pending = self.pending_text.borrow_mut();
             if let Some((pending_target, buffer)) = pending.as_mut()
@@ -589,6 +688,7 @@ impl TreeSink for RaikiriTreeSink {
                 self.flush_text();
                 // The child can itself be a fragment whose children are drained.
                 self.note_snapshot_changes([*parent, c]);
+                self.note_insertion(*parent, Some(c));
                 self.document.borrow_mut().attach_child(*parent, c);
             }
             NodeOrText::AppendText(text) => {
@@ -682,6 +782,7 @@ impl TreeSink for RaikiriTreeSink {
                 self.flush_text();
                 self.note_snapshot_changes([parent, c]);
                 self.note_snapshot_changes(self.document.borrow().parent_of(c));
+                self.note_insertion(parent, Some(c));
                 // Detach if already attached (TreeSink contract: new_node can have an
                 // old parent).
                 self.document.borrow_mut().detach_from_parent(c);
@@ -741,6 +842,7 @@ impl TreeSink for RaikiriTreeSink {
             );
             return;
         }
+        self.note_change_of(*target, true);
         known.extend(missing.iter().map(|a| a.name.clone()));
         existing.extend(missing);
     }
@@ -751,6 +853,9 @@ impl TreeSink for RaikiriTreeSink {
         }
         self.flush_text();
         self.note_snapshot_changes(self.document.borrow().parent_of(*target));
+        if let Some(parent) = self.document.borrow().parent_of(*target) {
+            self.note_change_of(parent, false);
+        }
         self.document.borrow_mut().detach_from_parent(*target);
     }
 
@@ -760,6 +865,8 @@ impl TreeSink for RaikiriTreeSink {
         }
         self.flush_text();
         self.note_snapshot_changes([*node, *new_parent]);
+        self.note_change_of(*node, false);
+        self.note_change_of(*new_parent, false);
         self.document
             .borrow_mut()
             .reparent_children(*node, *new_parent);
