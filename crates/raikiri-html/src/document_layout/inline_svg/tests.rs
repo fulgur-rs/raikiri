@@ -1,6 +1,6 @@
 use super::*;
 mod storage_tests;
-use raikiri_svg::{SvgFontRequest, SvgSceneLimit};
+use raikiri_svg::{SvgFilterBudget, SvgFontRequest, SvgSceneLimit};
 use raikiri_traits::vector::FontFace;
 
 const AHEM: &[u8] = include_bytes!(concat!(
@@ -149,6 +149,29 @@ fn a_filter_over_the_budget_of_the_raster_is_an_error_that_says_so() {
         ),
         "{result:?}"
     );
+}
+
+#[test]
+fn a_filter_subregion_beyond_reach_is_an_error_that_says_so() {
+    // Both used to panic: the first inside resvg, the second inside usvg.
+    for (subregion, budget) in [
+        (r#"x="-1e9" width="1e10""#, SvgFilterBudget::SubregionReach),
+        (r#"x="1e38" width="1e38""#, SvgFilterBudget::SubregionNumber),
+    ] {
+        let source = document(&format!(
+            r##"<filter id="f" primitiveUnits="userSpaceOnUse"><feOffset dx="1" {subregion}/></filter>
+            <rect x="10" y="5" width="20" height="10" fill="#c00" filter="url(#f)"/>"##
+        ));
+        let result = picture(&source, |_| {});
+        assert!(
+            matches!(
+                result,
+                Err(SvgSceneError::Svg(SvgError::FilterLimitExceeded { budget: found, .. }))
+                    if found == budget
+            ),
+            "{subregion}: {result:?}"
+        );
+    }
 }
 
 #[test]

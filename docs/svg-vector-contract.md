@@ -151,6 +151,21 @@ uses it, and the parser would have to read the filter before any budget above
 could look at it. A longer filter fails the parse with the same error and the
 `Elements` budget.
 
+The subregion of a filter primitive is held to two more limits, because `usvg`
+and `resvg` keep it in numbers that a very large value overflows, and they panic
+on it. A primitive that writes a number beyond 10^18 in its `x`, `y`, `width` or
+`height` (in any unit) fails the parse with the `SubregionNumber` budget: `usvg`
+multiplies it by the size of the filter region or of the bounding box in
+`objectBoundingBox` units. The raster path fails a picture with the
+`SubregionReach` budget when the subregion of a primitive, placed on the canvas,
+lies farther than about 2^30 pixels from its origin (less for each layer around
+the filter, which `resvg` places up to three canvases from the one around it),
+since `resvg` rounds it to a rectangle of 32-bit integers. That limit is in
+canvas pixels, so the same filter can pass at one raster scale and fail at a
+larger one. A browser clamps such a subregion and draws the picture; this
+refuses it. A bounding box that is itself near the limit of `f32` is outside
+these limits.
+
 An `feImage` that refers to an element of the document (`href="#id"`) fails the
 parse with `SvgError::InvalidDocument`. `usvg` breaks a filter whose picture
 uses that same filter, but two filters whose pictures use one another's

@@ -1642,6 +1642,14 @@ fn svg_error_display_pins_each_variant() {
             super::SvgFilterBudget::Elements,
             "SVG filters ask for 9 elements, exceeding the limit of 4",
         ),
+        (
+            super::SvgFilterBudget::SubregionNumber,
+            "SVG filters ask for 9 as the number of a subregion, exceeding the limit of 4",
+        ),
+        (
+            super::SvgFilterBudget::SubregionReach,
+            "SVG filters ask for 9 pixels of subregion reach, exceeding the limit of 4",
+        ),
     ] {
         let error = SvgError::FilterLimitExceeded {
             budget,
