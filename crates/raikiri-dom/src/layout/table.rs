@@ -3772,10 +3772,35 @@ fn resolve_column_widths(
     let mut col_min_full = col_min.clone();
     let mut col_max_full = col_max.clone();
 
-    // (C.2) colspan>1 excess distribution (smallest span first). Minima grow
-    // tracks toward their preferences before assigning any remaining excess
-    // to tracks without authored cell lengths. Max-content excess retains
-    // that same priority for the remaining tracks.
+    // A `<col>` percentage constrains an occupied column from the start,
+    // before the cells that span it ask for theirs (it is indefinite for a
+    // column with no cells).
+    let occupied = {
+        let mut occ = vec![false; n];
+        for cell in grid.cells.iter() {
+            let s = cell.col_start as usize;
+            let e = (s + cell.col_span as usize).min(n);
+            for slot in occ.iter_mut().take(e).skip(s) {
+                *slot = true;
+            }
+        }
+        occ
+    };
+    for (c, sz) in grid.col_widths.iter().enumerate().take(n) {
+        if let ExpandedDimension::Percent(percent) = sz.width.expand()
+            && occupied[c]
+        {
+            col_pct[c] = f32_max_compat(col_pct[c], percent);
+        }
+    }
+
+    // (C.2) colspan>1 cells (smallest span first). A spanning cell asks its
+    // columns for its percentage, minimum and maximum width the way the table
+    // asks them for its own width (CSS Tables 3, "width distribution
+    // algorithm"): the percentage the columns do not state go to the ones that
+    // state none, and the minimum and the maximum are then shared out as
+    // widths of the spanned columns, a length-sized cell also growing columns
+    // that state a length.
     let mut spans: Vec<(usize, u16, u16)> = grid
         .cells
         .iter()
@@ -3783,49 +3808,60 @@ fn resolve_column_widths(
         .filter(|(_, c)| c.col_span > 1)
         .map(|(i, c)| (i, c.col_start, c.col_span))
         .collect();
-    spans.sort_by_key(|&(_, _, span)| span);
+    spans.sort_by_key(|&(_, start, span)| (span, start));
     for (i, col_start, span) in spans {
         let s = col_start as usize;
         let e = (s + span as usize).min(n);
         if s >= e {
             continue;
         }
-        let targets: Vec<usize> = (s..e).filter(|&column| !authored_length[column]).collect();
-        let targets = if targets.is_empty() {
-            (s..e).collect()
-        } else {
-            targets
-        };
-        let cnt = targets.len() as f32;
         // The spanned columns' separated gaps already give the cell room.
         let gaps = spacing * (e - s - 1) as f32;
-        let cur_min: f32 = col_min_full[s..e].iter().sum::<f32>() + gaps;
-        if cell_min[i] > cur_min {
-            // An intrinsic minimum does not resolve percentages against the span.
-            let minimums = distribute_columns_with_authored(
-                cell_min[i] - gaps,
-                &col_min_full[s..e],
-                &col_max_full[s..e],
-                &vec![0.0; e - s],
-                &authored_length[s..e],
-            );
-            col_min_full[s..e].copy_from_slice(&minimums);
-        }
-        let cur_max: f32 = col_max_full[s..e].iter().sum::<f32>() + gaps;
-        if cell_max[i] > cur_max {
-            let add = (cell_max[i] - cur_max) / cnt;
-            for column in &targets {
-                col_max_full[*column] += add;
-            }
-        }
-        if let ExpandedDimension::Percent(p) = grid.cells[i].specified_width.expand() {
+        let cell = &grid.cells[i];
+        if let ExpandedDimension::Percent(p) = cell.specified_width.expand() {
+            // What the cell's percentage asks for beyond the percentages its
+            // columns already state goes to the columns that state none, in
+            // proportion to their max-content widths (equally when those are
+            // all zero). When every spanned column states one, it adds
+            // nothing.
             let cur_p: f32 = col_pct[s..e].iter().sum();
-            if p > cur_p {
-                let add = (p - cur_p) / cnt;
-                for column in &targets {
-                    col_pct[*column] += add;
+            let open: Vec<usize> = (s..e).filter(|&column| col_pct[column] <= 0.0).collect();
+            if p > cur_p && !open.is_empty() {
+                let weight: f32 = open.iter().map(|&column| col_max_full[column]).sum();
+                for &column in &open {
+                    let part = if weight > 0.0 {
+                        col_max_full[column] / weight
+                    } else {
+                        1.0 / open.len() as f32
+                    };
+                    col_pct[column] += (p - cur_p) * part;
                 }
             }
+        }
+        let minimums = distribute_columns_with_authored(
+            (cell_min[i] - gaps).max(0.0),
+            &col_min_full[s..e],
+            &col_max_full[s..e],
+            &col_pct[s..e],
+            &authored_length[s..e],
+            true,
+        );
+        for (column, minimum) in (s..e).zip(minimums) {
+            col_min_full[column] = f32_max_compat(col_min_full[column], minimum);
+        }
+        let maximums = distribute_columns_with_authored(
+            (cell_max[i] - gaps).max(0.0),
+            &col_min_full[s..e],
+            &col_max_full[s..e],
+            &col_pct[s..e],
+            &authored_length[s..e],
+            matches!(cell.specified_width.expand(), ExpandedDimension::Length(_)),
+        );
+        for (column, maximum) in (s..e).zip(maximums) {
+            col_max_full[column] = f32_max_compat(
+                f32_max_compat(col_max_full[column], col_min_full[column]),
+                maximum,
+            );
         }
     }
 
@@ -3858,31 +3894,14 @@ fn resolve_column_widths(
     // occupied columns (indefinite for missing cells); percent/calc
     // min/max are indefinite and ignored. CSS Sizing 3 §4/§5: min > max
     // resolves to min (max ignored).
-    let occupied = {
-        let mut occ = vec![false; n];
-        for cell in grid.cells.iter() {
-            let s = cell.col_start as usize;
-            let e = (s + cell.col_span as usize).min(n);
-            for slot in occ.iter_mut().take(e).skip(s) {
-                *slot = true;
-            }
-        }
-        occ
-    };
     for (c, sz) in grid.col_widths.iter().enumerate() {
         if c >= n {
             break;
         }
         let min_w = resolve_dimension(sz.min_width, None);
         let max_w = resolve_dimension(sz.max_width, None);
-        // Base width: definite length always; percent only when occupied.
+        // Base width: definite length always (a percentage was taken above).
         let base = resolve_dimension(sz.width, None);
-        if let ExpandedDimension::Percent(percent) = sz.width.expand()
-            && base.is_none()
-            && occupied[c]
-        {
-            col_pct[c] = f32_max_compat(col_pct[c], percent);
-        }
         // Clamp base by min/max (min wins over max).
         let mut floor = min_w;
         if let (Some(mn), Some(mx)) = (min_w, max_w)
@@ -3891,6 +3910,7 @@ fn resolve_column_widths(
             floor = Some(mn);
         }
         if let Some(b) = base {
+            authored_length[c] = true;
             let mut v = b;
             if let Some(mn) = min_w {
                 v = f32_max_compat(v, mn);
@@ -3915,6 +3935,9 @@ fn resolve_column_widths(
     }
 
     // (C.4) Distribute - auto only (fixed deferred to Wave4)
+    // The percentages add up to 100% at most: a column gets what the columns
+    // before it left, and none once nothing is left.
+    let col_pct = percent_shares_in_order(&col_pct);
     let insets = padding_border_size.width;
     let has_percent = col_pct.iter().any(|&share| share > 0.0);
     let widths = match inputs.known_dimensions.width {
@@ -3926,6 +3949,7 @@ fn resolve_column_widths(
                 &col_max_full,
                 &col_pct,
                 &authored_length,
+                true,
             )
         }
         None => match inputs.available_space.width {
@@ -3983,6 +4007,7 @@ fn resolve_column_widths(
                         &col_max_full,
                         &col_pct,
                         &authored_length,
+                        true,
                     )
                 }
             }
@@ -4010,7 +4035,7 @@ fn widened_percent_columns(
     let shares = percent_shares_in_order(pct);
     let widened = percent_columns_max_content_width(natural, max, &shares).min(limit);
     (widened > natural)
-        .then(|| distribute_columns_with_authored(widened, min, max, &shares, authored))
+        .then(|| distribute_columns_with_authored(widened, min, max, &shares, authored, true))
 }
 
 /// The share of the grid each column gets when the percentages are taken in
@@ -4059,84 +4084,174 @@ fn percent_columns_max_content_width(natural: f32, max: &[f32], shares: &[f32]) 
     width
 }
 
+/// The widths of the columns of an auto-layout table grid, or of the columns a
+/// spanning cell covers, when they share `target` (CSS Tables 3, "width
+/// distribution algorithm"). `min`, `max` and `pct` are the columns' minimum
+/// and maximum widths and percentage shares, `authored` marks the columns that
+/// state a length, and `target_is_constrained` whether a target that no
+/// column can absorb may grow those.
+///
+/// Four widths are guessed for the grid: every column at its minimum; the
+/// percentage columns at their share of `target`; the length columns at their
+/// maximum too; and the auto columns at theirs. `target` lies between two of
+/// them, and the columns whose width differs between the two grow in
+/// proportion to that difference. Past the last, what is left goes to the auto
+/// columns in proportion to their maximum widths, with none to the length
+/// columns, with none to the percentage columns in proportion to their
+/// shares.
 fn distribute_columns_with_authored(
-    avail: f32,
+    target: f32,
     min: &[f32],
     max: &[f32],
     pct: &[f32],
     authored_length: &[bool],
+    target_is_constrained: bool,
 ) -> Vec<f32> {
-    let n = min.len();
-    let psum: f32 = pct.iter().sum();
-    let scale = if psum > 1.0 { 1.0 / psum } else { 1.0 };
-    let mut w = vec![0.0f32; n];
-    for i in 0..n {
-        w[i] = if pct[i] > 0.0 {
-            f32_max_compat(pct[i] * scale * avail, min[i])
-        } else {
-            min[i]
-        };
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        Percent,
+        Fixed,
+        Auto,
     }
-    let assigned: f32 = w.iter().sum();
-    if assigned + 0.01 < avail {
-        let mut remaining = avail - assigned;
-        let grow: Vec<f32> = (0..n)
-            .map(|i| {
-                if pct[i] == 0.0 {
-                    f32_max_compat(max[i] - w[i], 0.0)
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-        // Satisfy cell length preferences before growing the auto columns.
-        // This also preserves Chromium's distribution of a spanning minimum.
-        for authored in [true, false] {
-            let gsum: f32 = (0..n)
-                .filter(|&i| authored_length[i] == authored)
-                .map(|i| grow[i])
-                .sum();
-            if gsum > 0.0 {
-                let take = remaining.min(gsum);
-                for i in 0..n {
-                    if authored_length[i] == authored {
-                        w[i] += take * grow[i] / gsum;
-                    }
-                }
-                remaining -= take;
-            }
-        }
-        if remaining > 0.0 {
-            let np: Vec<usize> = (0..n)
-                .filter(|&i| pct[i] == 0.0 && !authored_length[i])
-                .collect();
-            let targets = if np.is_empty() {
-                let all_auto: Vec<usize> = (0..n).filter(|&i| !authored_length[i]).collect();
-                if all_auto.is_empty() {
-                    (0..n).collect()
-                } else {
-                    all_auto
-                }
+    let n = min.len();
+    let kind: Vec<Kind> = (0..n)
+        .map(|i| {
+            if pct[i] > 0.0 {
+                Kind::Percent
+            } else if authored_length[i] {
+                Kind::Fixed
             } else {
-                np
-            };
-            let share = remaining / targets.len() as f32;
-            for i in targets {
-                w[i] += share;
+                Kind::Auto
+            }
+        })
+        .collect();
+    let percent_size = |i: usize, space: f32| f32_max_compat(min[i], pct[i] * space);
+    // The grid's width at each guess, and by how much the columns that grow
+    // between it and the one before add up to.
+    let mut guess = [0.0f32; 4];
+    let mut increase = [0.0f32; 4];
+    let (mut total_auto_max, mut total_fixed_max, mut total_percent) = (0.0f32, 0.0f32, 0.0f32);
+    for i in 0..n {
+        guess[0] += min[i];
+        match kind[i] {
+            Kind::Percent => {
+                let size = percent_size(i, target);
+                total_percent += pct[i];
+                guess[1] += size;
+                guess[2] += size;
+                guess[3] += size;
+                increase[1] += size - min[i];
+            }
+            Kind::Fixed => {
+                total_fixed_max += max[i];
+                guess[1] += min[i];
+                guess[2] += max[i];
+                guess[3] += max[i];
+                increase[2] += max[i] - min[i];
+            }
+            Kind::Auto => {
+                total_auto_max += max[i];
+                guess[1] += min[i];
+                guess[2] += min[i];
+                guess[3] += max[i];
+                increase[3] += max[i] - min[i];
             }
         }
-    } else if assigned > avail + 0.01 {
-        let excess = assigned - avail;
-        let shrink: Vec<f32> = (0..n).map(|i| f32_max_compat(w[i] - min[i], 0.0)).collect();
-        let ssum: f32 = shrink.iter().sum();
-        if ssum > 0.0 {
-            let take = if excess < ssum { excess } else { ssum };
-            for i in 0..n {
-                w[i] -= take * shrink[i] / ssum;
+    }
+    let target = f32_max_compat(target, guess[0]);
+    let count = |wanted: Kind| kind.iter().filter(|&&kind| kind == wanted).count() as f32;
+    // Adds `room` to the columns of a kind in proportion to their `weight`,
+    // or equally when they have none.
+    let grow =
+        |sizes: &mut [f32], wanted: Kind, room: f32, total: f32, weight: &dyn Fn(usize) -> f32| {
+            for i in (0..n).filter(|&i| kind[i] == wanted) {
+                sizes[i] += if total > 0.0 {
+                    room * weight(i) / total
+                } else {
+                    room / count(wanted)
+                };
             }
-        } // cov:ignore: llvm-cov reports the covered shrink branch's closing brace as uncovered.
-    } // cov:ignore: llvm-cov reports the covered shrink branch's closing brace as uncovered.
-    w
+        };
+    let mut sizes: Vec<f32> = vec![0.0; n];
+    match (0..4).find(|&at| guess[at] >= target) {
+        Some(0) => sizes.copy_from_slice(min),
+        Some(1) => {
+            sizes.copy_from_slice(min);
+            grow(
+                &mut sizes,
+                Kind::Percent,
+                target - guess[0],
+                increase[1],
+                &|i| percent_size(i, target) - min[i],
+            );
+        }
+        Some(2) => {
+            for i in 0..n {
+                sizes[i] = if kind[i] == Kind::Percent {
+                    percent_size(i, target)
+                } else {
+                    min[i]
+                };
+            }
+            grow(
+                &mut sizes,
+                Kind::Fixed,
+                target - guess[1],
+                increase[2],
+                &|i| max[i] - min[i],
+            );
+        }
+        Some(_) => {
+            // Where the guess is met exactly, the table is as wide as its
+            // content asks, and the maximum widths are used as they are.
+            let exact = (target - guess[3]).abs() < 0.001;
+            for i in 0..n {
+                sizes[i] = match kind[i] {
+                    Kind::Percent => percent_size(i, target),
+                    Kind::Fixed => max[i],
+                    Kind::Auto if exact => max[i],
+                    Kind::Auto => min[i],
+                };
+            }
+            if !exact {
+                grow(
+                    &mut sizes,
+                    Kind::Auto,
+                    target - guess[2],
+                    increase[3],
+                    &|i| max[i] - min[i],
+                );
+            }
+        }
+        None => {
+            let room = target - guess[3];
+            if count(Kind::Auto) > 0.0 {
+                for i in 0..n {
+                    sizes[i] = match kind[i] {
+                        Kind::Percent => percent_size(i, target),
+                        Kind::Fixed | Kind::Auto => max[i],
+                    };
+                }
+                grow(&mut sizes, Kind::Auto, room, total_auto_max, &|i| max[i]);
+            } else if count(Kind::Fixed) > 0.0 && target_is_constrained {
+                for i in 0..n {
+                    sizes[i] = match kind[i] {
+                        Kind::Percent => percent_size(i, target),
+                        _ => max[i],
+                    };
+                }
+                grow(&mut sizes, Kind::Fixed, room, total_fixed_max, &|i| max[i]);
+            } else if count(Kind::Percent) > 0.0 {
+                // Only the percentage columns are sized, and a length column
+                // that the target may not grow is left for the caller to keep.
+                for i in (0..n).filter(|&i| kind[i] == Kind::Percent) {
+                    sizes[i] = percent_size(i, target);
+                }
+                grow(&mut sizes, Kind::Percent, room, total_percent, &|i| pct[i]);
+            }
+        }
+    }
+    sizes
 }
 
 /// Rows removed by `visibility: collapse` on the row or its row group (CSS

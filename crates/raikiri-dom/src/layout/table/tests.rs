@@ -27,6 +27,7 @@ mod cell_maximum_tests;
 mod cell_percent_height_tests;
 pub(super) mod cell_scope_tests;
 mod cold_border_benchmark_tests;
+mod column_distribution_tests;
 mod inline_block_baseline_tests;
 mod intrinsic_keyword_tests;
 mod known_wrapper_height_tests;
@@ -2030,6 +2031,7 @@ fn distribute_columns_preserves_authored_tracks_for_spanning_excess() {
         &[5.0, 95.0, 0.0, 5.0],
         &[0.0, 0.0, 0.0, 0.0],
         &[true, false, false, true],
+        true,
     );
     assert!((widths[0] - 5.0).abs() < 0.01);
     assert!((widths[3] - 5.0).abs() < 0.01);
@@ -2044,17 +2046,19 @@ fn distribute_columns_falls_back_to_all_tracks_when_all_are_authored() {
         &[5.0, 5.0],
         &[0.0, 0.0],
         &[true, true],
+        true,
     );
     assert_eq!(widths, [6.0, 6.0]);
 }
 
 #[test]
 fn distribute_columns_covers_growth_and_shrink_phases() {
-    let grown = super::distribute_columns_with_authored(10.0, &[1.0], &[10.0], &[0.0], &[false]);
+    let grown =
+        super::distribute_columns_with_authored(10.0, &[1.0], &[10.0], &[0.0], &[false], true);
     assert_eq!(grown, [10.0]);
 
     let percentage =
-        super::distribute_columns_with_authored(10.0, &[0.0], &[0.0], &[0.5], &[false]);
+        super::distribute_columns_with_authored(10.0, &[0.0], &[0.0], &[0.5], &[false], true);
     assert_eq!(percentage, [10.0]);
 
     let shrunk = super::distribute_columns_with_authored(
@@ -2063,6 +2067,7 @@ fn distribute_columns_covers_growth_and_shrink_phases() {
         &[10.0, 5.0],
         &[1.0, 0.0],
         &[false, false],
+        true,
     );
     assert_eq!(shrunk, [0.0, 5.0]);
 }
@@ -2107,6 +2112,7 @@ fn distribute_columns_exact_fit_uses_min_widths_unchanged() {
         &[50.0, 50.0],
         &[0.0, 0.0],
         &[false, false],
+        true,
     );
     assert_eq!(widths, [10.0, 20.0]);
 }
@@ -2121,23 +2127,26 @@ fn distribute_columns_grows_toward_max_then_shares_remainder_equally() {
         &[10.0, 10.0],
         &[0.0, 0.0],
         &[false, false],
+        true,
     );
     assert_eq!(widths, [15.0, 15.0]);
 }
 
 #[test]
-fn distribute_columns_percentage_over_100_percent_is_scaled_down() {
-    // pct sums to 120% of avail: the `psum > 1.0` branch scales every
-    // percentage down by 1/psum before applying it.
+fn distribute_columns_percentages_over_100_percent_stop_at_the_whole() {
+    // The percentages are taken in column order and add up to 100% at most, so
+    // 60% and 60% are 60% and 40% (as in Chromium).
+    let shares = super::percent_shares_in_order(&[0.6, 0.6]);
     let widths = super::distribute_columns_with_authored(
         100.0,
         &[0.0, 0.0],
         &[100.0, 100.0],
-        &[0.6, 0.6],
+        &shares,
         &[false, false],
+        true,
     );
-    assert!((widths[0] - 50.0).abs() < 0.01, "widths: {widths:?}");
-    assert!((widths[1] - 50.0).abs() < 0.01, "widths: {widths:?}");
+    assert!((widths[0] - 60.0).abs() < 0.01, "widths: {widths:?}");
+    assert!((widths[1] - 40.0).abs() < 0.01, "widths: {widths:?}");
 }
 
 #[test]
@@ -2151,6 +2160,7 @@ fn distribute_columns_shrinks_percentage_driven_column_when_over_avail() {
         &[100.0, 100.0],
         &[1.0, 0.0],
         &[false, false],
+        true,
     );
     assert_eq!(widths, [30.0, 20.0]);
 }
@@ -2167,6 +2177,7 @@ fn distribute_columns_min_floor_holds_when_shrink_budget_is_zero() {
         &[20.0, 30.0],
         &[0.0, 0.0],
         &[false, false],
+        true,
     );
     assert_eq!(widths, [20.0, 30.0]);
 }
@@ -3316,10 +3327,11 @@ fn resolve_column_widths_col_percent_ignored_for_unoccupied_column() {
 
     // If the 25% were (incorrectly) applied despite no cell occupying
     // the column, column 1 would be pct-driven and would stop
-    // receiving a share of the leftover space; instead it behaves as
-    // a plain auto column here.
-    assert!((widths[0] - 130.0).abs() < 1.0, "widths: {widths:?}");
-    assert!((widths[1] - 70.0).abs() < 1.0, "widths: {widths:?}");
+    // receiving the leftover space; instead it behaves as a plain auto
+    // column here, and takes all of it, as the auto column of a table in
+    // Chromium does.
+    assert!((widths[0] - 60.0).abs() < 1.0, "widths: {widths:?}");
+    assert!((widths[1] - 140.0).abs() < 1.0, "widths: {widths:?}");
 }
 
 #[test]
@@ -3360,9 +3372,9 @@ fn resolve_column_widths_col_length_floors_even_unoccupied_column() {
         0.0,
     );
 
-    assert!(widths[0] > widths[1], "widths: {widths:?}");
-    assert!((widths[0] - 145.0).abs() < 1.0, "widths: {widths:?}");
-    assert!((widths[1] - 55.0).abs() < 1.0, "widths: {widths:?}");
+    // The length floors the first column; the leftover goes to the auto one.
+    assert!((widths[0] - 90.0).abs() < 1.0, "widths: {widths:?}");
+    assert!((widths[1] - 110.0).abs() < 1.0, "widths: {widths:?}");
 }
 
 #[test]
