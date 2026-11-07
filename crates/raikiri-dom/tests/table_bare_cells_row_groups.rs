@@ -510,3 +510,311 @@ fn a_caption_with_layout_containment_outside_a_table_holds_its_positioned_conten
         ],
     );
 }
+
+fn vertical(mode: &str, inner: &str) -> String {
+    format!("<div id=p style=\"writing-mode:{mode}\">{inner}</div>")
+}
+
+fn two_cell_row(id: &str) -> String {
+    group(
+        "row",
+        id,
+        &format!("{}{}", cell("c1", "aa"), cell("c2", "b")),
+    )
+}
+
+#[test]
+fn a_row_in_a_vertical_block_gets_an_anonymous_table() {
+    // The cells follow each other down the block, and the row runs across it.
+    let expected: &[(&str, [f32; 4])] = &[
+        ("p", [8.0, 8.0, 10.0, 30.0]),
+        ("r", [8.0, 8.0, 10.0, 30.0]),
+        ("c1", [8.0, 8.0, 10.0, 20.0]),
+        ("c2", [8.0, 28.0, 10.0, 10.0]),
+    ];
+    for mode in ["vertical-rl", "vertical-lr"] {
+        check(mode, &vertical(mode, &two_cell_row("r")), expected);
+    }
+    // The block it sits in is vertical as well.
+    check(
+        "nested vertical block",
+        &format!(
+            "<div id=o style=\"writing-mode:vertical-rl\">{}</div>",
+            vertical("vertical-rl", &two_cell_row("r"))
+        ),
+        &[
+            ("o", [8.0, 8.0, 10.0, 30.0]),
+            ("p", [8.0, 8.0, 10.0, 30.0]),
+            ("r", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+            ("c2", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn rows_in_a_vertical_block_share_the_columns_of_one_table() {
+    // The second row has one cell, which takes the 20px of the first column.
+    let rows = format!(
+        "{}{}",
+        two_cell_row("r1"),
+        group("row", "r2", &cell("c3", "c")),
+    );
+    check(
+        "two rows",
+        &vertical("vertical-rl", &rows),
+        &[
+            ("p", [8.0, 8.0, 20.0, 30.0]),
+            ("r1", [18.0, 8.0, 10.0, 30.0]),
+            ("c1", [18.0, 8.0, 10.0, 20.0]),
+            ("c2", [18.0, 28.0, 10.0, 10.0]),
+            ("r2", [8.0, 8.0, 10.0, 30.0]),
+            ("c3", [8.0, 8.0, 10.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
+fn cells_in_a_vertical_block_share_one_anonymous_row() {
+    let cells = format!("{}{}", cell("c1", "aa"), cell("c2", "b"));
+    check(
+        "cells in a vertical block",
+        &vertical("vertical-rl", &cells),
+        &[
+            ("p", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+            ("c2", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+    // Beside a horizontal block, which is not part of the table.
+    check(
+        "vertical block in a horizontal block",
+        &format!(
+            "<div id=o>{}<div id=q>x</div></div>",
+            vertical("vertical-lr", &cells)
+        ),
+        &[
+            ("o", [8.0, 8.0, 784.0, 40.0]),
+            ("p", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+            ("c2", [8.0, 28.0, 10.0, 10.0]),
+            ("q", [8.0, 38.0, 784.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn an_anonymous_table_in_a_vertical_block_is_placed_among_its_sibling_blocks() {
+    let block = |id: &str| format!("<div id={id} style=\"width:5px;height:15px\"></div>");
+    check(
+        "blocks either side of a row",
+        &vertical(
+            "vertical-rl",
+            &format!("{}{}{}", block("b1"), two_cell_row("r"), block("b2")),
+        ),
+        &[
+            ("p", [8.0, 8.0, 20.0, 30.0]),
+            ("b1", [23.0, 8.0, 5.0, 15.0]),
+            ("r", [13.0, 8.0, 10.0, 30.0]),
+            ("c1", [13.0, 8.0, 10.0, 20.0]),
+            ("c2", [13.0, 28.0, 10.0, 10.0]),
+            ("b2", [8.0, 8.0, 5.0, 15.0]),
+        ],
+    );
+    // A block between two cells makes two tables.
+    check(
+        "block between cells",
+        &vertical(
+            "vertical-rl",
+            &format!(
+                "{}<div id=blk style=\"width:5px;height:5px\"></div>{}",
+                cell("c1", "aa"),
+                cell("c2", "b")
+            ),
+        ),
+        &[
+            ("p", [8.0, 8.0, 25.0, 20.0]),
+            ("c1", [23.0, 8.0, 10.0, 20.0]),
+            ("blk", [18.0, 8.0, 5.0, 5.0]),
+            ("c2", [8.0, 8.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_caption_and_a_row_group_in_a_vertical_block_join_the_anonymous_table() {
+    check(
+        "caption beside a row",
+        &vertical(
+            "vertical-rl",
+            &format!(
+                "<div id=cap style=\"display:table-caption\">aaa</div>{}",
+                two_cell_row("r")
+            ),
+        ),
+        &[
+            ("p", [8.0, 8.0, 20.0, 30.0]),
+            ("cap", [18.0, 8.0, 10.0, 30.0]),
+            ("r", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+            ("c2", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+    check(
+        "row group in a wrapper",
+        &vertical(
+            "vertical-rl",
+            &wrapper(&group("row-group", "rg", &two_cell_row("r"))),
+        ),
+        &[
+            ("p", [8.0, 8.0, 10.0, 30.0]),
+            ("rg", [8.0, 8.0, 10.0, 30.0]),
+            ("r", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+            ("c2", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn rows_in_a_list_item_with_an_outside_marker_get_an_anonymous_table() {
+    let item = |inner: &str| {
+        format!(
+            "<div id=p style=\"display:list-item;list-style:outside disc;margin-left:30px\">{inner}</div>"
+        )
+    };
+    check(
+        "one row",
+        &item(&two_cell_row("r1")),
+        &[
+            ("p", [38.0, 8.0, 754.0, 10.0]),
+            ("r1", [38.0, 8.0, 30.0, 10.0]),
+            ("c1", [38.0, 8.0, 20.0, 10.0]),
+            ("c2", [58.0, 8.0, 10.0, 10.0]),
+        ],
+    );
+    check(
+        "two rows",
+        &item(&format!(
+            "{}{}",
+            two_cell_row("r1"),
+            group("row", "r2", &cell("c3", "c"))
+        )),
+        &[
+            ("p", [38.0, 8.0, 754.0, 20.0]),
+            ("r1", [38.0, 8.0, 30.0, 10.0]),
+            ("c1", [38.0, 8.0, 20.0, 10.0]),
+            ("c2", [58.0, 8.0, 10.0, 10.0]),
+            ("r2", [38.0, 18.0, 30.0, 10.0]),
+            ("c3", [38.0, 18.0, 20.0, 10.0]),
+        ],
+    );
+    // An inside marker that draws nothing leaves the row alone on its line.
+    check(
+        "inside marker of type none",
+        "<div id=p style=\"display:list-item;list-style:none inside\">\
+         <div id=r1 style=\"display:table-row\"><div id=c1 style=\"display:table-cell\">aa</div>\
+         <div id=c2 style=\"display:table-cell\">b</div></div></div>",
+        &[
+            ("p", [8.0, 8.0, 784.0, 10.0]),
+            ("r1", [8.0, 8.0, 30.0, 10.0]),
+            ("c1", [8.0, 8.0, 20.0, 10.0]),
+            ("c2", [28.0, 8.0, 10.0, 10.0]),
+        ],
+    );
+    check(
+        "cells in a list element",
+        &format!(
+            "<ul style=\"margin:0;padding-left:30px\"><li id=p>{}{}</li></ul>",
+            cell("c1", "aa"),
+            cell("c2", "b")
+        ),
+        &[
+            ("p", [38.0, 8.0, 754.0, 10.0]),
+            ("c1", [38.0, 8.0, 20.0, 10.0]),
+            ("c2", [58.0, 8.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn an_anonymous_table_in_a_vertical_block_keeps_the_content_of_its_parts() {
+    // The row's `::before` text takes an anonymous cell of its own, 20px
+    // along the block, in front of the cell the row holds.
+    check(
+        "generated text of a row",
+        "<style>.row::before { content: \"xx\" }</style><div id=p style=\"writing-mode:vertical-rl\">\
+         <div id=r class=row style=\"display:table-row\"><div id=c1 style=\"display:table-cell\">b</div></div></div>",
+        &[
+            ("p", [8.0, 8.0, 10.0, 30.0]),
+            ("r", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+    // A stated height of the block leaves the table its own size.
+    check(
+        "stated block height",
+        "<div id=p style=\"writing-mode:vertical-rl;height:100px\">\
+         <div id=r style=\"display:table-row\"><div id=c1 style=\"display:table-cell\">aa</div>\
+         <div id=c2 style=\"display:table-cell\">b</div></div></div>",
+        &[
+            ("p", [8.0, 8.0, 10.0, 100.0]),
+            ("r", [8.0, 8.0, 10.0, 30.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+            ("c2", [8.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+    // Cells that state a size stretch their row and column.
+    check(
+        "stated cell sizes",
+        "<div id=p style=\"writing-mode:vertical-lr\"><div id=rg style=\"display:table-row-group\">\
+         <div id=r1 style=\"display:table-row\"><div id=c1 style=\"display:table-cell\">a</div>\
+         <div id=c2 style=\"display:table-cell;height:25px\">b</div></div>\
+         <div id=r2 style=\"display:table-row\"><div id=c3 style=\"display:table-cell;width:15px\">c</div></div>\
+         </div></div>",
+        &[
+            ("p", [8.0, 8.0, 25.0, 35.0]),
+            ("rg", [8.0, 8.0, 25.0, 35.0]),
+            ("r1", [8.0, 8.0, 10.0, 35.0]),
+            ("c1", [8.0, 8.0, 10.0, 10.0]),
+            ("c2", [8.0, 18.0, 10.0, 25.0]),
+            ("r2", [18.0, 8.0, 15.0, 35.0]),
+            ("c3", [18.0, 8.0, 15.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_row_beside_a_block_with_text_in_a_vertical_block_keeps_its_own_text() {
+    // The text of the block makes the vertical parent lay its children out as
+    // lines, where the row stays a block that lays out its own text.
+    check(
+        "block with text",
+        &vertical(
+            "vertical-rl",
+            "<div id=b>x</div><div id=r style=\"display:table-row\">row text</div>",
+        ),
+        &[
+            ("p", [8.0, 8.0, 20.0, 80.0]),
+            ("b", [18.0, 8.0, 10.0, 80.0]),
+            ("r", [8.0, 8.0, 10.0, 80.0]),
+        ],
+    );
+    check(
+        "nested block with text",
+        &vertical(
+            "vertical-rl",
+            &format!(
+                "<div id=b><div id=d>x</div></div>{}",
+                group("row", "r", &cell("c1", "aa"))
+            ),
+        ),
+        &[
+            ("p", [8.0, 8.0, 20.0, 20.0]),
+            ("b", [18.0, 8.0, 10.0, 20.0]),
+            ("d", [18.0, 8.0, 10.0, 20.0]),
+            ("r", [8.0, 8.0, 10.0, 20.0]),
+            ("c1", [8.0, 8.0, 10.0, 20.0]),
+        ],
+    );
+}

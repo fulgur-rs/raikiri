@@ -262,7 +262,10 @@ fn inline_content(
                 Some(IfcBoxKind::Atomic) => return Ok(InlineContent::Line),
                 Some(IfcBoxKind::Block) => {
                     block = true;
-                    if vertical_block_children {
+                    // The text of a row or cell that an anonymous table wraps
+                    // belongs to the lines of its cell, not to this container,
+                    // which lays the table out like any other block child.
+                    if vertical_block_children && doc.anonymous_table_of(id).is_none() {
                         if has_in_flow_generated_text(doc, cascade, id, counters)? {
                             return Ok(InlineContent::Line);
                         }
