@@ -57,9 +57,11 @@ pub(super) fn around_atomics(context: LineBreakContext<'_>) -> LineBreakOverride
 ///
 /// Those are the glue classes of CSS Text 3 §5.1, except U+00A0, and the
 /// combining marks: U+034F COMBINING GRAPHEME JOINER, which the specification
-/// lists among the glue characters, has that class in current Unicode data. A
-/// space and a zero width space are left to the rules for white space: a space
-/// after an atomic hangs at the end of its line instead of starting the next.
+/// lists among the glue characters, has that class in current Unicode data.
+/// The rest are left to the rules that already govern them: a space after an
+/// atomic hangs at the end of its line instead of starting the next, and a
+/// forced break ends the line without a soft break before it, which would
+/// leave a line of nothing.
 fn keeps_atomic(c: char) -> bool {
     match CodePointMapData::<LineBreak>::new().get(c) {
         LineBreak::Glue => c != '\u{a0}',
@@ -67,7 +69,11 @@ fn keeps_atomic(c: char) -> bool {
         | LineBreak::ZWJ
         | LineBreak::CombiningMark
         | LineBreak::Space
-        | LineBreak::ZWSpace => true,
+        | LineBreak::ZWSpace
+        | LineBreak::MandatoryBreak
+        | LineBreak::CarriageReturn
+        | LineBreak::LineFeed
+        | LineBreak::NextLine => true,
         _ => false,
     }
 }

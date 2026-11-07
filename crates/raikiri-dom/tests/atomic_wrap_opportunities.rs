@@ -159,6 +159,29 @@ fn an_isolate_around_the_punctuation_does_not_hide_it_from_the_image() {
 }
 
 #[test]
+fn a_forced_break_after_an_image_stays_with_it() {
+    // The break the author wrote is the only one: the image does not end its
+    // line before it as well, which would leave a line of nothing.
+    for (markup, lines) in [
+        ("<img><br>X", IMAGE_LINE + TEXT_LINE),
+        ("<img><br>", IMAGE_LINE),
+        ("X<br><img>", TEXT_LINE + IMAGE_LINE),
+    ] {
+        assert_eq!(container_height(markup), lines, "{markup}");
+    }
+    // The same for a preserved newline.
+    for white_space in ["pre-line", "pre-wrap"] {
+        let body = format!("<div id=d style='width: 0; white-space: {white_space}'><img>\nX</div>");
+        let found = boxes(&body);
+        let (_, rect) = found
+            .iter()
+            .find(|(id, _)| id == "d")
+            .expect("the container");
+        assert_eq!(rect[3], IMAGE_LINE + TEXT_LINE, "{white_space}");
+    }
+}
+
+#[test]
 fn glue_and_joiners_keep_an_image_with_them() {
     // The images do not break from the narrow no-break space, the word joiner
     // or the zero width joiner, so a line holds both and overflows.

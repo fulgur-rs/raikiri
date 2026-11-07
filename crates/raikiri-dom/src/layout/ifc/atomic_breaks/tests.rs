@@ -143,3 +143,21 @@ fn bidi_controls_between_an_atomic_and_its_neighbour_are_looked_through() {
         LineBreakOverride::UseStandard
     );
 }
+
+#[test]
+fn a_forced_break_next_to_an_atomic_is_left_to_the_standard_rules() {
+    // BK, CR, LF and NL: Unicode never breaks before them, and it breaks
+    // after them whatever is next.
+    for c in ['\u{b}', '\r', '\n', '\u{85}', '\u{2028}', '\u{2029}'] {
+        assert_eq!(
+            after_atomic(c),
+            LineBreakOverride::UseStandard,
+            "after, {c:?}"
+        );
+        assert_eq!(
+            before_atomic(c),
+            LineBreakOverride::UseStandard,
+            "before, {c:?}"
+        );
+    }
+}
