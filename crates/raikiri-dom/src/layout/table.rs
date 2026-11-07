@@ -1303,7 +1303,12 @@ fn compute_table_layout_checked(
                         height: 0.0,
                     },
                     border_spacing.0,
-                    None,
+                    // A `min-width` or `max-width` keyword stands for the
+                    // width a box that shrinks to fit would give the table.
+                    PercentWidening {
+                        cap: None,
+                        max_content_of: Some(table_idx),
+                    },
                     vertical_writing,
                 )
                 .widths
@@ -1468,6 +1473,11 @@ fn compute_table_layout_checked(
             } else {
                 max_w_outer
             },
+            // A table that states `width: max-content` is measured for that
+            // very keyword, which stands for the columns' own widths.
+            max_content_of: (!vertical_writing
+                && !matches!(table_size.width.expand(), ExpandedDimension::MaxContent))
+            .then_some(table_idx),
         };
         // A collapsed column leaves the table, but its cells still count toward
         // the row heights, which keep the widths the columns had before the
@@ -3265,6 +3275,55 @@ struct ColumnPass {
     /// an outer width: its `max-width`, or zero for a vertical table, which
     /// they do not widen. `None` sets no limit.
     percent_width_limit: Option<f32>,
+    /// The table, when a max-content query of it can count the width its
+    /// percentage columns ask for (see [`PercentWidening::max_content_of`]).
+    max_content_of: Option<usize>,
+}
+
+/// How the percentage columns of an auto-width table widen it.
+#[derive(Clone, Copy)]
+struct PercentWidening {
+    /// The most that percentage columns may widen the table's grid to, net of
+    /// the insets. `None` sets no limit.
+    cap: Option<f32>,
+    /// The table whose max-content width counts that widening where only
+    /// blocks lie above it, or `None` where the max-content width is the
+    /// columns' own widths. A box that shrinks to fit its content (an
+    /// inline-block, a float, an absolutely positioned box, `width:
+    /// fit-content` or `max-content`) counts a table child at the width its
+    /// percentage columns ask for, as the table itself would lay out in a wide
+    /// room. A flex or grid container or a table cell above the table, and the
+    /// `max-content` keyword of the table itself, count the columns' own
+    /// widths alone.
+    max_content_of: Option<usize>,
+}
+
+/// The width that stands in for an unbounded one when the percentage columns
+/// of a table take the whole grid and another column still has content: no
+/// width would be enough, and a parent that shrinks to fit clamps this to its
+/// room. Chromium's finite fallback.
+const UNBOUNDED_PERCENT_TABLE_WIDTH: f32 = 1_000_000.0;
+
+/// Whether a table that a box shrinking to fit its content measures counts the
+/// width its percentage columns ask for in its max-content width.
+///
+/// Chromium counts it in a chain of blocks, however deep, and leaves it out
+/// once a flex container, a grid container or another table is anywhere above
+/// the table: an inline-block in a flex item shrinks to the plain total of the
+/// columns even where the item is far wider. A table that is an item itself
+/// has such a container for a parent.
+fn max_content_counts_percentages(doc: &LayoutSession<'_>, table_idx: usize) -> bool {
+    let mut ancestor = doc.taffy_parent_of(table_idx);
+    while let Some(node) = ancestor {
+        if matches!(
+            doc.nodes[node].formatting_context,
+            FormattingContext::Flex | FormattingContext::Grid | FormattingContext::Table
+        ) {
+            return false;
+        }
+        ancestor = doc.taffy_parent_of(node);
+    }
+    true
 }
 
 /// The used size of a table with no rows or cells along one axis, from the size
@@ -3301,9 +3360,16 @@ fn resolve_table_columns(
         width: insets_width,
         height: 0.0,
     };
-    let percent_width_cap = pass
-        .percent_width_limit
-        .map(|limit| f32_max_compat(limit - insets_width, 0.0));
+    // The `max-width` keyword of a table (`min-content` and the like) caps
+    // the widening as a length does.
+    let widening = PercentWidening {
+        cap: [pass.percent_width_limit, pass.wrapper_maximum]
+            .into_iter()
+            .flatten()
+            .reduce(f32::min)
+            .map(|limit| f32_max_compat(limit - insets_width, 0.0)),
+        max_content_of: pass.max_content_of,
+    };
     if pass.table_layout != TableLayoutValue::Fixed {
         return resolve_column_widths(
             doc,
@@ -3311,7 +3377,7 @@ fn resolve_table_columns(
             pass.inputs,
             insets,
             pass.border_spacing_x,
-            percent_width_cap,
+            widening,
             pass.vertical_writing,
         );
     }
@@ -3335,7 +3401,7 @@ fn resolve_table_columns(
             pass.inputs,
             insets,
             pass.border_spacing_x,
-            percent_width_cap,
+            widening,
             pass.vertical_writing,
         );
     };
@@ -3523,7 +3589,7 @@ fn resolve_column_widths(
     inputs: LayoutInput,
     padding_border_size: Size<f32>,
     spacing: f32,
-    percent_width_cap: Option<f32>,
+    widening: PercentWidening,
     vertical_writing: bool,
 ) -> ColumnSizing {
     #[cfg(test)]
@@ -3699,6 +3765,7 @@ fn resolve_column_widths(
 
     // (C.4) Distribute - auto only (fixed deferred to Wave4)
     let insets = padding_border_size.width;
+    let has_percent = col_pct.iter().any(|&share| share > 0.0);
     let widths = match inputs.known_dimensions.width {
         Some(w) => {
             let avail = f32_max_compat(w - insets, 0.0);
@@ -3712,25 +3779,46 @@ fn resolve_column_widths(
         }
         None => match inputs.available_space.width {
             AvailableSpace::MinContent => col_min_full,
-            AvailableSpace::MaxContent => col_max_full,
+            AvailableSpace::MaxContent => widening
+                .max_content_of
+                .filter(|&table| has_percent && max_content_counts_percentages(doc, table))
+                .and_then(|_| {
+                    // Only a box that shrinks to fit counts the width the
+                    // percentage columns ask for, which a `max-width` still
+                    // caps. It has no room to cap it by, so when no width is
+                    // enough a large one stands in.
+                    let limit = widening.cap.map_or(UNBOUNDED_PERCENT_TABLE_WIDTH, |cap| {
+                        cap.min(UNBOUNDED_PERCENT_TABLE_WIDTH)
+                    });
+                    widened_percent_columns(
+                        &col_min_full,
+                        &col_max_full,
+                        &col_pct,
+                        &authored_length,
+                        limit,
+                    )
+                })
+                .unwrap_or(col_max_full),
             AvailableSpace::Definite(avail_w) => {
                 let avail = f32_max_compat(avail_w - insets, 0.0);
                 let natural: f32 = col_max_full.iter().sum();
                 // Percentage columns can ask for more than the columns' own
                 // max-content widths add up to. The room and a `max-width`
                 // still cap that, but never below the natural total.
-                let shares = percent_shares_in_order(&col_pct);
-                let widened = percent_columns_max_content_width(natural, &col_max_full, &shares)
-                    .min(avail)
-                    .min(percent_width_cap.unwrap_or(f32::INFINITY));
-                if widened > natural {
-                    distribute_columns_with_authored(
-                        widened,
-                        &col_min_full,
-                        &col_max_full,
-                        &shares,
-                        &authored_length,
-                    )
+                let limit = avail.min(widening.cap.unwrap_or(f32::INFINITY));
+                if let Some(widened) = has_percent
+                    .then(|| {
+                        widened_percent_columns(
+                            &col_min_full,
+                            &col_max_full,
+                            &col_pct,
+                            &authored_length,
+                            limit,
+                        )
+                    })
+                    .flatten()
+                {
+                    widened
                 } else if natural <= avail {
                     col_max_full
                 } else {
@@ -3749,6 +3837,25 @@ fn resolve_column_widths(
         widths,
         vertical_rows: vertical_writing.then(|| vertical_row_widths(grid, &cell_max, spacing)),
     }
+}
+
+/// The column widths of a grid whose percentage columns ask for more than the
+/// columns' own max-content widths add up to, within `limit`, or `None` when
+/// they ask for no more (or the limit leaves no more). `min`, `max` and
+/// `authored` are the columns' min-content and max-content widths and whether
+/// each states a length; `pct` holds their percentages.
+fn widened_percent_columns(
+    min: &[f32],
+    max: &[f32],
+    pct: &[f32],
+    authored: &[bool],
+    limit: f32,
+) -> Option<Vec<f32>> {
+    let natural: f32 = max.iter().sum();
+    let shares = percent_shares_in_order(pct);
+    let widened = percent_columns_max_content_width(natural, max, &shares).min(limit);
+    (widened > natural)
+        .then(|| distribute_columns_with_authored(widened, min, max, &shares, authored))
 }
 
 /// The share of the grid each column gets when the percentages are taken in
@@ -5756,7 +5863,7 @@ fn fixed_intrinsic_width(
     // length columns. Match Chromium's finite table intrinsic fallback so
     // later percentage distribution cannot produce infinity minus infinity.
     let maximum = if maximum.is_infinite() {
-        1_000_000.0
+        UNBOUNDED_PERCENT_TABLE_WIDTH
     } else {
         maximum
     };

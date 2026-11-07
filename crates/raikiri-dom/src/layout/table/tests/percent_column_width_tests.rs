@@ -7,8 +7,12 @@
 //! and share `p` needs `m / p`, and the other columns need their total over
 //! what the percentages leave. The room of the containing block and a
 //! `max-width` still cap it. A flex item and a table cell take the table at its
-//! plain max-content width. Every rectangle here is what Chromium reports for
-//! the same markup (Ahem 10px, no body margin).
+//! plain max-content width. A box that shrinks to fit its content (an
+//! inline-block, a float, an absolutely positioned box, `width: fit-content` or
+//! `width: max-content`) counts a table child at the width its percentages ask
+//! for, unless a flex container, a grid container or another table is anywhere
+//! above the table. Every rectangle here is what Chromium reports for the same
+//! markup (Ahem 10px, no body margin).
 
 use crate::document::Document;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
@@ -54,11 +58,17 @@ struct Laid {
     doc: Document,
     table: usize,
     cells: Vec<usize>,
+    /// The innermost box around the table, when the page has one.
+    wrapper: Option<usize>,
 }
 
 impl Laid {
     fn table(&self) -> Rect {
         absolute_rect(&self.doc, self.table)
+    }
+
+    fn wrapper(&self) -> Rect {
+        absolute_rect(&self.doc, self.wrapper.expect("the page has a wrapper"))
     }
 
     fn cells(&self) -> Vec<Rect> {
@@ -130,7 +140,12 @@ fn finish(mut doc: Document, table: usize, cells: Vec<usize>) -> Laid {
     let cascade = cascade(&doc, &rules).expect("cascade");
     with_ahem(&mut doc);
     crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    Laid { doc, table, cells }
+    Laid {
+        doc,
+        table,
+        cells,
+        wrapper: None,
+    }
 }
 
 /// `body > div(position:relative; 200px wide) > table(table_css) > row >
@@ -154,8 +169,12 @@ fn lay_out_in(
     if let Some(wrapper_css) = wrapper_css {
         parent = doc.append_element(Some(parent), "div", Some(wrapper_css));
     }
+    let wrapper = wrapper_css.map(|_| parent);
     let (table, cells) = append_table(&mut doc, parent, table_css, columns);
-    finish(doc, table, cells)
+    Laid {
+        wrapper,
+        ..finish(doc, table, cells)
+    }
 }
 
 fn lay_out(table_css: &str, columns: &[Column]) -> Laid {
@@ -520,4 +539,235 @@ fn a_flex_item_is_taken_at_its_plain_max_content_width() {
             "{wrapper}"
         );
     }
+}
+
+/// `body > div(position:relative; 200px wide) > chain[0] > chain[1] > ... >
+/// table`, laid out on an 800x600 page. The last box of `chain` is the wrapper.
+fn lay_out_chain(chain: &[&str], table_css: &str, columns: &[Column]) -> Laid {
+    let (mut doc, body) = page();
+    let mut parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;position:relative;width:200px;height:100px"),
+    );
+    let mut wrapper = None;
+    for css in chain {
+        parent = doc.append_element(Some(parent), "div", Some(*css));
+        wrapper = Some(parent);
+    }
+    let (table, cells) = append_table(&mut doc, parent, table_css, columns);
+    Laid {
+        wrapper,
+        ..finish(doc, table, cells)
+    }
+}
+
+const WIDENED_CELLS: [Rect; 2] = [(0.0, 0.0, 30.0, 10.0), (30.0, 0.0, 30.0, 10.0)];
+const PLAIN_CELLS: [Rect; 2] = [(0.0, 0.0, 10.0, 10.0), (10.0, 0.0, 30.0, 10.0)];
+
+#[test]
+fn a_box_that_shrinks_to_fit_counts_the_width_a_percentage_column_asks_for() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    for wrapper in [
+        "display:inline-block",
+        "float:left",
+        "position:absolute;top:0",
+        "display:block;width:fit-content",
+        "display:block;width:max-content",
+    ] {
+        let laid = lay_out_chain(&[wrapper], BLOCK, &columns);
+        assert_eq!(laid.wrapper().2, 60.0, "{wrapper}");
+        assert_eq!(laid.table(), (0.0, 0.0, 60.0, 10.0), "{wrapper}");
+        assert_eq!(laid.cells(), WIDENED_CELLS, "{wrapper}");
+    }
+}
+
+#[test]
+fn blocks_between_the_shrink_wrapping_box_and_the_table_do_not_matter() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    for chain in [
+        vec!["display:inline-block", "display:block"],
+        vec!["display:inline-block", "display:inline-block"],
+        vec!["float:left", "display:block", "padding:0"],
+        vec!["display:inline-block", "display:flow-root"],
+        vec!["display:inline-block", "columns:1"],
+        vec![
+            "position:relative",
+            "display:block;width:max-content",
+            "overflow:hidden",
+        ],
+    ] {
+        let laid = lay_out_chain(&chain, BLOCK, &columns);
+        assert_eq!(laid.table(), (0.0, 0.0, 60.0, 10.0), "{chain:?}");
+        assert_eq!(laid.cells(), WIDENED_CELLS, "{chain:?}");
+    }
+}
+
+#[test]
+fn a_flex_container_a_grid_container_or_a_table_above_leaves_the_plain_total() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    for chain in [
+        vec!["display:flex", "display:inline-block"],
+        vec!["display:flex", "display:block", "display:inline-block"],
+        // The item has room for the widened table, and the box still takes the
+        // plain total.
+        vec!["display:flex", "width:300px", "display:inline-block"],
+        vec!["display:flex", "width:300px", "float:left"],
+        vec![
+            "display:flex",
+            "width:300px",
+            "display:block;width:fit-content",
+        ],
+        vec!["display:flex", "flex:1", "display:inline-block"],
+        vec![
+            "display:flex",
+            "display:block",
+            "overflow:hidden",
+            "display:inline-block",
+        ],
+        vec![
+            "display:inline-flex",
+            "display:block",
+            "display:inline-block",
+        ],
+        vec![
+            "display:flex;flex-direction:column",
+            "display:block",
+            "display:inline-block",
+        ],
+        vec!["display:grid", "display:block", "display:inline-block"],
+        vec![
+            "display:grid;grid-template-columns:300px",
+            "display:inline-block",
+        ],
+        // The box holds the container.
+        vec!["display:inline-block", "display:flex"],
+        vec!["display:inline-block", "display:flex", "display:block"],
+        vec!["display:inline-block", "display:grid"],
+        vec![
+            "display:table",
+            "display:table-row",
+            "display:table-cell",
+            "display:inline-block",
+        ],
+        vec![
+            "display:table",
+            "display:table-row",
+            "display:table-cell;width:300px",
+            "display:inline-block",
+        ],
+        vec![
+            "display:inline-block",
+            "display:table",
+            "display:table-row",
+            "display:table-cell",
+            "display:block",
+        ],
+    ] {
+        let laid = lay_out_chain(&chain, BLOCK, &columns);
+        assert_eq!(laid.table(), (0.0, 0.0, 40.0, 10.0), "{chain:?}");
+        assert_eq!(laid.cells(), PLAIN_CELLS, "{chain:?}");
+    }
+}
+
+#[test]
+fn the_max_content_keyword_of_the_table_itself_stays_plain() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    for table_css in [
+        "display:table;width:max-content",
+        "display:table;width:min-content",
+    ] {
+        for chain in [vec![], vec!["display:inline-block"]] {
+            let laid = lay_out_chain(&chain, table_css, &columns);
+            assert_eq!(
+                laid.table(),
+                (0.0, 0.0, 40.0, 10.0),
+                "{table_css} {chain:?}"
+            );
+            assert_eq!(laid.cells(), PLAIN_CELLS, "{table_css} {chain:?}");
+            if !chain.is_empty() {
+                assert_eq!(laid.wrapper().2, 40.0, "{table_css}");
+            }
+        }
+    }
+    // `width: fit-content` shrinks to fit in the room, so the percentages widen it.
+    let laid = lay_out_chain(
+        &["display:inline-block"],
+        "display:table;width:fit-content",
+        &columns,
+    );
+    assert_eq!(laid.wrapper().2, 60.0);
+    assert_eq!(laid.table(), (0.0, 0.0, 60.0, 10.0));
+    assert_eq!(laid.cells(), WIDENED_CELLS);
+}
+
+#[test]
+fn the_widening_in_a_shrink_wrapping_box_stops_at_the_max_width_of_the_table() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    // The cap stops the widening, and never takes the table below the plain total.
+    for (table_css, width, cells) in [
+        (
+            "display:table;max-width:50px",
+            50.0,
+            [(0.0, 0.0, 20.0, 10.0), (20.0, 0.0, 30.0, 10.0)],
+        ),
+        ("display:table;max-width:30px", 40.0, PLAIN_CELLS),
+        // The keyword stands for the plain total.
+        ("display:table;max-width:min-content", 40.0, PLAIN_CELLS),
+    ] {
+        let laid = lay_out_chain(&["display:inline-block"], table_css, &columns);
+        assert_eq!(laid.wrapper().2, width, "{table_css}");
+        assert_eq!(laid.table(), (0.0, 0.0, width, 10.0), "{table_css}");
+        assert_eq!(laid.cells(), cells, "{table_css}");
+    }
+    // The cap of the box applies to it as it does outside.
+    let laid = lay_out_chain(&["display:inline-block;max-width:50px"], BLOCK, &columns);
+    assert_eq!(laid.wrapper().2, 50.0);
+    assert_eq!(laid.table(), (0.0, 0.0, 50.0, 10.0));
+}
+
+#[test]
+fn percentages_that_take_everything_fill_the_room_of_a_shrink_wrapping_box() {
+    let columns = [column(10.0, Some(100.0)), column(30.0, None)];
+    // No width is enough for the second column, so the box fills its room.
+    let laid = lay_out_chain(&["display:inline-block"], BLOCK, &columns);
+    assert_eq!(laid.wrapper().2, 200.0);
+    assert_eq!(laid.table(), (0.0, 0.0, 200.0, 10.0));
+    assert_eq!(
+        laid.cells(),
+        [(0.0, 0.0, 170.0, 10.0), (170.0, 0.0, 30.0, 10.0)]
+    );
+    // Its max-content width is a large one, which the keyword takes as it is.
+    let laid = lay_out_chain(&["display:block;width:max-content"], BLOCK, &columns);
+    assert_eq!(laid.wrapper().2, 1_000_000.0);
+    assert_eq!(laid.table().2, 1_000_000.0);
+}
+
+#[test]
+fn a_max_width_or_min_width_keyword_of_the_table_takes_the_widened_max_content_width() {
+    let columns = [column(10.0, Some(50.0)), column(30.0, None)];
+    // The keyword stands for the width the table has in a wide room, so it
+    // does not hold the table to the plain total. In a flex item or a table
+    // cell the plain total is that width.
+    for table_css in [
+        "display:table;float:left;max-width:max-content",
+        "display:table;float:left;max-width:fit-content",
+        "display:table;float:left;min-width:max-content",
+    ] {
+        let (table, cells) = rects(table_css, &columns);
+        assert_eq!(table, (0.0, 0.0, 60.0, 10.0), "{table_css}");
+        assert_eq!(cells, WIDENED_CELLS, "{table_css}");
+        let laid = lay_out_chain(&["display:inline-block"], table_css, &columns);
+        assert_eq!(laid.wrapper().2, 60.0, "{table_css}");
+        assert_eq!(laid.table(), (0.0, 0.0, 60.0, 10.0), "{table_css}");
+    }
+    let table_css = "display:table;max-width:max-content";
+    let laid = lay_out_chain(&["display:flex"], table_css, &columns);
+    assert_eq!(laid.table(), (0.0, 0.0, 40.0, 10.0));
+    let laid = lay_out_chain(
+        &["display:table", "display:table-row", "display:table-cell"],
+        table_css,
+        &columns,
+    );
+    assert_eq!(laid.table(), (0.0, 0.0, 40.0, 10.0));
 }
