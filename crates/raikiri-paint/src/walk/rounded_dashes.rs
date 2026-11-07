@@ -4,7 +4,11 @@
 //! Chromium strokes the centerline of the border, a rounded rectangle half a
 //! border width inside the outer edge, as one closed path: the pattern starts on
 //! the top edge where the upper-left corner ends and runs clockwise, and the gap
-//! is chosen for the length of the whole path, so that the pattern fits it.
+//! is chosen for the length of the whole path, so that the pattern fits it. The
+//! pattern is clipped to the border, which an elliptical corner would not
+//! contain. It follows the curve only when the inner edge of the border is
+//! rounded too: a border no thicker than its radii is drawn in straight sides,
+//! each from its own corner, inside the rounded outer edge.
 
 use super::element_border::{Dashes, closed_dash_lengths};
 use super::*;
@@ -15,6 +19,11 @@ const ACCURACY: f64 = 1.0e-3;
 
 /// The tolerance with which the circle of a round dot is flattened to curves.
 const DOT_TOLERANCE: f64 = 0.1;
+
+/// How much wider than the border the stroke of the dashes is, in px: a pixel
+/// on each side, so that the edges of the dashes are antialiased by the clip
+/// alone.
+const STROKE_BLEED: f64 = 2.0;
 
 /// Paint the dashed or dotted border of `thickness` that is inside the rounded
 /// outer edge of the box at (`abs_x`, `abs_y`), where all four sides share the
@@ -28,13 +37,7 @@ pub(super) fn paint_rounded_dashed_border(
     color: Color,
     dotted: bool,
 ) {
-    // The box is snapped to whole pixels, as the border of a square box is.
-    let edges = Rect::new(
-        f64::from(abs_x).round(),
-        f64::from(abs_y).round(),
-        f64::from(abs_x + width).round(),
-        f64::from(abs_y + height).round(),
-    );
+    let edges = snapped_edges((abs_x, abs_y, width, height));
     let half = thickness / 2.0;
     let centerline = rounded_rect_path(
         edges.x0 + half,
@@ -56,13 +59,74 @@ pub(super) fn paint_rounded_dashed_border(
     };
     // The pattern starts where the upper-left corner ends.
     let centerline = from_end_of_first_curve(&centerline);
+    // The pattern is clipped to the border, as Chromium does: next to an
+    // elliptical corner, or one that is rounder than the border is wide, the
+    // stroke of the centerline reaches past the ring that the border covers.
+    scene.push_clip_layer(Affine::IDENTITY, &border_ring(edges, radii, thickness));
     if dotted && thickness > 3.0 {
         paint_dots(scene, &centerline, dashes, thickness, color);
-        return;
+    } else {
+        let dashed: BezPath =
+            kurbo::dash(centerline.iter(), 0.0, &[dashes.dash, dashes.gap]).collect();
+        let stroke = Stroke::new(thickness + STROKE_BLEED).with_caps(Cap::Butt);
+        scene.stroke(&stroke, Affine::IDENTITY, color, None, &dashed);
     }
-    let dashed: BezPath = kurbo::dash(centerline.iter(), 0.0, &[dashes.dash, dashes.gap]).collect();
-    let stroke = Stroke::new(thickness).with_caps(Cap::Butt);
-    scene.stroke(&stroke, Affine::IDENTITY, color, None, &dashed);
+    scene.pop_layer();
+}
+
+/// The box at (`abs_x`, `abs_y`) snapped to whole pixels, as the border of a
+/// square box is.
+fn snapped_edges((abs_x, abs_y, width, height): (f32, f32, f32, f32)) -> Rect {
+    Rect::new(
+        f64::from(abs_x).round(),
+        f64::from(abs_y).round(),
+        f64::from(abs_x + width).round(),
+        f64::from(abs_y + height).round(),
+    )
+}
+
+/// Whether the inner edge of a border `thickness` wide is rounded at any
+/// corner. Chromium follows the curve with a dashed or dotted border only
+/// then; when the radii are no larger than the border is wide, it draws the
+/// sides straight, each from its own corner, inside the rounded outer edge.
+pub(super) fn inner_edge_is_rounded(radii: [[f64; 2]; 4], thickness: f64) -> bool {
+    inset_border_radii(radii, (thickness, thickness, thickness, thickness))
+        .iter()
+        .any(|radius| *radius != [0.0; 2])
+}
+
+/// Run `paint` with `scene` clipped to the rounded outer edge of the box at
+/// (`abs_x`, `abs_y`).
+pub(super) fn within_rounded_outer_edge<S: PaintScene>(
+    scene: &mut S,
+    rect: (f32, f32, f32, f32),
+    radii: [[f64; 2]; 4],
+    paint: impl FnOnce(&mut S),
+) {
+    let edges = snapped_edges(rect);
+    let outer = rounded_rect_path(edges.x0, edges.y0, edges.x1, edges.y1, radii);
+    scene.push_clip_layer(Affine::IDENTITY, &outer);
+    paint(scene);
+    scene.pop_layer();
+}
+
+/// The ring between the rounded outer edge of the box `edges` and the inner
+/// edge of a border `thickness` wide, as a path that a clip fills by its
+/// winding.
+fn border_ring(edges: Rect, radii: [[f64; 2]; 4], thickness: f64) -> BezPath {
+    let mut ring = rounded_rect_path(edges.x0, edges.y0, edges.x1, edges.y1, radii);
+    // A box that is not wider and taller than twice the border has no hole.
+    if edges.width() > 2.0 * thickness && edges.height() > 2.0 * thickness {
+        let inner = rounded_rect_path(
+            edges.x0 + thickness,
+            edges.y0 + thickness,
+            edges.x1 - thickness,
+            edges.y1 - thickness,
+            inset_border_radii(radii, (thickness, thickness, thickness, thickness)),
+        );
+        ring.extend(inner.reverse_subpaths().iter());
+    }
+    ring
 }
 
 /// `path` with the curve at its start moved to its end, so that it begins where

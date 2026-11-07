@@ -78,7 +78,9 @@ use inline_svg::InlineSvg;
 use margin_box::paint_margin_box;
 use page_geometry::PageGeometry;
 use paint_walk::{PaintWalk, index_fragments};
-use rounded_dashes::paint_rounded_dashed_border;
+use rounded_dashes::{
+    inner_edge_is_rounded, paint_rounded_dashed_border, within_rounded_outer_edge,
+};
 
 use crate::text;
 
@@ -3566,9 +3568,11 @@ pub(crate) fn paint_element_box_shadows(
 }
 
 /// Paint a regular element border with a rounded outer edge when the four
-/// sides share one width, color and style that is solid, dashed or dotted.  The
-/// existing strip painter remains the conservative fallback for mixed sides and
-/// for the other styles.
+/// sides share one width, color and style that is solid, dashed or dotted.  A
+/// dashed or dotted border follows the curve when its inner edge is rounded,
+/// and is drawn in straight sides inside the rounded outer edge when it is not.
+/// The existing strip painter remains the conservative fallback for mixed
+/// sides and for the other styles.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_border_rounded(
     scene: &mut impl PaintScene,
@@ -3630,14 +3634,21 @@ pub(crate) fn paint_element_border_rounded(
     let rect = (abs_x, abs_y, width, height);
     match style {
         BorderStyle::Solid => fill_rounded_border_ring(scene, rect, radii, widths[0], color),
-        BorderStyle::Dashed | BorderStyle::Dotted => paint_rounded_dashed_border(
-            scene,
-            rect,
-            radii,
-            widths[0],
-            color,
-            style == BorderStyle::Dotted,
-        ),
+        BorderStyle::Dashed | BorderStyle::Dotted if inner_edge_is_rounded(radii, widths[0]) => {
+            paint_rounded_dashed_border(
+                scene,
+                rect,
+                radii,
+                widths[0],
+                color,
+                style == BorderStyle::Dotted,
+            );
+        }
+        BorderStyle::Dashed | BorderStyle::Dotted => {
+            within_rounded_outer_edge(scene, rect, radii, |scene| {
+                paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+            });
+        }
         _ => paint_element_border(scene, width, height, abs_x, abs_y, border, current_color),
     }
 }

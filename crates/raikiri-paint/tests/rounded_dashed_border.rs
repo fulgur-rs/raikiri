@@ -162,3 +162,30 @@ fn a_double_border_with_rounded_corners_keeps_its_two_bands() {
     assert_eq!(column(&pixels, 50, 8, 12), "..##..##....");
     assert_eq!(row(&pixels, 30, 8, 12), "..##..##....");
 }
+
+#[test]
+fn dots_stay_inside_the_border_at_an_elliptical_corner() {
+    // The corner is 40px wide and 8px tall, so the stroke of the centerline
+    // would reach the padding area under the arc: the inner edge of the border
+    // is an ellipse of 34px by 2px, not the centerline pushed in by half the
+    // border. Chromium leaves those pixels white.
+    let pixels = boxed(100, 50, "border:6px dotted green;border-radius:40px / 8px");
+    assert_eq!(row(&pixels, 17, 25, 2), "..");
+}
+
+#[test]
+fn a_border_wider_than_its_radius_is_drawn_in_straight_sides() {
+    // The inner edge of this border has square corners, so Chromium does not
+    // follow the curve: each side starts from its own corner and the corner
+    // of the box is only rounded off.
+    let pixels = boxed(100, 50, "border:10px dashed green;border-radius:4px");
+    assert_eq!(mark(&pixels, 10, 10), '.', "the corner is rounded off");
+    assert_eq!(
+        row(&pixels, 19, 10, 34),
+        format!("{}{}o", "#".repeat(20), ".".repeat(13))
+    );
+    assert_eq!(
+        column(&pixels, 19, 10, 45),
+        format!("{}{}{}", "#".repeat(20), ".".repeat(5), "#".repeat(20))
+    );
+}
