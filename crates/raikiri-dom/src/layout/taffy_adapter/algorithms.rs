@@ -19,6 +19,7 @@ use raikiri_layout_style::values::{
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod baseline_lines;
 mod flex_baseline;
 mod grid_row_measure;
 pub(crate) mod wrap_reverse;

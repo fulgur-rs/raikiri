@@ -13,11 +13,14 @@
 //!
 //! The items of a grid share a baseline when they align by the same set of
 //! baselines in the same column, or in the same row along the block axis, and
-//! those of a flex container when they sit on its one line. A group packs its
+//! those of a flex container when they sit on the same line. A group packs its
 //! items against the edge of the room they are aligned in that the first
 //! baselines of its items face, or the opposite one for last baselines, and
 //! puts the baselines of all of them the same distance from that edge: the
-//! farthest one, counting the margins.
+//! farthest one, counting the margins. The edge the first baselines face is
+//! where the line starts across the container: the left one, or the right one
+//! in a right-to-left container, and the other one again for the lines of a
+//! container that wraps its items in reverse.
 //!
 //! A box has no baseline along its own inline axis, so an item in the writing
 //! mode of the container is given a synthesized one. An item in the orthogonal
@@ -40,6 +43,7 @@ use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{BaselineSet, Direction, Display, Position, ResolveOrZero};
 use raikiri_style::property::WritingMode;
 use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 
 /// The physical axis the items are aligned along.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +131,12 @@ struct Container {
     /// of a vertical container along its block axis, which the container left
     /// at the start of the axis.
     opposed: bool,
+    /// Whether the container is a flex container that wraps its items, whose
+    /// lines each give the items in them a room of their own.
+    wraps: bool,
+    /// Whether the lines of the container are stacked from its cross end:
+    /// `flex-wrap: wrap-reverse`.
+    lines_reversed: bool,
 }
 
 impl Container {
@@ -139,12 +149,15 @@ impl Container {
         axis: Axis,
         justify: bool,
     ) -> Self {
+        let wraps = !justify && style.flex_wraps();
         Self {
             axis,
             right_to_left: style.direction() == Direction::Rtl,
             central: tree.nodes[idx].central_baseline,
             justify,
             opposed: false,
+            wraps,
+            lines_reversed: wraps && style.flex_lines_are_reversed(),
         }
     }
 
@@ -157,6 +170,8 @@ impl Container {
             central: tree.nodes[idx].central_baseline,
             justify: false,
             opposed: true,
+            wraps: false,
+            lines_reversed: false,
         }
     }
 
@@ -183,6 +198,33 @@ impl Container {
         }
     }
 
+    /// The set of baselines that the item `child`, of style `style`, aligns by
+    /// in this pass, or `None` when it does not align by a baseline: `parent`
+    /// is the style of the container.
+    fn baseline_set(
+        &self,
+        tree: &LayoutSession<'_>,
+        parent: &LayoutStyleView<'_>,
+        child: usize,
+        style: &LayoutStyleView<'_>,
+    ) -> Option<BaselineSet> {
+        // Only the items that run against the block direction are placed at
+        // the start for this pass.
+        if self.opposed && !tree.nodes[child].opposed_baseline_group {
+            return None;
+        }
+        let set = style.self_baseline_set(parent, self.justify)?;
+        // An auto margin takes the free space in the axis instead.
+        let margin = style.margin();
+        if match self.axis {
+            Axis::Horizontal => margin.left.is_auto() || margin.right.is_auto(),
+            Axis::Vertical => margin.top.is_auto() || margin.bottom.is_auto(),
+        } {
+            return None;
+        }
+        Some(set)
+    }
+
     /// The member `child` makes of itself, with `tracks` the first and last
     /// grid column it spans and `room` the room it is aligned in; `None` when
     /// it does not align by a baseline. `parent` is the style of the container.
@@ -194,21 +236,8 @@ impl Container {
         tracks: (u16, u16),
         room: (f32, f32),
     ) -> Option<Member> {
-        // Only the items that run against the block direction are placed at
-        // the start for this pass.
-        if self.opposed && !tree.nodes[child].opposed_baseline_group {
-            return None;
-        }
         let style = tree.physical_style(child);
-        let set = style.self_baseline_set(parent, self.justify)?;
-        // An auto margin takes the free space in the axis instead.
-        let margin = style.margin();
-        if match self.axis {
-            Axis::Horizontal => margin.left.is_auto() || margin.right.is_auto(),
-            Axis::Vertical => margin.top.is_auto() || margin.bottom.is_auto(),
-        } {
-            return None;
-        }
+        let set = self.baseline_set(tree, parent, child, &style)?;
         let layout = &tree.nodes[child].layout;
         let size = self.axis.extent(layout.size);
         let margin = self.axis.sides(layout.margin);
@@ -232,11 +261,16 @@ impl Container {
         } else {
             match self.axis {
                 // The baseline of a horizontal box along its inline axis is
-                // synthesized from its start edge.
-                Axis::Horizontal => (0.0, (set == BaselineSet::Last) != self.right_to_left),
+                // synthesized from its start edge. The group packs against the
+                // start of the room, which the end of a right-to-left
+                // container and of a container with reversed lines swaps.
+                Axis::Horizontal => (
+                    0.0,
+                    (set == BaselineSet::Last) ^ self.right_to_left ^ self.lines_reversed,
+                ),
                 Axis::Vertical => (
                     if self.central { size / 2.0 } else { size },
-                    set == BaselineSet::Last,
+                    (set == BaselineSet::Last) ^ self.lines_reversed,
                 ),
             }
         };
@@ -256,10 +290,17 @@ impl Container {
             }
         };
         // Taffy places the box at the start of the room and then adds the
-        // offset of a relative box, which moving the box must keep.
+        // offset of a relative box, which moving the box must keep. A
+        // right-to-left container starts the room at its end, and the lines of
+        // a container that wraps its items do so when they are reversed.
+        let at_end = if self.wraps {
+            self.lines_reversed
+        } else {
+            self.right_to_left
+        };
         let offset = if style.position() == Position::Relative {
             self.axis.coordinate(layout.location)
-                - if self.right_to_left {
+                - if at_end {
                     room.1 - size - margin.1
                 } else {
                     room.0 + margin.0
@@ -507,8 +548,11 @@ fn grid_members(
 /// direction of the container; the items of a vertical row that run against it
 /// are aligned here, as groups of their own.
 ///
-/// A container that wraps its items is left to the flex algorithm, which
-/// aligns by baselines in a line of its own.
+/// The items of a column container that wraps its items share a baseline in
+/// each of its lines, and each line is as large across as the room that
+/// `flex_baseline_lines` records for them (see [`wrapped_members`]). Any other
+/// container that wraps its items is left to the flex algorithm, which aligns
+/// by baselines in a line of its own.
 ///
 /// Returns the scrollable overflow that the moved items reach, relative to the
 /// border box of the container.
@@ -520,19 +564,17 @@ pub(super) fn align_flex(
     percent_basis: Option<f32>,
     candidates: &mut OofCandidates,
 ) -> Option<Edges<f32>> {
+    // Taken before the style, which borrows the tree.
+    let recorded_lines = tree.context.flex_baseline_lines.remove(&idx);
     let style = tree.physical_style(idx);
-    if style.flex_wraps() {
+    if style.flex_wraps() && style.flex_direction_is_row() {
         return None;
     }
     let (axis, container) = match (style.flex_direction_is_row(), vertical) {
         (true, false) => return None,
         (true, true) => (Axis::Horizontal, Container::opposed(tree, idx)),
         (false, vertical) => {
-            let axis = if vertical {
-                Axis::Vertical
-            } else {
-                Axis::Horizontal
-            };
+            let axis = column_axis(vertical);
             (axis, Container::new(tree, idx, &style, axis, false))
         }
     };
@@ -543,17 +585,65 @@ pub(super) fn align_flex(
     // The line is as large as the content box of the container.
     let (start, end) = axis.sides(border + padding);
     let room = (start, axis.extent(size) - end);
-    let members: Vec<Member> = TaffyChildIter::new_for_session(tree, idx)
-        .filter(|&child| {
-            tree.nodes[child].layout_display() != Display::None
-                && tree.nodes[child].layout_position() != Position::Absolute
+    // The lines of a container that wraps its items are not known without the
+    // replay that laid them out; with none, the items stay where they are.
+    let lines = if container.wraps {
+        Some(recorded_lines?)
+    } else {
+        None
+    };
+    let members: Vec<Member> = in_flow_items(tree, idx)
+        .filter_map(|child| match &lines {
+            Some(lines) => {
+                let line = lines.get(&child)?;
+                container.member(tree, &style, child, (line.line, line.line), line.edges)
+            }
+            None => container.member(tree, &style, child, (0, 0), room),
         })
-        .filter_map(|child| container.member(tree, &style, child, (0, 0), room))
         .collect();
     if members.is_empty() {
         return None;
     }
     container.align(tree, idx, &members, candidates)
+}
+
+/// The items of the flex container `idx` that align by a baseline along its
+/// cross axis, when the flex algorithm cannot share their baselines and the
+/// container has to know the room each line gives them: those of a column
+/// container that wraps its items. A container that is not one has none.
+pub(super) fn wrapped_members(tree: &LayoutSession<'_>, idx: usize) -> HashSet<usize> {
+    let style = tree.physical_style(idx);
+    if !style.flex_wraps() || style.flex_direction_is_row() {
+        return HashSet::new();
+    }
+    let axis = column_axis(block_right_to_left(tree, idx).is_some());
+    let container = Container::new(tree, idx, &style, axis, false);
+    in_flow_items(tree, idx)
+        .filter(|&child| {
+            let item = tree.physical_style(child);
+            container.baseline_set(tree, &style, child, &item).is_some()
+        })
+        .collect()
+}
+
+/// The axis along which a column container lays out the cross axis of its
+/// lines: the horizontal one, or the vertical one when the container runs
+/// vertically (`vertical`).
+fn column_axis(vertical: bool) -> Axis {
+    if vertical {
+        Axis::Vertical
+    } else {
+        Axis::Horizontal
+    }
+}
+
+/// The items of the flex container `idx` that take part in its lines: those
+/// that are rendered and not absolutely positioned.
+fn in_flow_items<'a>(tree: &'a LayoutSession<'_>, idx: usize) -> impl Iterator<Item = usize> + 'a {
+    TaffyChildIter::new_for_session(tree, idx).filter(move |&child| {
+        tree.nodes[child].layout_display() != Display::None
+            && tree.nodes[child].layout_position() != Position::Absolute
+    })
 }
 
 /// The scrollable overflow that reaches as far as both `first` and `second`.

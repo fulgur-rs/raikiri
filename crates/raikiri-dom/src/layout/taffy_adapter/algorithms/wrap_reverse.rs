@@ -5,7 +5,7 @@
 //! replay. A second positional replay distinguishes overflow from stretch
 //! arithmetic without inferring private flex lines from item rectangles.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::convert::{FromTaffy, IntoTaffy};
 use super::FlexReplayCall;
@@ -15,7 +15,7 @@ use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::TaffyStyle;
 use raikiri_layout_style::values::{
-    AlignContent, AlignContentKeyword, AlignmentSafety, Direction, Position,
+    AlignContent, AlignContentKeyword, AlignSelf, AlignmentSafety, Direction, Position,
 };
 use taffy::{LayoutFlexboxContainer, LayoutPartialTree, TraversePartialTree};
 
@@ -159,16 +159,49 @@ fn replay(
     calls: &[FlexReplayCall],
     keyword: AlignContentKeyword,
 ) -> Option<(LayoutOutput, HashMap<usize, BoxLayout>)> {
+    replay_with(
+        tree,
+        node,
+        inputs,
+        calls,
+        Overrides {
+            content: Some(AlignContent {
+                keyword,
+                safety: AlignmentSafety::Unsafe,
+            }),
+            items: None,
+        },
+    )
+}
+
+/// What a replay changes in the style the container is laid out with. Neither
+/// alters the size a child is asked for, so the recorded results still apply.
+#[derive(Clone, Copy)]
+pub(crate) struct Overrides<'a> {
+    /// The alignment of the flex lines, in place of the container's own.
+    pub(crate) content: Option<AlignContent>,
+    /// The items that are placed by another cross-axis alignment, and that
+    /// alignment: without the offset of a relative box, which moves the item
+    /// and not the line it is in.
+    pub(crate) items: Option<(&'a HashSet<usize>, AlignSelf)>,
+}
+
+/// Lay the container `node` out again from the recorded results of its
+/// children, with the `overrides` applied, and return what that places where.
+pub(crate) fn replay_with(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    inputs: LayoutInput,
+    calls: &[FlexReplayCall],
+    overrides: Overrides<'_>,
+) -> Option<(LayoutOutput, HashMap<usize, BoxLayout>)> {
     let mut replay = Replay {
         tree,
         calls,
         next: 0,
         mismatch: false,
         layouts: HashMap::new(),
-        alignment: AlignContent {
-            keyword,
-            safety: AlignmentSafety::Unsafe,
-        },
+        overrides,
     };
     let inputs = super::with_stretch_width(tree, node, inputs);
     let output = LayoutOutput::from_taffy(taffy::compute_flexbox_layout(
@@ -185,7 +218,7 @@ struct Replay<'a, 'doc> {
     next: usize,
     mismatch: bool,
     layouts: HashMap<usize, BoxLayout>,
-    alignment: AlignContent,
+    overrides: Overrides<'a>,
 }
 
 impl<'doc> TraversePartialTree for Replay<'_, 'doc> {
@@ -249,11 +282,19 @@ impl LayoutFlexboxContainer for Replay<'_, '_> {
     where
         Self: 'a;
     fn get_flexbox_container_style(&self, node: taffy::NodeId) -> Self::FlexboxContainerStyle<'_> {
-        self.tree
-            .get_flexbox_container_style(node)
-            .with_flex_align_content(self.alignment)
+        let style = self.tree.get_flexbox_container_style(node);
+        match self.overrides.content {
+            Some(alignment) => style.with_flex_align_content(alignment),
+            None => style,
+        }
     }
     fn get_flexbox_child_style(&self, node: taffy::NodeId) -> Self::FlexboxItemStyle<'_> {
-        self.tree.get_flexbox_child_style(node)
+        let style = self.tree.get_flexbox_child_style(node);
+        match self.overrides.items {
+            Some((items, alignment)) if items.contains(&usize::from(NodeId::from_taffy(node))) => {
+                style.with_flex_line_probe(alignment)
+            }
+            _ => style,
+        }
     }
 }

@@ -1964,3 +1964,392 @@ fn grid_vertical_lr_opposed_items_align_along_both_axes() {
         ],
     );
 }
+
+// A column container that wraps its items shares a baseline in each of its
+// lines. Chromium sizes a line by the group of baselines, which cross-axis
+// margins that differ among the items make wider than the widest item; the
+// cases with such margins have lines that fill the container instead.
+
+#[test]
+fn wrap_reverse_one_line_packs_the_group_at_the_right() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_margins_align_the_border_edges() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;margin-left:7px"></div><div id="b" style="width:50px;height:10px;margin-right:9px"></div><div id="c" style="width:30px;height:10px;margin-left:3px;margin-right:4px"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (149.0, 8.0, 20.0, 10.0)),
+            ("b", (149.0, 18.0, 50.0, 10.0)),
+            ("c", (149.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_one_line_aligns_the_border_edges_at_the_left() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap"><div id="a" style="width:20px;height:10px;margin-left:7px"></div><div id="b" style="width:50px;height:10px;margin-right:9px"></div><div id="c" style="width:30px;height:10px;margin-left:3px;margin-right:4px"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (15.0, 8.0, 20.0, 10.0)),
+            ("b", (15.0, 18.0, 50.0, 10.0)),
+            ("c", (15.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn rtl_wrap_packs_the_group_at_the_right() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap;direction:rtl"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn rtl_wrap_reverse_packs_the_group_at_the_left() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse;direction:rtl"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (8.0, 8.0, 20.0, 10.0)),
+            ("b", (8.0, 18.0, 50.0, 10.0)),
+            ("c", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_lines_are_groups_of_their_own() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap;height:20px"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div><div id="d" style="width:10px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 20.0)),
+            ("a", (8.0, 8.0, 20.0, 10.0)),
+            ("b", (8.0, 18.0, 50.0, 10.0)),
+            ("c", (118.0, 8.0, 30.0, 10.0)),
+            ("d", (118.0, 18.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_lines_are_groups_of_their_own() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse;height:20px"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div><div id="d" style="width:10px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 20.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (68.0, 8.0, 30.0, 10.0)),
+            ("d", (68.0, 18.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn rtl_wrap_lines_are_groups_of_their_own() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap;height:20px;direction:rtl"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div><div id="d" style="width:10px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 20.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (68.0, 8.0, 30.0, 10.0)),
+            ("d", (68.0, 18.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_lines_follow_align_content_end() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse;align-content:flex-end"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (8.0, 8.0, 20.0, 10.0)),
+            ("b", (8.0, 18.0, 50.0, 10.0)),
+            ("c", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_lines_follow_align_content_center() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse;align-content:center"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (83.0, 8.0, 20.0, 10.0)),
+            ("b", (83.0, 18.0, 50.0, 10.0)),
+            ("c", (83.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_line_overflow_keeps_the_group_together() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:40px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 40.0, 30.0)),
+            ("a", (-2.0, 8.0, 20.0, 10.0)),
+            ("b", (-2.0, 18.0, 50.0, 10.0)),
+            ("c", (-2.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_other_alignments_stay_at_the_line_start() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:flex-start;width:200px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;align-self:baseline"></div><div id="c" style="width:30px;height:10px;align-self:baseline"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (188.0, 8.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_last_baselines_pack_at_the_left() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse;align-items:last baseline"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (8.0, 8.0, 20.0, 10.0)),
+            ("b", (8.0, 18.0, 50.0, 10.0)),
+            ("c", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_relative_offset_is_kept() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;position:relative;left:5px"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (163.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_auto_margin_item_is_not_in_the_group() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;margin-left:auto"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (188.0, 8.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_column_reverse_keeps_the_group() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-direction:column-reverse;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (158.0, 28.0, 20.0, 10.0)),
+            ("b", (158.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 8.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_lines_follow_the_order_property() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap;height:20px"><div id="a" style="width:20px;height:10px;order:3"></div><div id="b" style="width:50px;height:10px;order:2"></div><div id="c" style="width:30px;height:10px;order:1"></div><div id="d" style="width:10px;height:10px;order:0"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 20.0)),
+            ("a", (98.0, 18.0, 20.0, 10.0)),
+            ("b", (98.0, 8.0, 50.0, 10.0)),
+            ("c", (8.0, 18.0, 30.0, 10.0)),
+            ("d", (8.0, 8.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn wrap_reverse_stretched_and_baseline_items_share_a_line() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="height:10px;align-self:stretch"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (178.0, 8.0, 20.0, 10.0)),
+            ("b", (8.0, 18.0, 200.0, 10.0)),
+            ("c", (178.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_rl_wrap_aligns_the_centers_at_the_top() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:100px;height:200px;writing-mode:vertical-rl;flex-wrap:wrap"><div id="a" style="height:20px;width:10px;margin-top:7px"></div><div id="b" style="height:50px;width:10px;margin-bottom:9px"></div><div id="c" style="height:30px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 100.0, 200.0)),
+            ("a", (98.0, 23.0, 10.0, 20.0)),
+            ("b", (88.0, 8.0, 10.0, 50.0)),
+            ("c", (78.0, 18.0, 10.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_rl_wrap_reverse_packs_the_group_at_the_bottom() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:100px;height:200px;writing-mode:vertical-rl;flex-wrap:wrap-reverse"><div id="a" style="height:20px;width:10px;margin-top:7px"></div><div id="b" style="height:50px;width:10px;margin-bottom:9px"></div><div id="c" style="height:30px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 100.0, 200.0)),
+            ("a", (98.0, 164.0, 10.0, 20.0)),
+            ("b", (88.0, 149.0, 10.0, 50.0)),
+            ("c", (78.0, 159.0, 10.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_lr_wrap_reverse_packs_the_group_at_the_bottom() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:100px;height:200px;writing-mode:vertical-lr;flex-wrap:wrap-reverse"><div id="a" style="height:20px;width:10px;margin-top:7px"></div><div id="b" style="height:50px;width:10px;margin-bottom:9px"></div><div id="c" style="height:30px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 100.0, 200.0)),
+            ("a", (8.0, 164.0, 10.0, 20.0)),
+            ("b", (18.0, 149.0, 10.0, 50.0)),
+            ("c", (28.0, 159.0, 10.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_rl_rtl_wrap_reverse_packs_the_group_at_the_bottom() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:100px;height:200px;writing-mode:vertical-rl;direction:rtl;flex-wrap:wrap-reverse"><div id="a" style="height:20px;width:10px;"></div><div id="b" style="height:50px;width:10px;"></div><div id="c" style="height:30px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 100.0, 200.0)),
+            ("a", (98.0, 173.0, 10.0, 20.0)),
+            ("b", (88.0, 158.0, 10.0, 50.0)),
+            ("c", (78.0, 168.0, 10.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_lr_rtl_wrap_packs_the_group_at_the_top() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:100px;height:200px;writing-mode:vertical-lr;direction:rtl;flex-wrap:wrap"><div id="a" style="height:20px;width:10px;"></div><div id="b" style="height:50px;width:10px;"></div><div id="c" style="height:30px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 100.0, 200.0)),
+            ("a", (8.0, 23.0, 10.0, 20.0)),
+            ("b", (18.0, 8.0, 10.0, 50.0)),
+            ("c", (28.0, 18.0, 10.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_rl_sideways_wrap_reverse_aligns_the_alphabetic_baselines() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:100px;height:200px;writing-mode:vertical-rl;text-orientation:sideways;flex-wrap:wrap-reverse"><div id="a" style="height:20px;width:10px;"></div><div id="b" style="height:50px;width:10px;"></div><div id="c" style="height:30px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 100.0, 200.0)),
+            ("a", (98.0, 188.0, 10.0, 20.0)),
+            ("b", (88.0, 158.0, 10.0, 50.0)),
+            ("c", (78.0, 178.0, 10.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_rl_wrap_lines_are_groups_of_their_own() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:20px;height:200px;writing-mode:vertical-rl;flex-wrap:wrap"><div id="a" style="height:20px;width:10px;"></div><div id="b" style="height:50px;width:10px;"></div><div id="c" style="height:30px;width:10px;"></div><div id="d" style="height:10px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 20.0, 200.0)),
+            ("a", (18.0, 23.0, 10.0, 20.0)),
+            ("b", (8.0, 8.0, 10.0, 50.0)),
+            ("c", (18.0, 118.0, 10.0, 30.0)),
+            ("d", (8.0, 128.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_lr_wrap_reverse_lines_are_groups_of_their_own() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:20px;height:200px;writing-mode:vertical-lr;flex-wrap:wrap-reverse"><div id="a" style="height:20px;width:10px;"></div><div id="b" style="height:50px;width:10px;"></div><div id="c" style="height:30px;width:10px;"></div><div id="d" style="height:10px;width:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 20.0, 200.0)),
+            ("a", (8.0, 173.0, 10.0, 20.0)),
+            ("b", (18.0, 158.0, 10.0, 50.0)),
+            ("c", (8.0, 68.0, 10.0, 30.0)),
+            ("d", (18.0, 78.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn rtl_wrap_relative_offset_is_kept() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap;direction:rtl"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;position:relative;left:5px"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (163.0, 18.0, 50.0, 10.0)),
+            ("c", (158.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn rtl_wrap_reverse_relative_offset_is_kept() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap-reverse;direction:rtl"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;position:relative;left:5px;top:3px"></div><div id="c" style="width:30px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 30.0)),
+            ("a", (8.0, 8.0, 20.0, 10.0)),
+            ("b", (13.0, 21.0, 50.0, 10.0)),
+            ("c", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn rtl_wrap_lines_with_a_relative_item_share_the_line() {
+    check(
+        r#"<div id="g" style="display:flex;flex-direction:column;align-items:baseline;width:200px;flex-wrap:wrap;height:20px;direction:rtl"><div id="a" style="width:20px;height:10px;"></div><div id="b" style="width:50px;height:10px;position:relative;left:5px"></div><div id="c" style="width:30px;height:10px;"></div><div id="d" style="width:10px;height:10px;"></div></div>"#,
+        &[
+            ("g", (8.0, 8.0, 200.0, 20.0)),
+            ("a", (158.0, 8.0, 20.0, 10.0)),
+            ("b", (163.0, 18.0, 50.0, 10.0)),
+            ("c", (68.0, 8.0, 30.0, 10.0)),
+            ("d", (68.0, 18.0, 10.0, 10.0)),
+        ],
+    );
+}

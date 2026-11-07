@@ -1,7 +1,7 @@
 use super::*;
 use crate::Document;
 use crate::layout::protocol::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, OofCandidate, OofPosition,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, OofCandidate, OofCandidates, OofPosition,
 };
 use crate::layout::taffy_adapter::algorithms::compute_flexbox_layout;
 use crate::layout::test_support::cascaded;
@@ -501,4 +501,226 @@ fn fractional_wrap_baseline_can_change_after_position_rounding() {
             before
         );
     }
+}
+
+/// A wrapping column container 200px wide and 20px high, whose items align by
+/// a baseline: `a` and `b` fill the first line, and `c` and `d` the second. A
+/// hidden item and an absolutely positioned one are in it too, and are in no
+/// line.
+fn wrapped_baselines(style: &str) -> (Document, usize, [usize; 4]) {
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "div",
+        Some(&format!(
+            "display:flex;flex-direction:column;align-items:baseline;width:200px;height:20px;{style}"
+        )),
+    );
+    let items = [(20, 10), (50, 10), (30, 10), (10, 10)].map(|(width, height)| {
+        doc.append_element(
+            Some(root),
+            "div",
+            Some(&format!("width:{width}px;height:{height}px")),
+        )
+    });
+    doc.append_element(Some(root), "div", Some("display:none"));
+    doc.append_element(
+        Some(root),
+        "div",
+        Some("position:absolute;width:5px;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    (doc, root, items)
+}
+
+fn wrapped_inputs() -> LayoutInput {
+    LayoutInput {
+        known_dimensions: Size {
+            width: Some(200.0),
+            height: Some(20.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(20.0),
+        },
+        ..inputs()
+    }
+}
+
+fn wrapped_capture(
+    tree: &mut LayoutSession<'_>,
+    root: usize,
+) -> (Vec<FlexReplayCall>, LayoutOutput) {
+    tree.context.table_item_captures.push(Capture {
+        container: root,
+        sizes: HashMap::new(),
+        calls: Some(Vec::new()),
+    });
+    let output = compute_flexbox_layout(tree, NodeId::from(root), wrapped_inputs());
+    let capture = tree.context.table_item_captures.pop().unwrap();
+    (capture.calls.unwrap(), output)
+}
+
+#[test]
+fn a_wrapping_column_lists_the_items_that_align_by_a_baseline() {
+    for (style, listed) in [
+        ("flex-wrap:wrap", true),
+        ("flex-wrap:wrap-reverse", true),
+        // The cross axis of a vertical container is its vertical inline axis.
+        ("flex-wrap:wrap;writing-mode:vertical-rl", true),
+        // Taffy shares the baselines of a row.
+        ("flex-direction:row;flex-wrap:wrap", false),
+        // One line is the whole content box.
+        ("flex-wrap:nowrap", false),
+        // Nothing asks for a baseline.
+        ("flex-wrap:wrap;align-items:flex-start", false),
+    ] {
+        let (mut doc, root, items) = wrapped_baselines(style);
+        let cascade = cascaded(&doc);
+        let tree = LayoutSession::bridged(&mut doc, &cascade);
+        // The hidden item and the absolutely positioned one are never in it.
+        let expected: HashSet<_> = if listed {
+            items.into_iter().collect()
+        } else {
+            HashSet::new()
+        };
+        assert_eq!(
+            inline_baseline::wrapped_members(&tree, root),
+            expected,
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn line_rooms_hold_the_items_of_each_line_and_the_edges_of_the_line() {
+    for (style, rooms) in [
+        // The lines share the 120px that the container has left, and the
+        // first one starts at the left.
+        (
+            "flex-wrap:wrap",
+            [(0.0, 110.0), (0.0, 110.0), (110.0, 200.0), (110.0, 200.0)],
+        ),
+        // The first line starts at the right.
+        (
+            "flex-wrap:wrap-reverse",
+            [(90.0, 200.0), (90.0, 200.0), (0.0, 90.0), (0.0, 90.0)],
+        ),
+        (
+            "flex-wrap:wrap;direction:rtl",
+            [(90.0, 200.0), (90.0, 200.0), (0.0, 90.0), (0.0, 90.0)],
+        ),
+        (
+            "flex-wrap:wrap-reverse;direction:rtl",
+            [(0.0, 110.0), (0.0, 110.0), (110.0, 200.0), (110.0, 200.0)],
+        ),
+    ] {
+        let (mut doc, root, items) = wrapped_baselines(style);
+        let cascade = cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+        let (calls, output) = wrapped_capture(&mut tree, root);
+        let members: HashSet<_> = items.into_iter().collect();
+        let found = baseline_lines::rooms(
+            &tree,
+            root.into(),
+            wrapped_inputs(),
+            &calls,
+            output.size,
+            &members,
+            None,
+        )
+        .unwrap_or_else(|| panic!("no rooms for {style}"));
+        assert_eq!(found.len(), 4, "{style}");
+        for (item, expected) in items.into_iter().zip(rooms) {
+            assert_eq!(found[&item].edges, expected, "{style}");
+        }
+        // The two items of a line share it, and the lines are told apart.
+        let [a, b, c, d] = items.map(|item| found[&item].line);
+        assert_eq!((a, c), (b, d), "{style}");
+        assert_ne!(a, c, "{style}");
+    }
+}
+
+#[test]
+fn line_rooms_refuse_a_replay_that_does_not_reproduce_the_layout() {
+    let (mut doc, root, items) = wrapped_baselines("flex-wrap:wrap");
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let (calls, output) = wrapped_capture(&mut tree, root);
+    let members: HashSet<_> = items.into_iter().collect();
+    let rooms = |calls: &[FlexReplayCall], size| {
+        baseline_lines::rooms(
+            &tree,
+            root.into(),
+            wrapped_inputs(),
+            calls,
+            size,
+            &members,
+            None,
+        )
+    };
+    assert!(rooms(&calls, output.size).is_some());
+    // The container settled on another size.
+    let mut larger = output.size;
+    larger.width += 1.0;
+    assert!(rooms(&calls, larger).is_none());
+    // The children reported another schedule.
+    assert!(rooms(&calls[1..], output.size).is_none());
+    // An item that is not in the container has no room in its lines.
+    let stranger: HashSet<_> = [usize::MAX].into_iter().collect();
+    assert!(
+        baseline_lines::rooms(
+            &tree,
+            root.into(),
+            wrapped_inputs(),
+            &calls,
+            output.size,
+            &stranger,
+            None
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn a_wrapping_column_aligns_its_items_by_the_lines_it_recorded_and_by_none_other() {
+    let (mut doc, root, items) = wrapped_baselines("flex-wrap:wrap-reverse");
+    let cascade = cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let (calls, output) = wrapped_capture(&mut tree, root);
+    let [a, b, ..] = items;
+    // The flex algorithm puts each item against the edge of its line.
+    let before = tree.nodes[a].layout.location.x - tree.nodes[b].layout.location.x;
+    assert_eq!(before, 30.0, "a is 20px wide and b is 50px wide");
+    let members: HashSet<_> = items.into_iter().collect();
+    let rooms = baseline_lines::rooms(
+        &tree,
+        root.into(),
+        wrapped_inputs(),
+        &calls,
+        output.size,
+        &members,
+        None,
+    )
+    .expect("rooms");
+
+    // Without the lines, nothing is known about where to put the items.
+    let mut candidates = OofCandidates::new();
+    assert!(
+        inline_baseline::align_flex(&mut tree, root, output.size, false, None, &mut candidates,)
+            .is_none()
+    );
+    assert_eq!(
+        tree.nodes[a].layout.location.x - tree.nodes[b].layout.location.x,
+        before
+    );
+
+    // With them, the items of a line share a baseline, and the lines are used up.
+    tree.context.flex_baseline_lines.insert(root, rooms);
+    inline_baseline::align_flex(&mut tree, root, output.size, false, None, &mut candidates);
+    assert_eq!(
+        tree.nodes[a].layout.location.x, tree.nodes[b].layout.location.x,
+        "the group is packed at the right edge of its line"
+    );
+    assert!(tree.context.flex_baseline_lines.is_empty());
 }
