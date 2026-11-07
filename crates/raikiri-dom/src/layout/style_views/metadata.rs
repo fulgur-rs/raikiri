@@ -228,7 +228,7 @@ pub(in crate::layout) fn full_size_containment(
         && !super::super::fixed::generates_inline_box_with_tree(doc, idx, cv, boxes)
 }
 
-fn size_containment_display(display: DisplayValue) -> bool {
+pub(in crate::layout) fn size_containment_display(display: DisplayValue) -> bool {
     display.is_flex_or_grid_container()
         || display.is_inline_flow_box()
         || matches!(
