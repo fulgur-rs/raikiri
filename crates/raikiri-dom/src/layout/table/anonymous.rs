@@ -438,6 +438,8 @@ fn flattened_children(
     let mut out = Vec::new();
     let mut pending: Vec<usize> = doc.nodes[parent].children.iter().rev().copied().collect();
     while let Some(id) = pending.pop() {
+        #[cfg(test)]
+        FLATTEN_VISITS.with(|visits| visits.set(visits.get() + 1));
         let node = doc.ifc_layout_node(id).unwrap();
         if node.is_in_document() && node.display() == DisplayValue::Contents {
             if generates_pseudo_box(cascade, id) {
@@ -451,43 +453,41 @@ fn flattened_children(
     Some(out)
 }
 
-/// Whether `parent` lays its children out as block-level boxes, so that a
-/// run of rows among them can be wrapped in an anonymous block-level table.
+/// Whether `parent` is a block container whose children are laid out as
+/// block-level boxes unless they are inline content, so that a run of table
+/// parts among them can be wrapped in an anonymous block-level table.
 ///
 /// Inline content would make the parent a paragraph root, whose children the
 /// inline engine lays out instead; its rows remain blocks there. List items,
 /// whose markers sit on their first line, and vertical and multicol
 /// containers keep their rows as blocks as well.
-///
-/// `children` are the children of `parent` with `display: contents` boxes
-/// looked through.
-fn holds_only_block_level_boxes(
-    doc: &Document,
-    cascade: &CascadeResult,
-    parent: usize,
-    children: &[usize],
-) -> bool {
+fn lays_out_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
     let node = doc.ifc_layout_node(parent).unwrap();
     let cv = &cascade.computed[parent];
-    if !matches!(
+    matches!(
         node.display(),
         DisplayValue::Block
             | DisplayValue::FlowRoot
             | DisplayValue::TableCell
             | DisplayValue::TableCaption
-    ) || cv.cssom_writing_mode.is_vertical()
-        || !matches!(
+    ) && !cv.cssom_writing_mode.is_vertical()
+        && matches!(
             cv.column_count,
             raikiri_style::property::ColumnCountValue::Auto
         )
-        || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto)
-        || node.is_inline_svg_root()
-    {
-        return false;
-    }
-    if generates_pseudo_box(cascade, parent) {
-        return false;
-    }
+        && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto)
+        && !node.is_inline_svg_root()
+        && !generates_pseudo_box(cascade, parent)
+}
+
+/// Whether none of `children` is inline content: they are the children of a
+/// parent with `display: contents` boxes looked through, and each is nothing,
+/// a block-level box, or white space that forms no line.
+fn holds_only_block_level_boxes(
+    doc: &Document,
+    cascade: &CascadeResult,
+    children: &[usize],
+) -> bool {
     children.iter().all(|&child| {
         let child_node = doc.ifc_layout_node(child).unwrap();
         !child_node.is_in_document()
@@ -511,7 +511,12 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
     let mut tables = Vec::new();
     for parent in 0..doc.nodes.len() {
         let node = doc.ifc_layout_node(parent).unwrap();
-        if !node.is_in_document() || node.kind() != NodeKind::Element {
+        // Looking through `display: contents` boxes costs the size of what is
+        // below them, so only a parent that can hold the run pays for it.
+        if !node.is_in_document()
+            || node.kind() != NodeKind::Element
+            || !lays_out_block_level_boxes(doc, cascade, parent)
+        {
             continue;
         }
         let Some(children) = flattened_children(doc, cascade, parent) else {
@@ -520,7 +525,7 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
         if !children
             .iter()
             .any(|&child| is_table_internal(doc.nodes[child].display()))
-            || !holds_only_block_level_boxes(doc, cascade, parent, &children)
+            || !holds_only_block_level_boxes(doc, cascade, &children)
         {
             continue;
         }
@@ -863,6 +868,7 @@ impl Document {
 
 #[cfg(test)]
 thread_local! {
+    static FLATTEN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static OWNER_CELL_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static OWNER_CLONE_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
