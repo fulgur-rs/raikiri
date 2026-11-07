@@ -5551,3 +5551,14 @@ css/filter-effects/filter-subregion-01.html
 css/css-display/display-contents-dynamic-table-002-inline.html
 css/css-display/display-contents-dynamic-table-002-none.html
 css/css-display/display-contents-table-002.html
+
+# --- Containment on the root or the body keeps the body's background off the canvas (WPT pin 97ea26e2, EXACT, Linux, 2026-11-07) ---
+# The body of these tests has `background: red` and the root or the body has `contain: layout`, `paint`, `size` or `style`; the reference is a white box. Containment on either element stops the body background from propagating to the canvas (CSS Containment 2 section 2), so no red is left outside the 300x200 box. Before the change the canvas took the body's red and 420,000 of 480,000 pixels differed. audit-vacuous-passes reports VACUOUS-UNSTYLED for all eight because they are negative tests: remove `background: red` and the page is white as well. They were reviewed one by one, and each fails with the fix reverted (crates/raikiri-paint/tests/canvas_contain_background.rs pins the same cases with pixels).
+css/css-contain/contain-body-bg-001.html
+css/css-contain/contain-body-bg-002.html
+css/css-contain/contain-body-bg-003.html
+css/css-contain/contain-body-bg-004.html
+css/css-contain/contain-html-bg-001.html
+css/css-contain/contain-html-bg-002.html
+css/css-contain/contain-html-bg-003.html
+css/css-contain/contain-html-bg-004.html

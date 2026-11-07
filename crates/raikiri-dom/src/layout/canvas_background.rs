@@ -3,7 +3,9 @@
 
 use super::root_box::root_element;
 use crate::Document;
-use raikiri_style::property::{BackgroundAttachment, BackgroundImage, BackgroundRepeatKeyword};
+use raikiri_style::property::{
+    BackgroundAttachment, BackgroundImage, BackgroundRepeatKeyword, Contain,
+};
 use raikiri_style::{
     CascadeResult, ComputedBackgroundLayer, ComputedBackgroundSize, ComputedCssPositionOffset,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -30,7 +32,9 @@ pub enum CanvasBoxUse {
 
 /// The element whose background paints the canvas (CSS Backgrounds 3
 /// §2.11.2): the root element, or the `<body>` when the root's background
-/// is transparent and has no image.
+/// is transparent and has no image. Containment of any kind on the root or on
+/// the `<body>` stops the `<body>`'s background from propagating (CSS
+/// Containment 2 §2), so that it paints in the `<body>`'s own box.
 #[doc(hidden)]
 pub fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Option<usize> {
     let html_id = root_element(document)?;
@@ -39,6 +43,9 @@ pub fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> 
     if !html_is_transparent {
         return Some(html_id);
     }
+    if html.effective_containment() != Contain::NONE {
+        return None;
+    }
 
     // Only a `body` propagates its background, not a `frameset` (CSS
     // Backgrounds 3, 2.11.2).
@@ -46,7 +53,7 @@ pub fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> 
         .filter(|&id| document.get_node(id).and_then(|node| node.tag_name()) == Some("body"))?;
     let body = cascade.computed.get(body_id)?;
     let body_has_background = body.has_background_image() || body.background_color.a != 0;
-    body_has_background.then_some(body_id)
+    (body_has_background && body.effective_containment() == Contain::NONE).then_some(body_id)
 }
 
 /// What the images of the canvas background of `document` take from the
