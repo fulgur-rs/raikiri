@@ -1837,8 +1837,11 @@ fn compute_ifc_root(
     let stretched_height = inputs.known_dimensions.height.is_some()
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_height(&style, inputs.parent_size.height));
+    // The width taffy gives an out-of-flow box that shrinks to fit is the
+    // width its content took, which fixes nothing for the children.
     let definite_width = (inputs.known_dimensions.width.is_some()
-        && inputs.known_dimensions_are_definite.width)
+        && inputs.known_dimensions_are_definite.width
+        && !(vertical_paragraph && vertical_oof::has_content_decided_width(tree, idx)))
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_width(&style, inputs.parent_size.width));
     let writing_mode = tree.nodes[idx]
@@ -2466,13 +2469,14 @@ fn measure_ifc_root(
         let percent_height = measure.definite_height.filter(|_| !vertical);
         // A vertical paragraph's boxes are measured along their heights, and
         // their percentage widths refer to the physical width the root has
-        // when it is known or stretched.
+        // when it is known or stretched, and not when its content decided
+        // that width.
         let physical_width = known_width
             .or(match available.width {
                 AvailableSpace::Definite(size) if measure.stretched_width => Some(size),
                 _ => None,
             })
-            .filter(|_| vertical);
+            .filter(|_| vertical && measure.definite_width);
         crate::layout::ifc::boxes::intrinsics_of_boxes(
             tree,
             idx,
@@ -3465,15 +3469,24 @@ fn compute_inline_block_shrink_wrap(
     // to comes from its content, so it is no basis for the percentage widths
     // inside it, which read as `auto` (CSS Sizing 3 §5.2.1) until the parent
     // fixes the width.
-    let content_decided_width =
-        inputs.known_dimensions.width.is_none() && tree.has_vertical_writing_mode(idx);
+    // The aspect ratio takes the width of a box from its definite height, and a
+    // width so fixed is a basis.
+    let width_from_ratio = leaf_style.aspect_ratio.is_some()
+        && (known_height.is_some()
+            || MaybeResolve::maybe_resolve(leaf_style.size, inputs.parent_size)
+                .height
+                .is_some());
+    let content_decided_width = inputs.known_dimensions.width.is_none()
+        && tree.has_vertical_writing_mode(idx)
+        && !width_from_ratio;
     let final_inputs = LayoutInput {
         known_dimensions: Size {
             width: Some(fit),
             height: inputs.known_dimensions.height,
         },
         known_dimensions_are_definite: Size {
-            width: inputs.known_dimensions_are_definite.width && !content_decided_width,
+            width: width_from_ratio
+                || (inputs.known_dimensions_are_definite.width && !content_decided_width),
             ..inputs.known_dimensions_are_definite
         },
         available_space: Size {

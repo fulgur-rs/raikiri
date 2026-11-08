@@ -2407,7 +2407,18 @@ fn across_lines_of_child(
         AcrossLines::MaxContent,
         |width_basis| {
             known_atomic_width(tree, node, width_basis, inline_basis).map_or_else(
-                || AcrossLines::Room((width_basis - margin.left - margin.right).max(0.0)),
+                || {
+                    // A box that shrinks to fit stays within its `min-width` and
+                    // `max-width`, which are of the same basis.
+                    let room = (width_basis - margin.left - margin.right).max(0.0);
+                    AcrossLines::Room(clamp_block_width_with_edge_basis(
+                        tree,
+                        node,
+                        width_basis,
+                        inline_basis,
+                        room,
+                    ))
+                },
                 AcrossLines::Width,
             )
         },
