@@ -795,3 +795,309 @@ const PLACED: &[Case] = &[
 fn a_stopped_table_keeps_its_place_among_the_items() {
     check(PLACED);
 }
+
+/// Whether a table overflows its area is settled by the width it ends up with, so a `safe` alignment gives way to `start` and auto margins lose their room by that width, not by the one the grid gave it first.
+const OVERFLOW: &[Case] = &[
+    Case {
+        label: "s4_safe_center_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;justify-self:safe center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 168.0, 18.0]),
+            ("a", [2.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s4_center_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;justify-self:center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [-34.0, 0.0, 168.0, 18.0]),
+            ("a", [-32.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s4_end_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;justify-self:end"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [-68.0, 0.0, 168.0, 18.0]),
+            ("a", [-66.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s4_safe_end_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;justify-self:safe end"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 168.0, 18.0]),
+            ("a", [2.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s4_unsafe_center_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;justify-self:unsafe center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [-34.0, 0.0, 168.0, 18.0]),
+            ("a", [-32.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s5_safe_center_w20_wide_track100_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;justify-self:safe center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [132.0, 0.0, 168.0, 18.0]),
+            ("a", [134.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s5_center_w20_wide_track100_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;justify-self:center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [166.0, 0.0, 168.0, 18.0]),
+            ("a", [168.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s5_end_w20_wide_track100_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;justify-self:end"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [200.0, 0.0, 168.0, 18.0]),
+            ("a", [202.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s5_safe_end_w20_wide_track100_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;justify-self:safe end"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [132.0, 0.0, 168.0, 18.0]),
+            ("a", [134.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s5_unsafe_end_w20_wide_track100_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;justify-self:unsafe end"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [200.0, 0.0, 168.0, 18.0]),
+            ("a", [202.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s5_start_w20_wide_track100_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;justify-self:start"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [132.0, 0.0, 168.0, 18.0]),
+            ("a", [134.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s6_auto_both_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;margin:0 auto"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 168.0, 18.0]),
+            ("a", [2.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s6b_auto_left_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;margin-left:auto"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 168.0, 18.0]),
+            ("a", [2.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s6c_auto_right_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;margin-right:auto"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 168.0, 18.0]),
+            ("a", [2.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s7_safe_center_w20_mid_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;justify-self:safe center"><tr><td id=a style="padding:2px">BBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [21.0, 0.0, 58.0, 18.0]),
+            ("a", [23.0, 2.0, 54.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s10_safe_center_margins_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;margin:0 10px;justify-self:safe center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [10.0, 0.0, 168.0, 18.0]),
+            ("a", [12.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s10b_center_margins_w20_wide_track100",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;"><table id=t style="width:20px;margin:0 10px;justify-self:center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [-34.0, 0.0, 168.0, 18.0]),
+            ("a", [-32.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "s11_safe_center_w20_wide_track100_rtl_margins",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:100px;direction:rtl;"><table id=t style="width:20px;margin:0 10px 0 4px;justify-self:safe center"><tr><td id=a style="padding:2px">BBBBBBBBBBBBBBBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [122.0, 0.0, 168.0, 18.0]),
+            ("a", [124.0, 2.0, 164.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t1_safe_center_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:safe center"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t1_safe_end_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:safe end"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [262.0, 0.0, 38.0, 18.0]),
+            ("a", [264.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t1_unsafe_center_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:unsafe center"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t1_center_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:center"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t1_unsafe_end_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:unsafe end"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [262.0, 0.0, 38.0, 18.0]),
+            ("a", [264.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t1_safe_start_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:safe start"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 38.0, 18.0]),
+            ("a", [2.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t2_safe_center_w400_maxc_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;direction:rtl;"><table id=t style="width:400px;max-width:max-content;justify-self:safe center"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t2_safe_end_w400_maxc_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;direction:rtl;"><table id=t style="width:400px;max-width:max-content;justify-self:safe end"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 38.0, 18.0]),
+            ("a", [2.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t2_unsafe_end_w400_maxc_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;direction:rtl;"><table id=t style="width:400px;max-width:max-content;justify-self:unsafe end"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 38.0, 18.0]),
+            ("a", [2.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t3_auto_both_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;margin:0 auto"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t3b_auto_left_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;margin-left:auto"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [262.0, 0.0, 38.0, 18.0]),
+            ("a", [264.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t4_items_safe_center_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;justify-items:safe center;"><table id=t style="width:400px;max-width:max-content"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t5_safe_center_margins_w400_maxc",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;margin:0 10px;justify-self:safe center"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [131.0, 0.0, 38.0, 18.0]),
+            ("a", [133.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t6_safe_center_margins_w400_maxc_rtl",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;direction:rtl;"><table id=t style="width:400px;max-width:max-content;margin:0 10px 0 4px;justify-self:safe center"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [128.0, 0.0, 38.0, 18.0]),
+            ("a", [130.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+    Case {
+        label: "t7_safe_center_w400_maxc_pos",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:300px;"><table id=t style="width:400px;max-width:max-content;justify-self:safe center;position:relative;left:7px"><tr><td id=a style="padding:2px">BBB</td></tr></table></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [138.0, 0.0, 38.0, 18.0]),
+            ("a", [140.0, 2.0, 34.0, 14.0]),
+        ],
+    },
+];
+
+#[test]
+fn a_table_falls_back_or_stays_by_the_width_it_ends_up_with() {
+    check(OVERFLOW);
+}
