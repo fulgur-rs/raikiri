@@ -830,17 +830,14 @@ pub(super) fn try_fixed_up_stops(
 /// the shorter arc between its ends is the arc it follows.
 const LONGER_HUE_PIECES: usize = 8;
 
-/// A `longer hue` gradient in a polar space with a transition hint. Its
-/// stops are joined with `shorter` ramps instead, since the samples of a
-/// hint's curve lie a few degrees apart along the long arc, and a `longer`
-/// ramp between two of them would go round the hue wheel the other way. The
-/// other segments are cut into [`LONGER_HUE_PIECES`] that keep their arc.
+/// A `longer hue` gradient with a transition hint. Its stops are joined
+/// with `shorter` ramps instead, since the samples of a hint's curve lie a
+/// few degrees apart along the long arc, and a `longer` ramp between two of
+/// them would go round the hue wheel the other way. The other segments are
+/// cut into [`LONGER_HUE_PIECES`] that keep their arc. Only a polar space
+/// stores `longer hue`; the others always store `shorter`.
 fn splits_longer_hue(interpolation: &GradientColorInterpolation, raw: &[RawStop]) -> bool {
     interpolation.hue_method == HueInterpolationMethod::Longer
-        && matches!(
-            conic_interpolation_tag(interpolation.color_space),
-            ColorSpaceTag::Lch | ColorSpaceTag::Oklch
-        )
         && raw.iter().any(|stop| stop.hint.is_some())
 }
 
