@@ -717,8 +717,7 @@ pub(super) fn layout(
                 );
                 let slot = placed.slot;
                 child_width = placed.width;
-                area_start = slot.x;
-                area_width = slot.stretch_width;
+                (area_start, area_width) = placed.stretch_room(container.direction);
                 separated = forced || slot.y > threshold + 0.001;
                 slot_y = Some(if joins && !separated {
                     flow.end

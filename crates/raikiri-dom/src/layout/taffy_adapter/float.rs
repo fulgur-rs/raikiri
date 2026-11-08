@@ -15,32 +15,47 @@ use raikiri_layout_style::values::{Clear, Direction};
 /// between the snapshots of a flow and clones it only when a float is placed
 /// or the width changes.
 #[derive(Debug, Clone)]
-pub(crate) struct FloatContext(taffy::FloatContext);
+pub(crate) struct FloatContext {
+    inner: taffy::FloatContext,
+    /// The width last set with [`Self::set_width`], which the library keeps
+    /// private.
+    width: f32,
+}
 
 impl FloatContext {
     /// A context that holds no float and has no width.
     #[inline]
     pub(crate) fn new() -> Self {
-        Self(taffy::FloatContext::new())
+        Self {
+            inner: taffy::FloatContext::new(),
+            width: 0.0,
+        }
     }
 
     /// Set the width of the formatting context, which the room beside the
     /// floats is measured in.
     #[inline]
     pub(crate) fn set_width(&mut self, width: f32) {
-        self.0.set_width(width);
+        self.width = width;
+        self.inner.set_width(width);
+    }
+
+    /// The width of the formatting context.
+    #[inline]
+    pub(crate) fn width(&self) -> f32 {
+        self.width
     }
 
     /// Whether the context holds any float.
     #[inline]
     pub(crate) fn has_floats(&self) -> bool {
-        self.0.has_floats()
+        self.inner.has_floats()
     }
 
     /// Whether the context holds a float that reaches `min_y` or below.
     #[inline]
     pub(crate) fn has_active_floats(&self, min_y: f32) -> bool {
-        self.0.has_active_floats(min_y)
+        self.inner.has_active_floats(min_y)
     }
 
     /// Place a floated box of the border-box size `floated_box` no higher than
@@ -57,7 +72,7 @@ impl FloatContext {
         direction: FloatDirection,
         clear: Clear,
     ) -> Point<f32> {
-        Point::from_taffy(self.0.place_floated_box(
+        Point::from_taffy(self.inner.place_floated_box(
             floated_box.into_taffy(),
             min_y,
             containing_block_insets,
@@ -81,7 +96,7 @@ impl FloatContext {
         clear: Clear,
         after: Option<usize>,
     ) -> BfcSlot {
-        BfcSlot::from_taffy(self.0.find_bfc_slot(
+        BfcSlot::from_taffy(self.inner.find_bfc_slot(
             min_y,
             containing_block_insets,
             margins,
@@ -94,7 +109,7 @@ impl FloatContext {
     /// How low the floats that `clear` clears reach, if there are any.
     #[inline]
     pub(crate) fn cleared_threshold(&self, clear: Clear) -> Option<f32> {
-        self.0.cleared_threshold(clear.to_taffy())
+        self.inner.cleared_threshold(clear.to_taffy())
     }
 }
 

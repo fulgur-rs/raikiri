@@ -29,6 +29,15 @@ pub(crate) struct BoxSlot {
     pub(crate) width: f32,
 }
 
+impl BoxSlot {
+    /// Where an `auto` width stretches from in the slot, and how far: the
+    /// room ends at the end of the fitting room on the leading side.
+    pub(crate) fn stretch_room(&self, direction: Direction) -> (f32, f32) {
+        let edges = room_edges(self.slot, direction);
+        (edges[2], self.slot.stretch_width)
+    }
+}
+
 /// The edges of the room `slot` leaves, left to right: where a border box
 /// that fits starts and ends, then where an `auto` width stretches from and
 /// to. The side that leads in `direction` is the same for both; a trailing
@@ -40,6 +49,78 @@ fn room_edges(slot: BfcSlot, direction: Direction) -> [f32; 4] {
         Direction::Rtl => (fit.1 - slot.stretch_width, fit.1),
     };
     [fit.0, fit.1, stretch.0, stretch.1]
+}
+
+/// The room for a box that establishes a formatting context in the segment
+/// it starts in, whose space between the floats, found with no margins, is
+/// `room`. `content` holds the left and right content edges of
+/// the containing block and `margins` the box's resolved left and right
+/// margins.
+///
+/// Only floats that reach into the containing block count, as in Chromium,
+/// whose layout opportunities are cut to the containing block. When none
+/// does on either side, the margins apply as usual, even where they pull the
+/// box over a float outside the containing block; a positive trailing margin
+/// may then overflow and does not keep the box from fitting. Likewise a box
+/// that fits beside a float on one side may reach past the containing block
+/// over a float outside it on the other.
+///
+/// Beside floats the margins are measured from the content edges, not from
+/// the floats, so the room is only shrunk where a positive margin reaches past
+/// a float, and a negative margin never widens it (Chromium,
+/// `BlockLayoutAlgorithm::LayoutNewFormattingContext`). An `auto` width still
+/// subtracts the margins from the room it fills, but never resolves below
+/// the room it would get with a room of zero, so a negative margin wider than
+/// the room makes the box too wide to fit there. A border box fits when it is
+/// no wider than the space between the floats and keeps clear of the float
+/// on its trailing side; it starts at the leading edge of the room.
+fn beside_floats(
+    room: BfcSlot,
+    content: [f32; 2],
+    margins: [f32; 2],
+    direction: Direction,
+) -> BfcSlot {
+    let space = (room.x, room.x + room.border_width);
+    let floats = [
+        space.0 > content[0] + FIT_SLACK,
+        space.1 < content[1] - FIT_SLACK,
+    ];
+    if floats == [false; 2] {
+        // Only the trailing margin may overflow without keeping the box
+        // from fitting.
+        let (start, end) = (content[0] + margins[0], content[1] - margins[1]);
+        let (x, fit_end) = match direction {
+            Direction::Ltr => (start, content[1] - margins[1].min(0.0)),
+            Direction::Rtl => (content[0] + margins[0].min(0.0), end),
+        };
+        return BfcSlot {
+            x,
+            border_width: fit_end - x,
+            stretch_width: end - start,
+            ..room
+        };
+    }
+    let start = space.0.max(content[0] + margins[0].max(0.0));
+    let end = space.1.min(content[1] - margins[1].max(0.0));
+    let shrunk = (end - start).max(0.0);
+    let stretch_width = shrunk.max(-(margins[0] + margins[1]));
+    let whole = space.1 - space.0;
+    let (x, border_width) = match direction {
+        Direction::Ltr => {
+            let width = if floats[1] { space.1 - start } else { whole };
+            (start, width)
+        }
+        Direction::Rtl => {
+            let width = if floats[0] { end - space.0 } else { whole };
+            (end - width, width)
+        }
+    };
+    BfcSlot {
+        x,
+        border_width,
+        stretch_width,
+        ..room
+    }
 }
 
 /// Float placement storage owned by one CSS block formatting context.
@@ -271,14 +352,28 @@ impl BlockContext<'_> {
         clear: Clear,
         after: Option<usize>,
     ) -> BfcSlot {
-        let mut slot = self.owner.floats.find_bfc_slot(
-            self.origin + from,
+        // The library measures the margins of the box from the floats; the
+        // room is asked for without them and the margins are applied here
+        // (see `beside_floats`).
+        let floats = &self.owner.floats;
+        let min_y = self.origin + from;
+        let room = floats.find_bfc_slot(
+            min_y,
             self.content_insets,
-            margins,
+            [0.0; 2],
             direction,
             clear,
             after,
         );
+        let mut slot = if room.segment_id.is_none() {
+            floats.find_bfc_slot(min_y, self.content_insets, margins, direction, clear, after)
+        } else {
+            let content = [
+                self.content_insets[0],
+                floats.width() - self.content_insets[1],
+            ];
+            beside_floats(room, content, margins, direction)
+        };
         slot.x -= self.border_insets[0];
         slot.y -= self.origin;
         slot
