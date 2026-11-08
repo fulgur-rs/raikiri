@@ -1276,11 +1276,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // offset moves it after fragmentation.
                 let flow_top = node.layout.location.y
                     - super::layout_relative_offset_y(document, cascade, body_id, node_id);
+                // The parent is the box the box is laid out in, past any
+                // `display: contents` element between them.
+                let box_parent_height = candidate_parent(document, node_id)
+                    .map_or(f32::INFINITY, |parent| {
+                        document.nodes[parent].layout.size.height
+                    });
                 let unbreakable_room = (unbreakable_box
                     && !direct_body_child
                     && frame.clip_end.is_infinite()
-                    && flow_top + node.layout.size.height > frame.parent_height)
-                    .then(|| (frame.parent_height - flow_top).max(0.0));
+                    && flow_top + node.layout.size.height > box_parent_height)
+                    .then(|| (box_parent_height - flow_top).max(0.0));
                 let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid

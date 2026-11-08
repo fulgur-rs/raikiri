@@ -238,6 +238,30 @@ fn a_relative_offset_does_not_make_the_paragraph_overflow_its_parent() {
     );
 }
 
+/// A `display: contents` element between the paragraph and its parent has no
+/// box: the parent the paragraph is measured against is the box around both.
+#[test]
+fn a_contents_element_is_not_the_parent_of_the_paragraph() {
+    check(
+        "auto-height parent",
+        "<div style=\"height:550px\"></div><div><div style=\"display:contents\">\
+         <div id=p style=\"writing-mode:vertical-rl;height:100px\">aa</div></div></div>",
+        2,
+        &[("p", (1, 0.0, 0.0, 10.0, 100.0))],
+    );
+    check(
+        "max-height parent",
+        "<div style=\"height:300px\"></div><div style=\"max-height:250px;padding-top:240px;\
+         box-sizing:border-box\"><div style=\"display:contents\"><div id=p \
+         style=\"writing-mode:vertical-rl;height:100px\">aa</div></div></div>",
+        2,
+        &[
+            ("p", (0, 0.0, 540.0, 10.0, 60.0)),
+            ("p", (1, 0.0, 0.0, 10.0, 40.0)),
+        ],
+    );
+}
+
 /// A paragraph that runs out past the bottom of a parent whose height ends on
 /// the page is overflow of that parent: Chromium cuts it at the page end
 /// rather than moving it on.
