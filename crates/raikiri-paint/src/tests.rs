@@ -3284,7 +3284,7 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
     let red = "p::first-line{background:rgb(255,0,0)}";
     let vertical = "p{width:auto;height:100px;writing-mode:vertical-rl}";
     // (css, body, the box of the red fill)
-    let cases: [(&str, &str, [f64; 4]); 19] = [
+    let cases: [(&str, &str, [f64; 4]); 21] = [
         (
             "",
             "<p><span style=\"margin:0 7px\">XX</span>XX</p>",
@@ -3365,6 +3365,17 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
         (
             "",
             "<p><span style=\"padding-right:30px;margin-right:-30px\">XX</span>YY</p>",
+            [0.0, 0.0, 40.0, 10.0],
+        ),
+        // Text an element's negative margin overlaps is still outside it.
+        (
+            "",
+            "<p>XX<span style=\"margin-left:-20px\">YY</span></p>",
+            [0.0, 0.0, 20.0, 10.0],
+        ),
+        (
+            "",
+            "<p>XX<span style=\"margin-left:-20px\">YY</span>XX</p>",
             [0.0, 0.0, 40.0, 10.0],
         ),
         // Generated boxes, first letters and ruby containers have margins too.

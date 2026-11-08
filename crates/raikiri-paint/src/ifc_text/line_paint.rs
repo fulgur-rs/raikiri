@@ -473,7 +473,9 @@ impl<'a> LinePaint<'a, '_> {
             return;
         }
         let root_node = self.root_node;
-        let Some(rect) = first_line_box(line, |node| root_node.ifc_first_line_margins(node)) else {
+        let Some(rect) = first_line_box(line, self.paragraph.document, |node| {
+            root_node.ifc_first_line_margins(node)
+        }) else {
             return;
         };
         let piece = InlineBoxPiece {
@@ -713,10 +715,6 @@ fn piece_style<'c>(
     Some((cv, source))
 }
 
-/// How far past an inline element's content box, in px, a run or an atomic
-/// box may reach and still count as held by the element.
-const BOX_SLACK: f32 = 0.01;
-
 /// The box a `::first-line` has on `line`, in the paragraph's content box:
 /// the content area of the line's font along the block axis, and what an
 /// inline box around the content covers along the inline axis, without the
@@ -726,6 +724,7 @@ const BOX_SLACK: f32 = 0.01;
 /// the line has no content.
 fn first_line_box(
     line: &PositionedLine<'_>,
+    document: &Document,
     margins: impl Fn(usize) -> (f32, f32),
 ) -> Option<raikiri_dom::BoxRect> {
     use shodo::Fragment;
@@ -739,31 +738,40 @@ fn first_line_box(
     let include = |extent: &mut Option<(f32, f32)>, start: f32, end: f32| {
         *extent = Some(extent.map_or((start, end), |(low, high)| (low.min(start), high.max(end))));
     };
-    let content_boxes: Vec<_> = line
+    let box_nodes: HashSet<usize> = line
         .line
         .fragments()
         .filter_map(|fragment| match fragment {
-            Fragment::InlineBox(inline_box) => Some((
-                inline_box.content_rect.inline_start,
-                inline_box.content_rect.inline_start + inline_box.content_rect.inline_size,
-            )),
+            Fragment::InlineBox(inline_box) => Some(inline_box.node.0 as usize),
             _ => None,
         })
         .collect();
-    let mut include_content = |start: f32, size: f32| {
-        let end = start + size;
-        let held = content_boxes
-            .iter()
-            .any(|&(low, high)| start >= low - BOX_SLACK && end <= high + BOX_SLACK);
-        if !held {
-            include(&mut content, start, end);
+    // Whether the text or atomic box of `node` sits in an inline element of
+    // the line, whose box then covers it: a generated box holds its text,
+    // and an element the content of its descendants.
+    let held = |node: usize| {
+        let element = generated_origin(node).map_or(node, |(element, _)| element);
+        box_nodes.contains(&node)
+            || box_nodes.contains(&element)
+            || document
+                .ancestors(element)
+                .any(|id| box_nodes.contains(&id))
+    };
+    let mut include_content = |node: Option<usize>, start: f32, size: f32| {
+        if !node.is_some_and(held) {
+            include(&mut content, start, start + size);
         }
     };
     for fragment in line.line.fragments() {
         match fragment {
-            Fragment::GlyphRun(run) => include_content(run.inline_start(), run.inline_size()),
+            Fragment::GlyphRun(run) => include_content(
+                run.node().map(|node| node.0 as usize),
+                run.inline_start(),
+                run.inline_size(),
+            ),
             Fragment::Atomic(atomic) => {
                 include_content(
+                    Some(atomic.node.0 as usize),
                     atomic.margin_rect.inline_start,
                     atomic.margin_rect.inline_size,
                 );
