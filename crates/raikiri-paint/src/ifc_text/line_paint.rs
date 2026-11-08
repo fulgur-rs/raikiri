@@ -769,13 +769,9 @@ fn first_line_box(
                 );
             }
             Fragment::InlineBox(inline_box) if inline_box.parent.is_none() => {
-                let (mut start, mut end) = margins(inline_box.node.0 as usize);
-                if !inline_box.has_start_edge {
-                    start = 0.0;
-                }
-                if !inline_box.has_end_edge {
-                    end = 0.0;
-                }
+                let (start, end) = margins(inline_box.node.0 as usize);
+                let mut start = f32::from(u8::from(inline_box.has_start_edge)) * start;
+                let mut end = f32::from(u8::from(inline_box.has_end_edge)) * end;
                 // The element's inline-start edge is on the line's
                 // inline-end side when its direction opposes the line's.
                 if inline_box.start_edge_is_reversed {

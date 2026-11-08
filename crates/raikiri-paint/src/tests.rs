@@ -3373,7 +3373,11 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
             "<p>XX</p>",
             [0.0, 0.0, 54.0, 10.0],
         ),
-        ("p::first-letter{margin:0 7px}", "<p>XX</p>", [0.0, 0.0, 34.0, 10.0]),
+        (
+            "p::first-letter{margin:0 7px}",
+            "<p>XX</p>",
+            [0.0, 0.0, 34.0, 10.0],
+        ),
         (
             "",
             "<p><ruby style=\"margin:0 7px\">XX<rt>X</rt></ruby>XX</p>",
