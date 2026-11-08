@@ -68,7 +68,7 @@ impl Document {
         }
         let offset = match computed.list_style_position {
             // An inside bullet starts 1px in, as in a paragraph (see
-            // [`inside_symbol_marker_margins`]).
+            // `inside_symbol_marker_margins`).
             raikiri_style::ListStylePosition::Inside if is_symbol_marker(computed) => {
                 padding_left + INSIDE_SYMBOL_GAP
             }
