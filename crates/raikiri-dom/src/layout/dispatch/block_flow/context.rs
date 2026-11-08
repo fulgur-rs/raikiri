@@ -51,16 +51,19 @@ fn room_edges(slot: BfcSlot, direction: Direction) -> [f32; 4] {
     [fit.0, fit.1, stretch.0, stretch.1]
 }
 
-/// The room for a box that establishes a formatting context in `room`, the
-/// space between the floats (found with no margins) of the
-/// segment starts in. `content` holds the left and right content edges of
+/// The room for a box that establishes a formatting context in the segment
+/// it starts in, whose space between the floats, found with no margins, is
+/// `room`. `content` holds the left and right content edges of
 /// the containing block and `margins` the box's resolved left and right
 /// margins.
 ///
-/// When no float reaches into the containing block on either side, the
-/// margins apply as usual, even where they pull the box over a float outside
-/// the containing block; a positive trailing margin may then overflow and
-/// does not keep the box from fitting.
+/// Only floats that reach into the containing block count, as in Chromium,
+/// whose layout opportunities are cut to the containing block. When none
+/// does on either side, the margins apply as usual, even where they pull the
+/// box over a float outside the containing block; a positive trailing margin
+/// may then overflow and does not keep the box from fitting. Likewise a box
+/// that fits beside a float on one side may reach past the containing block
+/// over a float outside it on the other.
 ///
 /// Beside floats the margins are measured from the content edges, not from
 /// the floats, so the room is only shrunk where a positive margin reaches past
@@ -349,25 +352,28 @@ impl BlockContext<'_> {
         clear: Clear,
         after: Option<usize>,
     ) -> BfcSlot {
+        // The library measures the margins of the box from the floats; the
+        // room is asked for without them and the margins are applied here
+        // (see `beside_floats`).
         let floats = &self.owner.floats;
         let min_y = self.origin + from;
-        let mut slot =
-            floats.find_bfc_slot(min_y, self.content_insets, margins, direction, clear, after);
-        if slot.segment_id.is_some() && margins != [0.0; 2] {
-            let room = floats.find_bfc_slot(
-                min_y,
-                self.content_insets,
-                [0.0; 2],
-                direction,
-                clear,
-                after,
-            );
+        let room = floats.find_bfc_slot(
+            min_y,
+            self.content_insets,
+            [0.0; 2],
+            direction,
+            clear,
+            after,
+        );
+        let mut slot = if room.segment_id.is_none() {
+            floats.find_bfc_slot(min_y, self.content_insets, margins, direction, clear, after)
+        } else {
             let content = [
                 self.content_insets[0],
                 floats.width() - self.content_insets[1],
             ];
-            slot = beside_floats(room, content, margins, direction);
-        }
+            beside_floats(room, content, margins, direction)
+        };
         slot.x -= self.border_insets[0];
         slot.y -= self.origin;
         slot
