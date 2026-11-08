@@ -19,7 +19,7 @@ use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, BoxGenerationMode, Direction, ExpandedDimension, Float, Position,
+    AlignContentKeyword, BoxGenerationMode, Clear, Direction, ExpandedDimension, Float, Position,
     ResolveOrZero,
 };
 use shodo::style::TextGroupAlign;
@@ -172,7 +172,10 @@ fn intrinsic_widths(
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut width = 0.0_f32;
     let mut spanning = 0.0_f32;
+    // A min-content measure takes the floats from the library; a max-content
+    // one counts them beside the boxes that follow them.
     let mut floats = FloatIntrinsicWidthCalculator::new(space);
+    let mut beside = FloatsBeside::default();
     for child in children {
         let style = child_style(tree, child);
         if style.box_generation_mode() == BoxGenerationMode::None
@@ -209,6 +212,7 @@ fn intrinsic_widths(
                 )
             };
             width = width.max(columns);
+            beside.end_run();
             spanning = spanning.max(spanners + edges);
             continue;
         }
@@ -221,15 +225,97 @@ fn intrinsic_widths(
             percent_height,
         );
         match style.float {
-            Float::Left => floats.add_float(child_width, FloatDirection::Left, style.clear),
-            Float::Right => floats.add_float(child_width, FloatDirection::Right, style.clear),
+            Float::Left | Float::Right => {
+                let direction = if style.float == Float::Left {
+                    FloatDirection::Left
+                } else {
+                    FloatDirection::Right
+                };
+                if space == AvailableSpace::MaxContent {
+                    beside.add_float(child_width, direction, style.clear);
+                } else {
+                    floats.add_float(child_width, direction, style.clear);
+                }
+            }
+            // A spanner leaves the run of floats in the columns open, as
+            // browsers measure it.
             Float::None if spans && crate::layout::is_spanner(tree, usize::from(child)) => {
                 spanning = spanning.max(child_width);
             }
-            Float::None => width = width.max(child_width),
+            Float::None
+                if space == AvailableSpace::MaxContent
+                    && !shares_parent_context(tree, node, child, &style) =>
+            {
+                beside.clear(style.clear);
+                let border_box = child_width - margin.left - margin.right;
+                width = width.max(beside.contribution(border_box, margin.left, margin.right));
+                beside.end_run();
+            }
+            Float::None => {
+                width = width.max(child_width);
+                beside.end_run();
+            }
         }
     }
-    (width.max(floats.result()), spanning)
+    (width.max(floats.result()).max(beside.widest()), spanning)
+}
+
+/// The floats of a max-content measure, in runs: the margin boxes of the
+/// floats on each side since the last in-flow child.
+///
+/// Browsers count floats side by side only up to the next in-flow child,
+/// which ends the run. A box that makes its own context (a table,
+/// `flow-root`, a scroller, a replaced box) sits beside the floats of the run,
+/// so its contribution adds their widths. A positive margin on a side is room
+/// the floats already take, and a negative one pulls the box over them.
+#[derive(Default)]
+struct FloatsBeside {
+    /// The summed widths of the floats on the left and on the right.
+    sides: [f32; 2],
+    /// The widest that the floats of a run came to side by side.
+    widest: f32,
+}
+
+impl FloatsBeside {
+    fn add_float(&mut self, width: f32, direction: FloatDirection, clear: Clear) {
+        self.clear(clear);
+        self.sides[direction as usize] += width;
+    }
+
+    /// Places the next box below the floats on the sides that `clear` names.
+    fn clear(&mut self, clear: Clear) {
+        self.widest = self.widest.max(self.sides[0] + self.sides[1]);
+        if matches!(clear, Clear::Left | Clear::Both) {
+            self.sides[0] = 0.0;
+        }
+        if matches!(clear, Clear::Right | Clear::Both) {
+            self.sides[1] = 0.0;
+        }
+    }
+
+    /// The width that a box with `border_box` and the side margins `left` and
+    /// `right` takes beside the floats.
+    fn contribution(&self, border_box: f32, left: f32, right: f32) -> f32 {
+        let side = |floats: f32, margin: f32| {
+            if margin > 0.0 {
+                floats.max(margin)
+            } else {
+                floats + margin
+            }
+        };
+        border_box + side(self.sides[0], left) + side(self.sides[1], right)
+    }
+
+    /// Ends the run at an in-flow child.
+    fn end_run(&mut self) {
+        self.clear(Clear::Both);
+    }
+
+    /// The widest that the floats came to side by side in any run.
+    fn widest(&mut self) -> f32 {
+        self.end_run();
+        self.widest
+    }
 }
 
 /// The min-content width of the content of `node`, which a multicol container
