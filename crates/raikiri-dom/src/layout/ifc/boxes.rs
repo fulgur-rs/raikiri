@@ -2353,6 +2353,57 @@ pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Opti
     Some((max.max(min) - edges).max(0.0))
 }
 
+/// The content height that the table cell `container` offers a vertical box
+/// in it as definite, when the cell states a length `height` (see
+/// `layout_cell_contents` in [`crate::layout::table`]).
+pub(crate) fn table_cell_orthogonal_room(
+    tree: &LayoutSession<'_>,
+    container: usize,
+) -> Option<f32> {
+    tree.context
+        .table_cell_orthogonal_rooms
+        .iter()
+        .rev()
+        .find_map(|&(cell, room)| (cell == container).then_some(room))
+}
+
+/// The room that a cell which states a height gives `node`, an inline-level
+/// box of its paragraph held through inline boxes only: `Some(Some(room))`
+/// with [`table_cell_orthogonal_room`], and `Some(None)` when the content
+/// sits beside an in-flow block of the cell, in an anonymous block whose
+/// height is open. `None` when no such cell holds the box.
+fn table_cell_room_of_box(tree: &LayoutSession<'_>, node: usize) -> Option<Option<f32>> {
+    if tree.context.table_cell_orthogonal_rooms.is_empty() {
+        return None;
+    }
+    let mut parent = tree.taffy_parent_of(node)?;
+    while matches!(
+        tree.nodes[parent].display(),
+        DisplayValue::Inline | DisplayValue::Contents
+    ) {
+        parent = tree.taffy_parent_of(parent)?;
+    }
+    let room = table_cell_orthogonal_room(tree, parent)?;
+    // Inline content beside an in-flow block of the cell sits in an anonymous
+    // block of its own.
+    let children = tree
+        .ifc_layout_node(parent)
+        .map(|cell| cell.children.as_slice());
+    let beside_a_block = children.unwrap_or_default().iter().any(|&child| {
+        let display = tree.nodes[child].display();
+        (matches!(
+            display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Table
+        ) || display.is_block_flex_or_grid_container())
+            && tree.nodes[child].layout_position() != Position::Absolute
+            && !tree.physical_style(child).float().is_floated()
+    });
+    Some((!beside_a_block).then_some(room))
+}
+
 /// The room along its height that a vertical box in a horizontal container is
 /// offered while the height of the container is open: the height of the page
 /// area within `cap`, the most that the container allows, or the one of them
@@ -2380,7 +2431,11 @@ fn orthogonal_room(
 ) -> Option<f32> {
     crate::layout::dispatch::used_writing_mode(tree, node)
         .is_vertical()
-        .then(|| definite_height.or_else(|| open_height_room(tree, height_cap)))
+        .then(|| match table_cell_room_of_box(tree, node) {
+            Some(Some(room)) => Some(room),
+            Some(None) => open_height_room(tree, height_cap),
+            None => definite_height.or_else(|| open_height_room(tree, height_cap)),
+        })
         .flatten()
         .map(|height| (height - margin.top - margin.bottom).max(0.0))
 }

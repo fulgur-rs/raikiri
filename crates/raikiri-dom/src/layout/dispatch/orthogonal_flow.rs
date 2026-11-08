@@ -22,7 +22,9 @@
 //! when the grid has none.
 
 use crate::layout::context::LayoutSession;
-use crate::layout::ifc::boxes::{box_sizing_height_adjustment, max_height_cap, open_height_room};
+use crate::layout::ifc::boxes::{
+    box_sizing_height_adjustment, max_height_cap, open_height_room, table_cell_orthogonal_room,
+};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
 };
@@ -87,10 +89,17 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
     if inputs.available_space.height != AvailableSpace::MaxContent {
         return inputs.available_space.height;
     }
-    let definite = inputs
-        .parent_size
-        .height
-        .filter(|&height| !is_stretch_to_dropped_limit(tree, idx, height));
+    // A table cell that states a height offers the one it is laid out at,
+    // whatever it passes down.
+    let cell_room = tree
+        .taffy_parent_of(idx)
+        .and_then(|parent| table_cell_orthogonal_room(tree, parent));
+    let definite = cell_room.or_else(|| {
+        inputs
+            .parent_size
+            .height
+            .filter(|&height| !is_stretch_to_dropped_limit(tree, idx, height))
+    });
     page_room(tree, idx, inputs, definite)
 }
 
