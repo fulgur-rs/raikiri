@@ -71,9 +71,9 @@ pub use rule::{Declaration, StyleRule};
 
 pub mod counter_style;
 pub use counter_style::{
-    CounterRange, CounterStyleRegistry, CounterStyleRule, CounterStyleSystem, CounterSymbol,
-    NegativeDescriptor, PadDescriptor, RangeEntry, RangeLimit, parse_counter_style_rules,
-    resolve_custom_counter,
+    CounterRange, CounterRepresentation, CounterStyleRegistry, CounterStyleRule,
+    CounterStyleSystem, CounterSymbol, NegativeDescriptor, PadDescriptor, RangeEntry, RangeLimit,
+    parse_counter_style_rules, resolve_counter_representation, resolve_custom_counter,
 };
 
 pub mod font_face;

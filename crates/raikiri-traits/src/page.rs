@@ -37,9 +37,9 @@ mod target;
 
 pub use context::{CounterStack, NamedStringState, PageContext};
 pub use target::{
-    PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry,
-    format_counter as format_predefined_counter, is_predefined_counter_style,
-    predefined_counter_suffix, resolve_content_component,
+    PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry, author_counter_style_name,
+    format_author_counter, format_counter as format_predefined_counter, format_counter_with_styles,
+    is_predefined_counter_style, predefined_counter_suffix, resolve_content_component,
 };
 
 use crate::dom::{NodeId, Symbol};
