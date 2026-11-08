@@ -86,7 +86,14 @@ fn printed(before: u32, table_css: &str, parts: &[Part], holder_css: &str, depth
         };
         let owner = *groups[group].get_or_insert_with(|| {
             let tag = ["thead", "tbody", "tfoot"][group];
-            doc.append_element(Some(table), tag, Some(format!("display:{display}")))
+            // The user agent sheet makes header and footer groups avoid
+            // breaking inside, which is what lets them repeat.
+            let avoid = if group == 1 {
+                ""
+            } else {
+                ";break-inside:avoid"
+            };
+            doc.append_element(Some(table), tag, Some(format!("display:{display}{avoid}")))
         });
         let row = doc.append_element(Some(owner), "tr", Some("display:table-row"));
         let cell = doc.append_element(
