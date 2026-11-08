@@ -31,14 +31,14 @@ use crate::layout::taffy_adapter::columns_follow_their_items;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::{
-    AlignItemsKeyword, BoxSizing, Float, MaybeResolve, Position, ResolveOrZero,
+    AlignItemsKeyword, BoxSizing, ExpandedDimension, Float, MaybeResolve, Position, ResolveOrZero,
 };
 
 use raikiri_style::property::DisplayValue;
 
-/// Whether `idx` is an in-flow block-level box with an auto width in a
-/// vertical writing mode, its own or inherited, under a horizontal block
-/// container.
+/// Whether `idx` is an in-flow block-level box in a vertical writing mode, its
+/// own or inherited, under a horizontal block container, whose width is `auto`
+/// or an intrinsic keyword that stands for it.
 pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize) -> bool {
     use super::vertical_oof::used_writing_mode;
     let node = &tree.nodes[idx];
@@ -58,7 +58,15 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
         })
         && {
             let style = tree.physical_style(idx);
-            style.size().width.is_auto() && style.float() == Float::None
+            // The intrinsic keywords on the block axis behave as `auto` (CSS
+            // Sizing 3 §3.1).
+            matches!(
+                style.size().width.expand(),
+                ExpandedDimension::Auto
+                    | ExpandedDimension::MinContent
+                    | ExpandedDimension::MaxContent
+                    | ExpandedDimension::FitContent
+            ) && style.float() == Float::None
         }
 }
 

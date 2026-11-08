@@ -319,8 +319,9 @@ fn a_grid_nested_in_a_vertical_grid_lays_out_in_its_own_writing_mode() {
 #[test]
 fn an_orthogonal_item_sizes_the_rows_by_its_inline_size() {
     // A horizontal item's inline size runs along the grid's block axis. Its
-    // max-content width (9 glyphs) is the row; its min-content width (4) is
-    // the row when the grid is sized to its min-content.
+    // max-content width (9 glyphs) is the row. The `min-content` width of the
+    // grid is its block size, where the intrinsic keywords behave as `auto`
+    // (CSS Sizing 3 §3.1), so the row stays 9 glyphs wide.
     let item = &["writing-mode:horizontal-tb|aaaa bbbb"];
     let laid = lay_out(
         "writing-mode:vertical-rl;width:max-content;height:100px;grid-template-columns:100px;grid-template-rows:auto",
@@ -332,8 +333,8 @@ fn an_orthogonal_item_sizes_the_rows_by_its_inline_size() {
         "writing-mode:vertical-rl;width:min-content;height:100px;grid-template-columns:100px;grid-template-rows:auto",
         item,
     );
-    assert_eq!(laid.grid_rect(), (8.0, 8.0, 40.0, 100.0));
-    assert_eq!(laid.rects(), [(8.0, 8.0, 40.0, 100.0)]);
+    assert_eq!(laid.grid_rect(), (8.0, 8.0, 90.0, 100.0));
+    assert_eq!(laid.rects(), [(8.0, 8.0, 90.0, 100.0)]);
 }
 
 #[test]

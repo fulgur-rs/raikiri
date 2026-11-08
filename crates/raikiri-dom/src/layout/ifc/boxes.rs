@@ -1922,6 +1922,7 @@ fn perform_box_layout(
     basis: f32,
     height_basis: Option<f32>,
     known: Size<Option<f32>>,
+    width_is_definite: bool,
     available: Size<AvailableSpace>,
 ) -> LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
@@ -1934,7 +1935,7 @@ fn perform_box_layout(
             axis: RequestedAxis::Both,
             known_dimensions: known,
             known_dimensions_are_definite: Size {
-                width: true,
+                width: width_is_definite,
                 height: true,
             },
             parent_size: Size {
@@ -1955,6 +1956,12 @@ struct ChildFit {
     space: Size<AvailableSpace>,
     /// The width it is given outright.
     known_width: Option<f32>,
+    /// Whether that width is a size the content of the box does not decide, so
+    /// that the percentages inside it may refer to it. The `min-content` or
+    /// `max-content` width of a vertical box is its block size, which those
+    /// keywords leave to the content, as they do for the height of a
+    /// horizontal one.
+    known_width_is_definite: bool,
     /// The height it is given outright: what `height: stretch` fills.
     known_height: Option<f32>,
     /// The percentage widths of the box that are replaced by what they stand
@@ -2038,6 +2045,8 @@ fn fit_child(
     } else {
         keyword_width(tree, node, geometry, available)
     };
+    let known_width_is_definite =
+        vertical || !crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
     let widths = if vertical {
         percentage_width_overrides(tree, node, width_basis)
     } else {
@@ -2059,6 +2068,7 @@ fn fit_child(
     ChildFit {
         space,
         known_width,
+        known_width_is_definite,
         known_height,
         widths,
     }
@@ -2077,6 +2087,7 @@ fn layout_child(
     let ChildFit {
         space,
         known_width,
+        known_width_is_definite,
         known_height,
         widths,
     } = fit;
@@ -2085,7 +2096,15 @@ fn layout_child(
         height: known_height,
     };
     let layout = |tree: &mut LayoutSession<'_>| {
-        perform_box_layout(tree, node, geometry.width, height_basis, known, space)
+        perform_box_layout(
+            tree,
+            node,
+            geometry.width,
+            height_basis,
+            known,
+            known_width_is_definite,
+            space,
+        )
     };
     let WidthOverrides { entries, variant } = widths;
     if entries.is_empty() {

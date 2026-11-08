@@ -1785,6 +1785,10 @@ fn compute_ifc_root(
     let stretched_height = inputs.known_dimensions.height.is_some()
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_height(&style, inputs.parent_size.height));
+    let definite_width = (inputs.known_dimensions.width.is_some()
+        && inputs.known_dimensions_are_definite.width)
+        || (inputs.sizing_mode == SizingMode::InherentSize
+            && ifc_has_definite_width(&style, inputs.parent_size.width));
     let writing_mode = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -1796,6 +1800,7 @@ fn compute_ifc_root(
     let measure = IfcMeasure {
         run_mode: inputs.run_mode,
         stretched_width,
+        definite_width,
         stretched_height,
         width_bounds: ifc_content_width_bounds(
             &style,
@@ -2259,6 +2264,10 @@ struct IfcMeasure {
     run_mode: RunMode,
     /// The parent stretched or fixed the box's physical width.
     stretched_width: bool,
+    /// The physical width does not depend on the content of the box: the parent
+    /// fixed it as definite, or the box states it. The percentage widths of a
+    /// vertical paragraph's children refer to it, and read as `auto` otherwise.
+    definite_width: bool,
     /// The parent stretched or fixed the box's physical height.
     stretched_height: bool,
     /// The box's own content-box `min-width` and `max-width`.
@@ -2536,10 +2545,9 @@ fn measure_ifc_root(
     // the column the lines are broken in. A vertical root's physical width
     // is settled by the layout below, which resolves against it.
     let containing_width = (!vertical).then_some(width);
-    // A vertical root's width is its block extent, definite when it is known
-    // or stretched to the available space rather than sized by its lines.
-    let vertical_width = (vertical && (known_width.is_some() || measure.stretched_width))
-        .then_some(physical_block_extent);
+    // A vertical root's width is its block extent, definite when the box states
+    // it or the parent fixes it as definite, and not when its lines size it.
+    let vertical_width = (vertical && measure.definite_width).then_some(physical_block_extent);
     // The root's paragraph was taken above, so it is present.
     tree.nodes[idx].ifc.iter_mut().for_each(|root| {
         root.definite_height = definite_height;
@@ -3385,10 +3393,20 @@ fn compute_inline_block_shrink_wrap(
     }
     .max(0.0);
 
+    // The width of a vertical box is its block size. The width this box shrinks
+    // to comes from its content, so it is no basis for the percentage widths
+    // inside it, which read as `auto` (CSS Sizing 3 §5.2.1) until the parent
+    // fixes the width.
+    let content_decided_width =
+        inputs.known_dimensions.width.is_none() && tree.has_vertical_writing_mode(idx);
     let final_inputs = LayoutInput {
         known_dimensions: Size {
             width: Some(fit),
             height: inputs.known_dimensions.height,
+        },
+        known_dimensions_are_definite: Size {
+            width: inputs.known_dimensions_are_definite.width && !content_decided_width,
+            ..inputs.known_dimensions_are_definite
         },
         available_space: Size {
             width: AvailableSpace::Definite(fit),
