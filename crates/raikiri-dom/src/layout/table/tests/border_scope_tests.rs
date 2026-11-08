@@ -367,7 +367,7 @@ fn border_scope_temporary_reset_is_explicit_and_restores_outer_values() {
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let grid = super::super::cache::table_grid(&mut tree, table).unwrap();
-    let authored = super::super::BorderState::authored(&tree, &grid);
+    let authored = super::super::BorderState::authored(&tree, &grid, false);
     let mut outer = authored.clone();
     let mut used = authored.clone();
     let outer_winner = collapsed_candidate(BorderStyle::Solid, 17.0, CssColor::BLACK);
@@ -733,7 +733,7 @@ fn centered_border_flags_follow_temporary_scopes_and_unwind() {
         let cascade = crate::layout::test_support::cascaded(&doc);
         let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         let grid = super::super::cache::table_grid(&mut tree, table).unwrap();
-        let authored = super::super::BorderState::authored(&tree, &grid);
+        let authored = super::super::BorderState::authored(&tree, &grid, false);
         let prepared = prepared_state(&mut tree, table);
         let state = prepared.borders.as_ref().unwrap();
         let cell = cells[0];
@@ -823,4 +823,75 @@ fn asymmetric_used_table_edges_are_stored_on_physical_axes() {
             assert_eq!(doc.nodes[table].layout.border.bottom, 3.0);
         }
     }
+}
+
+/// Two cells in a collapsed table of the `direction`, with the `left` and
+/// `right` border widths `a` and `b` state.
+fn collapsed_pair(
+    direction: &str,
+    a: (u8, u8),
+    b: (u8, u8),
+) -> (Document, raikiri_style::CascadeResult, usize, [usize; 2]) {
+    let mut doc = Document::new();
+    let table = append_grid_part(
+        &mut doc,
+        0,
+        "table",
+        DisplayValue::Table,
+        &format!("display:table;border-collapse:collapse;direction:{direction}"),
+    );
+    let row = append_grid_part(
+        &mut doc,
+        table,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row",
+    );
+    let cell = |doc: &mut Document, (left, right): (u8, u8)| {
+        append_grid_part(
+            doc,
+            row,
+            "td",
+            DisplayValue::TableCell,
+            &format!(
+                "display:table-cell;width:20px;height:10px;\
+                 border-left:{left}px solid black;border-right:{right}px solid black"
+            ),
+        )
+    };
+    let cells = [cell(&mut doc, a), cell(&mut doc, b)];
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    (doc, cascade, table, cells)
+}
+
+/// The left and right border widths painted on the cells of the table once it
+/// is laid out.
+fn painted_sides(direction: &str, a: (u8, u8), b: (u8, u8)) -> [(f32, f32); 2] {
+    let (mut doc, cascade, table, cells) = collapsed_pair(direction, a, b);
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    super::super::compute_table_layout_checked(&mut tree, table.into(), column_probe_input())
+        .unwrap();
+    cells.map(|cell| {
+        let paint = tree.nodes[cell].collapsed_border.expect("collapsed paint");
+        (paint.left.width().px(), paint.right.width().px())
+    })
+}
+
+#[test]
+fn rtl_table_paints_the_collapsed_winners_on_the_physical_sides() {
+    // The first column is on the right, so the border between the cells is the
+    // right border of `b` against the left border of `a`, and the table edges
+    // are the left of `b` and the right of `a`.
+    let rtl = painted_sides("rtl", (6, 2), (4, 8));
+    assert_eq!(rtl, [(8.0, 2.0), (4.0, 8.0)]);
+    // The same borders in `ltr` put `a` on the left: the border between the
+    // cells is the right of `a` against the left of `b`, and `b` wins it.
+    let ltr = painted_sides("ltr", (6, 2), (4, 8));
+    assert_eq!(ltr, [(6.0, 4.0), (4.0, 8.0)]);
+    // The mirror image of the `rtl` table, `a` and `b` swapped and every border
+    // turned around, paints the mirror image of what the `rtl` table paints.
+    let mirrored = painted_sides("ltr", (2, 6), (8, 4));
+    assert_eq!(mirrored, [(2.0, 8.0), (8.0, 4.0)]);
 }

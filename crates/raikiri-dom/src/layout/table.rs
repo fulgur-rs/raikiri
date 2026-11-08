@@ -242,6 +242,15 @@ fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
     doc.nodes[doc.ifc_source_owner(table_idx)].used_writing_mode
 }
 
+/// Whether the columns of `table` run against the physical axis they lie on.
+/// Columns follow the inline direction of the table: from right to left with
+/// `direction: rtl`, and in a vertical table from bottom to top (`rtl`, or
+/// `sideways-lr` which runs its inline axis upwards).
+fn columns_run_backwards(doc: &LayoutSession<'_>, table_idx: usize) -> bool {
+    let rtl = doc.table_style(table_idx).direction() == Direction::Rtl;
+    rtl != (table_writing_mode(doc, table_idx) == WritingMode::SidewaysLr)
+}
+
 /// The `table-caption` boxes of `table` in source order, looking through the
 /// `display: contents` children whose own children take their place.
 fn table_captions(doc: &Document, table: usize) -> Vec<usize> {
@@ -813,6 +822,7 @@ fn compute_table_layout_checked(
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
+    let columns_backwards = columns_run_backwards(doc, table_idx);
     // A flex row sizes its table item along the table's inline axis by the
     // item's flex base size, the columns' own widths, and takes the width
     // keywords of the table for that size as well.
@@ -2142,6 +2152,9 @@ fn compute_table_layout_checked(
                 column_origins: &col_origins,
                 row_origins: &row_origins,
                 row_spacing: border_spacing.1,
+                mirrored_columns: (!vertical_writing && columns_backwards)
+                    // The last origin is the far edge of the last column.
+                    .then(|| (col_origins[0], col_origins[col_origins.len() - 1])),
                 vertical_writing,
                 vertical_rows: visible_rows,
                 height_is_definite: vertical_writing || specified_height.is_some(),
@@ -2193,6 +2206,7 @@ fn compute_table_layout_checked(
                     },
                     spacing: border_spacing.1,
                     reverse: reverse_rows,
+                    columns_backwards,
                 },
                 cell_candidates,
             );
@@ -5109,6 +5123,10 @@ struct CellPlacementTracks<'a> {
     column_origins: &'a [f32],
     row_origins: &'a [f32],
     row_spacing: f32,
+    /// The physical span of the columns of a table whose columns run from
+    /// right to left: a cell sits where the mirror image of its column span
+    /// across that span puts it.
+    mirrored_columns: Option<(f32, f32)>,
     vertical_writing: bool,
     vertical_rows: Option<RowTrackView<'a>>,
     /// The table states its own height, so the height of a cell is definite
@@ -5136,6 +5154,7 @@ fn place_cells(
         column_origins: col_x,
         row_origins: row_y,
         row_spacing,
+        mirrored_columns,
         vertical_writing,
         vertical_rows,
         height_is_definite,
@@ -5203,6 +5222,8 @@ fn place_cells(
             },
             |rows| rows.cell_width(cell),
         );
+        let cell_x =
+            mirrored_columns.map_or(cell_x, |(start, end)| start + end - cell_x - cell_width);
         let cell_height = spanned_rows.height(start_row..end_row)
             + spanned_rows.nonzero_gaps(start_row..end_row.saturating_sub(1).max(start_row)) as f32
                 * row_spacing;
@@ -5525,6 +5546,8 @@ struct VerticalPlacement<'a> {
     origin: Point<f32>,
     spacing: f32,
     reverse: bool,
+    /// The columns run from the bottom up.
+    columns_backwards: bool,
 }
 
 /// Re-map the already measured table grid from horizontal physical axes to
@@ -5544,7 +5567,9 @@ fn reposition_cells_for_vertical_writing(
         origin,
         spacing,
         reverse,
+        columns_backwards,
     } = placement;
+    let columns_extent = spanned_size(tracks, spacing);
     let mut final_candidates = OofCandidates::new();
     // Zero-height columns still place their cells, as in the measurement pass.
     if !tracks.iter().sum::<f32>().is_finite() {
@@ -5567,10 +5592,15 @@ fn reposition_cells_for_vertical_writing(
         let col_end = col_start
             .saturating_add(usize::from(cell.col_span))
             .min(tracks.len());
-        let y = origin.y
-            + spanned_size(&tracks[..col_start], spacing)
-            + if col_start > 0 { spacing } else { 0.0 };
+        let offset =
+            spanned_size(&tracks[..col_start], spacing) + if col_start > 0 { spacing } else { 0.0 };
         let height = spanned_size(&tracks[col_start..col_end], spacing);
+        let y = origin.y
+            + if columns_backwards {
+                columns_extent - offset - height
+            } else {
+                offset
+            };
         let cell_width = rows.cell_width(cell);
         let row = usize::from(cell.row);
         let cell_x = if reverse {
@@ -6434,6 +6464,17 @@ enum CellBorderSide {
     Left,
 }
 
+impl CellBorderSide {
+    /// The side across the table: left and right swap, top and bottom stay.
+    fn flipped(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            side => side,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct CollapsedBorderCandidate {
     border: ComputedBorder,
@@ -6999,6 +7040,30 @@ fn border_width_with_columns_in_place(
 }
 
 fn compute_collapsed_lines(
+    doc: &Document,
+    state: &BorderState,
+    grid: &TableGrid,
+    index: &CellIndex,
+    table_border: &Edges<f32>,
+    basis: Option<f32>,
+) -> CollapsedLines {
+    if !state.flipped() {
+        return collapsed_lines_in_frame(doc, state, grid, index, table_border, basis);
+    }
+    // The state keeps its sides in the frame of a table whose columns run from
+    // left to right, so the table's own border enters mirrored and the outer
+    // widths leave turned around again.
+    let mirrored = Edges {
+        left: table_border.right,
+        right: table_border.left,
+        ..*table_border
+    };
+    let mut lines = collapsed_lines_in_frame(doc, state, grid, index, &mirrored, basis);
+    std::mem::swap(&mut lines.outer_left, &mut lines.outer_right);
+    lines
+}
+
+fn collapsed_lines_in_frame(
     _doc: &Document,
     state: &BorderState,
     grid: &TableGrid,

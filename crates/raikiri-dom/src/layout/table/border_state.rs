@@ -29,14 +29,35 @@ pub(super) struct BorderState {
     row_slots: HashMap<usize, usize>,
     row_widths: HashMap<usize, Edges<LengthPercentage>>,
     block_metrics: Option<Rc<BlockMetrics>>,
+    /// The state keeps the left and right sides swapped, so that the first
+    /// column of a table whose columns run from right to left is resolved on
+    /// its left, as the first column of any table is. [`Self::physical_paint`]
+    /// and [`Self::entries`] turn the sides around again for the boxes.
+    flipped: bool,
+}
+
+fn mirrored_edges(edges: Edges<LengthPercentage>) -> Edges<LengthPercentage> {
+    Edges {
+        left: edges.right,
+        right: edges.left,
+        ..edges
+    }
+}
+
+fn mirrored_sides(sides: Sides<ComputedBorder>) -> Sides<ComputedBorder> {
+    Sides {
+        left: sides.right,
+        right: sides.left,
+        ..sides
+    }
 }
 
 impl BorderState {
-    pub(super) fn authored(doc: &LayoutSession<'_>, grid: &TableGrid) -> Self {
+    pub(super) fn authored(doc: &LayoutSession<'_>, grid: &TableGrid, flipped: bool) -> Self {
         let cells: Vec<_> = grid
             .cells
             .iter()
-            .map(|cell| Self::authored_cell(doc, cell.node_id))
+            .map(|cell| Self::authored_cell(doc, cell.node_id, flipped))
             .collect();
         let slots = cells
             .iter()
@@ -61,7 +82,17 @@ impl BorderState {
             .collect();
         let row_widths = rows
             .iter()
-            .map(|&(row, _)| (row, doc.table_style(row).border()))
+            .map(|&(row, _)| {
+                let widths = doc.table_style(row).border();
+                (
+                    row,
+                    if flipped {
+                        mirrored_edges(widths)
+                    } else {
+                        widths
+                    },
+                )
+            })
             .collect();
         Self {
             cells,
@@ -70,10 +101,11 @@ impl BorderState {
             row_slots,
             row_widths,
             block_metrics: None,
+            flipped,
         }
     }
 
-    fn authored_cell(doc: &LayoutSession<'_>, node_id: usize) -> CellBorderState {
+    fn authored_cell(doc: &LayoutSession<'_>, node_id: usize, flipped: bool) -> CellBorderState {
         let node = doc
             .ifc_layout_node(node_id)
             .expect("table cell layout view");
@@ -81,11 +113,36 @@ impl BorderState {
             || doc.table_style(node_id).border(),
             |border| super::super::bridge::taffy_border_widths(border, &mut Vec::new()),
         );
+        let (widths, authored) = if flipped {
+            (
+                mirrored_edges(widths),
+                node.computed_border.map(mirrored_sides),
+            )
+        } else {
+            (widths, node.computed_border)
+        };
         CellBorderState {
             node_id,
             widths,
             paint: None,
-            authored: node.computed_border,
+            authored,
+        }
+    }
+
+    /// Whether the state keeps the left and right sides swapped.
+    pub(super) fn flipped(&self) -> bool {
+        self.flipped
+    }
+
+    /// The sides `paint` of this state as the box paints them.
+    pub(super) fn physical_paint(
+        &self,
+        paint: Option<Sides<ComputedBorder>>,
+    ) -> Option<Sides<ComputedBorder>> {
+        if self.flipped {
+            paint.map(mirrored_sides)
+        } else {
+            paint
         }
     }
 
@@ -192,13 +249,19 @@ impl BorderState {
             (cell.paint.or(cell.authored)?, cell.widths)
         } else if let Some(&slot) = self.row_slots.get(&node) {
             (
-                self.rows[slot]
-                    .1
-                    .or(doc.ifc_layout_node(node)?.computed_border)?,
+                self.rows[slot].1.or_else(|| {
+                    let authored = doc.ifc_layout_node(node)?.computed_border;
+                    if self.flipped {
+                        authored.map(mirrored_sides)
+                    } else {
+                        authored
+                    }
+                })?,
                 *self.row_widths.get(&node)?,
             )
         } else {
-            return border_candidate(doc, node, side);
+            let physical = if self.flipped { side.flipped() } else { side };
+            return border_candidate(doc, node, physical);
         };
         let width = match side {
             CellBorderSide::Top => widths.top,
@@ -240,7 +303,7 @@ impl BorderState {
                 .slots
                 .get(&cell.node_id)
                 .expect("reset cell belongs to border state");
-            self.cells[slot] = Self::authored_cell(doc, cell.node_id);
+            self.cells[slot] = Self::authored_cell(doc, cell.node_id, self.flipped);
             if let Some(metrics) = &self.block_metrics {
                 let (widths, paint) = metrics.seeds[slot];
                 self.cells[slot].widths.top = widths.start;
@@ -268,11 +331,16 @@ impl BorderState {
                 .row_slots
                 .get(&row)
                 .expect("resolved row belongs to border state");
-            self.rows[slot].1 = Some(Sides {
+            let suppressed = Sides {
                 top: computed.top.without_line(),
                 right: computed.right.without_line(),
                 bottom: computed.bottom.without_line(),
                 left: computed.left.without_line(),
+            };
+            self.rows[slot].1 = Some(if self.flipped {
+                mirrored_sides(suppressed)
+            } else {
+                suppressed
             });
         }
     }
@@ -286,6 +354,11 @@ impl BorderState {
                 continue;
             }
             let widths = self.used_widths(cell.node_id);
+            let widths = if self.flipped {
+                mirrored_edges(widths)
+            } else {
+                widths
+            };
             let key = doc
                 .nodes
                 .box_key(cell.node_id)
@@ -312,7 +385,7 @@ impl BorderState {
 
     #[cfg(test)]
     pub(super) fn retained(doc: &LayoutSession<'_>, grid: &TableGrid) -> Self {
-        let mut state = Self::authored(doc, grid);
+        let mut state = Self::authored(doc, grid, false);
         for cell in &mut state.cells {
             cell.widths = doc.table_style(cell.node_id).border();
             cell.paint = doc.ifc_layout_node(cell.node_id).unwrap().collapsed_border;
