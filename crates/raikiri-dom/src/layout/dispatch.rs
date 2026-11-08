@@ -1004,7 +1004,7 @@ impl LayoutSession<'_> {
         &mut self,
         node_id: NodeId,
         inputs: LayoutInput,
-        block_ctx: Option<&mut BlockContext<'_>>,
+        mut block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
         self.sync_layout_cache_mutations();
         if let Some((measure, legacy_maximum)) =
@@ -1047,6 +1047,11 @@ impl LayoutSession<'_> {
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
+        if let Some(output) =
+            vertical_ratio_width::layout(self, node_id, inputs, block_ctx.as_deref_mut())
+        {
+            return output;
+        }
         if inputs.run_mode == RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
@@ -1612,6 +1617,7 @@ mod replaced_size;
 mod transposed_axes;
 mod vertical_block;
 mod vertical_oof;
+mod vertical_ratio_width;
 pub(crate) use oof::{
     compute_root_layout_with_content_limits, layout_container_candidates,
     refresh_container_candidates,
