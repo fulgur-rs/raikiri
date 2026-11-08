@@ -704,16 +704,15 @@ fn provisional_grid_row_rooms_restore_the_previous_scope_after_a_panic() {
 /// An item of [`vertical_flex_rects`]: its style and the text it holds.
 type Item<'a> = (&'a str, &'a str);
 
+/// A border-box rect, as `(x, y, width, height)`.
+type Rect = (f32, f32, f32, f32);
+
 /// A box of its own 10px size that does not shrink.
 const BOX: Item<'static> = ("width:10px;height:10px;flex:none", "");
 
 /// The border-box rects of a vertical flex container `css` under a block
 /// `parent_css`, and of its `items`.
-fn vertical_flex_rects(
-    parent_css: &str,
-    css: &str,
-    items: &[Item<'_>],
-) -> ((f32, f32, f32, f32), Vec<(f32, f32, f32, f32)>) {
+fn vertical_flex_rects(parent_css: &str, css: &str, items: &[Item<'_>]) -> (Rect, Vec<Rect>) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
@@ -747,7 +746,7 @@ fn vertical_flex_rects(
 
 /// [`vertical_flex_rects`] under a plain block, with one item of
 /// [`long_text`].
-fn long_vertical_flex_rects(css: &str) -> ((f32, f32, f32, f32), Vec<(f32, f32, f32, f32)>) {
+fn long_vertical_flex_rects(css: &str) -> (Rect, Vec<Rect>) {
     vertical_flex_rects("display:block", css, &[("", &long_text())])
 }
 
