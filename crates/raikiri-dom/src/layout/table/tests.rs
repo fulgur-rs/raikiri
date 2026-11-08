@@ -167,6 +167,7 @@ fn place_cells_in_session(
                 vertical_rows: None,
                 height_is_definite: true,
                 stretch_height_is_resolved: false,
+                mirrored_columns: None,
             },
             &mut oof_candidates,
         )

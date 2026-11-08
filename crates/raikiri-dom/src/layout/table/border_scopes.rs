@@ -5,7 +5,8 @@ fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
     #[cfg(test)]
     let mut applied = 0;
     for cell in &state.cells {
-        tree.table_layout_node_mut(cell.node_id).collapsed_border = cell.paint;
+        tree.table_layout_node_mut(cell.node_id).collapsed_border =
+            state.physical_paint(cell.paint);
         tree.table_layout_node_mut(cell.node_id).flags.set(
             NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS,
             state.block_outer().is_some(),
@@ -17,7 +18,7 @@ fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
         }
     }
     for &(row, paint) in &state.rows {
-        tree.nodes[row].collapsed_border = paint;
+        tree.nodes[row].collapsed_border = state.physical_paint(paint);
         #[cfg(test)]
         {
             applied += 1;

@@ -23,7 +23,7 @@ fn border_state_resolves_without_document_publication() {
     };
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let mut state = BorderState::authored(&tree, &grid);
+    let mut state = BorderState::authored(&tree, &grid, false);
     let before_paint = tree.nodes[right].collapsed_border;
     super::super::resolve_collapsed_borders(&tree, &mut state, &grid, &CellIndex::new(&grid), 0);
     assert_eq!(
@@ -61,7 +61,7 @@ fn border_state_authored_ignores_previous_success_and_outer_width() {
         cells: vec![make_cell(cell, 0, 0, 1, 1, Dimension::auto())],
         col_widths: Vec::new(),
     };
-    let state = BorderState::authored(&tree, &grid);
+    let state = BorderState::authored(&tree, &grid, false);
     assert_eq!(
         state.cell(cell).unwrap().widths.left,
         LengthPercentage::length(2.0)
@@ -95,7 +95,7 @@ fn border_state_resets_to_authored_not_outer_used() {
     let outer =
         OwnedPropertyOverride::length(LengthProperty::BorderLeft, L::Px(17.0), true).unwrap();
     tree.with_overrides(vec![(key, outer)], |tree| {
-        let mut state = BorderState::authored(tree, &grid);
+        let mut state = BorderState::authored(tree, &grid, false);
         let winner = collapsed_candidate(BorderStyle::Double, 9.0, CssColor::BLACK);
         state.set_side(
             cell,
@@ -167,7 +167,7 @@ fn border_state_remaining_keeps_excluded_cells() {
     };
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let mut state = BorderState::authored(&tree, &grid);
+    let mut state = BorderState::authored(&tree, &grid, false);
     super::super::resolve_collapsed_borders(&tree, &mut state, &grid, &CellIndex::new(&grid), 0);
     let excluded = state.cell(left).unwrap().clone();
     assert_eq!(excluded.widths.right, LengthPercentage::length(9.0));
@@ -196,7 +196,7 @@ fn border_state_mixes_width_without_replacing_paint() {
     };
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let mut in_place = BorderState::authored(&tree, &grid);
+    let mut in_place = BorderState::authored(&tree, &grid, false);
     let mut remaining = in_place.clone();
     let first = collapsed_candidate(BorderStyle::Solid, 11.0, CssColor::BLACK);
     let second = collapsed_candidate(BorderStyle::Double, 29.0, CssColor::BLACK);
@@ -249,7 +249,7 @@ fn border_state_missing_computed_border_keeps_retained_width() {
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     // The cell has a width but no computed border to contribute as a candidate.
     tree.nodes[cell].computed_border = None;
-    let mut state = BorderState::authored(&tree, &grid);
+    let mut state = BorderState::authored(&tree, &grid, false);
     super::super::resolve_collapsed_borders(&tree, &mut state, &grid, &CellIndex::new(&grid), 0);
     assert_eq!(
         state.cell(cell).unwrap().widths.left,

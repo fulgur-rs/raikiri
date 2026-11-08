@@ -125,8 +125,14 @@ pub(super) fn prepared_borders(
         return Rc::clone(prepared);
     }
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
-    let mut borders = collapse.then(|| BorderState::authored(doc, grid));
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
+    let mut borders = collapse.then(|| {
+        BorderState::authored(
+            doc,
+            grid,
+            !vertical_writing && columns_run_backwards(doc, table_idx),
+        )
+    });
     let cell_index =
         (collapse && !grid.rows.is_empty() && grid.n_cols > 0).then(|| CellIndex::new(grid));
     let collapsed_rows = collapsed_rows(doc, grid);

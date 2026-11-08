@@ -176,6 +176,7 @@ fn an_invalid_vertical_track_keeps_pending_candidates() {
                     origin: Point::ZERO,
                     spacing: 0.0,
                     reverse: true,
+                    columns_backwards: false,
                 },
                 vec![(absolute, pending)],
             );
