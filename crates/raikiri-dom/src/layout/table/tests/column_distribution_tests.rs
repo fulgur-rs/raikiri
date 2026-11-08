@@ -448,3 +448,44 @@ fn a_spanning_maximum_is_shared_over_the_maximums_before_the_minimum_raised_them
         ],
     );
 }
+
+#[test]
+fn empty_open_columns_share_a_spanning_percentage_equally() {
+    // Columns with no content have no max-content width to share the cell's 50% by,
+    // so each gets 25% and the 40px of text makes the table 80px wide.
+    let laid = lay_out(
+        "display:table;border-spacing:0",
+        &[],
+        &[&[spanning("AAAA", 2, "50%")], &[cell("", ""), cell("", "")]],
+    );
+    laid.assert_close(
+        (0.0, 0.0, 80.0, 10.0),
+        &[
+            (0.0, 0.0, 80.0, 10.0),
+            (0.0, 10.0, 40.0, 0.0),
+            (40.0, 10.0, 40.0, 0.0),
+        ],
+    );
+}
+
+#[test]
+fn a_spanning_cell_does_not_widen_columns_that_state_a_length() {
+    // The spanning text wants 200px, but a cell that states no width cannot grow
+    // columns that do: the table stays at the 100px of the text's longest word.
+    let laid = lay_out(
+        "display:table;border-spacing:0",
+        &[],
+        &[
+            &[cell("A", "30px"), cell("A A", "30px")],
+            &[spanning("AAAAAAAAAA AAAAAAAAA", 2, "")],
+        ],
+    );
+    laid.assert_close(
+        (0.0, 0.0, 100.0, 30.0),
+        &[
+            (0.0, 0.0, 50.0, 10.0),
+            (50.0, 0.0, 50.0, 10.0),
+            (0.0, 10.0, 100.0, 20.0),
+        ],
+    );
+}
