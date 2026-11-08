@@ -345,6 +345,16 @@ const SHRINK_TO_FIT: &[Case] = &[
             ("a", [83.0, 2.0, 34.0, 14.0]),
         ],
     },
+    Case {
+        label: "e5_ig_fixed_cell_wider_than_table",
+        markup: r##"<div id=g style="display:inline-grid"><table id=t style="table-layout:fixed;width:20px"><colgroup></colgroup><tr><td id=a style="padding:2px;width:50px">BBB</td></tr></table><div id=x style="width:20px">xx</div></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 58.0, 28.0]),
+            ("t", [0.0, 0.0, 58.0, 18.0]),
+            ("a", [2.0, 2.0, 54.0, 14.0]),
+            ("x", [0.0, 18.0, 20.0, 10.0]),
+        ],
+    },
 ];
 
 #[test]
@@ -538,6 +548,8 @@ fn a_table_in_a_flex_row_shrinks_to_its_columns() {
 }
 
 /// Tables whose stated width is what they come to, and the placement of a table that does not fill its area, keep their sizes.
+/// A fixed table with a collapsed column shares its stated width among all its columns before the collapsed one is removed, so it
+/// stays as wide as it states in the sizes its container gathers.
 const SAME_AS_BEFORE: &[Case] = &[
     Case {
         label: "a5_block_w20",
@@ -711,6 +723,50 @@ const SAME_AS_BEFORE: &[Case] = &[
             ("g", [0.0, 0.0, 20.0, 38.0]),
             ("t", [0.0, 0.0, 20.0, 38.0]),
             ("a", [2.0, 2.0, 16.0, 34.0]),
+        ],
+    },
+    Case {
+        label: "e1_ig_fixed_collapsed_column_w200",
+        markup: r##"<div id=g style="display:inline-grid"><table id=t style="table-layout:fixed;width:200px"><colgroup><col><col style="visibility:collapse"></colgroup><tr><td id=a style="padding:2px">BBB</td><td id=b style="padding:2px">CCC</td></tr></table><div id=x style="width:20px">xx</div></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 200.0, 28.0]),
+            ("t", [0.0, 0.0, 101.0, 18.0]),
+            ("a", [2.0, 2.0, 97.0, 14.0]),
+            ("b", [99.0, 2.0, 0.0, 14.0]),
+            ("x", [0.0, 18.0, 20.0, 10.0]),
+        ],
+    },
+    Case {
+        label: "e2_ig_fixed_collapsed_column_w20",
+        markup: r##"<div id=g style="display:inline-grid"><table id=t style="table-layout:fixed;width:20px"><colgroup><col><col style="visibility:collapse"></colgroup><tr><td id=a style="padding:2px">BBB</td><td id=b style="padding:2px">CCC</td></tr></table><div id=x style="width:20px">xx</div></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 20.0, 28.0]),
+            ("t", [0.0, 0.0, 11.0, 18.0]),
+            ("a", [2.0, 2.0, 7.0, 14.0]),
+            ("b", [9.0, 2.0, 0.0, 14.0]),
+            ("x", [0.0, 18.0, 20.0, 10.0]),
+        ],
+    },
+    Case {
+        label: "e3_grid_fixed_collapsed_column_w200",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:auto auto;width:300px"><table id=t style="table-layout:fixed;width:200px"><colgroup><col><col style="visibility:collapse"></colgroup><tr><td id=a style="padding:2px">BBB</td><td id=b style="padding:2px">CCC</td></tr></table><div id=x style="width:20px">xx</div></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 101.0, 18.0]),
+            ("a", [2.0, 2.0, 97.0, 14.0]),
+            ("b", [99.0, 2.0, 0.0, 14.0]),
+            ("x", [240.0, 0.0, 20.0, 18.0]),
+        ],
+    },
+    Case {
+        label: "e4_grid_fixed_collapsed_column_w20",
+        markup: r##"<div id=g style="display:grid;grid-template-columns:auto auto;width:300px"><table id=t style="table-layout:fixed;width:20px"><colgroup><col><col style="visibility:collapse"></colgroup><tr><td id=a style="padding:2px">BBB</td><td id=b style="padding:2px">CCC</td></tr></table><div id=x style="width:20px">xx</div></div>"##,
+        boxes: &[
+            ("g", [0.0, 0.0, 300.0, 18.0]),
+            ("t", [0.0, 0.0, 11.0, 18.0]),
+            ("a", [2.0, 2.0, 7.0, 14.0]),
+            ("b", [9.0, 2.0, 0.0, 14.0]),
+            ("x", [150.0, 0.0, 20.0, 18.0]),
         ],
     },
 ];

@@ -2999,6 +2999,15 @@ fn collect_col_widths(
     Ok(out)
 }
 
+/// Whether `visibility: collapse` removes a column of the table `table_idx`.
+pub(crate) fn has_collapsed_column(doc: &Document, table_idx: usize) -> bool {
+    let mut collapsed = false;
+    each_column_run(doc, table_idx, |_, run_collapsed, _| {
+        collapsed |= run_collapsed
+    });
+    collapsed
+}
+
 /// Columns removed by `visibility: collapse` on the `<col>` or its
 /// `<colgroup>` (CSS Tables 3, "Visibility-collapse rendering"), one entry
 /// per grid column.

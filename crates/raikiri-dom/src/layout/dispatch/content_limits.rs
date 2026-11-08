@@ -2155,11 +2155,17 @@ fn px_length(property: LengthProperty, size: f32) -> OwnedPropertyOverride {
 /// the item along the table's inline axis by that width, in the sizes it
 /// gathers before it lays the table out, so the table is not asked what width
 /// it comes to.
+///
+/// A fixed table with a collapsed column shares the width it states among all
+/// its columns before the collapsed ones are removed, so the width it comes to
+/// is not one it could be given as its `width`: the stated width stays.
 fn stated_table_item_width(tree: &LayoutSession<'_>, container: usize, idx: usize) -> Option<f32> {
     if !is_table_content_limits(tree, idx)
         || is_oof_box(tree, idx)
         || tree.has_vertical_writing_mode(idx)
         || tree.has_vertical_writing_mode(container)
+        || (tree.nodes[idx].table_layout == TableLayoutValue::Fixed
+            && crate::layout::table::has_collapsed_column(tree, idx))
     {
         return None;
     }
