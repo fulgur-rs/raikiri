@@ -1044,6 +1044,7 @@ impl LayoutSession<'_> {
             };
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let inputs = orthogonal_flow::with_grid_item_room(self, usize::from(node_id), inputs);
+        let inputs = with_container_page_room(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
@@ -3427,6 +3428,8 @@ fn compute_inline_block_shrink_wrap(
                 },
                 ..inputs
             };
+            let intrinsic_inputs =
+                with_container_page_room(tree, usize::from(node_id), intrinsic_inputs);
             if cache_probes && let Some(cached) = tree.cached_width(node_id, &intrinsic_inputs) {
                 return cached;
             }
@@ -3865,6 +3868,31 @@ fn center_absolute_children_in_block_axis(
     }
 }
 
+/// `inputs` for the flex or grid container `idx` with the room it fits its
+/// lines in as the available height, when it runs on the axes of a vertical
+/// writing mode in a horizontal flow (see [`orthogonal_flow::with_page_room`]).
+/// A container in a multicol container or a table runs on horizontal axes.
+///
+/// Dispatch applies this before looking in the layout caches, since the room
+/// comes from the parent size and the table cell around the container, which
+/// the caches do not key on; the container layouts apply it again for callers
+/// that reach them directly. Both are no-ops once the height is offered.
+fn with_container_page_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: LayoutInput,
+) -> LayoutInput {
+    let container = matches!(
+        tree.nodes[idx].formatting_context,
+        FormattingContext::Flex | FormattingContext::Grid
+    );
+    if container && block_right_to_left(tree, idx).is_some() {
+        orthogonal_flow::with_page_room(tree, idx, inputs)
+    } else {
+        inputs
+    }
+}
+
 /// Lay out the flex container `node_id` with taffy's flexbox algorithm,
 /// recording the content-box width its items' percentage edges resolve
 /// against while taffy measures them without one; see
@@ -3878,7 +3906,7 @@ pub(crate) fn flex_layout(
     // its lines in the room; one in a multicol container or a table runs on
     // horizontal axes.
     let inputs = if block_right_to_left(tree, usize::from(node_id)).is_some() {
-        let inputs = orthogonal_flow::with_page_room(tree, usize::from(node_id), inputs);
+        let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
         with_orthogonal_fit_content_height(tree, node_id, inputs)
     } else {
         inputs
@@ -4687,6 +4715,7 @@ fn with_clamped_keyword_width(
 /// A container with a preferred aspect ratio and an `auto` height is given the
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
     content_limits::with_vertical_ratio_stated_size_clamp(
         tree,
         node_id,
