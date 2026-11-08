@@ -504,6 +504,26 @@ pub(super) fn align_grid(
     union_of(columns, rows)
 }
 
+/// The offset from the left edge of the border box of `child`, an item of the
+/// vertical grid container `idx` that runs against its block direction, to
+/// the baseline of the item's first line: the one the container aligns it by,
+/// synthesized from the border box when the item has none.
+pub(super) fn opposed_baseline_from_left(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    child: usize,
+) -> f32 {
+    let width = tree.nodes[child].layout.size.width;
+    let offset = tree.nodes[child]
+        .own_first_baseline
+        .unwrap_or_else(|| Container::opposed(tree, idx).synthesized_offset(tree, child, width));
+    if block_right_to_left(tree, child) == Some(true) {
+        width - offset
+    } else {
+        offset
+    }
+}
+
 /// The members of the grid container `idx` for the one `container` pass: the
 /// items that align along the columns, or, with the `block` axes of the
 /// container given, along the rows.
