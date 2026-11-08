@@ -932,6 +932,15 @@ fn multicol_has_only_paragraph_children(
         if lineless::is_sized_leaf(tree, child) || lineless::is_margin_only_block(tree, child) {
             return insets_are_a_relative_offset(tree, child);
         }
+        // A wrapper whose paragraphs join the flow of the columns counts as
+        // the paragraphs it holds. A chain of wrappers around one paragraph
+        // keeps the strategies of such chains.
+        if let Some(count) =
+            paragraph_group::wrapped_paragraphs(tree, child).filter(|&count| count > 1)
+        {
+            paragraphs += count;
+            return true;
+        }
         // A box of lines with a height of its own goes whole to a column, so
         // it needs the planner as a box of lines does.
         if is_sized_paragraph(tree, child) {
@@ -969,7 +978,8 @@ fn multicol_has_only_paragraph_children(
             && style.min_size().height.is_auto()
             && style.max_size().height.is_auto()
     });
-    plain && paragraphs > 0 && (several || decorated || balances)
+    // The paragraphs of a wrapper count as the container's own.
+    plain && paragraphs > 0 && (several || paragraphs > 1 || decorated || balances)
 }
 
 /// Whether the insets of `child` can be left to the painter once the columns
@@ -1191,7 +1201,10 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
         let painted = node.ifc.is_none() && node.paints_whole_box_effects;
         if clips
             || painted
-            || node.display() != DisplayValue::Block
+            // The paragraph at the end may be a list item, whose marker sits on
+            // its first line.
+            || !(node.display() == DisplayValue::Block
+                || node.ifc.is_some() && node.display() == DisplayValue::ListItem)
             || style.float().is_floated()
             || margin.top != zero_margin
             || margin.right != zero_margin
@@ -1327,6 +1340,168 @@ fn relayout_nested_multicol_children(
         fragment.rect.height = fragment_height;
     } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
     used
+}
+
+/// Place the boxes inside the wrapper that the `entry`th child of `group`
+/// is, where the columns of `context` put them: each relative to the wrapper
+/// that holds it, whose box starts with its first box. Returns the columns
+/// their lines reach.
+fn place_wrapped_boxes(
+    tree: &mut LayoutSession<'_>,
+    group: &paragraph_group::Group,
+    entry: usize,
+    context: FragmentationContext,
+) -> Vec<usize> {
+    let mut columns = Vec::new();
+    for wrapped in group.wrapped(entry) {
+        let (placement, parent) = (&wrapped.placement, &wrapped.parent);
+        let parent_layout = tree.nodes[wrapped.parent_node].layout;
+        let mut layout = tree.nodes[wrapped.node].layout;
+        // The box stands at the start of the wrapper's content box, which
+        // starts at the left of the wrapper's first column, in its own.
+        layout.location = Point {
+            x: parent_layout.border.left
+                + parent_layout.padding.left
+                + layout.margin.left
+                + context.column_offset_x(placement.first_column)
+                - context.column_offset_x(parent.first_column),
+            y: placement.first_y - parent.first_y,
+        };
+        layout.size.height = placement.first_height;
+        tree.set_unrounded_layout(NodeId::from(wrapped.node), &layout);
+        leave_block_offset_to_painter(tree, wrapped.node);
+        if let Some(root) = tree.nodes[wrapped.node].ifc.as_mut() {
+            root.multicol_fragments = Some(placement.fragments.clone());
+            root.multicol_fragment_origins_recorded = true;
+        }
+        columns.extend(
+            placement
+                .fragments
+                .iter()
+                .filter(|range| range.line_start < range.line_end)
+                .map(|range| range.fragmentainer),
+        );
+        let column_context = context.in_column(
+            placement.first_column,
+            context.origin_x + context.column_offset_x(placement.first_column),
+            context.origin_y + placement.first_y - layout.margin.top,
+        );
+        refresh_paragraph_boxes(
+            tree,
+            wrapped.node,
+            column_context,
+            FlexFloatChain::of_ancestors(tree, wrapped.node),
+        );
+    }
+    columns
+}
+
+/// Record the pieces of the boxes inside the wrapper that the `entry`th child
+/// of `group` is, whose fragment is `wrapper_fragment`: a fragment for each
+/// wrapper inside it, and one for each piece of a paragraph, under the
+/// fragment of the wrapper that holds it. `None` when the fragments run out.
+fn record_wrapped_fragments(
+    tree: &mut LayoutSession<'_>,
+    group: &paragraph_group::Group,
+    entry: usize,
+    wrapper_fragment: usize,
+    context: FragmentationContext,
+) -> Option<()> {
+    let mut fragments = HashMap::new();
+    fragments.insert(
+        tree.fragment_tree.fragments[wrapper_fragment].node_id,
+        wrapper_fragment,
+    );
+    for wrapped in group.wrapped(entry) {
+        let parent_fragment = *fragments.get(&wrapped.parent_node)?;
+        let layout = tree.nodes[wrapped.node].layout;
+        let Some(lines) = tree.nodes[wrapped.node]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .filter(|_| !wrapped.placement.fragments.is_empty())
+        else {
+            let fragment = tree
+                .fragment_tree
+                .try_push(crate::fragment::LayoutFragment {
+                    node_id: wrapped.node,
+                    parent: Some(parent_fragment),
+                    fragmentainer: wrapped.placement.first_column,
+                    rect: crate::fragment::FragmentRect {
+                        x: layout.location.x,
+                        y: layout.location.y,
+                        width: layout.size.width,
+                        height: layout.size.height,
+                    },
+                    fragmentainer_clip: None,
+                    fragment_index: 0,
+                    fragment_count: 1,
+                    line_start: None,
+                    line_end: None,
+                })?;
+            fragments.insert(wrapped.node, fragment);
+            continue;
+        };
+        let extents: Vec<(f32, f32)> = lines
+            .lines
+            .iter()
+            .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
+            .collect();
+        let count = wrapped.placement.fragments.len();
+        // The top of the columns in the space of the wrapper's fragment.
+        let columns_top = -wrapped.parent.first_y;
+        for (index, range) in wrapped.placement.fragments.iter().enumerate() {
+            let y = layout.location.y + range.y;
+            let last = range.line_end >= extents.len();
+            let height = if last {
+                let first = extents.get(range.line_start).map_or(0.0, |extent| extent.0);
+                extents
+                    .get(range.line_end.saturating_sub(1))
+                    .map_or(0.0, |extent| extent.1)
+                    - first
+            } else {
+                (columns_top + group.height - y).max(0.0)
+            };
+            let rect = crate::fragment::FragmentRect {
+                x: layout.location.x + range.x,
+                y,
+                width: layout.size.width,
+                height,
+            };
+            // The clip cuts a piece at the block edges of its column, so the
+            // lines of its neighbours stay out, and leaves the inline axis
+            // open. The edge where the paragraph begins or ends has no
+            // neighbour behind it.
+            let clip = (count > 1).then(|| {
+                let reach = paragraph_group::BLOCK_INK_REACH;
+                let top = if range.line_start == 0 {
+                    columns_top - reach
+                } else {
+                    columns_top
+                };
+                let bottom = columns_top + group.height + if last { reach } else { 0.0 };
+                paragraph_group::inline_open_clip(crate::fragment::FragmentRect {
+                    x: rect.x,
+                    y: top,
+                    width: context.column_width,
+                    height: bottom - top,
+                })
+            });
+            tree.fragment_tree
+                .try_push(crate::fragment::LayoutFragment {
+                    node_id: wrapped.node,
+                    parent: Some(parent_fragment),
+                    fragmentainer: range.fragmentainer,
+                    rect,
+                    fragmentainer_clip: clip,
+                    fragment_index: index,
+                    fragment_count: count,
+                    line_start: Some(range.line_start),
+                    line_end: Some(range.line_end),
+                })?;
+        }
+    }
+    Some(())
 }
 
 /// The only paragraph of a balanced column container, with the line ranges
@@ -1705,7 +1880,8 @@ fn layout_column_group(
             };
         let planned = group_balance
             .as_ref()
-            .and_then(|group| group.placements[local_order].as_ref());
+            .and_then(|group| group.placement_of(local_order));
+        let planned = planned.as_ref();
         if let Some(placement) = planned {
             column = placement.first_column;
             cursor = placement.first_y - margin_top;
@@ -1900,6 +2076,9 @@ fn layout_column_group(
                 column_context,
                 FlexFloatChain::of_ancestors(tree, child),
             );
+            if let Some(group) = &group_balance {
+                occupied.extend(place_wrapped_boxes(tree, group, local_order, context));
+            }
         } else {
             // A block measured as one item of the balance stays whole in its
             // column, so no line of it may go to a later column.
@@ -1951,6 +2130,23 @@ fn layout_column_group(
             return fallback_height;
         };
         tree.fragment_tree.reparent_roots(child, child_fragment);
+        // The boxes inside a wrapper whose boxes joined the flow have their
+        // pieces in the columns the flow gave them.
+        let wrapped = match group_balance.as_ref() {
+            Some(group)
+                if group.flow.is_some()
+                    && planned.is_some()
+                    && paragraph_group::is_flow_wrapper(tree, child) =>
+            {
+                if record_wrapped_fragments(tree, group, local_order, child_fragment, context)
+                    .is_none()
+                {
+                    return fallback_height;
+                }
+                true
+            }
+            _ => false,
+        };
         if let Some(plan) = &continuation {
             if apply_nested_continuation(tree, plan).is_none() {
                 return fallback_height;
@@ -1985,14 +2181,15 @@ fn layout_column_group(
             origin_y: content_origin.y,
             ..record_context
         };
-        if record_nested_ifc_box_fragments(
-            tree,
-            child,
-            child_fragment,
-            record_context,
-            planned.is_some(),
-        )
-        .is_none()
+        if !wrapped
+            && record_nested_ifc_box_fragments(
+                tree,
+                child,
+                child_fragment,
+                record_context,
+                planned.is_some(),
+            )
+            .is_none()
         {
             return fallback_height;
         }
