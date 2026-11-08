@@ -1804,8 +1804,11 @@ fn compute_ifc_root(
     let stretched_height = inputs.known_dimensions.height.is_some()
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_height(&style, inputs.parent_size.height));
+    // The width taffy gives an out-of-flow box that shrinks to fit is the
+    // width its content took, which fixes nothing for the children.
     let definite_width = (inputs.known_dimensions.width.is_some()
-        && inputs.known_dimensions_are_definite.width)
+        && inputs.known_dimensions_are_definite.width
+        && !(vertical_paragraph && vertical_oof::has_content_decided_width(tree, idx)))
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_width(&style, inputs.parent_size.width));
     let writing_mode = tree.nodes[idx]
@@ -2433,13 +2436,14 @@ fn measure_ifc_root(
         let percent_height = measure.definite_height.filter(|_| !vertical);
         // A vertical paragraph's boxes are measured along their heights, and
         // their percentage widths refer to the physical width the root has
-        // when it is known or stretched.
+        // when it is known or stretched, and not when its content decided
+        // that width.
         let physical_width = known_width
             .or(match available.width {
                 AvailableSpace::Definite(size) if measure.stretched_width => Some(size),
                 _ => None,
             })
-            .filter(|_| vertical);
+            .filter(|_| vertical && measure.definite_width);
         crate::layout::ifc::boxes::intrinsics_of_boxes(
             tree,
             idx,

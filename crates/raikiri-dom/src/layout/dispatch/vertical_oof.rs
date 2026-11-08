@@ -27,7 +27,7 @@
 
 use crate::layout::protocol::{AvailableSpace, LayoutInput};
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::{MaybeResolve, Position, ResolveOrZero};
+use raikiri_layout_style::values::{ExpandedDimension, MaybeResolve, Position, ResolveOrZero};
 
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
@@ -48,6 +48,27 @@ pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
 
 fn is_absolute(tree: &Document, node: usize) -> bool {
     tree.nodes[node].layout_position() == Position::Absolute && !tree.nodes[node].is_display_none()
+}
+
+/// Whether the width of the absolutely positioned box `node` comes from its
+/// content: `width` is `auto` or an intrinsic keyword, and `left` or `right` is
+/// `auto`, so the box shrinks to fit (CSS 2.1 §10.3.7). The width of a vertical
+/// box is its block size, and the percentage widths of its children read as
+/// `auto` until something other than the content fixes it.
+pub(super) fn has_content_decided_width(tree: &LayoutSession<'_>, node: usize) -> bool {
+    if !is_absolute(tree, node) {
+        return false;
+    }
+    let style = tree.physical_style(node);
+    let inset = style.inset();
+    (inset.left.is_auto() || inset.right.is_auto())
+        && matches!(
+            style.size().width.expand(),
+            ExpandedDimension::Auto
+                | ExpandedDimension::MinContent
+                | ExpandedDimension::MaxContent
+                | ExpandedDimension::FitContent
+        )
 }
 
 /// The physical height of the padding box `node` would fill as a vertical
