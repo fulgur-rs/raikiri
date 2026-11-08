@@ -12,6 +12,11 @@ pub(super) fn preferred_height(doc: &LayoutSession<'_>, cell: &CellPlacement, wi
         .max(numeric_minimum_height(doc, cell.node_id, width).unwrap_or(0.0))
 }
 
+/// Whether the cell states a height of its own, which is its inline size.
+pub(super) fn states_height(doc: &LayoutSession<'_>, cell: &CellPlacement) -> bool {
+    resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some()
+}
+
 /// Minimum tracks, using local preferences before each spanning cell settles.
 pub(super) fn minimum_tracks(
     doc: &mut LayoutSession<'_>,

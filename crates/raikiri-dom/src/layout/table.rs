@@ -1999,9 +1999,12 @@ fn compute_table_layout_checked(
                 .as_ref()
                 .expect("vertical rows measured")
                 .natural();
-            let mut tracks = vertical_column_tracks(&grid, border_spacing.1, |cell| {
-                vertical_columns::preferred_height(doc, cell, rows.cell_width(cell))
-            });
+            let mut tracks = vertical_column_tracks(
+                &grid,
+                border_spacing.1,
+                |cell| vertical_columns::preferred_height(doc, cell, rows.cell_width(cell)),
+                |cell| vertical_columns::states_height(doc, cell),
+            );
             let spacing_total = border_spacing.1 * (columns + 1) as f32;
             // The room the rows were given has the spacing of every visible
             // row taken out of it; the columns stack along that height with
@@ -5678,9 +5681,14 @@ fn vertical_column_tracks(
     grid: &TableGrid,
     spacing: f32,
     mut height: impl FnMut(&CellPlacement) -> f32,
+    states_height: impl Fn(&CellPlacement) -> bool,
 ) -> Vec<f32> {
     let columns = usize::from(grid.n_cols);
     let mut tracks = vec![0.0f32; columns];
+    // A column whose own cell states a height keeps it: a spanning cell asks
+    // the other columns for what it lacks first.
+    let mut fixed = vec![false; columns];
+    let mut own = vec![false; columns];
     let mut spanning = Vec::new();
     for cell in &grid.cells {
         let start = usize::from(cell.col_start).min(columns);
@@ -5692,16 +5700,72 @@ fn vertical_column_tracks(
             spanning.push((start..end, height));
         } else if end > start {
             tracks[start] = f32_max_compat(tracks[start], height);
+            fixed[start] |= states_height(cell);
+            own[start] = true;
         }
     }
+    if spanning.is_empty() {
+        return tracks;
+    }
+    let merged = columns_merged_into_neighbours(&own, spanning.iter().map(|(span, _)| span));
     spanning.sort_by_key(|(span, _)| (span.len(), span.start));
     for (span, height) in spanning {
         let current = spanned_size(&tracks[span.clone()], spacing);
         if height > current {
-            grow_tracks(&mut tracks[span], height - current);
+            let members: Vec<usize> = span.filter(|&column| !merged[column]).collect();
+            share_column_deficit(&mut tracks, &fixed, &members, height - current);
         }
     }
     tracks
+}
+
+/// The columns that take no part in sharing out what a spanning cell lacks
+/// because they have no cell of their own and no spanning cell starts or ends
+/// beside them: Chromium merges such a column into the column next to it, so
+/// the one it joins takes its share. Of a run of such columns with no cell
+/// anywhere in it, the first stands for all.
+fn columns_merged_into_neighbours<'a>(
+    own: &[bool],
+    spans: impl Iterator<Item = &'a std::ops::Range<usize>>,
+) -> Vec<bool> {
+    let columns = own.len();
+    // The runs of columns between the places a spanning cell starts or ends.
+    let mut cuts = std::collections::BTreeSet::from([0, columns]);
+    for span in spans {
+        cuts.insert(span.start);
+        cuts.insert(span.end);
+    }
+    let cuts: Vec<usize> = cuts.into_iter().collect();
+    let mut merged = vec![false; columns];
+    for run in cuts.windows(2) {
+        let (start, end) = (run[0], run[1]);
+        let anchor = (start..end).find(|&column| own[column]).unwrap_or(start);
+        for column in start..end {
+            merged[column] = column != anchor && !own[column];
+        }
+    }
+    merged
+}
+
+/// Shares the height a spanning cell lacks among the `members` of the columns
+/// it spans, as Chromium shares inline size: the columns that state no height
+/// (`fixed` is false) take it first, in proportion to their heights, or
+/// equally when none has any, and only without such columns do all of them
+/// take it in proportion to theirs. The rows of a table share a spanning
+/// cell's height by another rule (`share_span_deficit`), as Chromium
+/// distributes block size apart from inline size.
+fn share_column_deficit(tracks: &mut [f32], fixed: &[bool], members: &[usize], extra: f32) {
+    let free: Vec<usize> = members
+        .iter()
+        .copied()
+        .filter(|&column| !fixed[column])
+        .collect();
+    let takers = if free.is_empty() { members } else { &free };
+    let mut heights: Vec<f32> = takers.iter().map(|&column| tracks[column]).collect();
+    grow_tracks(&mut heights, extra);
+    for (&column, height) in takers.iter().zip(heights) {
+        tracks[column] = height;
+    }
 }
 
 /// Adds `extra` to `tracks` in proportion to their sizes, or equally when none
