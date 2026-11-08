@@ -4760,21 +4760,29 @@ fn is_plain_table_box(document: &Document, node_id: usize) -> bool {
 }
 
 /// Whether `caption` is a caption of a block table that stacks in plain block
-/// flow up to `body_id`, outside any table cell, flex or grid item, float and
-/// out-of-flow box: its lines can be broken between at a page end like those
-/// of a paragraph, and the rows and captions after it follow the moved lines.
-fn is_flow_table_caption(
+/// flow up to `body_id`, outside any table cell, float and out-of-flow box,
+/// and in no flex or grid item but one alone in its container: its lines, and
+/// those of the blocks inside it, can be broken between at a page end like
+/// those of a paragraph, and the rows and captions after it follow the moved
+/// lines.
+pub(super) fn is_flow_table_caption(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     caption: usize,
     body_id: usize,
 ) -> bool {
-    document.nodes[caption].display() == DisplayValue::TableCaption
-        && !document.nodes[caption].used_writing_mode.is_vertical()
-        && document.layout_parent_of(caption).is_some_and(|table| {
-            is_plain_table_box(document, table)
-                && placed_in_block_flow(document, cascade, table, body_id)
-        })
+    caption_table(document, caption)
+        .is_some_and(|table| placed_in_flow_to_body(document, cascade, table, body_id, true))
+}
+
+/// The block table of `caption` when `caption` is a horizontal table caption
+/// of a table that [`is_plain_table_box`] takes.
+fn caption_table(document: &Document, caption: usize) -> Option<usize> {
+    (document.nodes[caption].display() == DisplayValue::TableCaption
+        && !document.nodes[caption].used_writing_mode.is_vertical())
+    .then(|| document.layout_parent_of(caption))
+    .flatten()
+    .filter(|&table| is_plain_table_box(document, table))
 }
 
 /// A table row group with `break-inside: avoid` starts on the next page
@@ -11890,6 +11898,18 @@ fn placed_in_flow_to_body(
                 PositionValue::Absolute | PositionValue::Fixed
             );
         walk.advance(document);
+        // A caption of a block table stacks its children in block order, and
+        // the rows after it follow its growth: the walk goes on from the table.
+        if let Some(table) = walk.current().filter(|_| !placed_apart).and_then(|parent| {
+            caption_table(document, parent).filter(|_| {
+                moves_later_siblings(document, parent)
+                    && holds_moved_lines(document, cascade, parent)
+            })
+        }) {
+            child = table;
+            walk = AncestorCursor::new(Some(table), ParentRelation::Layout);
+            continue;
+        }
         match walk.current() {
             Some(parent) if !placed_apart && parent == body_id => return true,
             // A `display: contents` element has no box; its parent lays the
@@ -12085,6 +12105,7 @@ fn moves_later_siblings(document: &Document, parent: usize) -> bool {
             | DisplayValue::FlowRoot
             | DisplayValue::ListItem
             | DisplayValue::InlineBlock
+            | DisplayValue::TableCaption
     ) && document.nodes[parent].multicol.is_none()
         && document
             .ifc_layout_node(parent)
