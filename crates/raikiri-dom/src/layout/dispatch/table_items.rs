@@ -16,10 +16,10 @@ use crate::layout::taffy_adapter::algorithms::{
     FlexReplayCall, baseline_lines, flex_baseline_source, wrap_reverse,
 };
 use crate::node::FormattingContext;
-use raikiri_layout_geometry::{Edges, Point, Size};
+use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_layout_style::values::{
-    AlignContent, AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, Direction, Position,
-    ResolveOrZero,
+    AlignContent, AlignContentKeyword, AlignItems, AlignItemsKeyword, AlignmentSafety, Direction,
+    Position, ResolveOrZero,
 };
 use rustc_hash::FxHashMap;
 
@@ -221,6 +221,9 @@ fn normalize_grid(
     let align_items = parent.align_items();
     let justify_items = parent.justify_items();
     let mut shifts = Vec::new();
+    if !vertical_parent {
+        settle_table_widths(tree, idx, &items, &sizes, &mut shifts);
+    }
     for &child in &items {
         let Some(measured) = sizes.get(&child) else {
             continue;
@@ -269,6 +272,136 @@ fn normalize_grid(
     }
     finish(tree, idx, inputs, &items, &shifts, output);
 }
+
+/// Give the tables among the items of a horizontal grid the widths they were
+/// laid out at.
+///
+/// Taffy sizes a grid item by the size it assigns, which a table answers with
+/// its own: the stretch to the whole grid area and the `width`, `min-width`
+/// and `max-width` it clamps by do not know that a keyword limit stands for
+/// the columns' widths, nor that the table never gets narrower than its
+/// narrowest columns. The item is then aligned in its area at the width the
+/// table reports, where the alignment may fall back to the start edge (`safe`)
+/// or the auto margins may have no room left, depending on that width.
+fn settle_table_widths(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    items: &[usize],
+    sizes: &HashMap<usize, Measured>,
+    shifts: &mut Vec<(usize, Point<f32>)>,
+) {
+    let parent = tree.query_style(idx, ReadRole::GridContainer);
+    let parent_direction = parent.direction();
+    let rtl = parent_direction == Direction::Rtl;
+    let justify_items = parent.justify_items();
+    // The width of the grid area of each item, in the order of the items.
+    let areas: Vec<Option<f32>> = {
+        let grid = tree.context.grid_layout_info.get(&idx);
+        (0..items.len())
+            .map(|index| {
+                grid.and_then(|grid| grid.item_inline_range(index))
+                    .map(|(start, end)| end - start)
+            })
+            .collect()
+    };
+    for (&child, area) in items.iter().zip(areas) {
+        let (Some(measured), Some(area)) = (sizes.get(&child), area) else {
+            continue;
+        };
+        if !crate::layout::table::item_sized_by_columns(tree, child) {
+            continue;
+        }
+        let mut layout = tree.nodes[child].layout;
+        if (layout.size.width - measured.size.width).abs() <= WIDTH_EPSILON {
+            continue;
+        }
+        let style = crate::layout::table::item_style(tree, child, ReadRole::GridItem);
+        let margin = style.margin();
+        let alignment = style
+            .bridge_justify_self()
+            .unwrap_or(justify_items)
+            .resolve_self_relative(style.direction(), parent_direction, true);
+        // The margins the item states; the auto ones take what the width
+        // leaves.
+        let stated = Line {
+            start: (!margin.left.is_auto()).then_some(layout.margin.left),
+            end: (!margin.right.is_auto()).then_some(layout.margin.right),
+        };
+        let before = align_in_area(area, layout.size.width, stated, alignment, rtl);
+        let after = align_in_area(area, measured.size.width, stated, alignment, rtl);
+        let shift = after.offset - before.offset;
+        layout.size.width = measured.size.width;
+        layout.location.x += shift;
+        layout.margin.left = after.margin.start;
+        layout.margin.right = after.margin.end;
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
+        shifts.push((child, Point { x: shift, y: 0.0 }));
+    }
+}
+
+/// Where an item sits along the inline axis of its grid area.
+struct Aligned {
+    /// The distance from the start of the area to the border box.
+    offset: f32,
+    /// The margins at the start and end of the item, the auto ones resolved.
+    margin: Line<f32>,
+}
+
+/// Align an item of `width` in a grid area of `area` the way the grid
+/// algorithm does: the auto margins share the room the item leaves, and a
+/// `safe` alignment of an item that overflows its area gives way to `start`.
+fn align_in_area(
+    area: f32,
+    width: f32,
+    stated: Line<Option<f32>>,
+    alignment: AlignItems,
+    rtl: bool,
+) -> Aligned {
+    let area = area.max(0.0);
+    let stated_sum = stated.start.unwrap_or(0.0) + stated.end.unwrap_or(0.0);
+    let auto_count = u8::from(stated.start.is_none()) + u8::from(stated.end.is_none());
+    let auto_size = if auto_count > 0 {
+        (area - width - stated_sum).max(0.0) / f32::from(auto_count)
+    } else {
+        0.0
+    };
+    let margin = Line {
+        start: stated.start.unwrap_or(auto_size),
+        end: stated.end.unwrap_or(auto_size),
+    };
+    let overflows = width + stated_sum > area;
+    let keyword = if alignment.safety == AlignmentSafety::Safe && overflows {
+        AlignItemsKeyword::Start
+    } else {
+        alignment.keyword
+    };
+    let offset = match keyword {
+        AlignItemsKeyword::Center => (area - width + margin.start - margin.end) / 2.0,
+        AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd | AlignItemsKeyword::SelfEnd => {
+            if rtl {
+                margin.start
+            } else {
+                area - width - margin.end
+            }
+        }
+        AlignItemsKeyword::Normal
+        | AlignItemsKeyword::Stretch
+        | AlignItemsKeyword::Start
+        | AlignItemsKeyword::FlexStart
+        | AlignItemsKeyword::SelfStart
+        | AlignItemsKeyword::Baseline => {
+            if rtl {
+                area - width - margin.end
+            } else {
+                margin.start
+            }
+        }
+    };
+    Aligned { offset, margin }
+}
+
+/// Widths this close are the same width.
+const WIDTH_EPSILON: f32 = 0.001;
 
 fn normalize_flex(
     tree: &mut LayoutSession<'_>,
@@ -394,7 +527,12 @@ pub(super) fn finish(
     }
     // Local out-of-flow layout runs after this pass. Only the candidates
     // already translated by the container need to follow their moved item now.
-    let moved: FxHashMap<usize, Point<f32>> = shifts.iter().copied().collect();
+    let mut moved: FxHashMap<usize, Point<f32>> = FxHashMap::default();
+    for &(item, shift) in shifts {
+        let total = moved.entry(item).or_insert(Point { x: 0.0, y: 0.0 });
+        total.x += shift.x;
+        total.y += shift.y;
+    }
     output.oof_candidates.for_each_mut(|candidate| {
         let node = usize::from(candidate.node);
         let Some(shift) =
