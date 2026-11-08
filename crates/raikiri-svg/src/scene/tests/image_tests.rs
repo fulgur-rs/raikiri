@@ -636,3 +636,40 @@ fn equal_url_text_shares_success_and_failure_but_distinct_urls_stay_apart() {
         ["url gone.png", "url quad.png", "url quad.png?other"]
     );
 }
+
+/// A source with a bug: every reference makes it panic.
+struct PanickingPictures;
+
+impl SvgImageSource for PanickingPictures {
+    fn url(&self, _: &str) -> Option<Arc<DecodedImage>> {
+        panic!("the source has a bug");
+    }
+
+    fn data(&self, _: &str, _: &[u8]) -> Option<Arc<DecodedImage>> {
+        panic!("the source has a bug");
+    }
+}
+
+#[test]
+fn a_panic_in_the_callers_source_is_carried_on_not_refused() {
+    // The parse refuses a document that makes the parser panic, but a panic
+    // of the caller's own source is the caller's to see.
+    let document = parse(
+        SvgImageAccess::Any,
+        r#"<image href="a.png" width="10" height="10"/>"#,
+    );
+    let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        document.build_scene(
+            VIEWPORT,
+            style(1.0),
+            None,
+            SceneLimits::default(),
+            SvgResources::new().with_images(&PanickingPictures),
+        )
+    }))
+    .expect_err("the source's panic must reach the caller");
+    assert_eq!(
+        payload.downcast_ref::<&str>(),
+        Some(&"the source has a bug")
+    );
+}

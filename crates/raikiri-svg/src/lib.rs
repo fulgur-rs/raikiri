@@ -19,6 +19,7 @@ use raikiri_traits::DecodedImage;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod css;
 mod filter_source;
@@ -1096,15 +1097,102 @@ fn parse_tree_with(
     font_resolver: usvg::FontResolver<'_>,
     image_href_resolver: usvg::ImageHrefResolver<'_>,
 ) -> Result<usvg::Tree, SvgError> {
-    let options = usvg::Options {
-        image_href_resolver,
-        font_resolver,
-        ..usvg::Options::default()
-    };
     let geometry_source = filter_source::like_browsers(source);
     let backend_source = css::backend_source(&geometry_source)?;
-    usvg::Tree::from_str(&backend_source, &options)
-        .map_err(|error| SvgError::InvalidDocument(error.to_string()))
+    // `usvg` maps an `objectBoundingBox` filter, mask or pattern region onto
+    // the box of its element in `f32` and unwraps the rectangle, so a box
+    // near the `f32` limit makes it panic. That box is only known once
+    // `usvg` has applied the geometry, the transforms and the cascade, so no
+    // check of the source can bound it. The parse is unwound instead, and
+    // the document refused. Nothing the parse built is kept, so no broken
+    // state survives the unwind. The panic hook still reports the panic, and
+    // a build with `panic = "abort"` still aborts here.
+    //
+    // The resolvers call the caller's font and image sources. A panic there
+    // is the caller's own, so it is marked on the way out and carried on.
+    let caller_panicked = AtomicBool::new(false);
+    let options = usvg::Options {
+        image_href_resolver: mark_image_panics(image_href_resolver, &caller_panicked),
+        font_resolver: mark_font_panics(font_resolver, &caller_panicked),
+        ..usvg::Options::default()
+    };
+    let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        usvg::Tree::from_str(&backend_source, &options)
+    }));
+    match parsed {
+        Ok(tree) => tree.map_err(|error| SvgError::InvalidDocument(error.to_string())),
+        Err(payload) if caller_panicked.load(Ordering::Relaxed) => {
+            std::panic::resume_unwind(payload)
+        }
+        Err(payload) => Err(SvgError::InvalidDocument(format!(
+            "{PARSER_PANIC}: {}",
+            panic_message(payload.as_ref())
+        ))),
+    }
+}
+
+/// How the error of a parse that panicked begins.
+const PARSER_PANIC: &str = "the SVG parser could not represent the document";
+
+/// The message a panic was raised with, when it has one.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("no message")
+}
+
+/// Sets `flag` when a resolver call unwinds, so the parse tells a panic of
+/// the caller's source from one of the parser.
+struct CallerCall<'f>(&'f AtomicBool);
+
+impl Drop for CallerCall<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+fn mark_font_panics<'a>(
+    resolver: usvg::FontResolver<'a>,
+    flag: &'a AtomicBool,
+) -> usvg::FontResolver<'a> {
+    let usvg::FontResolver {
+        select_font,
+        select_fallback,
+    } = resolver;
+    usvg::FontResolver {
+        select_font: Box::new(move |font, database| {
+            let _call = CallerCall(flag);
+            select_font(font, database)
+        }),
+        select_fallback: Box::new(move |ch, used, database| {
+            let _call = CallerCall(flag);
+            select_fallback(ch, used, database)
+        }),
+    }
+}
+
+fn mark_image_panics<'a>(
+    resolver: usvg::ImageHrefResolver<'a>,
+    flag: &'a AtomicBool,
+) -> usvg::ImageHrefResolver<'a> {
+    let usvg::ImageHrefResolver {
+        resolve_data,
+        resolve_string,
+    } = resolver;
+    usvg::ImageHrefResolver {
+        resolve_data: Box::new(move |mime, data, options| {
+            let _call = CallerCall(flag);
+            resolve_data(mime, data, options)
+        }),
+        resolve_string: Box::new(move |href, options| {
+            let _call = CallerCall(flag);
+            resolve_string(href, options)
+        }),
+    }
 }
 
 /// Whether `source` may hold text, which only a parse with fonts draws.
@@ -2512,7 +2600,8 @@ fn check_filters(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
 /// of the bounding box when the primitive's units are `objectBoundingBox`,
 /// and unwraps a result that overflows `f32`. This keeps the product finite
 /// for any region and box of ordinary size, which is all a picture needs. A
-/// box so large that it overflows by itself is outside what this checks.
+/// box so large that it overflows by itself is refused by the unwind guard
+/// around the parse in `parse_tree_with`.
 const MAX_SUBREGION_NUMBER: f64 = 1e18;
 
 /// Rejects `filter` when a primitive of it writes a subregion number beyond
