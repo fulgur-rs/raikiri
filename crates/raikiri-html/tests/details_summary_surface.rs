@@ -207,3 +207,51 @@ fn a_closed_details_does_not_hide_the_content_of_an_open_one() {
     );
     assert_eq!(origin_of(&runs, "CD"), (0.0, 63.0));
 }
+
+/// Each run on the first page as its text, origin and font size.
+fn sized_runs(body: &str, extra: &str) -> Vec<(String, (f32, f32), f32)> {
+    let document = lay_out(body, extra);
+    let page = document.page(0).unwrap();
+    page.text_runs()
+        .into_iter()
+        .filter(|run| !run.text.trim().is_empty())
+        .map(|run| (run.text.to_string(), run.origin, run.font_size))
+        .collect()
+}
+
+#[test]
+fn hidden_text_is_not_the_first_line_or_the_first_letter_of_a_details() {
+    // Chromium styles the summary line, the first formatted line, even
+    // when hidden text comes before the summary.
+    let runs = sized_runs(
+        "<details>EF<summary>AB</summary>IJ</details>",
+        "details::first-line{font-size:20px}",
+    );
+    assert_eq!(
+        runs.iter().map(|run| run.0.as_str()).collect::<Vec<_>>(),
+        ["\u{25b8}", "AB"]
+    );
+    assert!(runs.iter().all(|run| run.2 == 20.0), "{runs:?}");
+    // Chromium gives a lone punctuation mark no first letter: the hidden
+    // letters after it do not join it.
+    let runs = sized_runs(
+        "<details><summary style='display:inline'>\"</summary>EF</details>",
+        "details::first-letter{font-size:20px}",
+    );
+    assert_eq!(runs, [("\"".to_string(), (0.0, 13.0), 10.0)]);
+}
+
+#[test]
+fn hidden_text_does_not_keep_a_details_around_a_spanner() {
+    // A details whose only rendered child spans the columns lays out as one
+    // with no other content.
+    let with_hidden_text = sized_runs(
+        "<div style='columns:2'><details><summary style='column-span:all'>AB</summary>EF</details><p>CD</p></div>",
+        "",
+    );
+    let without = sized_runs(
+        "<div style='columns:2'><details><summary style='column-span:all'>AB</summary></details><p>CD</p></div>",
+        "",
+    );
+    assert_eq!(with_hidden_text, without);
+}

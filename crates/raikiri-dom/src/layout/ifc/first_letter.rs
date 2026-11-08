@@ -204,6 +204,10 @@ impl FirstLetter {
                 Visit::Enter(id) => {
                     let node = doc.get_node(id).ok_or(IfcError::InvalidNode(id))?;
                     match node.kind() {
+                        // Projection skips text a closed `details` hides.
+                        NodeKind::Text if cascade.computed[id].display == DisplayValue::None => {
+                            continue;
+                        }
                         NodeKind::Text => (
                             id,
                             std::borrow::Cow::Borrowed(node.text_content().unwrap_or("")),

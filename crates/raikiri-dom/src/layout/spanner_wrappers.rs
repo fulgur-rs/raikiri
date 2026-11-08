@@ -242,6 +242,8 @@ fn holds_lines(
     doc.nodes[id].children.iter().any(|&child| {
         let node = &doc.nodes[child];
         match node.kind() {
+            // Text a closed `details` hides makes no line.
+            NodeKind::Text if cascade.computed[child].display == DisplayValue::None => false,
             NodeKind::Text => node.text_content().is_some_and(|text| {
                 let dropped = text.chars().all(|c| c.is_ascii_whitespace())
                     && drops_white_space(container)
