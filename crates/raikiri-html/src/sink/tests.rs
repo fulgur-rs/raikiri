@@ -9,6 +9,7 @@ mod inline_stylesheet_text_tests;
 mod preloaded_stylesheet_tests;
 mod source_snapshot_tests;
 mod stylesheet_link_tests;
+mod subtree_watch_tests;
 
 #[test]
 fn streaming_warnings_do_not_use_up_the_parse_error_cap() {

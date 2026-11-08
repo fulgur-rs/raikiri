@@ -1031,9 +1031,29 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         if !self.input.sink().has_created_body_candidate() {
             return Ok(());
         }
+        let traced = self.input.traced_handles();
+        // The last layout delivered no new page, and its frontier was an open
+        // element that is still open, while the input since then has only
+        // added to that element's subtree. Everything before the frontier
+        // lays out as it did, so this layout would deliver no page either:
+        // skip it, and the snapshot and cascade before it. An open table
+        // holds the frontier this way while its rows arrive, and laying out
+        // the growing table at every checkpoint would cost the square of its
+        // length.
+        //
+        // One page can arrive later than a layout would deliver it: the
+        // element's first box can move to the next page as its content grows
+        // (a table's first row widens with the rows after it), which leaves
+        // the page before it holding only final content. That page is then
+        // delivered once the element closes, or at the end of the input.
+        if let Some(root) = self.input.sink().only_watched_subtree_changed()
+            && traced.contains(&root)
+        {
+            return Ok(());
+        }
+        self.input.sink().stop_watching_subtree();
         // `feed_unchecked` has just checked the parse budgets, and a snapshot
         // allocates no node of the parse, so they hold here.
-        let traced = self.input.traced_handles();
         let (parsed, _copied) = self
             .input
             .sink()
@@ -1103,6 +1123,13 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         self.record_delivered(&laid_out, from);
         if delivery? == Delivery::Aborted {
             self.aborted = true;
+        }
+        // Watch the frontier element while no page is final: see above.
+        if self.progress.delivered == from
+            && let Frontier::At(frontier) = frontier
+            && open_html_elements(&document.uncascaded.dom, &traced).contains(&frontier)
+        {
+            self.input.sink().watch_subtree(frontier);
         }
         // A page start found in this layout lets the next one leave more
         // out; a start found earlier stays valid when this one has none.
