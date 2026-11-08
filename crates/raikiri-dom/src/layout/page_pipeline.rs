@@ -4759,6 +4759,24 @@ fn is_plain_table_box(document: &Document, node_id: usize) -> bool {
         && !node.used_writing_mode.is_vertical()
 }
 
+/// Whether `caption` is a caption of a block table that stacks in plain block
+/// flow up to `body_id`, outside any table cell, flex or grid item, float and
+/// out-of-flow box: its lines can be broken between at a page end like those
+/// of a paragraph, and the rows and captions after it follow the moved lines.
+fn is_flow_table_caption(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    caption: usize,
+    body_id: usize,
+) -> bool {
+    document.nodes[caption].display() == DisplayValue::TableCaption
+        && !document.nodes[caption].used_writing_mode.is_vertical()
+        && document.layout_parent_of(caption).is_some_and(|table| {
+            is_plain_table_box(document, table)
+                && placed_in_block_flow(document, cascade, table, body_id)
+        })
+}
+
 /// A table row group with `break-inside: avoid` starts on the next page
 /// when it would cross the current one. Its first row carries the block
 /// end of the group's rows up to the first forced break between them (a
@@ -5755,7 +5773,10 @@ impl AvoidedBreaks {
         // A caption moves to the next page whole unless a break between its
         // lines leaves enough of them on either side (orphans and widows): a
         // break between boxes beats one that leaves too few. It stays when it
-        // already starts its page or is taller than the next one.
+        // already starts its page or is taller than the next one. A caption
+        // that stays in plain block flow has its lines broken between by the
+        // paragraph line pass (see `is_flow_table_caption`); elsewhere it
+        // stays as it was laid out.
         let table_caption = candidate.context.is_table_caption()
             && item_overflow()
             && (avoids_break_inside
@@ -9924,9 +9945,11 @@ impl CheckedParagraphs {
 /// The block is `paragraph_root`, the inline layout root of the text's
 /// paragraph, or else the text's parent. A block nested in plain block flow
 /// uses the same checks as a direct child; line moves propagate only the
-/// growth its height constraints allow. There is no such block for text
-/// placed by positioned insets, for a block whose checks have all run, or
-/// for a nested block outside plain block flow or inside a float or an
+/// growth its height constraints allow. A caption of a block table in plain
+/// block flow is such a block too (see [`is_flow_table_caption`]): the rows
+/// and captions after it follow its moved lines. There is no such block for
+/// text placed by positioned insets, for a block whose checks have all run,
+/// or for a nested block outside plain block flow or inside a float or an
 /// out-of-flow box.
 fn line_block_parent(
     document: &super::context::LayoutSession<'_>,
@@ -9948,7 +9971,8 @@ fn line_block_parent(
             } else {
                 (!candidate.context.is_float_descendant()
                     && !candidate.context.is_out_of_flow_descendant()
-                    && is_block_flow_paragraph(document, cascade, parent_id, roots.element))
+                    && (is_block_flow_paragraph(document, cascade, parent_id, roots.element)
+                        || is_flow_table_caption(document, cascade, parent_id, roots.element)))
                 .then_some((parent_id, true))
             }
         })

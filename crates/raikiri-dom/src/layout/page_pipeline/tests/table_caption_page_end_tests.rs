@@ -193,13 +193,16 @@ fn a_caption_whose_first_lines_do_not_fit_for_the_orphans_moves_whole() {
 fn a_caption_that_splits_between_its_lines_stays_where_it_is() {
     // Four lines starting 25px above the page end: two fit, and a break after
     // them leaves two orphans and two widows, so the caption is not moved.
-    let (positions, _, pages) = laid_out(
+    // The other two lines open the second page, and the row and the block
+    // after the table follow them.
+    let (positions, after, pages) = laid_out(
         175,
         "",
         &[Part::Top("width:16px", "t1 t1 t1 t1"), Part::Row("c")],
         None,
     );
-    assert_eq!(positions[0], 175.0);
+    assert_eq!(positions, [175.0, 220.0]);
+    assert_eq!(after, 230.0);
     assert_eq!(pages, 2);
 }
 
