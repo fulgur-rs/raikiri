@@ -1839,10 +1839,7 @@ css/CSS2/floats/floats-placement-006.html
 css/CSS2/floats/floats-placement-007.html
 css/CSS2/floats/floats-placement-008.html
 css/CSS2/floats/floats-wrap-bfc-008.html
-css/CSS2/floats/floats-wrap-bfc-with-margin-006.tentative.html
-css/CSS2/floats/floats-wrap-bfc-with-margin-007.tentative.html
 css/CSS2/floats/floats-wrap-bfc-with-margin-008.tentative.html
-css/CSS2/floats/floats-wrap-bfc-with-margin-009.tentative.html
 css/CSS2/floats/intrinsic-size-float-and-line.html
 css/CSS2/floats/negative-margin-float-positioning.html
 css/CSS2/floats/new-fc-beside-adjoining-float-2.html
