@@ -341,6 +341,8 @@ fn first_content(doc: &Document, cascade: &CascadeResult, root: usize) -> Start 
             Visit::Enter(id) => {
                 let node = &doc.nodes[id];
                 match node.kind() {
+                    // Text a closed `details` hides is no content.
+                    NodeKind::Text if cascade.computed[id].display == DisplayValue::None => {}
                     NodeKind::Text => {
                         let collapses = doc
                             .parent_of(id)

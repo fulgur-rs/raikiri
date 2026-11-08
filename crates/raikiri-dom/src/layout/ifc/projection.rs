@@ -1213,6 +1213,8 @@ fn project_children_builder(
             continue;
         }
         match node.kind() {
+            // Text a closed `details` hides has no box (HTML LS §4.11.1).
+            NodeKind::Text if node.display() == DisplayValue::None => {}
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
                 let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];

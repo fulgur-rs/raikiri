@@ -195,6 +195,30 @@ legend    { display: block; padding-inline: 2px; }
 dialog       { display: none; }
 dialog[open] { display: block; }
 
+/* HTML Living Standard "Rendering" §flow-content-3 lists `details` and
+ * `summary` in its `display: block` group, and §the-details-and-summary-
+ * elements gives the first `summary` child of a `details` the disclosure
+ * marker:
+ *   details > summary:first-of-type {
+ *     display: list-item;
+ *     counter-increment: list-item 0;
+ *     list-style: disclosure-closed inside;
+ *   }
+ *   details[open] > summary:first-of-type {
+ *     list-style-type: disclosure-open;
+ *   }
+ * A closed `details` shows only that summary. Its other children are not
+ * rendered whatever the author styles say, which the cascade enforces (see
+ * `hidden_by_closed_details` in raikiri-style) rather than a rule here that
+ * an author `display` declaration would override. */
+details, summary { display: block; }
+details > summary:first-of-type {
+  display: list-item;
+  counter-increment: list-item 0;
+  list-style: disclosure-closed inside;
+}
+details[open] > summary:first-of-type { list-style-type: disclosure-open; }
+
 /* HTML Living Standard "Rendering" §15.3.1 "Hidden elements" — metadata
  * content and the other elements that never generate a box:
  *   area, base, basefont, datalist, head, link, meta, noembed, noframes,

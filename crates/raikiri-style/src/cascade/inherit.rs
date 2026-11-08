@@ -469,6 +469,53 @@ fn contents_computes_to_none<E: StyleElement>(element: &E, parent_is_svg: bool) 
     }
 }
 
+/// Whether `element` is the HTML element named `tag`. HTML names match ASCII
+/// case-insensitively, as in [`contents_computes_to_none`].
+fn is_html_element<E: StyleElement>(element: &E, tag: &str) -> bool {
+    matches!(
+        element.namespace_uri(),
+        None | Some("http://www.w3.org/1999/xhtml")
+    ) && element.tag_name().eq_ignore_ascii_case(tag)
+}
+
+/// Whether `id`, a child of `parent`, is content a closed HTML `<details>`
+/// does not show.
+///
+/// HTML Living Standard §4.11.1 "The details element": while the `open`
+/// attribute is absent, only the element's summary (its first `summary`
+/// child) is shown; the rest of its contents is hidden. The rendering
+/// section realises this with a slot no author style reaches, so the hiding
+/// applies to text children too and no author `display` brings an element
+/// back. `first_summaries` remembers the summary of each closed `details`
+/// found so far, so a long list of children scans its parent once.
+fn hidden_by_closed_details<D: StyleDom>(
+    dom: &D,
+    id: StyleNodeId,
+    parent: Option<StyleNodeId>,
+    first_summaries: &mut HashMap<StyleNodeId, Option<StyleNodeId>>,
+) -> bool {
+    let Some(parent) = parent else {
+        return false;
+    };
+    let closed_details = dom.node(parent).is_some_and(|node| {
+        node.as_element().is_some_and(|element| {
+            is_html_element(&element, "details") && element.attr("open").is_none()
+        })
+    });
+    if !closed_details {
+        return false;
+    }
+    let summary = *first_summaries.entry(parent).or_insert_with(|| {
+        dom.child_ids(parent).find(|&child| {
+            dom.node(child).is_some_and(|node| {
+                node.as_element()
+                    .is_some_and(|element| is_html_element(&element, "summary"))
+            })
+        })
+    });
+    summary != Some(id)
+}
+
 pub(crate) fn walk_from<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -530,6 +577,9 @@ pub(crate) fn walk_from<D: StyleDom>(
     // the first few nodes, then incurs no allocations. `apply_winners` owns its
     // fill and drain; the walk loop only lends it a reusable container.
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
+    // The summary of each closed `details` met so far; see
+    // `hidden_by_closed_details`.
+    let mut first_summaries: HashMap<StyleNodeId, Option<StyleNodeId>> = HashMap::new();
     // Scratch buffer for the candidates that apply to `::first-line`, reused
     // the same way.
     let mut first_line_scratch: Vec<Candidate> = Vec::new();
@@ -579,6 +629,12 @@ pub(crate) fn walk_from<D: StyleDom>(
         let unboxes_to_none = node
             .as_element()
             .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
+        let hidden_by_details = hidden_by_closed_details(
+            dom,
+            id,
+            parent.or_else(|| dom.parent_id(id)),
+            &mut first_summaries,
+        );
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
         // The painting properties a presentation attribute of the element sets,
@@ -650,6 +706,14 @@ pub(crate) fn walk_from<D: StyleDom>(
                                 contents_computes_to_none(&element, parent_is_svg)
                             }) == unboxes_to_none
                     }) && input.same_input(&source.input, shared)
+                        // A child a closed `details` hides computes to
+                        // `display: none` whatever its candidates say.
+                        && hidden_by_closed_details(
+                            dom,
+                            source.id,
+                            dom.parent_id(source.id),
+                            &mut first_summaries,
+                        ) == hidden_by_details
                 })
                 .map(|source| source.id),
             _ => None,
@@ -1036,6 +1100,9 @@ pub(crate) fn walk_from<D: StyleDom>(
 
         let mut computed = computed;
         if unboxes_to_none && computed.display == crate::property::DisplayValue::Contents {
+            computed.display = crate::property::DisplayValue::None;
+        }
+        if hidden_by_details {
             computed.display = crate::property::DisplayValue::None;
         }
 
