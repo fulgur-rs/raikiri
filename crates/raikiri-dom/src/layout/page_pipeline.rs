@@ -5661,7 +5661,7 @@ impl AvoidedBreaks {
         // A replaced element is unbreakable whole, and so is a line of
         // atomic inlines alone, which keeps the block that holds it whole.
         let unbreakable_end = if candidate.context.is_unbreakable() {
-            Some(page_box_end)
+            Some(page_box_end - height + candidate.context.unbreakable_extent(height))
         } else {
             unplaced_line
                 .filter(|line| line.atomic)

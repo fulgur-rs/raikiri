@@ -155,6 +155,11 @@ pub(super) struct ElementContext {
     /// inline-level box that no page break goes through (see
     /// [`super::box_is_unbreakable`]).
     pub(super) unbreakable: bool,
+    /// The block size of the part of an unbreakable box that lies inside its
+    /// parent, when the rest of it is visible overflow of that parent. Only
+    /// that part decides whether the box crosses the page end: Chromium does
+    /// not move overflow of a parent that ends on the page, it cuts it.
+    pub(super) unbreakable_room: Option<f32>,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
     /// stayed on a page they do not fit (see [`super::closing_edges_move`]).
@@ -308,6 +313,14 @@ impl BoxContext {
     pub(super) fn is_unbreakable(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.unbreakable)
+    }
+
+    /// The block size of an unbreakable box of `height` that decides whether
+    /// it crosses the page end (see [`ElementContext::unbreakable_room`]).
+    pub(super) fn unbreakable_extent(self, height: f32) -> f32 {
+        self.element_attributes()
+            .and_then(|attributes| attributes.unbreakable_room)
+            .map_or(height, |room| room.min(height))
     }
 
     pub(super) fn closing_edges(self) -> f32 {
@@ -1255,6 +1268,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     node_id,
                     document.context.pagination_on_transposed_axes,
                 );
+                // The part of such a box that lies inside its parent, when the
+                // box runs out past the bottom of a parent whose height is held
+                // below its content and nothing clips it: the rest is visible
+                // overflow of the parent.
+                let unbreakable_room = (unbreakable_box
+                    && !direct_body_child
+                    && frame.clip_end.is_infinite()
+                    && node.layout.location.y + node.layout.size.height > frame.parent_height)
+                    .then(|| (frame.parent_height - node.layout.location.y).max(0.0));
                 let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid
@@ -1645,6 +1667,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 deferred_named_break_after,
                                 unplaced_line,
                                 unbreakable: unbreakable_box,
+                                unbreakable_room,
                                 closing_edges: if closing_edges_candidate
                                     || lone_box_candidate.is_some()
                                 {

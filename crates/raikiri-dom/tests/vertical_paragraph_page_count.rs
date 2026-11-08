@@ -67,7 +67,8 @@ fn pages_of(body: &str) -> (usize, Vec<(String, Placed)>) {
 }
 
 /// Checks that `body` lays out on `page_count` pages with exactly the
-/// `expected` boxes, each given with its page.
+/// `expected` boxes, each given with its page: a box that the page cuts is
+/// one entry per page.
 fn check(label: &str, body: &str, page_count: usize, expected: &[(&str, Placed)]) {
     let (pages, boxes) = pages_of(body);
     assert_eq!(pages, page_count, "{label}: page count, got {boxes:?}");
@@ -76,14 +77,12 @@ fn check(label: &str, body: &str, page_count: usize, expected: &[(&str, Placed)]
     for (id, (page, x, y, width, height)) in expected {
         let (_, got) = boxes
             .iter()
-            .find(|(name, _)| name == id)
-            .unwrap_or_else(|| panic!("{label}: no fragment for #{id}"));
+            .find(|(name, placed)| name == id && placed.0 == *page)
+            .unwrap_or_else(|| {
+                panic!("{label}: no fragment for #{id} on page {page}, got {boxes:?}")
+            });
         assert!(
-            got.0 == *page
-                && near(got.1, *x)
-                && near(got.2, *y)
-                && near(got.3, *width)
-                && near(got.4, *height),
+            near(got.1, *x) && near(got.2, *y) && near(got.3, *width) && near(got.4, *height),
             "{label}: #{id} got {got:?}, expected {:?}",
             (page, x, y, width, height)
         );
@@ -223,6 +222,30 @@ fn paragraph_crossing_the_page_end_moves_whole() {
         2,
         &[("p", (1, 0.0, 0.0, 610.0, 50.0))],
     );
+}
+
+/// A paragraph that runs out past the bottom of a parent whose height ends on
+/// the page is overflow of that parent: Chromium cuts it at the page end
+/// rather than moving it on.
+#[test]
+fn paragraph_overflowing_a_parent_that_ends_on_the_page_is_cut() {
+    for (label, parent) in [
+        ("height", "height:250px;padding-top:240px"),
+        ("max-height", "max-height:250px;padding-top:240px"),
+    ] {
+        check(
+            label,
+            &format!(
+                "<div style=\"height:300px\"></div><div style=\"{parent};box-sizing:border-box\">\
+                 <div id=p style=\"writing-mode:vertical-rl;height:100px\">aa</div></div>"
+            ),
+            2,
+            &[
+                ("p", (0, 0.0, 540.0, 10.0, 60.0)),
+                ("p", (1, 0.0, 0.0, 10.0, 40.0)),
+            ],
+        );
+    }
 }
 
 /// The text of a paragraph of several text nodes, or one placed in positioned

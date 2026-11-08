@@ -76,64 +76,23 @@ fn assert_boxes(body: &str, expected: &[(&str, [f32; 4])]) {
     }
 }
 
-/// The page and the `[x, y, width]` of the first fragment of every element
-/// with an `id` when `body` is laid out on pages without margins.
-fn first_pieces(body: &str) -> Vec<(String, usize, [f32; 3])> {
-    let html = format!(
-        "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
-         body {{ margin: 0; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
-    );
-    let fonts = FontCollectionBuilder::new()
-        .font_bytes("Ahem", AHEM.to_vec())
-        .build()
-        .expect("fonts");
-    let resources = RenderResources::new().fonts(fonts);
-    let doc = parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
-    let status = layout(
-        &doc,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        LayoutOptions::new().resources(&resources),
-    )
-    .expect("layout");
-    let LayoutStatus::Completed(result) = status else {
-        panic!("expected a complete layout");
-    };
-    let mut pieces: Vec<(String, usize, [f32; 3])> = Vec::new();
-    for (index, page) in result.pages().enumerate() {
-        let dom = page.dom();
-        for fragment in page.fragments() {
-            let Some(id) = dom.attr(fragment.node(), "id") else {
-                continue;
-            };
-            if pieces.iter().all(|(seen, _, _)| seen != id) {
-                let rect = fragment.rect();
-                pieces.push((id.to_owned(), index, [rect.x, rect.y, rect.width]));
-            }
-        }
-    }
-    pieces
-}
-
-/// Check that the first fragment of every `(id, page, [x, y, width])` of
-/// `expected` is on that page and starts at and is as wide as given. A box
-/// that is taller than the page is cut at its bottom edge, so its height is
-/// left out.
-fn assert_origin_and_width(body: &str, expected: &[(&str, usize, [f32; 3])]) {
-    let actual = first_pieces(body);
-    for &(id, want_page, want) in expected {
-        let &(_, page, got) = actual
+/// Check that every `(id, [x, y, width])` of `expected` is laid out as given.
+/// A box that is taller than the page is cut at its bottom edge, so its height
+/// is left out.
+fn assert_origin_and_width(body: &str, expected: &[(&str, [f32; 3])]) {
+    let actual = boxes(body);
+    for &(id, want) in expected {
+        let got = actual
             .iter()
-            .find(|(name, _, _)| name == id)
-            .unwrap_or_else(|| panic!("no fragment for #{id} in {body}"));
+            .find(|(name, _)| name == id)
+            .unwrap_or_else(|| panic!("no fragment for #{id} in {body}"))
+            .1;
+        let got = [got[0], got[1], got[2]];
         assert!(
-            page == want_page
-                && got
-                    .iter()
-                    .zip(want)
-                    .all(|(got, want)| (got - want).abs() < 0.01),
-            "#{id} starts on page {page} at and is as wide as {got:?}, expected page \
-             {want_page} and {want:?} for {body}"
+            got.iter()
+                .zip(want)
+                .all(|(got, want)| (got - want).abs() < 0.01),
+            "#{id} starts at and is as wide as {got:?}, expected {want:?} for {body}"
         );
     }
 }
@@ -303,31 +262,28 @@ fn a_border_box_max_height_with_a_percentage_padding_above_or_below_is_no_limit(
     // The percentage of the padding refers to the width of the wrapper, 400px:
     // 40px. A browser cannot take it off the limit, so the limit is not
     // applied, and the lines of `#o` break at the page height, five columns of
-    // 10px, below the padding. A block or float `#o` is then an orthogonal flow
-    // 600px tall that would cross the page end, which no page break goes
-    // through: it starts the next page, as Chromium prints it.
-    for (container_css, tag, css, page, top) in [
-        ("padding:10% 0", "div", "", 1, 0.0),
-        ("padding:10% 0", "span", "display:inline-block", 0, 40.0),
-        ("padding:10% 0", "div", "float:left", 1, 0.0),
+    // 10px, below the padding.
+    for (container_css, tag, css, top) in [
+        ("padding:10% 0", "div", "", 40.0),
+        ("padding:10% 0", "span", "display:inline-block", 40.0),
+        ("padding:10% 0", "div", "float:left", 40.0),
         (
             "padding:10% 0;display:flex;align-self:flex-start",
             "div",
             "",
-            0,
             40.0,
         ),
-        ("padding:calc(10% + 5px) 0", "div", "", 1, 0.0),
-        ("padding:10% 0 0", "div", "", 1, 0.0),
-        ("padding-top:10%", "div", "", 1, 0.0),
-        ("padding:10% 0;position:absolute", "div", "", 0, 80.0),
+        ("padding:calc(10% + 5px) 0", "div", "", 45.0),
+        ("padding:10% 0 0", "div", "", 40.0),
+        ("padding-top:10%", "div", "", 40.0),
+        ("padding:10% 0;position:absolute", "div", "", 80.0),
     ] {
         assert_origin_and_width(
             &format!(
                 "<div style=\"width:400px\">{}</div>",
                 container(&format!("max-height:300px;{container_css}"), tag, css)
             ),
-            &[("o", page, [0.0, top, 50.0])],
+            &[("o", [0.0, top, 50.0])],
         );
     }
     assert_origin_and_width(
@@ -335,7 +291,7 @@ fn a_border_box_max_height_with_a_percentage_padding_above_or_below_is_no_limit(
             "<div style=\"width:400px\">{}</div>",
             container("max-height:300px;padding:10% 0;border:5px solid", "div", "")
         ),
-        &[("o", 1, [5.0, 0.0, 50.0])],
+        &[("o", [5.0, 45.0, 50.0])],
     );
     // Whatever the padding comes to, also when it is nothing.
     for container_css in ["padding:0 0 10%", "padding:0% 0"] {
