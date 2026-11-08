@@ -1272,11 +1272,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // box runs out past the bottom of a parent whose height is held
                 // below its content and nothing clips it: the rest is visible
                 // overflow of the parent.
+                // The box is measured at its normal-flow place: a relative
+                // offset moves it after fragmentation.
+                let flow_top = node.layout.location.y
+                    - super::layout_relative_offset_y(document, cascade, body_id, node_id);
                 let unbreakable_room = (unbreakable_box
                     && !direct_body_child
                     && frame.clip_end.is_infinite()
-                    && node.layout.location.y + node.layout.size.height > frame.parent_height)
-                    .then(|| (frame.parent_height - node.layout.location.y).max(0.0));
+                    && flow_top + node.layout.size.height > frame.parent_height)
+                    .then(|| (frame.parent_height - flow_top).max(0.0));
                 let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid

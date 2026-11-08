@@ -224,6 +224,20 @@ fn paragraph_crossing_the_page_end_moves_whole() {
     );
 }
 
+/// A relative offset moves the paragraph after fragmentation: whether it
+/// overflows its parent and crosses the page end is decided at its normal-flow
+/// place, so it moves whole, and the offset then moves it down on the new page.
+#[test]
+fn a_relative_offset_does_not_make_the_paragraph_overflow_its_parent() {
+    check(
+        "relative",
+        "<div style=\"height:550px\"></div><div><div id=p style=\"writing-mode:vertical-rl;\
+         height:100px;position:relative;top:100px\">aa</div></div>",
+        2,
+        &[("p", (1, 0.0, 100.0, 10.0, 100.0))],
+    );
+}
+
 /// A paragraph that runs out past the bottom of a parent whose height ends on
 /// the page is overflow of that parent: Chromium cuts it at the page end
 /// rather than moving it on.
