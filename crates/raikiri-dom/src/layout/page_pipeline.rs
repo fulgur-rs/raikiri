@@ -335,10 +335,16 @@ fn content_overflow(
         }
         // Generated block content and overflowing lines have no source box
         // to visit. Measure retained paragraph flow even when an authored
-        // height or max-height limits its ordinary containing box.
+        // height or max-height limits its ordinary containing box. The lines
+        // of a vertical paragraph stack across a flow paginated along y, so
+        // their block extent says nothing about how far down it reaches.
         if in_columns.is_none()
             && y < clip.end
             && node.multicol.is_none()
+            && (document.context.pagination_on_transposed_axes
+                || !node
+                    .ifc_writing_mode()
+                    .is_some_and(|mode| mode.is_vertical()))
             && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
         {
             end = end.max(
@@ -7989,25 +7995,34 @@ fn box_avoids_page_break_inside(
             || page_applies_to_box(document, node_id))
 }
 
-/// Whether the box `node_id` is replaced content or a full size containment
-/// box laid out as a block-level box: no page break goes through it, so it moves to the
-/// next page whole when it would cross the page end, as if it said
+/// Whether the box `node_id` is replaced content, a full size containment box
+/// or an orthogonal flow in a flow paginated along y, laid out as a
+/// block-level box: no page break goes through it, so it moves to the next
+/// page whole when it would cross the page end, as if it said
 /// `break-inside: avoid`. It stays where it is only at the top of its page
-/// (CSS Fragmentation 3 section 5.1.1, Chromium).
+/// (CSS Fragmentation 3 section 5.1.1, CSS Writing Modes 4 section 7.3,
+/// Chromium).
 ///
 /// A box with inline outer display is left out: it takes part in the lines of
 /// its paragraph, which move it (see [`unplaced_line`]), and moving it on its
 /// own as well would shift it twice. So is a positioned box taken out of the
 /// flow: its offsets place it in its containing block, and moving it would
 /// push the boxes that follow it.
-fn box_is_unbreakable(document: &Document, node_id: usize) -> bool {
+fn box_is_unbreakable(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    pagination_on_transposed_axes: bool,
+) -> bool {
     let node = &document.nodes[node_id];
     matches!(
         node.position(),
         PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
     ) && !node.display().is_inline_level()
         && (is_replaced_for_pagination(document, node_id)
-            || size_contained_for_pagination(BoxTree::for_layout(document), node_id))
+            || size_contained_for_pagination(BoxTree::for_layout(document), node_id)
+            || (!pagination_on_transposed_axes
+                && super::page::establishes_orthogonal_flow(document, cascade, node_id)))
 }
 
 /// The single line of a paragraph that no text node places, as the block

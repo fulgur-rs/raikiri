@@ -942,6 +942,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     // `parent_abs_y` is the root's. A text node that is a root
                     // itself (an anonymous flex or grid item) has a box of its
                     // own, located like any other.
+                    if text_moves_with_orthogonal_flow(document, cascade, body_id, node_id) {
+                        return Ok(());
+                    }
                     self.text_lines
                         .prepare_for(document, node_id, || control.check_aborted())?;
                     let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
@@ -1246,7 +1249,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| unplaced_line(document, cascade, node_id))
                     .flatten();
-                let unbreakable_box = box_is_unbreakable(document, node_id);
+                let unbreakable_box = box_is_unbreakable(
+                    document,
+                    cascade,
+                    node_id,
+                    document.context.pagination_on_transposed_axes,
+                );
                 let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid
@@ -2106,4 +2114,38 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         }
         Ok(())
     }
+}
+
+/// Whether the text node `node_id` is a line of a vertical paragraph inside an
+/// orthogonal flow of a document paginated along y. Its lines are columns
+/// across the flow, with their block offsets along x, and no page break goes
+/// through the orthogonal flow (see [`box_is_unbreakable`]), so the text moves
+/// with that box and stands for no break of its own.
+fn text_moves_with_orthogonal_flow(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
+    if document.context.pagination_on_transposed_axes
+        || !document.nodes[node_id].under_vertical_writing
+    {
+        return false;
+    }
+    let Some(root) = document
+        .ifc_root_of(node_id)
+        .filter(|&root| root != node_id)
+    else {
+        return false;
+    };
+    if !document
+        .ifc_layout_node(root)
+        .and_then(|root| root.ifc_writing_mode())
+        .is_some_and(|mode| mode.is_vertical())
+    {
+        return false;
+    }
+    std::iter::successors(Some(root), |&id| document.parent_of(id))
+        .take_while(|&id| id != body_id)
+        .any(|id| super::super::page::establishes_orthogonal_flow(document, cascade, id))
 }
