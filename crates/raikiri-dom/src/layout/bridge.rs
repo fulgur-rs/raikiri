@@ -668,7 +668,7 @@ fn apply_computed_to_style_in_session_inner(
     for node in doc.nodes.layout_nodes_mut() {
         node.formatting_context = classify_formatting_context(node);
     }
-    refresh_order_modified_children(doc);
+    refresh_order_modified_children(doc, cascade);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {

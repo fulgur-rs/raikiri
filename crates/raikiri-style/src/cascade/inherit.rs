@@ -9,10 +9,10 @@ use crate::computed::{
 };
 use crate::logical::FlowMapping;
 use crate::property::{
-    Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
-    Length, LengthOrAuto, LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize,
-    Sides, TextWrapMode, WhiteSpaceCollapse, WritingMode, resolve_text_align_internal_center,
-    resolve_text_align_match_parent,
+    Border, BorderColor, BorderRadius, BorderStyle, ContentComponent, ContentList, CornerRadius,
+    CssWideKeyword, DisplayValue, FontWeightValue, Length, LengthOrAuto, LengthPercentageOrCalc,
+    PositionValue, PropertyValue, RelativeFontSize, Sides, TextWrapMode, WhiteSpaceCollapse,
+    WritingMode, resolve_text_align_internal_center, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
@@ -505,15 +505,53 @@ fn hidden_by_closed_details<D: StyleDom>(
     if !closed_details {
         return false;
     }
-    let summary = *first_summaries.entry(parent).or_insert_with(|| {
+    first_summary(dom, parent, first_summaries) != Some(id)
+}
+
+/// The first `summary` child of `parent`, remembered in `first_summaries`.
+fn first_summary<D: StyleDom>(
+    dom: &D,
+    parent: StyleNodeId,
+    first_summaries: &mut HashMap<StyleNodeId, Option<StyleNodeId>>,
+) -> Option<StyleNodeId> {
+    *first_summaries.entry(parent).or_insert_with(|| {
         dom.child_ids(parent).find(|&child| {
             dom.node(child).is_some_and(|node| {
                 node.as_element()
                     .is_some_and(|element| is_html_element(&element, "summary"))
             })
         })
-    });
-    summary != Some(id)
+    })
+}
+
+/// The text of the summary a `<details>` element shows when it has no
+/// `summary` child, or `None` for any other element.
+///
+/// HTML Living Standard §4.11.1 "The details element": the summary of a
+/// `details` without a `summary` child is a user-agent defined legend, and
+/// the rendering section (§15.5.4 "The details and summary elements") gives
+/// it the disclosure marker of a `summary`. Chromium shows "Details" after
+/// the marker, closed `"\u{25b8} "` or open `"\u{25be} "`. The legend is a
+/// block-level `::before` of the `details` here, so it comes before every
+/// child, as the summary slot does. That makes it an approximation of the
+/// shadow tree Chromium uses: an author `::before` that generates content
+/// takes the place of the legend instead of preceding it, and the other
+/// declarations of an author `::before` but `display` style the legend.
+fn default_summary_text<D: StyleDom>(
+    dom: &D,
+    id: StyleNodeId,
+    first_summaries: &mut HashMap<StyleNodeId, Option<StyleNodeId>>,
+) -> Option<&'static str> {
+    let node = dom.node(id)?;
+    let element = node.as_element()?;
+    if !is_html_element(&element, "details") || first_summary(dom, id, first_summaries).is_some() {
+        return None;
+    }
+    Some(if element.attr("open").is_some() {
+        "\u{25be} Details"
+    } else {
+        "\u{25b8} Details"
+    })
 }
 
 pub(crate) fn walk_from<D: StyleDom>(
@@ -635,6 +673,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             parent.or_else(|| dom.parent_id(id)),
             &mut first_summaries,
         );
+        let default_summary = default_summary_text(dom, id, &mut first_summaries);
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
         // The painting properties a presentation attribute of the element sets,
@@ -714,6 +753,9 @@ pub(crate) fn walk_from<D: StyleDom>(
                             dom.parent_id(source.id),
                             &mut first_summaries,
                         ) == hidden_by_details
+                        // The legend of a `details` without a summary is a
+                        // `::before` its candidates do not give.
+                        && default_summary_text(dom, source.id, &mut first_summaries) == default_summary
                 })
                 .map(|source| source.id),
             _ => None,
@@ -916,7 +958,8 @@ pub(crate) fn walk_from<D: StyleDom>(
             if is_element {
                 for pseudo in CASCADED_PSEUDO_ELEMENTS {
                     let (candidates, custom_candidates) = input.pseudo(pseudo, shared);
-                    if candidates.is_none() && custom_candidates.is_none() {
+                    let legend = default_summary.filter(|_| pseudo == PseudoElem::Before);
+                    if candidates.is_none() && custom_candidates.is_none() && legend.is_none() {
                         continue;
                     }
                     let pseudo_resolved_custom_properties = custom_candidates.map(|candidates| {
@@ -962,6 +1005,16 @@ pub(crate) fn walk_from<D: StyleDom>(
                             None,
                             None,
                         );
+                    }
+
+                    if let Some(text) = legend
+                        && pseudo_specified.content.is_empty()
+                    {
+                        pseudo_specified.display = DisplayValue::Block;
+                        pseudo_specified.content =
+                            Arc::new(ContentList::from(vec![ContentComponent::Literal(
+                                smol_str::SmolStr::new_static(text),
+                            )]));
                     }
 
                     let ctx = child_ctx.expect(

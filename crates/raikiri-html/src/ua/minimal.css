@@ -210,7 +210,11 @@ dialog[open] { display: block; }
  * A closed `details` shows only that summary. Its other children are not
  * rendered whatever the author styles say, which the cascade enforces (see
  * `hidden_by_closed_details` in raikiri-style) rather than a rule here that
- * an author `display` declaration would override. */
+ * an author `display` declaration would override. A `details` without a
+ * `summary` child shows a default "Details" legend, which the cascade gives
+ * it as a `::before` (see `default_summary_text` in raikiri-style), since a
+ * rule here would need `:has()`; layout puts the first summary ahead of the
+ * other children. */
 details, summary { display: block; }
 details > summary:first-of-type {
   display: list-item;

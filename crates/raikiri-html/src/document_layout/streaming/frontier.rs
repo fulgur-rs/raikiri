@@ -127,6 +127,9 @@ pub(crate) fn stable_frontier(
         if has_auto_direction(document, id) {
             held.push(id);
         }
+        if awaits_summary(document, id) {
+            held.push(surrounding_run_start(document, cascade, &position, id));
+        }
         if computed(cascade, id)
             .is_none_or(|values| needs_all_children(values) || paints_from_whole_height(values))
         {
@@ -342,6 +345,25 @@ fn has_auto_direction(document: &Document, id: usize) -> bool {
             .and_then(|node| node.tag_name())
             .is_some_and(|tag| tag.eq_ignore_ascii_case("bdi")),
     }
+}
+
+/// Whether `id` is a `<details>` that has no `summary` child yet. Its first
+/// summary, when one arrives, takes the place of the default legend and is
+/// laid out ahead of the children before it (HTML §15.5.4). A `details` that
+/// generates no box needs no check here: it joins the trailing inline run of
+/// its parent, which holds it anyway.
+fn awaits_summary(document: &Document, id: usize) -> bool {
+    let is_tag = |id: usize, tag: &str| {
+        is_html_element_in_document(document, id)
+            && document
+                .get_node(id)
+                .and_then(|node| node.tag_name())
+                .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+    };
+    is_tag(id, "details")
+        && document
+            .get_node(id)
+            .is_some_and(|node| !node.children.iter().any(|&child| is_tag(child, "summary")))
 }
 
 /// Whether `id` can belong to the inline formatting context of its parent:
