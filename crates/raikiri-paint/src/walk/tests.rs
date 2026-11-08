@@ -425,15 +425,26 @@ fn paint_list_marker_emits_text_and_honors_display_none() {
     );
     assert_eq!(scene.commands.len(), before);
 
-    // Inside markers use the DOM bridge's reserved gutter.
+    // Inside markers use the DOM bridge's reserved gutter. A bullet starts
+    // 1px in, as Chromium's does.
     let (document, cascade, first, _) = list_fixture(
         "display: list-item; list-style-position: inside",
         "display: list-item",
         None,
     );
+    let mut inside = Scene::new();
     paint_list_marker(
-        &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+        &mut inside,
+        &document,
+        &cascade,
+        first,
+        0.0,
+        0.0,
+        200.0,
+        30.0,
+        0.0,
     );
+    assert_eq!(glyph_xs(&inside).first(), Some(&1.0));
 
     // Empty generated content and a zero-sized marker both fail closed
     // before a glyph command is emitted.
