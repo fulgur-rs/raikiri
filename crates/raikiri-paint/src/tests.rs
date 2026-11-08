@@ -3284,7 +3284,7 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
     let red = "p::first-line{background:rgb(255,0,0)}";
     let vertical = "p{width:auto;height:100px;writing-mode:vertical-rl}";
     // (css, body, the box of the red fill)
-    let cases: [(&str, &str, [f64; 4]); 21] = [
+    let cases: [(&str, &str, [f64; 4]); 23] = [
         (
             "",
             "<p><span style=\"margin:0 7px\">XX</span>XX</p>",
@@ -3377,6 +3377,18 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
             "",
             "<p>XX<span style=\"margin-left:-20px\">YY</span>XX</p>",
             [0.0, 0.0, 40.0, 10.0],
+        ),
+        // A space hanging in an element at the end of the line is outside the
+        // box, which still ends at the element's margin edge.
+        (
+            "",
+            "<p>XX<span style=\"margin-left:-20px;margin-right:-10px\">YY </span>XXXXXXXXXX</p>",
+            [0.0, 0.0, 10.0, 10.0],
+        ),
+        (
+            "",
+            "<p>XX <span>YY </span>XXXXXXXXXX</p>",
+            [0.0, 0.0, 50.0, 10.0],
         ),
         // Generated boxes, first letters and ruby containers have margins too.
         (
