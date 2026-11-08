@@ -3436,15 +3436,24 @@ fn compute_inline_block_shrink_wrap(
     // to comes from its content, so it is no basis for the percentage widths
     // inside it, which read as `auto` (CSS Sizing 3 §5.2.1) until the parent
     // fixes the width.
-    let content_decided_width =
-        inputs.known_dimensions.width.is_none() && tree.has_vertical_writing_mode(idx);
+    // The aspect ratio takes the width of a box from its definite height, and a
+    // width so fixed is a basis.
+    let width_from_ratio = leaf_style.aspect_ratio.is_some()
+        && (known_height.is_some()
+            || MaybeResolve::maybe_resolve(leaf_style.size, inputs.parent_size)
+                .height
+                .is_some());
+    let content_decided_width = inputs.known_dimensions.width.is_none()
+        && tree.has_vertical_writing_mode(idx)
+        && !width_from_ratio;
     let final_inputs = LayoutInput {
         known_dimensions: Size {
             width: Some(fit),
             height: inputs.known_dimensions.height,
         },
         known_dimensions_are_definite: Size {
-            width: inputs.known_dimensions_are_definite.width && !content_decided_width,
+            width: width_from_ratio
+                || (inputs.known_dimensions_are_definite.width && !content_decided_width),
             ..inputs.known_dimensions_are_definite
         },
         available_space: Size {

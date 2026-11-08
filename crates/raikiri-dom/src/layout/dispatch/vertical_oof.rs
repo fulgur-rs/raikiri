@@ -54,13 +54,20 @@ fn is_absolute(tree: &Document, node: usize) -> bool {
 /// content: `width` is `auto` or an intrinsic keyword, and `left` or `right` is
 /// `auto`, so the box shrinks to fit (CSS 2.1 §10.3.7). The width of a vertical
 /// box is its block size, and the percentage widths of its children read as
-/// `auto` until something other than the content fixes it.
+/// `auto` until something other than the content fixes it. A box with an
+/// aspect ratio takes its width from a height that it states or that its
+/// `top` and `bottom` give, and that width is fixed.
 pub(super) fn has_content_decided_width(tree: &LayoutSession<'_>, node: usize) -> bool {
     if !is_absolute(tree, node) {
         return false;
     }
     let style = tree.physical_style(node);
     let inset = style.inset();
+    let height_is_given = !matches!(style.size().height.expand(), ExpandedDimension::Auto)
+        || (!inset.top.is_auto() && !inset.bottom.is_auto());
+    if style.stated_aspect_ratio().is_some() && height_is_given {
+        return false;
+    }
     (inset.left.is_auto() || inset.right.is_auto())
         && matches!(
             style.size().width.expand(),
