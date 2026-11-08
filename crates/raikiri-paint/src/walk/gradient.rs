@@ -737,10 +737,7 @@ pub(super) struct RawStop {
 
 /// The offsets of authored stops after the color stop fixup (CSS Images 3
 /// §3.4.3), with each transition hint replaced by the stops that draw its
-/// curve. In an `lch` or `oklch` gradient the colors come back in that space
-/// with the hue Chromium gives each stop, and a stop that takes a different
-/// hue toward each neighbor becomes two stops at its offset (see
-/// the `polar_stops` module).
+/// curve.
 ///
 /// A stop or hint that lies before an earlier one is moved up to it, then
 /// the stops without a position are spread evenly between the stops and hints
@@ -793,8 +790,21 @@ pub(super) fn try_fixed_up_stops(
         }
         push_stop(&mut fixed, (offset, stop.color), budget)?;
     }
+    Some(fixed)
+}
+
+/// The stops of one period with the hue Chromium gives each stop of an
+/// `lch` or `oklch` gradient (see the `polar_stops` module). A stop that
+/// takes a different hue toward each neighbor becomes two stops at its
+/// offset, so this runs after a too-short repeating period has been
+/// averaged: the average weighs the authored stops, not the split ones.
+pub(super) fn try_polar_resolved_stops(
+    stops: Vec<(f64, DynamicColor)>,
+    interpolation: &GradientColorInterpolation,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<Vec<(f64, DynamicColor)>> {
     polar_stops::chromium_polar_stops(
-        fixed,
+        stops,
         conic_interpolation_tag(interpolation.color_space),
         budget,
     )
@@ -1065,6 +1075,8 @@ fn normalize_stops(
     if repeating && period <= MIN_REPEATING_PERIOD {
         return Some(Normalized::Solid(ramp_average_color(&stops, interpolation)));
     }
+    let stops = try_polar_resolved_stops(stops, interpolation, None)
+        .expect("unbounded stop buffers have no allocation budget");
     let (start, end) = if repeating {
         (first, last)
     } else {
@@ -1385,6 +1397,7 @@ pub(super) fn try_repeat_over_turn(
             Some(budget),
         )?));
     }
+    let stops = try_polar_resolved_stops(stops, interpolation, Some(budget))?;
     // The first period that starts at or before 0, and the first that ends at
     // or after 1. A period longer than the turn is the only one.
     let lowest = (-first / period).floor() as i64;

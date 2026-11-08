@@ -3093,7 +3093,12 @@ fn a_missing_component_of_a_polar_stop_comes_from_the_neighbor_on_each_side() {
         hint: None,
         color,
     });
-    let stops = gradient::fixed_up_stops(&raw, &linear.interpolation);
+    let stops = gradient::try_polar_resolved_stops(
+        gradient::fixed_up_stops(&raw, &linear.interpolation),
+        &linear.interpolation,
+        None,
+    )
+    .expect("no budget");
     assert_eq!(stops.len(), 4);
     let (before, after) = (stops[1].1.components, stops[2].1.components);
     assert_eq!((stops[1].0, stops[2].0), (0.5, 0.5));
@@ -3125,4 +3130,23 @@ fn zz_probe() {
             .collect();
         eprintln!("{stops} {px:?}");
     }
+}
+
+#[test]
+fn a_too_short_polar_period_averages_the_authored_stops() {
+    // A stop split in two for its two neighbors' hues would count as one
+    // more pair of the average. With every stop inside the gamut the
+    // average does not depend on the interpolation space.
+    let raster = |space: &str| {
+        raster_layer(
+            &format!(
+                "background-image: repeating-linear-gradient(to right in {space}, \
+                 red 0px, black 0px, blue 0px)"
+            ),
+            20,
+            20,
+        )
+    };
+    let (got, want) = (raster("lch"), raster("lab"));
+    assert_eq!(pixel(&got, 20, 10, 10), pixel(&want, 20, 10, 10));
 }

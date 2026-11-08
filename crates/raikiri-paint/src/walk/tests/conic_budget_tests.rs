@@ -200,3 +200,19 @@ fn many_elements_share_the_paint_budget_and_a_new_paint_resets_it() {
     assert!(first.2 <= 1_048_576);
     assert_eq!(paint_counts(), first);
 }
+
+#[test]
+fn a_too_short_polar_period_averages_the_authored_stops() {
+    // White between red and blue is split for its two neighbors' hues only
+    // after the average, which weighs the authored stops.
+    let average = |space: &str| {
+        let style = format!(
+            "background-image:repeating-conic-gradient(in {space}, red 0%, white 0.001%, blue 0.002%)"
+        );
+        let gradient::GradientFill::Solid(color) = fill(&style, &ImageBrushCache::default()) else {
+            panic!("expected the tiny-period average");
+        };
+        color
+    };
+    assert_eq!(average("oklch"), average("oklab"));
+}

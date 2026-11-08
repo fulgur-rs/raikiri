@@ -4265,6 +4265,8 @@ fn try_conic_to_peniko(
             }
             gradient::RepeatedTurn::Stops(stops) => fixed = stops,
         }
+    } else {
+        fixed = gradient::try_polar_resolved_stops(fixed, &conic.interpolation, Some(budget))?;
     }
     let mut peniko_stops = budget.vector(fixed.len())?;
     for (offset, color) in fixed {
