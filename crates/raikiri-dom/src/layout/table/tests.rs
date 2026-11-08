@@ -35,6 +35,7 @@ mod multiple_caption_tests;
 mod orthogonal_baseline_tests;
 mod part_containing_block_tests;
 mod percent_column_width_tests;
+mod row_extra_size_tests;
 mod rowspan_tests;
 mod sparse_border_tests;
 mod vertical_row_measurement_tests;
