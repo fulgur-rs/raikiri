@@ -506,6 +506,9 @@ fn push_generated(
     // engine decides whether those edges make a line in the document's mode.
     let open_inline = !empty || (!atomic && has_edges);
     if open_inline {
+        if let Some(first_line) = first_letter.first_line.as_mut() {
+            first_line.note_margins(id.0 as usize, &edges, &edge_percents);
+        }
         let first_line = if pseudo == PseudoElem::Marker {
             None
         } else if inline_level {
@@ -1461,6 +1464,9 @@ fn project_children_builder(
                         id as u64,
                         cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
                     );
+                    if let Some(first_line) = first_letter.first_line.as_mut() {
+                        first_line.note_margins(id, &edges, &edge_percents);
+                    }
                     // On the first line the element's values come from the
                     // `::first-line` it sits in; its box geometry does not.
                     match first_letter

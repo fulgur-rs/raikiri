@@ -559,6 +559,15 @@ impl IfcRoot {
         self.first_line_styles.background()
     }
 
+    /// The inline-start and inline-end margins of the inline element or
+    /// generated box `id` on the first line, as the lines are laid out.
+    pub(crate) fn first_line_margins(&self, id: usize) -> (f32, f32) {
+        // A paragraph that could not be rebuilt for its basis keeps its
+        // percentages at zero.
+        self.first_line_styles
+            .margins(id, self.line_paragraph.edge_basis())
+    }
+
     pub(crate) fn typographic_fragment(
         &self,
         box_id: usize,

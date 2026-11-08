@@ -472,7 +472,10 @@ impl<'a> LinePaint<'a, '_> {
         if line.index != 0 || cv.visibility != raikiri_style::property::Visibility::Visible {
             return;
         }
-        let Some(rect) = first_line_box(line) else {
+        let root_node = self.root_node;
+        let Some(rect) = first_line_box(line, self.paragraph.document, |node| {
+            root_node.ifc_first_line_margins(node)
+        }) else {
             return;
         };
         let piece = InlineBoxPiece {
@@ -715,34 +718,82 @@ fn piece_style<'c>(
 /// The box a `::first-line` has on `line`, in the paragraph's content box:
 /// the content area of the line's font along the block axis, and what an
 /// inline box around the content covers along the inline axis, without the
-/// trailing space that hangs. The borders and padding of the inline elements
-/// at its ends are inside it. `None` when the line has no content.
-fn first_line_box(line: &PositionedLine<'_>) -> Option<raikiri_dom::BoxRect> {
+/// trailing space that hangs. The margins, borders and padding of the inline
+/// elements at its ends are inside it; `margins` gives the inline-start and
+/// inline-end margins an element is laid out with, by node id. `None` when
+/// the line has no content.
+fn first_line_box(
+    line: &PositionedLine<'_>,
+    document: &Document,
+    margins: impl Fn(usize) -> (f32, f32),
+) -> Option<raikiri_dom::BoxRect> {
     use shodo::Fragment;
-    // The glyphs and atomic boxes, whose last one may hang past the line,
-    // and the border boxes of the inline elements, which end before the
-    // space that hangs.
+    // The glyphs and atomic boxes outside the inline elements, whose last one
+    // may hang past the line, and the margin boxes of the outermost inline
+    // elements, which end before the space that hangs. Like Chromium's, the
+    // box runs from the margin edge of what starts the line to that of what
+    // ends it, so a negative margin pulls it in past the glyphs.
     let mut content: Option<(f32, f32)> = None;
     let mut boxes: Option<(f32, f32)> = None;
-    let include = |extent: &mut Option<(f32, f32)>, start: f32, size: f32| {
-        *extent = Some(extent.map_or((start, start + size), |(low, high)| {
-            (low.min(start), high.max(start + size))
-        }));
+    let include = |extent: &mut Option<(f32, f32)>, start: f32, end: f32| {
+        *extent = Some(extent.map_or((start, end), |(low, high)| (low.min(start), high.max(end))));
+    };
+    let box_nodes: HashSet<usize> = line
+        .line
+        .fragments()
+        .filter_map(|fragment| match fragment {
+            Fragment::InlineBox(inline_box) => Some(inline_box.node.0 as usize),
+            _ => None,
+        })
+        .collect();
+    // Whether the text or atomic box of `node` sits in an inline element of
+    // the line, whose box then covers it: a generated box holds its text,
+    // and an element the content of its descendants.
+    let held = |node: usize| {
+        let element = generated_origin(node).map_or(node, |(element, _)| element);
+        box_nodes.contains(&node)
+            || box_nodes.contains(&element)
+            || document
+                .ancestors(element)
+                .any(|id| box_nodes.contains(&id))
+    };
+    let mut include_content = |node: Option<usize>, start: f32, size: f32| {
+        if !node.is_some_and(held) {
+            include(&mut content, start, start + size);
+        }
     };
     for fragment in line.line.fragments() {
         match fragment {
-            Fragment::GlyphRun(run) => include(&mut content, run.inline_start(), run.inline_size()),
-            Fragment::Atomic(atomic) => include(
-                &mut content,
-                atomic.margin_rect.inline_start,
-                atomic.margin_rect.inline_size,
+            Fragment::GlyphRun(run) => include_content(
+                run.node().map(|node| node.0 as usize),
+                run.inline_start(),
+                run.inline_size(),
             ),
-            Fragment::InlineBox(inline_box) => include(
-                &mut boxes,
-                inline_box.rect.inline_start,
-                inline_box.rect.inline_size,
-            ),
-            Fragment::RubyAnnotation(_) | Fragment::OutOfFlowAnchor(_) => {}
+            Fragment::Atomic(atomic) => {
+                include_content(
+                    Some(atomic.node.0 as usize),
+                    atomic.margin_rect.inline_start,
+                    atomic.margin_rect.inline_size,
+                );
+            }
+            Fragment::InlineBox(inline_box) if inline_box.parent.is_none() => {
+                let (start, end) = margins(inline_box.node.0 as usize);
+                let mut start = f32::from(u8::from(inline_box.has_start_edge)) * start;
+                let mut end = f32::from(u8::from(inline_box.has_end_edge)) * end;
+                // The element's inline-start edge is on the line's
+                // inline-end side when its direction opposes the line's.
+                if inline_box.start_edge_is_reversed {
+                    std::mem::swap(&mut start, &mut end);
+                }
+                let rect = inline_box.rect;
+                include(
+                    &mut boxes,
+                    rect.inline_start - start,
+                    rect.inline_start + rect.inline_size + end,
+                );
+            }
+            Fragment::InlineBox(_) | Fragment::RubyAnnotation(_) | Fragment::OutOfFlowAnchor(_) => {
+            }
         }
     }
     let content = content.map(|(start, end)| (start, (end - line.line.hang_end()).max(start)));

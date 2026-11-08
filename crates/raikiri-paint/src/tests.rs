@@ -3276,6 +3276,149 @@ fn first_line_background_covers_the_content_of_the_first_line() {
     }
 }
 
+/// The margins of the inline elements at the ends of the first line are
+/// inside its box, as in Chromium: the box runs from the margin edge of what
+/// starts the line to the margin edge of what ends it.
+#[test]
+fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends() {
+    let red = "p::first-line{background:rgb(255,0,0)}";
+    let vertical = "p{width:auto;height:100px;writing-mode:vertical-rl}";
+    // (css, body, the box of the red fill)
+    let cases: [(&str, &str, [f64; 4]); 23] = [
+        (
+            "",
+            "<p><span style=\"margin:0 7px\">XX</span>XX</p>",
+            [0.0, 0.0, 54.0, 10.0],
+        ),
+        (
+            "",
+            "<p>XX<span style=\"margin:0 7px\">XX</span></p>",
+            [0.0, 0.0, 54.0, 10.0],
+        ),
+        // The margins of nested elements add up at both ends.
+        (
+            "",
+            "<p><span style=\"margin:0 3px\"><span style=\"margin:0 5px\">XX</span></span>XX<span style=\"margin-right:4px\"><b style=\"margin-right:6px\">X</b></span></p>",
+            [0.0, 0.0, 76.0, 10.0],
+        ),
+        // A negative margin pulls the end of the box in, past the glyphs.
+        (
+            "",
+            "<p><span style=\"margin:0 -3px\">XX</span>XX<span style=\"margin-right:-4px\">X</span></p>",
+            [0.0, 0.0, 40.0, 10.0],
+        ),
+        (
+            "",
+            "<p><span style=\"margin-left:5px\"><span style=\"margin-left:-3px\">XX</span></span>XX</p>",
+            [0.0, 0.0, 42.0, 10.0],
+        ),
+        // A percentage refers to the width of the paragraph.
+        (
+            "",
+            "<p><span style=\"margin-left:10%\">XX</span>XX</p>",
+            [0.0, 0.0, 50.0, 10.0],
+        ),
+        (
+            "",
+            "<p><span style=\"margin:0 7px;padding:0 2px;border:solid transparent;border-width:0 1px\">XX</span>XX</p>",
+            [0.0, 0.0, 60.0, 10.0],
+        ),
+        // Only the start edge of an element that goes on is on the line.
+        (
+            "",
+            "<p><span style=\"margin:0 7px\">XX XX XX XX XX XX</span></p>",
+            [0.0, 0.0, 87.0, 10.0],
+        ),
+        (
+            "",
+            "<p><span style=\"margin:0 7px\"><i style=\"display:inline-block;width:10px;height:10px\"></i></span>XX</p>",
+            [0.0, 2.0, 44.0, 12.0],
+        ),
+        (
+            "p{direction:rtl}",
+            "<p><span style=\"margin:0 7px 0 2px\">XX</span>XX</p>",
+            [51.0, 0.0, 100.0, 10.0],
+        ),
+        // A right-to-left element has its start margin on the right.
+        (
+            "",
+            "<p><span dir=rtl style=\"margin:0 7px 0 2px\">XX</span>XX</p>",
+            [0.0, 0.0, 49.0, 10.0],
+        ),
+        (
+            "",
+            "<p>XX<span dir=rtl style=\"margin:0 7px 0 2px\">XX</span></p>",
+            [0.0, 0.0, 49.0, 10.0],
+        ),
+        (
+            vertical,
+            "<p><span style=\"margin:7px 0 2px\">XX</span>XX</p>",
+            [0.0, 0.0, 10.0, 49.0],
+        ),
+        (
+            "p{width:auto;height:100px;writing-mode:vertical-lr}",
+            "<p>XX<span style=\"margin:7px 0 2px\">XX</span></p>",
+            [0.0, 0.0, 10.0, 49.0],
+        ),
+        // Text after an element whose negative margin takes back its padding
+        // is outside the element.
+        (
+            "",
+            "<p><span style=\"padding-right:30px;margin-right:-30px\">XX</span>YY</p>",
+            [0.0, 0.0, 40.0, 10.0],
+        ),
+        // Text an element's negative margin overlaps is still outside it.
+        (
+            "",
+            "<p>XX<span style=\"margin-left:-20px\">YY</span></p>",
+            [0.0, 0.0, 20.0, 10.0],
+        ),
+        (
+            "",
+            "<p>XX<span style=\"margin-left:-20px\">YY</span>XX</p>",
+            [0.0, 0.0, 40.0, 10.0],
+        ),
+        // A space hanging in an element at the end of the line is outside the
+        // box, which still ends at the element's margin edge.
+        (
+            "",
+            "<p>XX<span style=\"margin-left:-20px;margin-right:-10px\">YY </span>XXXXXXXXXX</p>",
+            [0.0, 0.0, 10.0, 10.0],
+        ),
+        (
+            "",
+            "<p>XX <span>YY </span>XXXXXXXXXX</p>",
+            [0.0, 0.0, 50.0, 10.0],
+        ),
+        // Generated boxes, first letters and ruby containers have margins too.
+        (
+            "p::before{content:\"XX\";margin:0 7px}",
+            "<p>XX</p>",
+            [0.0, 0.0, 54.0, 10.0],
+        ),
+        (
+            "p::first-letter{margin:0 7px}",
+            "<p>XX</p>",
+            [0.0, 0.0, 34.0, 10.0],
+        ),
+        (
+            "",
+            "<p><ruby style=\"margin:0 7px\">XX<rt>X</rt></ruby>XX</p>",
+            [0.0, 5.0, 54.0, 15.0],
+        ),
+        // An inside marker has no margins of its own on the line.
+        (
+            "p{display:list-item;list-style:inside \"X\";margin-left:40px}",
+            "<p>XX</p>",
+            [40.0, 0.0, 70.0, 10.0],
+        ),
+    ];
+    for (css, body, expected) in cases {
+        let fills = first_line_fills(&format!("{red}{css}"), body);
+        assert_eq!(fills, [(FIRST_LINE_RED, expected)], "{css} {body}");
+    }
+}
+
 /// A first line with no content has nothing to cover.
 #[test]
 fn first_line_background_skips_an_empty_first_line() {
