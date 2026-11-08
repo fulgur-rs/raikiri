@@ -528,7 +528,7 @@ fn initial_page_child_order<'doc>(
                 )
             });
     if !is_auto_row_grid {
-        return Cow::Borrowed(children);
+        return details_child_order(document, cascade, parent_id);
     }
 
     let is_in_flow = |child_id: usize| {
@@ -877,7 +877,7 @@ pub fn resolve_initial_page_context(
 /// `Style`, so retain a stable sorted projection only for containers with a
 /// non-zero ordered child. `TaffyChildIter` applies its existing flat-tree and
 /// whitespace filtering to this view.
-pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
+pub(crate) fn refresh_order_modified_children(doc: &mut Document, cascade: &CascadeResult) {
     let mut projection_changed = false;
     let grid_details_stale = doc.layout_dirty;
     for parent_idx in 0..doc.nodes.len() {
@@ -887,20 +887,35 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         // sorts that flattened sequence. Taffy takes no `order` input, so the
         // sorted items replace the DOM children here.
         let mut children = Vec::new();
-        if parent.formatting_context.is_flex_or_grid() {
-            let mut pending: Vec<usize> = parent.children.iter().rev().copied().collect();
+        // A `details` lays its first summary out ahead of its other children
+        // (see `details_child_order`), before `order` sorts flex and grid
+        // items.
+        let summary_moved =
+            !parent.is_ifc_root() && summary_out_of_place(doc, cascade, parent_idx).is_some();
+        let flex_or_grid = parent.formatting_context.is_flex_or_grid();
+        // Whether a `details` among the flattened children moved its summary.
+        let mut flattened_moved = false;
+        if flex_or_grid {
+            let mut pending: Vec<usize> = details_child_order(doc, cascade, parent_idx)
+                .iter()
+                .rev()
+                .copied()
+                .collect();
             while let Some(child) = pending.pop() {
                 let node = &doc.nodes[child];
                 if node.kind() == NodeKind::Element
                     && node.display() == DisplayValue::Contents
                     && !node.is_ifc_root()
                 {
-                    pending.extend(node.children.iter().rev().copied());
+                    let order = details_child_order(doc, cascade, child);
+                    flattened_moved |= matches!(order, Cow::Owned(_));
+                    pending.extend(order.iter().rev().copied());
                 } else {
                     children.push(child);
                 }
             }
         }
+        // `order` applies to flex and grid items only.
         let should_sort = children.iter().any(|&child| {
             doc.nodes[child].layout_position() != Position::Absolute && doc.nodes[child].order != 0
         });
@@ -922,6 +937,12 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
                 }
             }
             ordered_children.into_boxed_slice()
+        } else if flex_or_grid && (summary_moved || flattened_moved) {
+            children.into_boxed_slice()
+        } else if summary_moved {
+            details_child_order(doc, cascade, parent_idx)
+                .into_owned()
+                .into_boxed_slice()
         } else {
             Box::new([])
         };
@@ -951,6 +972,70 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
             node.grid_column_count = 0;
         }
     }
+}
+
+/// The children of `parent` in box order: its DOM children, but for the
+/// first summary of a `details`, which comes first (see
+/// [`summary_out_of_place`]).
+pub(crate) fn details_child_order<'doc>(
+    doc: &'doc Document,
+    cascade: &CascadeResult,
+    parent: usize,
+) -> Cow<'doc, [usize]> {
+    let children = &doc.nodes[parent].children;
+    match summary_out_of_place(doc, cascade, parent) {
+        Some(summary) => Cow::Owned(
+            std::iter::once(summary)
+                .chain(children.iter().copied().filter(|&child| child != summary))
+                .collect(),
+        ),
+        None => Cow::Borrowed(children),
+    }
+}
+
+/// The first `summary` child of the HTML `details` element `parent`, when
+/// another child that generates a box comes before it.
+///
+/// HTML Living Standard §15.5.4 "The details and summary elements": a
+/// `details` renders its first `summary` child in a slot of its own ahead of
+/// the slot that holds the rest of its contents, so the summary is laid out
+/// first wherever it is among the children.
+pub(crate) fn summary_out_of_place(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+) -> Option<usize> {
+    fn is_html(node: &crate::Node, tag: &str) -> bool {
+        node.kind() == NodeKind::Element
+            && matches!(
+                node.namespace_uri(),
+                None | Some("http://www.w3.org/1999/xhtml")
+            )
+            && node
+                .tag_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case(tag))
+    }
+    let node = &doc.nodes[parent];
+    if !is_html(node, "details") {
+        return None;
+    }
+    let mut before = false;
+    for &child in &node.children {
+        let child_node = &doc.nodes[child];
+        if is_html(child_node, "summary") {
+            return before.then_some(child);
+        }
+        // Collapsible white space between the children makes no box.
+        before |= match child_node.kind() {
+            NodeKind::Element => cascade
+                .computed
+                .get(child)
+                .is_some_and(|values| values.display != DisplayValue::None),
+            NodeKind::Text => super::ifc::assign::text_makes_a_line(doc, cascade, child),
+            _ => false,
+        };
+    }
+    None
 }
 
 /// Whether `child` is a text node after the first of the run of text that
@@ -992,8 +1077,7 @@ fn flex_pagination_child_order(
     // Contents wrappers do not delimit order-modified flex item sequences.
     // Flatten the complete effective sequence before stable sorting so items
     // in different wrappers can interleave without changing DOM box layout.
-    let mut pending: Vec<_> = document.nodes[parent_id]
-        .children
+    let mut pending: Vec<_> = details_child_order(document, cascade, parent_id)
         .iter()
         .rev()
         .copied()
@@ -1001,7 +1085,12 @@ fn flex_pagination_child_order(
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
         if boxes.identity(child).display() == DisplayValue::Contents {
-            pending.extend(document.nodes[child].children.iter().rev().copied());
+            pending.extend(
+                details_child_order(document, cascade, child)
+                    .iter()
+                    .rev()
+                    .copied(),
+            );
         } else {
             children.push(child);
         }
@@ -1174,7 +1263,7 @@ pub(crate) fn pagination_child_order_borrowed<'doc>(
             return Cow::Owned(grid_pagination_children(document, parent_id));
         }
         FormattingContext::Grid => {}
-        _ => return Cow::Borrowed(&document.nodes[parent_id].children),
+        _ => return details_child_order(document, cascade, parent_id),
     }
 
     let mut children = grid_pagination_children(document, parent_id);

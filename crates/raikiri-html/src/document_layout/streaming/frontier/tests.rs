@@ -160,6 +160,18 @@ fn open_elements_with_auto_direction_hold_from_their_start() {
 }
 
 #[test]
+fn an_open_details_holds_until_its_summary_arrives() {
+    // The legend shown in place of a missing summary, and the summary that
+    // a details lays out first, can change until a summary arrives.
+    assert_eq!(frontier_of("<p>a</p><details open><p>x</p>"), "<details>");
+    assert_eq!(
+        frontier_of("<p>a</p><details open><summary>s</summary><p>x</p>"),
+        "end"
+    );
+    assert_eq!(frontier_of("<details><p>x</p></details><p>y</p>"), "end");
+}
+
+#[test]
 fn forward_dependent_selectors_hold_everything() {
     // The virtual document root has no tag and no text.
     assert_eq!(

@@ -1717,7 +1717,7 @@ fn resolved_grid_row_ranges_are_discarded_when_order_or_tree_changes() {
         } else {
             doc.append_element(Some(grid), "div", Some("height:30px"));
         }
-        refresh_order_modified_children(&mut doc);
+        refresh_order_modified_children(&mut doc, &cascade);
         assert!(doc.nodes[grid].grid_item_rows.is_empty());
         assert!(doc.nodes[grid].grid_item_row_starts.is_empty());
     }

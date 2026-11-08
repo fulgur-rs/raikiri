@@ -1166,12 +1166,22 @@ fn project_children_builder(
                 crate::layout::table::anonymous::Content::After(id) => Step::After(*id),
             })
             .collect(),
-        None => root_node
-            .children
-            .iter()
-            .rev()
-            .map(|&id| Step::Enter(id))
-            .collect(),
+        None => {
+            // The first summary of a `details` comes first in its paragraph
+            // too, so the text around it joins up after it.
+            let summary = crate::layout::page::summary_out_of_place(doc, cascade, root);
+            let rest = root_node
+                .children
+                .iter()
+                .copied()
+                .filter(|&id| Some(id) != summary);
+            summary
+                .into_iter()
+                .chain(rest)
+                .rev()
+                .map(Step::Enter)
+                .collect()
+        }
     };
     while let Some(step) = stack.pop() {
         let id = match step {
