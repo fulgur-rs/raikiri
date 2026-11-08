@@ -1655,6 +1655,20 @@ fn flex_item_height_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &La
         && !tree.container_is_vertical(idx)
 }
 
+/// Whether the flex item `idx` of a column container is measured for its flex
+/// base size without its `height`: a flex basis of `content`, `max-content` or
+/// `fit-content` takes the place of the main size property, so the item is
+/// sized at its longest line whatever height it states.
+fn flex_basis_ignores_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.flex_main_axis_is_width(idx) == Some(false)
+        && matches!(
+            tree.physical_style(idx).flex_basis().expand(),
+            ExpandedDimension::Content
+                | ExpandedDimension::MaxContent
+                | ExpandedDimension::FitContent
+        )
+}
+
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
 fn compute_ifc_root(
@@ -1703,6 +1717,26 @@ fn compute_ifc_root(
     } else {
         inputs
     };
+    // The inline size of a vertical paragraph is its physical height, which
+    // the bridge hands taffy as `auto` (see `sized_by_content_keyword`) while
+    // the paragraph keeps the keyword (see `vertical_ifc_height`). A container
+    // that measures the paragraph's width before it settles the height, a flex
+    // row for its flex base size, offers the height it has or none at all, so
+    // the lines would break there and not at the `min-content` inline size the
+    // box states (CSS Sizing 3 §3.1.1). The width is measured in that room,
+    // as a grid asks for it, so that the lines break at the longest word.
+    let mut inputs = inputs;
+    if inputs.sizing_mode == SizingMode::ContentSize
+        && inputs.known_dimensions.height.is_none()
+        && tree.nodes[idx]
+            .ifc
+            .as_ref()
+            .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
+        && tree.retained_height_keyword(idx) == Some(raikiri_style::ContentSizeKeyword::MinContent)
+        && !flex_basis_ignores_height(tree, idx)
+    {
+        inputs.available_space.height = AvailableSpace::MinContent;
+    }
     let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
     let mut layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
     // A paragraph box with an `aspect-ratio` is sized as block flow sizes a
@@ -1727,7 +1761,6 @@ fn compute_ifc_root(
     let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size);
     let ratio_height_follows =
         ratio.is_some() && inputs.known_dimensions.height.is_none() && stated.height.is_none();
-    let mut inputs = inputs;
     if ratio.is_some() {
         let metrics = block_flow::Metrics::resolve(&layout_style, false, content_box_ratio, inputs);
         if inputs.known_dimensions.width.is_none()
