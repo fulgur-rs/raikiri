@@ -2385,13 +2385,22 @@ fn table_cell_room_of_box(tree: &LayoutSession<'_>, node: usize) -> Option<Optio
     }
     let room = table_cell_orthogonal_room(tree, parent)?;
     // Inline content beside an in-flow block of the cell sits in an anonymous
-    // block of its own.
-    let children = tree
-        .ifc_layout_node(parent)
-        .map(|cell| cell.children.as_slice());
-    let beside_a_block = children.unwrap_or_default().iter().any(|&child| {
+    // block of its own. The children of a `display: contents` element take
+    // part as the element's siblings.
+    let children_of = |node: usize| {
+        tree.ifc_layout_node(node)
+            .map(|node| node.children.clone())
+            .unwrap_or_default()
+    };
+    let mut pending = children_of(parent);
+    let mut beside_a_block = false;
+    while let Some(child) = pending.pop() {
         let display = tree.nodes[child].display();
-        (matches!(
+        if display == DisplayValue::Contents {
+            pending.extend(children_of(child));
+            continue;
+        }
+        beside_a_block |= (matches!(
             display,
             DisplayValue::Block
                 | DisplayValue::FlowRoot
@@ -2399,8 +2408,8 @@ fn table_cell_room_of_box(tree: &LayoutSession<'_>, node: usize) -> Option<Optio
                 | DisplayValue::Table
         ) || display.is_block_flex_or_grid_container())
             && tree.nodes[child].layout_position() != Position::Absolute
-            && !tree.physical_style(child).float().is_floated()
-    });
+            && !tree.physical_style(child).float().is_floated();
+    }
     Some((!beside_a_block).then_some(room))
 }
 

@@ -498,6 +498,15 @@ const CASES: &[Case] = &[
             ("o", (0.0, 0.0, 100.0, 300.0)),
         ],
     ),
+    (
+        "contents",
+        r#"<table style="border-spacing:0"><tr><td id=c style="padding:0;height:300px"><span style="display:contents"><div id=d>x</div></span><span id=o style="display:inline-block;writing-mode:vertical-rl">{W}</span></td></tr></table>"#,
+        &[
+            ("c", (0.0, 0.0, 100.0, 612.0)),
+            ("d", (0.0, 0.0, 100.0, 10.0)),
+            ("o", (0.0, 10.0, 50.0, 600.0)),
+        ],
+    ),
 ];
 
 #[test]
