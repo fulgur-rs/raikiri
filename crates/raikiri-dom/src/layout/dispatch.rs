@@ -1772,6 +1772,25 @@ fn compute_ifc_root(
             &[OwnedPropertyOverride::aspect_ratio(None)],
         );
     }
+    // The physical width of a vertical paragraph is its block size, which the
+    // leaf layout would take from the lines. A `stretch` width fills the room
+    // the containing block leaves instead, within the limits of the box, and
+    // acts as `auto` while that width is open (CSS Sizing 4 §5.1).
+    if vertical_paragraph
+        && inputs.sizing_mode == SizingMode::InherentSize
+        && inputs.known_dimensions.width.is_none()
+        && inputs.parent_size.width.is_some()
+        && matches!(style.size.width.expand(), ExpandedDimension::Stretch)
+        && let AvailableSpace::Definite(room) = inputs.available_space.width
+    {
+        let edges = ifc_horizontal_edges(&style, parent_inline_size);
+        let (minimum, maximum) =
+            ifc_content_width_bounds(&style, inputs.parent_size.width, parent_inline_size);
+        let stretch = content_limits::stretch_fit_width(tree, idx, &inputs, room);
+        let content = (stretch - edges.0 - edges.1).clamp(0.0, f32::INFINITY);
+        inputs.known_dimensions.width = Some(content.min(maximum).max(minimum) + edges.0 + edges.1);
+        inputs.known_dimensions_are_definite.width = true;
+    }
     // Border-box top inset, resolved here: the parent has not
     // stored this node's layout yet.
     let top_inset = ifc_top_inset(&style, parent_inline_size);
@@ -1801,6 +1820,7 @@ fn compute_ifc_root(
         run_mode: inputs.run_mode,
         stretched_width,
         definite_width,
+        margins_collapsible: inputs.vertical_margins_are_collapsible,
         stretched_height,
         width_bounds: ifc_content_width_bounds(
             &style,
@@ -2268,6 +2288,9 @@ struct IfcMeasure {
     /// fixed it as definite, or the box states it. The percentage widths of a
     /// vertical paragraph's children refer to it, and read as `auto` otherwise.
     definite_width: bool,
+    /// Whether the margins at the block-start and block-end edges of the box
+    /// may collapse with those of its parent.
+    margins_collapsible: Line<bool>,
     /// The parent stretched or fixed the box's physical height.
     stretched_height: bool,
     /// The box's own content-box `min-width` and `max-width`.
@@ -2560,11 +2583,23 @@ fn measure_ifc_root(
     let height_cap = (!vertical)
         .then(|| crate::layout::ifc::boxes::max_height_cap(tree, idx))
         .flatten();
+    let held_margins = if vertical {
+        crate::layout::ifc::boxes::held_block_margins(
+            tree,
+            idx,
+            axes.writing_mode(),
+            measure.margins_collapsible,
+            measure.insets,
+        )
+    } else {
+        Line::TRUE
+    };
     let geometry_of = |content_size| {
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
         geometry.height_cap = height_cap;
         geometry.vertical_width = vertical_width;
+        geometry.held_margins = held_margins;
         // The spanners are laid out across the columns once the lines are
         // placed in them.
         geometry.blocks_apart = spanner_groups && fragmentation.is_some();
