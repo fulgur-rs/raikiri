@@ -5520,6 +5520,9 @@ struct BoxOverflow {
     /// The box is a table caption with no break between its lines that would
     /// cross the page edge.
     table_caption: bool,
+    /// The box is a table caption that moves to the next page alone, with the
+    /// edges that close its table's parent, though it fits this page.
+    tail_caption: bool,
     /// How far below its table's top edge the box starts when it is the
     /// first row of a table, or zero.
     table_row_lead: f32,
@@ -5765,6 +5768,7 @@ impl AvoidedBreaks {
             avoided_run,
             table_row,
             table_caption,
+            tail_caption: candidate.context.is_table_caption() && item_tail,
             table_row_lead,
             row_group_lead,
             flex_item,
@@ -10988,6 +10992,41 @@ fn make_room_for_table_header(
             .max(current_page);
         footer.last_row = Some((end_page, bottom));
     }
+    delta
+}
+
+/// Makes room at the top of `current_page` for a copy of the repeated header
+/// of the table whose bottom caption `caption`, which sits at `caption_y` with
+/// `height`, moved there alone. The caption goes below the copy and the closing
+/// padding and border of the table. Returns how far the caption moved down,
+/// which is zero when the page already holds the copy or cannot hold it with
+/// the caption.
+fn make_room_for_caption_header(
+    document: &mut Document,
+    table_headers: &mut HeaderRepeats,
+    caption: usize,
+    caption_y: f32,
+    height: f32,
+    current_page: u32,
+    page_origins: &PageOrigins,
+) -> f32 {
+    let Some(&(header_id, closing)) = table_headers.tail_captions.get(&caption) else {
+        return 0.0;
+    };
+    let header = table_headers
+        .headers
+        .get_mut(&header_id)
+        .expect("prepared header");
+    let copy = header.height + header.gap + closing;
+    if header.placements.contains_key(&current_page)
+        || copy + height > page_origins.step_at(current_page) + 0.001
+    {
+        return 0.0;
+    }
+    let origin = page_origins.origin(current_page);
+    let delta = (origin + copy - caption_y).max(0.0);
+    materialize_y(document, caption, caption_y + delta);
+    header.placements.insert(current_page, (origin, origin));
     delta
 }
 

@@ -308,14 +308,56 @@ fn an_avoided_multirow_footer_moves_as_a_group_without_counting_rows_twice() {
 }
 
 #[test]
-fn a_header_with_a_bottom_caption_keeps_the_documented_repeat_limit() {
-    // Chromium also repeats the header before the caption on page2. This
-    // assertion pins only the existing repeat exclusion, not conformance (RAIKIRI-1494).
-    let (doc, _, _, rows, after, _) = printed_table(Tail::HeaderCaption, 30, false);
-    assert!(doc.table_objects.headers.headers.is_empty());
-    let actual: Vec<_> = rows.into_iter().map(|row| page_flow_y(&doc, row)).collect();
-    assert_eq!(actual, [160.0, 170.0, 180.0, 200.0]);
-    assert_eq!(page_flow_y(&doc, after), 240.0);
+fn a_header_is_copied_above_a_bottom_caption_that_moves_alone() {
+    // The caption fits on page one but not together with the holder's end padding, so it
+    // moves alone and a copy of the header goes above it on the next page (Chromium 152).
+    let (doc, holder, table, rows, after, pages) = printed_table(Tail::HeaderCaption, 30, false);
+    let actual: Vec<_> = rows.iter().map(|&row| page_flow_y(&doc, row)).collect();
+    assert_eq!(actual, [160.0, 170.0, 180.0, 210.0]);
+    assert_eq!(page_flow_y(&doc, after), 250.0);
+    assert_eq!(doc.nodes[holder].layout.size.height, 250.0);
+    assert_eq!(pages, 2);
+    let (_, table_y, _, table_height) = crate::layout::test_support::absolute_rect(&doc, table);
+    assert_eq!((table_y, table_height), (160.0, 60.0));
+    let header = doc
+        .table_objects
+        .headers
+        .headers
+        .values()
+        .find(|header| !header.footer)
+        .unwrap();
+    assert_eq!(header.placements.get(&1), Some(&(200.0, 200.0)));
+}
+
+#[test]
+fn a_caption_gets_no_header_copy_on_a_page_that_has_one_or_cannot_hold_it() {
+    let (mut doc, _, _, rows, _, _) = printed_table(Tail::HeaderCaption, 30, false);
+    let caption = *rows.last().unwrap();
+    let mut headers = doc.table_objects.headers.clone();
+    let copies = |headers: &HeaderRepeats| {
+        headers
+            .headers
+            .values()
+            .filter(|header| header.placements.contains_key(&1))
+            .count()
+    };
+    // The caption sits at the top of page one, which starts at `step`.
+    let room = |doc: &mut Document, headers: &mut HeaderRepeats, step: f32| {
+        let pages = PageOrigins::new(&[], step);
+        make_room_for_caption_header(doc, headers, caption, step, 10.0, 1, &pages)
+    };
+    // The layout already placed the copy of the second page.
+    assert_eq!(copies(&headers), 1);
+    assert_eq!(room(&mut doc, &mut headers, 200.0), 0.0);
+    // The 10px copy and the 10px caption do not fit a 15px page.
+    for header in headers.headers.values_mut() {
+        header.placements.clear();
+    }
+    assert_eq!(room(&mut doc, &mut headers, 15.0), 0.0);
+    assert_eq!(copies(&headers), 0);
+    // They fit a page of 20px, and the caption goes below the copy.
+    assert_eq!(room(&mut doc, &mut headers, 20.0), 10.0);
+    assert_eq!(copies(&headers), 1);
 }
 
 #[test]

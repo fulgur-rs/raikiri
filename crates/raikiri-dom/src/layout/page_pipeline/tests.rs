@@ -74,6 +74,7 @@ mod sibling_shift_tests;
 mod source_walk_tests;
 mod table_caption_page_end_tests;
 mod table_follow_tests;
+mod table_header_caption_tests;
 mod table_tail_tests;
 mod top_edge_tests;
 mod tree_order_tests;
@@ -18015,6 +18016,7 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
         avoided_run: false,
         table_row: false,
         table_caption: false,
+        tail_caption: false,
         table_row_lead,
         row_group_lead: None,
         flex_item: false,
@@ -18524,6 +18526,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
             avoided_run: false,
             table_row: false,
             table_caption: false,
+            tail_caption: false,
             table_row_lead: 0.0,
             row_group_lead: None,
             flex_item: false,
@@ -19723,6 +19726,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
             avoided_run: false,
             table_row: false,
             table_caption: false,
+            tail_caption: false,
             table_row_lead: 0.0,
             row_group_lead: None,
             flex_item: false,

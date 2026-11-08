@@ -73,6 +73,12 @@ pub(crate) struct HeaderRepeats {
     /// The repeated header group of each table whose body rows are all
     /// anonymous: their boxes are not placed as rows.
     pub(crate) anonymous_body_tables: HashMap<usize, usize>,
+    /// The first bottom caption of each table that repeats a header and no
+    /// footer, with that header group and the block size the table's closing
+    /// padding and border add below the header copy. When pagination moves
+    /// the caption alone to the next page with the edges that close the
+    /// table's parent, the page opens with a copy of the header above it.
+    pub(crate) tail_captions: HashMap<usize, (usize, f32)>,
     owners: Vec<Option<usize>>,
 }
 
@@ -202,17 +208,12 @@ impl HeaderRepeats {
             if body_rows.is_empty() {
                 continue;
             }
-            // Spanning-row breaks and bottom captions need their own table
-            // fragmentation pass. Preserve the existing source geometry.
+            // Spanning-row breaks need their own table fragmentation pass.
+            // Preserve the existing source geometry.
             let spans_rows = grid_rows
                 .iter()
                 .flat_map(|row| row.cells.iter().copied())
                 .any(|cell| super::get_rowspan(document, cell) != 1);
-            let bottom_caption = document.children_through_contents(table).iter().any(|&id| {
-                document.nodes[id].display() == DisplayValue::TableCaption
-                    && document.nodes[id].caption_side
-                        == raikiri_style::property::CaptionSideValue::Bottom
-            });
             let mut sources = Vec::new();
             let mut has_fixed = false;
             let mut has_page_boundary = false;
@@ -235,7 +236,7 @@ impl HeaderRepeats {
                     descendants.extend(document.nodes[id].children.iter().copied());
                 }
             }
-            if spans_rows || bottom_caption || has_fixed || has_page_boundary {
+            if spans_rows || has_fixed || has_page_boundary {
                 continue;
             }
             // A body box that does not break, or one inside a cell of a body
@@ -347,6 +348,25 @@ impl HeaderRepeats {
             result
                 .monolithic
                 .extend(unbroken.into_iter().map(|id| (id, groups)));
+            if let (Some(header), None) = (header, footer)
+                && let Some(caption) = document
+                    .children_through_contents(table)
+                    .iter()
+                    .copied()
+                    .find(|&id| {
+                        !document.nodes[id].is_display_none()
+                            && document.nodes[id].display() == DisplayValue::TableCaption
+                            && document.nodes[id].caption_side
+                                == raikiri_style::property::CaptionSideValue::Bottom
+                            && matches!(document.nodes[id].position(), PositionValue::Static)
+                    })
+            {
+                let layout = &node.layout;
+                result.tail_captions.insert(
+                    caption,
+                    (header, layout.padding.bottom + layout.border.bottom),
+                );
+            }
             for (group, is_footer) in [(header, false), (footer, true)] {
                 if let Some(group) = group {
                     result.headers.insert(
