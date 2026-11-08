@@ -5775,7 +5775,7 @@ impl AvoidedBreaks {
         // break between boxes beats one that leaves too few. It stays when it
         // already starts its page or is taller than the next one. A caption
         // that stays in plain block flow has its lines broken between by the
-        // paragraph line pass (see [`is_flow_table_caption`]); elsewhere it
+        // paragraph line pass (see `is_flow_table_caption`); elsewhere it
         // stays as it was laid out.
         let table_caption = candidate.context.is_table_caption()
             && item_overflow()
