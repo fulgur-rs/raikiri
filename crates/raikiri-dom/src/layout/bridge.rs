@@ -217,6 +217,17 @@ fn apply_computed_to_style_in_session_inner(
     let initial = ComputedValues::initial();
     let mut settled_styles = vec![Settled::default(); doc.nodes.len()];
     for (idx, slot) in settled_styles.iter_mut().enumerate() {
+        if doc.nodes[idx].kind() == NodeKind::Text {
+            // Text has no `display` of its own, but the cascade hides the
+            // text a closed `details` does not show (HTML LS §4.11.1).
+            let display = match cascade.computed.get(idx).map(|cv| cv.display) {
+                Some(DisplayValue::None) => DisplayValue::None,
+                _ => DisplayValue::Inline,
+            };
+            if doc.nodes[idx].display() != display {
+                doc.set_box_properties(idx, display, PositionValue::Static);
+            }
+        }
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }

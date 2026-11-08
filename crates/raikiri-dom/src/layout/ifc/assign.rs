@@ -492,6 +492,7 @@ fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
         let node = &doc.nodes[idx];
         if node.kind() != NodeKind::Text
             || !node.is_in_document()
+            || node.display() == DisplayValue::None
             || node.is_inline_svg_content()
             || node
                 .flags
@@ -617,6 +618,11 @@ fn inside_hidden_subtrees(doc: &Document) -> Vec<bool> {
 /// `preserve-spaces` and `break-spaces`, and a segment break under
 /// `preserve-breaks`.
 pub(crate) fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    // Text the cascade hides (a closed `details` hides all but its summary)
+    // makes no line, as text under a `display: none` element makes none.
+    if cascade.computed[id].display == DisplayValue::None {
+        return false;
+    }
     let Some(text) = doc.nodes[id].text_content() else {
         return false; // cov:ignore: callers pass text nodes, which always hold character data.
     };
@@ -690,7 +696,7 @@ fn anonymous_text_runs(doc: &Document, container: usize) -> Vec<TextRun> {
             continue;
         }
         match node.kind() {
-            NodeKind::Text => members.push(child),
+            NodeKind::Text if node.display() != DisplayValue::None => members.push(child),
             NodeKind::Element
                 if node.display() != DisplayValue::None && !node.is_non_rendered_html_element() =>
             {
