@@ -4257,11 +4257,8 @@ fn try_conic_to_peniko(
             color: gradient_stop_dynamic(stop.color, current_color),
         });
     }
-    let mut fixed = gradient::try_fixed_up_stops(&raw, &conic.interpolation, Some(budget))?;
-    let interpolation = gradient::drawn_interpolation(
-        &conic.interpolation,
-        conic.stops.iter().any(|stop| stop.hint.is_some()),
-    );
+    let (mut fixed, interpolation) =
+        gradient::try_fixed_up_stops(&raw, &conic.interpolation, Some(budget))?;
     if conic.repeating {
         match gradient::try_repeat_over_turn(fixed, &interpolation, budget)? {
             gradient::RepeatedTurn::Solid(color) => {

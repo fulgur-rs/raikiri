@@ -2304,7 +2304,7 @@ fn a_transition_hint_between_equal_colors_adds_no_stops() {
         })
         .collect();
     assert_eq!(
-        gradient::fixed_up_stops(&raw, &conic.interpolation).len(),
+        gradient::fixed_up_stops(&raw, &conic.interpolation).0.len(),
         3
     );
 }
@@ -2379,6 +2379,42 @@ fn a_transition_hint_keeps_the_long_arc_of_the_other_segments() {
     for x in [20, 40, 60, 80] {
         assert_same_pixel(&hinted, x, &turn, 2 * x, 4);
     }
+}
+
+#[test]
+fn a_transition_hint_keeps_the_long_arc_to_an_achromatic_stop() {
+    // White takes the hue Chromium gives it before the long arc to it is
+    // cut, so a hint elsewhere leaves that arc as it is.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, lch(50% 100 40), white 50%, 75%, blue)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, lch(50% 100 40), white 50%, blue)",
+        200,
+        1,
+    );
+    for x in [10, 30, 50, 70, 90] {
+        assert_same_pixel(&hinted, x, &plain, x, 4);
+    }
+}
+
+#[test]
+fn a_transition_hint_bends_the_turn_between_equal_colors() {
+    // Under `longer hue` the ramp between two equal colors turns once round,
+    // and the hint takes the middle of that turn.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, red, 25%, red)",
+        200,
+        1,
+    );
+    let turn = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, red, red)",
+        200,
+        1,
+    );
+    assert_same_pixel(&hinted, 50, &turn, 100, 4);
 }
 
 #[test]
@@ -3205,7 +3241,7 @@ fn a_missing_component_of_a_polar_stop_comes_from_the_neighbor_on_each_side() {
         color,
     });
     let stops = gradient::try_polar_resolved_stops(
-        gradient::fixed_up_stops(&raw, &linear.interpolation),
+        gradient::fixed_up_stops(&raw, &linear.interpolation).0,
         &linear.interpolation,
         None,
     )
