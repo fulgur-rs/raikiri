@@ -7,6 +7,7 @@ use crate::text_decoration::has_paintable_line;
 use raikiri_style::property::{ContentComponent, DisplayValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
+use shodo::node::{InlineEdgePercents, InlineEdges};
 use std::collections::HashMap;
 
 /// The `::first-line` styles that reach the first formatted line of one
@@ -42,6 +43,10 @@ pub(crate) struct FirstLineStyles {
     /// The `::first-line` box whose background covers the line, with the
     /// block it belongs to.
     background: Option<(usize, ComputedValues)>,
+    /// The inline-start and inline-end margins the inline elements and
+    /// generated boxes are laid out with, by id: the px parts and the
+    /// percentages, as fractions of the containing block's inline size.
+    margins: HashMap<usize, [(f32, f32); 2]>,
 }
 
 impl FirstLineStyles {
@@ -73,6 +78,18 @@ impl FirstLineStyles {
     /// it, even when it sets none itself.
     pub(crate) fn background(&self) -> Option<&(usize, ComputedValues)> {
         self.background.as_ref()
+    }
+
+    /// The inline-start and inline-end margins, in px, the inline element or
+    /// generated box `id` is laid out with when its lines' containing block
+    /// is `basis` wide. Zero for a box laid out without margins.
+    pub(crate) fn margins(&self, id: usize, basis: f32) -> (f32, f32) {
+        self.margins.get(&id).map_or(
+            (0.0, 0.0),
+            |[(start, end), (start_percent, end_percent)]| {
+                (start + start_percent * basis, end + end_percent * basis)
+            },
+        )
     }
 }
 
@@ -219,6 +236,31 @@ impl FirstLine {
     }
 
     /// Record `values`, those of the inline element `id` on the first line.
+    /// Record the inline margins in `edges` and `percents` that the inline
+    /// element or generated box `id` is laid out with, which the box of the
+    /// `::first-line` takes in when the element is at an end of the line. A
+    /// box laid out in parts keeps the start margin of its first part and the
+    /// end margin of its last.
+    pub(crate) fn note_margins(
+        &mut self,
+        id: usize,
+        edges: &InlineEdges,
+        percents: &InlineEdgePercents,
+    ) {
+        let (margin, percent) = (edges.margin, percents.margin);
+        self.styles
+            .margins
+            .entry(id)
+            .and_modify(|[(_, end), (_, end_percent)]| {
+                *end = margin.inline_end;
+                *end_percent = percent.inline_end;
+            })
+            .or_insert([
+                (margin.inline_start, margin.inline_end),
+                (percent.inline_start, percent.inline_end),
+            ]);
+    }
+
     pub(crate) fn note_element(&mut self, id: usize, values: ComputedValues) {
         self.styles.elements.insert(id, values);
     }

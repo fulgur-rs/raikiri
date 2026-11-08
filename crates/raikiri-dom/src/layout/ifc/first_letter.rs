@@ -520,6 +520,9 @@ impl FirstLetter {
                         edges,
                     );
                     builder.set_inline_edge_percents(edge_percents);
+                    if let Some(first_line) = self.first_line.as_mut() {
+                        first_line.note_margins(box_id, &edges, &edge_percents);
+                    }
                     self.open_boxes += 1;
                 }
                 if let Some(error) = builder.error() {

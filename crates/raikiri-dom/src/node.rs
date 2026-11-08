@@ -1071,6 +1071,15 @@ impl Node {
         self.ifc.as_ref()?.first_line_background()
     }
 
+    /// The inline-start and inline-end margins, in px, that the inline
+    /// element or generated box `id` of an ifc root is laid out with, in its
+    /// own direction, when a `::first-line` reaches the root.
+    pub fn ifc_first_line_margins(&self, id: usize) -> (f32, f32) {
+        self.ifc
+            .as_ref()
+            .map_or((0.0, 0.0), |root| root.first_line_margins(id))
+    }
+
     /// Enclosing typographic pseudo box, when ancestor block letters nest.
     pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
         self.ifc.as_ref()?.typographic_parent(box_id)

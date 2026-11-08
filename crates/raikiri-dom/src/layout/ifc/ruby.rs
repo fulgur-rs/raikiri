@@ -713,6 +713,19 @@ struct Content<'a, 'b> {
 }
 
 impl Content<'_, '_> {
+    /// Record the inline margins the element `id` is laid out with, for the
+    /// box of a `::first-line` around it.
+    fn note_margins(
+        &mut self,
+        id: usize,
+        edges: &InlineEdges,
+        percents: &shodo::node::InlineEdgePercents,
+    ) {
+        if let Some(first_line) = self.sink.first_letter.first_line.as_mut() {
+            first_line.note_margins(id, edges, percents);
+        }
+    }
+
     /// Record the line data of the element `id`: its relative offset and
     /// whether its content wraps.
     fn record_element(&mut self, id: usize) {
@@ -840,6 +853,7 @@ impl Content<'_, '_> {
             let (edges, edge_percents) = style::inline_edges(cv, id, self.fonts)?;
             let inline = styled(self.doc, self.cascade, cv, id, self.fonts)?;
             self.record_element(id);
+            self.note_margins(id, &edges, &edge_percents);
             builder
                 .open_inline(NodeId(id as u64), &inline, edges)
                 .set_inline_edge_percents(edge_percents);
@@ -1002,6 +1016,7 @@ impl Content<'_, '_> {
         if !root {
             let (edges, edge_percents) = style::inline_edges(cv, ruby, self.fonts)?;
             self.record_element(ruby);
+            self.note_margins(ruby, &edges, &edge_percents);
             builder
                 .open_inline(NodeId(ruby as u64), &container, edges)
                 .set_inline_edge_percents(edge_percents);
