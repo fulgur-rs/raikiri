@@ -3298,3 +3298,80 @@ thread_local! {
 }
 mod retained_source_tests;
 mod stylesheet_recovery_tests;
+
+/// Elements so large that `usvg` overflows `f32` when it maps an
+/// `objectBoundingBox` region onto them.
+const HUGE_BOX_FEATURES: [(&str, &str); 4] = [
+    (
+        "default filter region",
+        r#"<filter id="f"><feGaussianBlur stdDeviation="1"/></filter>
+<rect width="3e38" height="3e38" fill="green" filter="url(#f)"/>"#,
+    ),
+    (
+        "filter region",
+        r#"<filter id="f" x="1e30" y="1e30" width="1e30" height="1e30"><feGaussianBlur stdDeviation="1"/></filter>
+<rect width="1e30" height="1e30" fill="green" filter="url(#f)"/>"#,
+    ),
+    (
+        "mask",
+        r#"<mask id="m" maskUnits="objectBoundingBox" x="1e30" y="1e30" width="1e30" height="1e30"><rect width="10" height="10" fill="white"/></mask>
+<rect width="1e30" height="1e30" fill="green" mask="url(#m)"/>"#,
+    ),
+    (
+        "pattern",
+        r#"<pattern id="p" patternUnits="objectBoundingBox" x="1e30" width="1e30" height="1"><rect width="10" height="10" fill="green"/></pattern>
+<rect width="1e30" height="1e30" fill="url(#p)"/>"#,
+    ),
+];
+
+/// Parses `body` in a 10 by 10 document and draws it at that size.
+fn draw_ten_by_ten(body: &str) -> Result<raikiri_traits::DecodedImage, SvgError> {
+    let source =
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">{body}</svg>"#);
+    SvgDocument::parse(source.as_bytes())?.rasterize(
+        SvgViewport {
+            width: 10.0,
+            height: 10.0,
+        },
+        SvgRootStyle::default(),
+        None,
+    )
+}
+
+#[test]
+fn huge_boxes_with_bounding_box_features_are_refused() {
+    for (name, body) in HUGE_BOX_FEATURES {
+        let Err(SvgError::InvalidDocument(message)) = draw_ten_by_ten(body) else {
+            panic!("{name}: a box too large for usvg must be refused");
+        };
+        assert!(
+            message.starts_with(super::PARSER_PANIC),
+            "{name}: {message}"
+        );
+        assert!(message.contains("unwrap"), "{name}: {message}");
+    }
+}
+
+#[test]
+fn huge_boxes_without_bounding_box_features_still_draw() {
+    // A plain huge rect and the features whose `objectBoundingBox` mapping
+    // does not overflow keep drawing: the guard only refuses what panics.
+    for body in [
+        r#"<rect width="3e38" height="3e38" fill="green"/>"#,
+        r#"<linearGradient id="g"><stop stop-color="green"/></linearGradient><rect width="3e38" height="3e38" fill="url(#g)"/>"#,
+        r#"<clipPath id="c" clipPathUnits="objectBoundingBox"><rect width="1" height="1"/></clipPath><rect width="3e38" height="3e38" fill="green" clip-path="url(#c)"/>"#,
+    ] {
+        let image = draw_ten_by_ten(body).unwrap_or_else(|error| panic!("{body}: {error}"));
+        assert_eq!((image.width, image.height), (10, 10));
+    }
+}
+
+#[test]
+fn panic_message_reads_str_and_string_payloads() {
+    let str_payload: Box<dyn std::any::Any + Send> = Box::new("plain");
+    let string_payload: Box<dyn std::any::Any + Send> = Box::new(String::from("formatted"));
+    let other_payload: Box<dyn std::any::Any + Send> = Box::new(7_u8);
+    assert_eq!(super::panic_message(str_payload.as_ref()), "plain");
+    assert_eq!(super::panic_message(string_payload.as_ref()), "formatted");
+    assert_eq!(super::panic_message(other_payload.as_ref()), "no message");
+}
