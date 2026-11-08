@@ -3755,18 +3755,29 @@ fn resolve_column_widths(
     let mut col_max = vec![0.0f32; n];
     let mut col_pct = vec![0.0f32; n];
     let mut authored_length = vec![false; n];
+    let mut length_max = vec![0.0f32; n];
     for (i, cell) in grid.cells.iter().enumerate() {
         #[cfg(test)]
         tests::AUTHORED_LENGTH_CELL_VISITS.with(|count| count.set(count.get() + 1));
         let c = cell.col_start as usize;
         if cell.col_span == 1 && c < n {
-            authored_length[c] |=
-                matches!(cell.specified_width.expand(), ExpandedDimension::Length(_));
+            if matches!(cell.specified_width.expand(), ExpandedDimension::Length(_)) {
+                authored_length[c] = true;
+                length_max[c] = f32_max_compat(length_max[c], cell_max[i]);
+            }
             col_min[c] = f32_max_compat(col_min[c], cell_min[i]);
             col_max[c] = f32_max_compat(col_max[c], cell_max[i]);
             if let ExpandedDimension::Percent(percent) = cell.specified_width.expand() {
                 col_pct[c] = f32_max_compat(col_pct[c], percent);
             }
+        }
+    }
+    // A column that states a length is as wide as the widest length it
+    // states, or as the widest content that cannot break if that is wider; the
+    // content of its other cells does not widen it.
+    for c in 0..n {
+        if authored_length[c] {
+            col_max[c] = f32_max_compat(length_max[c], col_min[c]);
         }
     }
     let mut col_min_full = col_min.clone();

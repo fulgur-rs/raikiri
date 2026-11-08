@@ -395,3 +395,32 @@ fn spanning_length_over_percent_column() {
         ],
     );
 }
+
+#[test]
+fn a_length_column_is_not_widened_by_the_content_of_its_other_cells() {
+    // The 50px column is as wide as the widest length it states, so the long text
+    // in its other cell wraps inside it.
+    let laid = lay_out(
+        "display:table;border-spacing:0",
+        &[],
+        &[&[cell("A", "50px")], &[cell("AA AA AA AA", "")]],
+    );
+    laid.assert_close(
+        (0.0, 0.0, 50.0, 30.0),
+        &[(0.0, 0.0, 50.0, 10.0), (0.0, 10.0, 50.0, 20.0)],
+    );
+}
+
+#[test]
+fn unbreakable_content_widens_a_length_column() {
+    // Content that cannot wrap is wider than the length, and the column follows it.
+    let laid = lay_out(
+        "display:table;border-spacing:0",
+        &[],
+        &[&[cell("A", "50px")], &[cell("AAAAAAAA", "")]],
+    );
+    laid.assert_close(
+        (0.0, 0.0, 80.0, 20.0),
+        &[(0.0, 0.0, 80.0, 10.0), (0.0, 10.0, 80.0, 10.0)],
+    );
+}
