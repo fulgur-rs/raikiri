@@ -916,3 +916,391 @@ fn columns_of_no_height_keep_their_cells_at_no_height() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// A cell of a table of spanning cells: its id, the columns it spans, and the
+/// height it states, if any.
+type Spanning = (&'static str, u32, Option<u32>);
+
+/// A table in `mode` of rows of the cells `rows` gives: each is 40px wide
+/// with no padding and holds one letter.
+fn spanning_table(mode: &str, rows: &[&[Spanning]]) -> String {
+    let rows: String = rows
+        .iter()
+        .map(|cells| {
+            let cells: String = cells
+                .iter()
+                .map(|&(id, span, height)| {
+                    let height = height.map_or(String::new(), |h| format!("; height: {h}px"));
+                    format!(
+                        "<td id={id} colspan={span} style='padding: 0; width: 40px{height}'>x</td>"
+                    )
+                })
+                .collect();
+            format!("<tr>{cells}</tr>")
+        })
+        .collect();
+    table_element(mode, "0", &rows)
+}
+
+/// Checks the top and the height of the elements `expected` names in both
+/// modes, each counted from the top of the table.
+fn check_spanning(label: &str, rows: &[&[Spanning]], expected: &[(&str, f32, f32)]) -> Vec<String> {
+    let expected: Vec<(&str, f32, f32)> = expected
+        .iter()
+        .map(|&(id, top, height)| (id, 8.0 + top, height))
+        .collect();
+    MODES
+        .into_iter()
+        .flat_map(|mode| {
+            check_extent(
+                &format!("{mode}, {label}"),
+                &spanning_table(mode, rows),
+                &expected,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_spanning_cell_asks_the_columns_that_state_no_height_first() {
+    let mut mismatches = Vec::new();
+    // The cells in the first and the third column state a height of nothing,
+    // and each of the two spanning cells asks 100px. The column between them,
+    // which no cell starts in, takes all that is missing: the two columns at
+    // the ends are not stretched.
+    mismatches.extend(check(
+        "vertical-rl, a column no cell starts in",
+        "<table id=t style='writing-mode: vertical-rl; border-spacing: 0'>\
+         <tr><td id=c colspan=2 style='padding: 0; width: 60px; height: 100px'>x</td>\
+         <td id=e style='padding: 0; width: 60px; height: 0px'>z</td></tr>\
+         <tr><td id=g style='padding: 0; width: 40px; height: 0px'>v</td>\
+         <td id=d colspan=2 style='padding: 0; width: 40px; height: 100px'>y</td></tr></table>",
+        &[
+            ("t", [8.0, 8.0, 100.0, 110.0]),
+            ("c", [48.0, 8.0, 60.0, 100.0]),
+            ("e", [48.0, 108.0, 60.0, 10.0]),
+            ("g", [8.0, 8.0, 40.0, 10.0]),
+            ("d", [8.0, 18.0, 40.0, 100.0]),
+        ],
+    ));
+    // Only one of the two cells states its height: the other column is
+    // stretched with the one between them in proportion to its height.
+    mismatches.extend(check_spanning(
+        "the cell of one end states a height",
+        &[
+            &[("c", 2, Some(100)), ("e", 1, None)],
+            &[("g", 1, Some(0)), ("d", 2, Some(100))],
+        ],
+        &[
+            ("t", 0.0, 110.0),
+            ("c", 0.0, 100.0),
+            ("e", 100.0, 10.0),
+            ("g", 0.0, 10.0),
+            ("d", 10.0, 100.0),
+        ],
+    ));
+    // Neither does: the columns at the ends take what is missing in
+    // proportion to their heights, and the one between them has none to take.
+    mismatches.extend(check_spanning(
+        "no cell states a height",
+        &[
+            &[("c", 2, Some(100)), ("e", 1, None)],
+            &[("g", 1, None), ("d", 2, Some(100))],
+        ],
+        &[
+            ("t", 0.0, 200.0),
+            ("c", 0.0, 100.0),
+            ("e", 100.0, 100.0),
+            ("g", 0.0, 100.0),
+            ("d", 100.0, 100.0),
+        ],
+    ));
+    // A column that states a height keeps it, and the other one takes the rest.
+    mismatches.extend(check_spanning(
+        "the first column states a height",
+        &[
+            &[("c", 2, Some(100))],
+            &[("a", 1, Some(20)), ("b", 1, None)],
+        ],
+        &[
+            ("t", 0.0, 100.0),
+            ("a", 0.0, 20.0),
+            ("b", 20.0, 80.0),
+            ("c", 0.0, 100.0),
+        ],
+    ));
+    mismatches.extend(check_spanning(
+        "the second column states a height",
+        &[
+            &[("c", 2, Some(100))],
+            &[("a", 1, None), ("b", 1, Some(20))],
+        ],
+        &[("t", 0.0, 100.0), ("a", 0.0, 80.0), ("b", 80.0, 20.0)],
+    ));
+    // Three columns, of which one or two state a height.
+    mismatches.extend(check_spanning(
+        "three columns, two state a height",
+        &[
+            &[("c", 3, Some(90))],
+            &[("a", 1, Some(10)), ("b", 1, Some(10)), ("d", 1, None)],
+        ],
+        &[
+            ("t", 0.0, 90.0),
+            ("a", 0.0, 10.0),
+            ("b", 10.0, 10.0),
+            ("d", 20.0, 70.0),
+        ],
+    ));
+    mismatches.extend(check_spanning(
+        "three columns, one has a cell of a height",
+        &[
+            &[("c", 3, Some(120))],
+            &[("a", 1, Some(10)), ("b", 1, None)],
+        ],
+        &[("t", 0.0, 120.0), ("a", 0.0, 10.0), ("b", 10.0, 110.0)],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn columns_that_state_no_height_share_a_spanning_cell_in_proportion() {
+    let mut mismatches = Vec::new();
+    // Neither column states a height: they are even, or follow their text.
+    mismatches.extend(check_spanning(
+        "two even columns",
+        &[&[("c", 2, Some(100))], &[("a", 1, None), ("b", 1, None)]],
+        &[("t", 0.0, 100.0), ("a", 0.0, 50.0), ("b", 50.0, 50.0)],
+    ));
+    let rows = |text: &str| {
+        format!(
+            "<tr><td id=c colspan=2 style='padding: 0; width: 40px; height: 100px'>x</td></tr>\
+             <tr><td id=a style='padding: 0; width: 40px'>{text}</td>\
+             <td id=b style='padding: 0; width: 40px'>x</td></tr>"
+        )
+    };
+    mismatches.extend(check_extent(
+        "vertical-rl, a column of more text",
+        &table_element("vertical-rl", "0", &rows("xxxxx")),
+        &[
+            ("t", 8.0, 100.0),
+            ("a", 8.0, 83.328125),
+            ("b", 91.328125, 16.671875),
+        ],
+    ));
+    // Cells of no content take their part just the same.
+    mismatches.extend(check_extent(
+        "vertical-rl, empty cells",
+        &table_element(
+            "vertical-rl",
+            "0",
+            "<tr><td id=c colspan=2 style='padding: 0; width: 40px; height: 100px'></td></tr>\
+             <tr><td id=a style='padding: 0; width: 40px'></td>\
+             <td id=b style='padding: 0; width: 40px'></td></tr>",
+        ),
+        &[("t", 8.0, 100.0), ("a", 8.0, 50.0), ("b", 58.0, 50.0)],
+    ));
+    // A spanning cell that states no height asks what its text does.
+    mismatches.extend(check_extent(
+        "vertical-rl, a spanning cell of text",
+        &table_element(
+            "vertical-rl",
+            "0",
+            "<tr><td id=c colspan=2 style='padding: 0; width: 40px'>xxxxxxxxxx</td></tr>\
+             <tr><td id=a style='padding: 0; width: 40px'>x</td>\
+             <td id=b style='padding: 0; width: 40px'>x</td></tr>",
+        ),
+        &[("t", 8.0, 100.0), ("a", 8.0, 50.0), ("b", 58.0, 50.0)],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn columns_that_all_state_a_height_share_a_spanning_cell_in_proportion() {
+    let mut mismatches = Vec::new();
+    // What is missing goes to the stated heights in proportion to them.
+    mismatches.extend(check_spanning(
+        "two even columns",
+        &[
+            &[("c", 2, Some(100))],
+            &[("a", 1, Some(20)), ("b", 1, Some(20))],
+        ],
+        &[("t", 0.0, 100.0), ("a", 0.0, 50.0), ("b", 50.0, 50.0)],
+    ));
+    mismatches.extend(check_spanning(
+        "two columns, one twice as high",
+        &[
+            &[("c", 2, Some(100))],
+            &[("a", 1, Some(40)), ("b", 1, Some(20))],
+        ],
+        &[
+            ("t", 0.0, 100.0),
+            ("a", 0.0, 66.65625),
+            ("b", 66.65625, 33.34375),
+        ],
+    ));
+    // Two spanning cells side by side take a part of the table each.
+    mismatches.extend(check_spanning(
+        "spanning cells side by side",
+        &[
+            &[("c", 2, Some(60)), ("d", 2, Some(60))],
+            &[
+                ("a", 1, Some(10)),
+                ("b", 1, Some(10)),
+                ("e", 1, Some(10)),
+                ("f", 1, Some(10)),
+            ],
+        ],
+        &[
+            ("t", 0.0, 120.0),
+            ("c", 0.0, 60.0),
+            ("d", 60.0, 60.0),
+            ("a", 0.0, 30.0),
+            ("b", 30.0, 30.0),
+            ("e", 60.0, 30.0),
+            ("f", 90.0, 30.0),
+        ],
+    ));
+    // A spanning cell above and one below share the first two columns, and the
+    // third column keeps the height of its cell.
+    mismatches.extend(check_spanning(
+        "a spanning cell above and one below",
+        &[
+            &[("d", 2, Some(100))],
+            &[("g", 1, Some(30)), ("e", 1, Some(30)), ("f", 1, Some(30))],
+            &[("c", 2, Some(100))],
+        ],
+        &[
+            ("t", 0.0, 130.0),
+            ("d", 0.0, 100.0),
+            ("g", 0.0, 50.0),
+            ("e", 50.0, 50.0),
+            ("f", 100.0, 30.0),
+            ("c", 0.0, 100.0),
+        ],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn a_column_no_cell_starts_in_takes_part_in_the_sharing_only_when_it_stands_alone() {
+    let mut mismatches = Vec::new();
+    // A column that no cell starts in and no spanning cell begins or ends at
+    // joins its neighbour, and takes no share of its own: the cell above is
+    // given the whole height of the one column that has a cell.
+    mismatches.extend(check_spanning(
+        "an empty column after",
+        &[&[("c", 2, Some(100))], &[("a", 1, Some(30))]],
+        &[("t", 0.0, 100.0), ("c", 0.0, 100.0), ("a", 0.0, 100.0)],
+    ));
+    mismatches.extend(check_spanning(
+        "an empty column before",
+        &[&[("e", 1, Some(30))], &[("c", 2, Some(100))]],
+        &[("t", 0.0, 100.0), ("e", 0.0, 100.0), ("c", 0.0, 100.0)],
+    ));
+    mismatches.extend(check_spanning(
+        "two empty columns after",
+        &[&[("c", 3, Some(100))], &[("a", 1, Some(30))]],
+        &[("t", 0.0, 100.0), ("c", 0.0, 100.0), ("a", 0.0, 100.0)],
+    ));
+    mismatches.extend(check_spanning(
+        "an empty column after two",
+        &[
+            &[("c", 3, Some(100))],
+            &[("a", 1, Some(30)), ("b", 1, Some(30))],
+        ],
+        &[("t", 0.0, 100.0), ("a", 0.0, 50.0), ("b", 50.0, 50.0)],
+    ));
+    // The same column is a column of its own when a spanning cell ends at it:
+    // the cell of the column beside it keeps its height.
+    mismatches.extend(check_spanning(
+        "an empty column that a spanning cell ends at",
+        &[
+            &[("c", 2, Some(100)), ("e", 1, Some(30))],
+            &[("g", 1, Some(30))],
+        ],
+        &[
+            ("t", 0.0, 130.0),
+            ("c", 0.0, 100.0),
+            ("e", 100.0, 30.0),
+            ("g", 0.0, 100.0),
+        ],
+    ));
+    // Cut on both sides by the spanning cells, it is the one column that
+    // states no height, and takes what the cells above and below lack.
+    mismatches.extend(check_spanning(
+        "an empty column between two spanning cells",
+        &[
+            &[("c", 2, Some(100)), ("e", 1, Some(20))],
+            &[("g", 1, Some(20)), ("d", 2, Some(100))],
+        ],
+        &[
+            ("t", 0.0, 120.0),
+            ("c", 0.0, 100.0),
+            ("e", 100.0, 20.0),
+            ("g", 0.0, 20.0),
+            ("d", 20.0, 100.0),
+        ],
+    ));
+    // A spanning cell that overlaps just one cell: the empty column is the
+    // only one of the two to take what is missing.
+    mismatches.extend(check_spanning(
+        "a spanning cell over one cell and an empty column",
+        &[
+            &[("c", 2, Some(100))],
+            &[("g", 1, Some(30)), ("d", 2, Some(100))],
+        ],
+        &[
+            ("t", 0.0, 130.0),
+            ("c", 0.0, 130.0),
+            ("g", 0.0, 30.0),
+            ("d", 30.0, 100.0),
+        ],
+    ));
+    mismatches.extend(check_spanning(
+        "two spanning cells over the same columns",
+        &[
+            &[("c", 2, Some(100))],
+            &[("d", 2, Some(100))],
+            &[("g", 1, Some(30))],
+        ],
+        &[
+            ("t", 0.0, 100.0),
+            ("c", 0.0, 100.0),
+            ("d", 0.0, 100.0),
+            ("g", 0.0, 100.0),
+        ],
+    ));
+    // A column of a cell that states no height beside the empty one: it is
+    // stretched, and the empty column does not take a part.
+    mismatches.extend(check_spanning(
+        "a cell of no height stated beside an empty column",
+        &[
+            &[("c", 2, Some(100)), ("e", 1, None)],
+            &[("g", 1, Some(30))],
+        ],
+        &[
+            ("t", 0.0, 110.0),
+            ("c", 0.0, 100.0),
+            ("e", 100.0, 10.0),
+            ("g", 0.0, 100.0),
+        ],
+    ));
+    // With a second spanning cell that ends at the empty column, the column
+    // of the cell that states no height takes part of what is missing in
+    // proportion to its height.
+    mismatches.extend(check_spanning(
+        "a cell of no height stated and two spanning cells",
+        &[
+            &[("c", 2, Some(100)), ("e", 1, None)],
+            &[("g", 1, Some(30)), ("d", 2, Some(100))],
+        ],
+        &[
+            ("t", 0.0, 130.0),
+            ("c", 0.0, 117.5),
+            ("e", 117.5, 12.5),
+            ("g", 0.0, 30.0),
+            ("d", 30.0, 100.0),
+        ],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
