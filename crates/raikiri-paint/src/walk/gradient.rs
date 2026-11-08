@@ -737,7 +737,10 @@ pub(super) struct RawStop {
 
 /// The offsets of authored stops after the color stop fixup (CSS Images 3
 /// §3.4.3), with each transition hint replaced by the stops that draw its
-/// curve.
+/// curve. In an `lch` or `oklch` gradient the colors come back in that space
+/// with the hue Chromium gives each stop, and a stop that takes a different
+/// hue toward each neighbor becomes two stops at its offset (see
+/// the `polar_stops` module).
 ///
 /// A stop or hint that lies before an earlier one is moved up to it, then
 /// the stops without a position are spread evenly between the stops and hints
@@ -1160,11 +1163,18 @@ pub(super) fn any_out_of_gamut(stops: &[(f32, DynamicColor)]) -> bool {
         .any(|(_, color)| !in_gamut(color.to_alpha_color::<Srgb>()))
 }
 
-/// Every sRGB channel lies in 0..=1.
+/// How far outside 0..=1 an sRGB channel may lie and still count as inside
+/// the gamut: clipping it moves the channel by less than half an 8-bit
+/// level. Colors kept in Lab-like coordinates, and achromatic stops of a
+/// polar gradient (whose hue comes from a slight chroma), convert to sRGB
+/// with rounding that lands just past 0 or 1.
+const GAMUT_SLACK: f32 = 0.5 / 255.0;
+
+/// Every sRGB channel lies in 0..=1, within [`GAMUT_SLACK`].
 fn in_gamut(color: AlphaColor<Srgb>) -> bool {
     color.components[..3]
         .iter()
-        .all(|channel| (0.0..=1.0).contains(channel))
+        .all(|channel| (-GAMUT_SLACK..=1.0 + GAMUT_SLACK).contains(channel))
 }
 
 /// The color clipped to the sRGB gamut, as it is drawn.

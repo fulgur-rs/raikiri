@@ -2930,6 +2930,28 @@ fn achromatic_stops_take_the_hue_chromium_interpolates() {
 }
 
 #[test]
+fn a_transition_hint_next_to_an_achromatic_stop_keeps_the_neighbor_hue() {
+    // Blink draws a transition hint with stops it mixes itself, where white
+    // carries the neighbor's hue, so the ramp stays red. Blink places fewer
+    // stops along the hint's curve, so the pixels between them are left out.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in lch, lch(50% 100 40), 30%, white)",
+        200,
+        1,
+    );
+    assert_pixels_near(
+        &rgba,
+        200,
+        &[
+            ((50, 0), [255, 145, 116]),
+            ((100, 0), [255, 190, 170]),
+            ((198, 0), [254, 254, 253]),
+        ],
+        4,
+    );
+}
+
+#[test]
 fn an_achromatic_stop_between_two_hues_takes_each_side_from_its_neighbor() {
     assert_ramps(&[(
         "to right in lch, lch(50% 100 40), white, lch(50% 100 200)",
@@ -3074,4 +3096,23 @@ fn a_missing_component_of_a_polar_stop_comes_from_the_neighbor_on_each_side() {
         "{after:?}"
     );
     assert!((before[2] - 200.0).abs() < 1.0 && (after[2] - 200.0).abs() < 1.0);
+}
+#[test]
+fn zz_probe() {
+    for stops in [
+        "to right in lch, lch(50% 100 40), 30%, white",
+        "to right in lch, lch(50% 100 40), 30%, lch(100% 0.5 40)",
+        "to right in srgb, red, 30%, white",
+    ] {
+        let rgba = raster_layer(
+            &format!("background-image: linear-gradient({stops})"),
+            200,
+            1,
+        );
+        let px: Vec<_> = [0usize, 5, 50, 100, 150, 198]
+            .iter()
+            .map(|&x| (rgba[x * 4], rgba[x * 4 + 1], rgba[x * 4 + 2]))
+            .collect();
+        eprintln!("{stops} {px:?}");
+    }
 }

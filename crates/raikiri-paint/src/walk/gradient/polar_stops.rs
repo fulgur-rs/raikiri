@@ -23,6 +23,8 @@
 //! steps and carry the neighbor's. This module repeats both steps on the
 //! stops, so the stops it returns carry the hue Chromium interpolates.
 
+use std::sync::LazyLock;
+
 use peniko::color::{ColorSpaceTag, DynamicColor, Flags};
 
 use super::{ConicBudget, push_stop, stop_vector};
@@ -153,32 +155,30 @@ pub(super) fn chromium_polar_stops(
     for (i, (offset, color)) in stops.iter().enumerate() {
         // Skia takes a powerless hue from the color next to it in its own
         // list: the neighbor's side that faces this stop.
-        let resolved: Vec<DynamicColor> = [0, 1]
-            .into_iter()
-            .filter_map(|side| {
-                let mut lch = sides[i][side]?;
-                if lch.powerless {
-                    let neighbor = if side == 0 { i - 1 } else { i + 1 };
-                    lch.hue = sides[neighbor][1 - side]?.hue;
-                }
-                Some(lch.to_dynamic(space, alpha_on_side(&blink, i, side)))
-            })
-            .collect();
+        let resolved = [0, 1].map(|side| {
+            let mut lch = sides[i][side]?;
+            if lch.powerless {
+                let neighbor = if side == 0 { i - 1 } else { i + 1 };
+                lch.hue = sides[neighbor][1 - side]?.hue;
+            }
+            Some(lch.to_dynamic(space, alpha_on_side(&blink, i, side)))
+        });
         // A stop whose hue comes out as its own keeps its authored color,
         // which the round trip through the two conversions would only move
-        // by rounding, possibly just outside the sRGB gamut.
-        let own = color.convert(space);
+        // by rounding.
+        let own = blink[i].own;
         let keeps_own = !own.flags.missing().contains(2)
             && !blink[i].alpha_missing
             && resolved
                 .iter()
+                .flatten()
                 .all(|side| hue_distance(side.components[2], own.components[2]) < SAME_HUE_DEGREES);
         if keeps_own {
             push_stop(&mut out, (*offset, *color), budget)?;
             continue;
         }
-        let mut resolved = resolved.into_iter();
         // Every stop has a neighbor, so it has at least one side.
+        let mut resolved = resolved.into_iter().flatten();
         if let Some(before) = resolved.next() {
             push_stop(&mut out, (*offset, before), budget)?;
             if let Some(after) = resolved.next()
@@ -236,9 +236,9 @@ impl Polar {
         match self {
             Self::Lch => xyz_to_lab(xyz, BLINK_D50),
             Self::Oklch => {
-                let d65 = mul(&inverse(&d65_to_d50()), xyz);
+                let d65 = mul(&DERIVED.d50_to_d65, xyz);
                 let lms = mul(&XYZ_D65_TO_LMS, d65).map(f64::cbrt);
-                mul(&inverse(&OKLAB_TO_LMS), lms)
+                mul(&DERIVED.lms_to_oklab, lms)
             }
         }
     }
@@ -258,7 +258,7 @@ impl Polar {
         let (lab, limit) = match self {
             Self::Lch => (xyz_to_lab(xyz, CSS_D50), SKIA_LCH_ACHROMATIC_CHROMA),
             Self::Oklch => {
-                let linear = mul(&inverse(&SRGB_TO_XYZ_D50), xyz);
+                let linear = mul(&DERIVED.xyz_d50_to_srgb, xyz);
                 let lms = mul(&LINEAR_SRGB_TO_LMS, linear).map(f64::cbrt);
                 (mul(&LMS_TO_OKLAB, lms), SKIA_OKLCH_ACHROMATIC_CHROMA)
             }
@@ -282,6 +282,8 @@ struct BlinkStop {
     missing: [bool; 3],
     alpha: f32,
     alpha_missing: bool,
+    /// The authored color in the interpolation space, as CSS converts it.
+    own: DynamicColor,
 }
 
 impl BlinkStop {
@@ -289,6 +291,7 @@ impl BlinkStop {
         let flags = color.flags.missing();
         let alpha = color.components[3];
         let alpha_missing = flags.contains(3);
+        let own = color.convert(polar.tag());
         if color.cs == polar.tag() {
             let [l, c, h, _] = color.components.map(f64::from);
             return Self {
@@ -296,6 +299,7 @@ impl BlinkStop {
                 missing: [flags.contains(0), flags.contains(1), flags.contains(2)],
                 alpha,
                 alpha_missing,
+                own,
             };
         }
         let lab = if color.cs == polar.rectangular() {
@@ -307,7 +311,7 @@ impl BlinkStop {
         let lch = rectangular_to_polar(lab);
         // Components missing in the authored color stay missing when they are
         // analogous to one of this space (CSS Color 4 §12.2).
-        let carried = color.convert(polar.tag()).flags.missing();
+        let carried = own.flags.missing();
         Self {
             lch,
             missing: [
@@ -317,6 +321,7 @@ impl BlinkStop {
             ],
             alpha,
             alpha_missing,
+            own,
         }
     }
 
@@ -388,8 +393,29 @@ fn blink_xyz_of(color: DynamicColor) -> Vec3 {
 /// Blink's XYZ D50 color of an Oklab color.
 fn blink_oklab_to_xyz(lab: Vec3) -> Vec3 {
     let lms = mul(&OKLAB_TO_LMS, lab).map(|v| v * v * v);
-    mul(&d65_to_d50(), mul(&inverse(&XYZ_D65_TO_LMS), lms))
+    mul(&DERIVED.d65_to_d50, mul(&DERIVED.lms_to_xyz_d65, lms))
 }
+
+/// The inverses and the white point adaptation the conversions use, worked
+/// out once from the constants above.
+struct Derived {
+    d65_to_d50: Mat3,
+    d50_to_d65: Mat3,
+    lms_to_xyz_d65: Mat3,
+    lms_to_oklab: Mat3,
+    xyz_d50_to_srgb: Mat3,
+}
+
+static DERIVED: LazyLock<Derived> = LazyLock::new(|| {
+    let d65_to_d50 = d65_to_d50();
+    Derived {
+        d65_to_d50,
+        d50_to_d65: inverse(&d65_to_d50),
+        lms_to_xyz_d65: inverse(&XYZ_D65_TO_LMS),
+        lms_to_oklab: inverse(&OKLAB_TO_LMS),
+        xyz_d50_to_srgb: inverse(&SRGB_TO_XYZ_D50),
+    }
+});
 
 /// skcms's Bradford adaptation from the D65 white (0.3127, 0.3290) to D50.
 fn d65_to_d50() -> Mat3 {
