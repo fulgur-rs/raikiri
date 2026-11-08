@@ -877,7 +877,28 @@ fn compute_table_layout_checked(
         // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
         // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
-        let table_size = doc.table_style(table_idx).size();
+        let table_size = {
+            let size = doc.table_style(table_idx).size();
+            // The size of the content of a flex row item (the measure behind
+            // its automatic minimum size, CSS Flexbox 1 §4.5) is that of its
+            // columns, not the width it states: the flex algorithm weighs the
+            // two against each other, so that a table can shrink under the
+            // width it states, down to its columns. A keyword names a width
+            // of the columns already, so only a length is set aside, and a
+            // fixed table takes its columns from the width it states.
+            if flex_row_item
+                && inputs.sizing_mode == SizingMode::ContentSize
+                && table_layout != TableLayoutValue::Fixed
+                && matches!(size.width.expand(), ExpandedDimension::Length(_))
+            {
+                Size {
+                    width: Dimension::auto(),
+                    ..size
+                }
+            } else {
+                size
+            }
+        };
         let resolves_item_width = !table_size.width.is_auto() && item_owns_width(doc, table_idx);
 
         // The size of the content of a flex column item (the measure behind its
