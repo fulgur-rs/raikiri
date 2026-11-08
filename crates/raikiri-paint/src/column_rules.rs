@@ -6,6 +6,8 @@ use peniko::{Color, Fill};
 use raikiri_dom::ColumnRule;
 use raikiri_style::property::{BorderStyle, CssColor};
 
+use crate::bevel;
+
 const MAX_RULE_SEGMENTS: usize = 4096;
 
 fn color(color: CssColor) -> Color {
@@ -28,8 +30,8 @@ pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
     }
     match rule.style {
         BorderStyle::None | BorderStyle::Hidden => {} // cov:ignore: retained source rules require positive width; these styles compute to zero.
-        BorderStyle::Double if width >= 3.0 => paint_double(scene, bounds, rule),
-        BorderStyle::Ridge | BorderStyle::Groove => paint_ridge_or_groove(scene, bounds, rule),
+        style if bevel::has_two_lines(style, width) => paint_double(scene, bounds, rule),
+        style if bevel::has_two_bands(style, width) => paint_ridge_or_groove(scene, bounds, rule),
         BorderStyle::Dotted => paint_dotted(scene, bounds, rule),
         BorderStyle::Dashed => paint_dashed(scene, bounds, rule),
         _ => scene.fill(
@@ -42,13 +44,14 @@ pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
     }
 }
 
-/// Two bars, each a third of the rule's width, at its edges.
+/// Two bars at the edges of the rule, a third of its width each, the way
+/// Chromium divides a `double` border (see [`crate::bevel::third`]).
 fn paint_double(scene: &mut impl PaintScene, bounds: Rect, rule: ColumnRule) {
     let Rect { x0, y0, x1, y1 } = bounds;
-    let width = x1 - x0;
+    let bar = bevel::third(x1 - x0);
     for rect in [
-        Rect::new(x0, y0, x0 + width / 3.0, y1),
-        Rect::new(x1 - width / 3.0, y0, x1, y1),
+        Rect::new(x0, y0, x0 + bar, y1),
+        Rect::new(x1 - bar, y0, x1, y1),
     ] {
         scene.fill(
             Fill::NonZero,
@@ -60,31 +63,22 @@ fn paint_double(scene: &mut impl PaintScene, bounds: Rect, rule: ColumnRule) {
     }
 }
 
-/// Two halves in a lighter and a darker shade of the rule's color.
+/// Two halves in a lighter and a darker shade of the rule's color, the left one
+/// the wider when the width is odd.
 fn paint_ridge_or_groove(scene: &mut impl PaintScene, bounds: Rect, rule: ColumnRule) {
     let Rect { x0, y0, x1, y1 } = bounds;
     let width = x1 - x0;
-    let light = |channel: u8| channel + (255 - channel) / 2;
-    let light = CssColor {
-        r: light(rule.color.r),
-        g: light(rule.color.g),
-        b: light(rule.color.b),
-        ..rule.color
-    };
-    let dark = CssColor {
-        r: rule.color.r / 2,
-        g: rule.color.g / 2,
-        b: rule.color.b / 2,
-        ..rule.color
-    };
+    let light = bevel::shade(rule.color, false);
+    let dark = bevel::shade(rule.color, true);
     let (left, right) = if rule.style == BorderStyle::Groove {
         (dark, light)
     } else {
         (light, dark)
     };
+    let middle = x0 + bevel::nearer_half(width);
     for (rect, shade) in [
-        (Rect::new(x0, y0, x0 + width / 2.0, y1), left),
-        (Rect::new(x0 + width / 2.0, y0, x1, y1), right),
+        (Rect::new(x0, y0, middle, y1), left),
+        (Rect::new(middle, y0, x1, y1), right),
     ] {
         scene.fill(Fill::NonZero, Affine::IDENTITY, color(shade), None, &rect);
     }
