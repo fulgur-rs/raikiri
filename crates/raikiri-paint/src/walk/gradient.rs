@@ -13,6 +13,7 @@ use raikiri_style::property::{
 };
 
 mod budget;
+mod polar_stops;
 pub(super) use budget::{ConicBudget, ConicPaintBudget};
 
 fn stop_vector<T>(capacity: usize, budget: Option<&ConicBudget<'_>>) -> Option<Vec<T>> {
@@ -789,7 +790,11 @@ pub(super) fn try_fixed_up_stops(
         }
         push_stop(&mut fixed, (offset, stop.color), budget)?;
     }
-    Some(fixed)
+    polar_stops::chromium_polar_stops(
+        fixed,
+        conic_interpolation_tag(interpolation.color_space),
+        budget,
+    )
 }
 
 /// Number of samples in each of the two grids that sample a hint's curve.

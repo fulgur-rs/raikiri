@@ -1968,8 +1968,9 @@ fn default_center_position() -> CssPosition {
 
 /// Color of a gradient stop with `<color>` (see [`GradientStopColor`]):
 /// handle the `currentcolor` keyword before delegating to the color parser,
-/// as in [`parse_text_shadow_color`]. A color outside the sRGB gamut keeps
-/// its own coordinates for interpolation.
+/// as in [`parse_text_shadow_color`]. A color outside the sRGB gamut, or one
+/// written in Lab, LCH, Oklab or OKLCh, keeps its own coordinates for
+/// interpolation.
 fn parse_gradient_stop_color(input: &mut Parser<'_, '_>) -> Option<GradientStopColor> {
     if input
         .try_parse(|i| i.expect_ident_matching("currentcolor"))

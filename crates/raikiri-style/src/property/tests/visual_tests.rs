@@ -4788,27 +4788,60 @@ fn gradient_stops_outside_the_srgb_gamut_keep_their_own_coordinates() {
 }
 
 #[test]
-fn gradient_stops_inside_the_gamut_stay_8_bit() {
-    assert_eq!(
-        first_linear_stop_color("linear-gradient(lch(50% 0 0deg), red)"),
-        GradientStopColor::Resolved(CssColor {
-            r: 119,
-            g: 119,
-            b: 119,
-            a: 255,
-        })
-    );
-    // At the lightness boundary without chroma, the coordinates are in the
-    // gamut: black and white.
-    for (css, channel) in [("lab(0% 0 0)", 0), ("lab(100% 0 0)", 255)] {
+fn rgb_gradient_stops_inside_the_gamut_stay_8_bit() {
+    for css in [
+        "rgb(119 119 119)",
+        "color(srgb-linear 0.1845 0.1845 0.1845)",
+    ] {
         assert_eq!(
             first_linear_stop_color(&format!("linear-gradient({css}, red)")),
             GradientStopColor::Resolved(CssColor {
+                r: 119,
+                g: 119,
+                b: 119,
+                a: 255,
+            }),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn lab_like_gradient_stops_keep_their_coordinates_inside_the_gamut() {
+    // A polar gradient takes a low-chroma stop's hue from the space it is
+    // written in, which the 8-bit color no longer tells.
+    let gray = CssColor {
+        r: 119,
+        g: 119,
+        b: 119,
+        a: 255,
+    };
+    assert_eq!(
+        first_linear_stop_color("linear-gradient(lch(50% 0 0deg), red)"),
+        GradientStopColor::Unbounded(UnboundedColor {
+            space: MixColorSpace::Lch,
+            components: [50.0, 0.0, 0.0],
+            alpha: 1.0,
+            srgb: gray,
+        })
+    );
+    // At the lightness boundary without chroma, the 8-bit colors are black
+    // and white.
+    for (css, channel) in [("lab(0% 0 0)", 0), ("lab(100% 0 0)", 255)] {
+        let GradientStopColor::Unbounded(color) =
+            first_linear_stop_color(&format!("linear-gradient({css}, red)"))
+        else {
+            panic!("{css} lost its coordinates");
+        };
+        assert_eq!(color.space, MixColorSpace::Lab, "{css}");
+        assert_eq!(
+            color.srgb,
+            CssColor {
                 r: channel,
                 g: channel,
                 b: channel,
                 a: 255,
-            }),
+            },
             "{css}"
         );
     }
