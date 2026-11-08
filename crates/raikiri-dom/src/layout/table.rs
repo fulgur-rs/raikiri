@@ -1371,12 +1371,21 @@ fn compute_table_layout_checked(
                             border_spacing.0,
                             true,
                         );
+                        let floors = stated_row_widths(doc, &intrinsic_grid);
+                        let natural = vertical_row_widths(
+                            &intrinsic_grid,
+                            &cell_max,
+                            border_spacing.0,
+                            &floors,
+                        );
                         let rows = VerticalRows::new(
-                            vertical_row_widths(&intrinsic_grid, &cell_max, border_spacing.0),
+                            natural,
                             &groups,
                             collapsed_rows,
                             border_spacing.0,
                             0.0,
+                            &[],
+                            &[],
                         );
                         return rows.outer_width(border_spacing.0) + padding_border_size.width;
                     }
@@ -1784,12 +1793,25 @@ fn compute_table_layout_checked(
                 .unwrap_or(minimum)
                 .max(minimum);
             let outer = clamp_min_max(requested, min_w_outer, max_w_outer);
+            // The extra width goes to the rows without a width of their own,
+            // and the rows that state a percentage take theirs of it when the
+            // table's width is definite (the rows of a table the way
+            // `distribute_extra_to_groups` shares its height).
+            let authored = authored_height_rows(doc, &grid, true);
+            let percents =
+                if specified_width.is_some() || min_w_outer.is_some() || parent_is_flex_or_grid {
+                    percent_height_rows(doc, &grid, true)
+                } else {
+                    vec![None; natural.len()]
+                };
             let rows = VerticalRows::new(
                 natural,
                 &groups,
                 collapsed_rows,
                 border_spacing.0,
                 (outer - padding_border_size.width - full_spacing).max(0.0),
+                &authored,
+                &percents,
             );
             let used = rows.outer_width(border_spacing.0) + padding_border_size.width;
             vertical_row_layout = Some(rows);
@@ -1922,16 +1944,19 @@ fn compute_table_layout_checked(
             // The row groups share the extra first and the rows without an
             // authored height take their group's share, which keeps the
             // others as they are (see `distribute_extra_to_groups`).
-            let authored = authored_height_rows(doc, &grid);
+            let authored = authored_height_rows(doc, &grid, false);
             // The percentages of rows resolve only in a table whose `height`
             // or `min-height` is authored: a height imposed from outside, which
             // may come from fragmentation, does not make it definite. They are
             // also left alone in vertical writing modes, which this pass does
             // not adjust.
             let percents = if !vertical_writing
-                && (specified_height.is_some() || min_h_outer.is_some() || stretch_room.is_some())
+                && (specified_height.is_some()
+                    || min_h_outer.is_some()
+                    || stretch_room.is_some()
+                    || parent_sizes_rows)
             {
-                percent_height_rows(doc, &grid)
+                percent_height_rows(doc, &grid, false)
             } else {
                 vec![None; grid.rows.len()]
             };
@@ -3580,7 +3605,8 @@ fn resolve_table_columns(
             pass.border_spacing_x,
             true,
         );
-        vertical_row_widths(grid, &cell_max, pass.border_spacing_x)
+        let floors = stated_row_widths(doc, grid);
+        vertical_row_widths(grid, &cell_max, pass.border_spacing_x, &floors)
     });
     normalize_fixed_cells(doc, grid, avail, pass.border_spacing_x);
     ColumnSizing {
@@ -4044,7 +4070,10 @@ fn resolve_column_widths(
     };
     ColumnSizing {
         widths,
-        vertical_rows: vertical_writing.then(|| vertical_row_widths(grid, &cell_max, spacing)),
+        vertical_rows: vertical_writing.then(|| {
+            let floors = stated_row_widths(doc, grid);
+            vertical_row_widths(grid, &cell_max, spacing, &floors)
+        }),
     }
 }
 
@@ -4574,26 +4603,27 @@ fn distribute_extra_to_rows(
 // Row heights
 // ---------------------------------------------------------------------------
 
-/// The `height` of each row's own box and of the cells confined to it, read
-/// with `read` and folded into one value per row with `fold`. A cell that spans
-/// rows is left out.
+/// The size along the block axis of each row's own box and of the cells
+/// confined to it (their `height`, or their `width` in a vertical table, whose
+/// rows run across the page), read with `read` and folded into one value per
+/// row with `fold`. A cell that spans rows is left out.
 fn fold_row_heights<T: Copy>(
     doc: &LayoutSession<'_>,
     grid: &TableGrid,
+    vertical: bool,
     read: impl Fn(Dimension) -> T,
     fold: impl Fn(T, T) -> T,
 ) -> Vec<T> {
-    let mut rows: Vec<T> = grid
-        .rows
-        .iter()
-        .map(|&row_id| read(doc.table_style(row_id).size().height))
-        .collect();
+    let block_size = |node: usize| {
+        let size = doc.table_style(node).size();
+        read(if vertical { size.width } else { size.height })
+    };
+    let mut rows: Vec<T> = grid.rows.iter().map(|&row_id| block_size(row_id)).collect();
     for cell in &grid.cells {
         let start = cell.row as usize;
         let end = (start + cell.row_span as usize).min(rows.len());
         if end - start == 1 {
-            let height = read(doc.table_style(cell.node_id).size().height);
-            rows[start] = fold(rows[start], height);
+            rows[start] = fold(rows[start], block_size(cell.node_id));
         }
     }
     rows
@@ -4602,10 +4632,11 @@ fn fold_row_heights<T: Copy>(
 /// The rows with an authored height: the row's own `height`, or the `height` of
 /// a cell confined to it, is a length. A cell that spans rows does not make any
 /// of them so.
-fn authored_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<bool> {
+fn authored_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid, vertical: bool) -> Vec<bool> {
     fold_row_heights(
         doc,
         grid,
+        vertical,
         |height| resolve_dimension(height, None).is_some(),
         |row, cell| row || cell,
     )
@@ -4615,10 +4646,15 @@ fn authored_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<bool> 
 /// the row's own and those of the cells confined to it, as in Chromium. A cell
 /// that spans rows does not count. A `calc()` that mixes a percentage with a
 /// length is not a percentage here, and neither is a row without a `height`.
-fn percent_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<Option<f32>> {
+fn percent_height_rows(
+    doc: &LayoutSession<'_>,
+    grid: &TableGrid,
+    vertical: bool,
+) -> Vec<Option<f32>> {
     fold_row_heights(
         doc,
         grid,
+        vertical,
         |height| match height.expand() {
             ExpandedDimension::Percent(percent) => Some(percent),
             _ => None,
@@ -4628,6 +4664,19 @@ fn percent_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<Option<
             (row, cell) => row.or(cell),
         },
     )
+}
+
+/// The `width` each row of a vertical table states for itself, which is the
+/// size of its block axis, or zero for a row that states none.
+fn stated_row_widths(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<f32> {
+    grid.rows
+        .iter()
+        .map(|&row_id| {
+            resolve_dimension(doc.table_style(row_id).size().width, None)
+                .unwrap_or(0.0)
+                .max(0.0)
+        })
+        .collect()
 }
 
 /// The row groups of `grid`: the runs of rows that share the box they sit in,
@@ -4760,7 +4809,7 @@ fn resolve_row_heights(
     let mut row_heights = vec![0.0f32; grid.rows.len()];
     // The rows without an authored height stretch first when a spanning cell
     // is taller than the rows it spans.
-    let fixed_rows = authored_height_rows(doc, grid);
+    let fixed_rows = authored_height_rows(doc, grid, false);
     // Authored `height` on rows floors the row (CSS 2.1 §17.5.3; lengths
     // only — percentages need the table height, indefinite at this stage, and
     // are settled by `distribute_extra_to_rows` once it is known).

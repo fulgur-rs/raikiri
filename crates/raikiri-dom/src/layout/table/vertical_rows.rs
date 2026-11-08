@@ -1,13 +1,27 @@
 //! Physical block-axis tracks of a vertical table.
 
 use super::{
-    CellPlacement, RowGroup, TableGrid, distribute_extra, grow_tracks, row_track_gaps,
+    CellPlacement, RowGroup, TableGrid, distribute_extra_to_groups, grow_tracks, row_track_gaps,
     spanned_size, track_origins,
 };
 
-/// Natural block-axis tracks of a vertical table, before removing rows.
-pub(super) fn natural_widths(grid: &TableGrid, cell_widths: &[f32], spacing: f32) -> Vec<f32> {
-    let mut rows = vec![0.0f32; grid.rows.len()];
+/// `values` as `len` entries, the missing ones being `fill`.
+fn pad_to<T: Copy>(values: &[T], len: usize, fill: T) -> Vec<T> {
+    let mut padded = values.to_vec();
+    padded.resize(len, fill);
+    padded
+}
+
+/// Natural block-axis tracks of a vertical table, before removing rows. A row
+/// is at least as wide as the `width` it states for itself (`floors`, one per
+/// row, zero where it states none).
+pub(super) fn natural_widths(
+    grid: &TableGrid,
+    cell_widths: &[f32],
+    spacing: f32,
+    floors: &[f32],
+) -> Vec<f32> {
+    let mut rows = pad_to(floors, grid.rows.len(), 0.0);
     let mut spanning = Vec::new();
     for (cell, &width) in grid.cells.iter().zip(cell_widths) {
         let start = usize::from(cell.row).min(rows.len());
@@ -65,15 +79,30 @@ impl RowTrackView<'_> {
 }
 
 impl VerticalRows {
+    /// `authored` marks the rows that state a width of their own and
+    /// `percents` holds the share of the table that the others state, which
+    /// the extra up to `target` is shared by as it is for the height of a
+    /// horizontal table. Both may be empty where there is no extra to share.
     pub(super) fn new(
         mut natural: Vec<f32>,
         groups: &[RowGroup],
         hidden: &[bool],
         spacing: f32,
         target: f32,
+        authored: &[bool],
+        percents: &[Option<f32>],
     ) -> Self {
         // Authored room is shared before collapsed rows give up their share.
-        distribute_extra(&mut natural, None, target);
+        let rows = natural.len();
+        distribute_extra_to_groups(
+            &mut natural,
+            &vec![false; rows],
+            &pad_to(authored, rows, false),
+            &pad_to(percents, rows, None),
+            groups,
+            spacing,
+            target,
+        );
         let widths = natural
             .iter()
             .zip(hidden)
