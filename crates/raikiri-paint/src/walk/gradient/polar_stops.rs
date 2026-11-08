@@ -177,15 +177,12 @@ pub(super) fn chromium_polar_stops(
             push_stop(&mut out, (*offset, *color), budget)?;
             continue;
         }
-        // Every stop has a neighbor, so it has at least one side.
-        let mut resolved = resolved.into_iter().flatten();
-        if let Some(before) = resolved.next() {
-            push_stop(&mut out, (*offset, before), budget)?;
-            if let Some(after) = resolved.next()
-                && after != before
-            {
-                push_stop(&mut out, (*offset, after), budget)?;
-            }
+        // Every stop has a neighbor, so it has at least one side. The side
+        // after it is a second stop only where it differs.
+        let [before, after] = resolved;
+        let after = after.filter(|after| before.is_none_or(|before| before != *after));
+        for side in [before, after].into_iter().flatten() {
+            push_stop(&mut out, (*offset, side), budget)?;
         }
     }
     Some(out)

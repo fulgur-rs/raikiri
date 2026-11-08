@@ -3022,6 +3022,16 @@ fn stops_written_in_lab_like_spaces_take_the_hue_chromium_interpolates() {
             ],
         ),
         (
+            "to right in lch, lch(50% 100 40), oklab(1 0 0)",
+            [
+                (0, [235, 0, 4]),
+                (50, [216, 129, 0]),
+                (100, [202, 185, 89]),
+                (150, [208, 225, 177]),
+                (198, [253, 254, 253]),
+            ],
+        ),
+        (
             "to right in oklch, oklch(60% 0.25 40), oklab(1 0 0)",
             [
                 (0, [239, 26, 0]),
