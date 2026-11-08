@@ -3860,6 +3860,10 @@ fn resolve_column_widths(
         for (column, minimum) in (s..e).zip(minimums) {
             col_min_full[column] = f32_max_compat(col_min_full[column], minimum);
         }
+        // The maximum is shared out over the minimums just raised, and over the
+        // maximums as they were: a column the minimum pushed past its maximum
+        // is not lifted to it first, which is how Chromium's width table
+        // behaves and lets the percentage column set a wider table.
         let maximums = distribute_columns_with_authored(
             (cell_max[i] - gaps).max(0.0),
             &col_min_full[s..e],

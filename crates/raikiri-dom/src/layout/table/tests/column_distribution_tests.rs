@@ -424,3 +424,27 @@ fn unbreakable_content_widens_a_length_column() {
         &[(0.0, 0.0, 80.0, 10.0), (0.0, 10.0, 80.0, 10.0)],
     );
 }
+
+#[test]
+fn a_spanning_maximum_is_shared_over_the_maximums_before_the_minimum_raised_them() {
+    // The spanning cell's minimum (100px) lifts the 30px column past its own
+    // maximum before its maximum (200px) is shared out. Chromium shares that
+    // maximum over the old maximums, so the first column ends up far wider than
+    // the cell asks for and the 30% column makes the table 566.66px wide.
+    let laid = lay_out(
+        "display:table;border-spacing:0",
+        &[],
+        &[
+            &[cell("A", "30px"), cell("A A", "30%")],
+            &[spanning("AAAAAAAAAA AAAAAAAAA", 2, "")],
+        ],
+    );
+    laid.assert_close(
+        (0.0, 0.0, 566.66, 20.0),
+        &[
+            (0.0, 0.0, 396.67, 10.0),
+            (396.67, 0.0, 169.98, 10.0),
+            (0.0, 10.0, 566.66, 10.0),
+        ],
+    );
+}
