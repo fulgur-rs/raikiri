@@ -506,21 +506,36 @@ fn push_generated(
     // engine decides whether those edges make a line in the document's mode.
     let open_inline = !empty || (!atomic && has_edges);
     if open_inline {
-        let first_line = if inline_level && pseudo != PseudoElem::Marker {
+        let first_line = if pseudo == PseudoElem::Marker {
+            None
+        } else if inline_level {
             first_letter
                 .first_line
                 .as_ref()
                 .and_then(|first_line| first_line.generated(doc, cascade, element, pseudo))
         } else {
-            None
+            // A block-level box of the paragraph itself has the first line
+            // when it comes first and its content makes a line.
+            first_letter.first_line.as_ref().and_then(|first_line| {
+                first_line.generated_block(cascade, element, pseudo, &text, has_images)
+            })
         };
         match first_line {
-            Some(values) => {
+            Some(values) if inline_level => {
                 let first_style = styled(doc, cascade, &values, element, fonts)?;
                 if let Some(first_line) = first_letter.first_line.as_mut() {
                     first_line.note_generated(id.0 as usize, values);
                 }
                 builder.open_inline_with_first_line(id, &inline_style, &first_style, edges)
+            }
+            Some(values) => {
+                // The line of a block box starts after its start token, so
+                // shodo has no first line to style: only its paint takes the
+                // values, and only for the text, not the box around it.
+                if let Some(first_line) = first_letter.first_line.as_mut() {
+                    first_line.note_generated_block_text(cascade, id.0 as usize, values);
+                }
+                builder.open_inline(id, &inline_style, edges)
             }
             None => builder.open_inline(id, &inline_style, edges),
         }
@@ -1009,7 +1024,9 @@ fn project_children_builder(
     if anonymous_children.is_some() {
         first_letter.first_line = None;
     }
-    if let Some(first_line) = &first_letter.first_line {
+    if let Some(first_line) = &first_letter.first_line
+        && !first_line.in_own_block()
+    {
         paragraph_style.first_line =
             Some(styled(doc, cascade, first_line.root_values(), root, fonts)?);
     }

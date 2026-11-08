@@ -2,9 +2,9 @@
 
 use super::{boxes::IfcBoxKind, projection::box_kind};
 use crate::Document;
-use crate::generated_content::is_in_flow_generated_text;
+use crate::generated_content::{is_collapsed_white_space, is_in_flow_generated_text};
 use crate::text_decoration::has_paintable_line;
-use raikiri_style::property::{DisplayValue, WhiteSpaceCollapse};
+use raikiri_style::property::{ContentComponent, DisplayValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
 use std::collections::HashMap;
@@ -18,6 +18,13 @@ pub(crate) struct FirstLine {
     origins: Vec<StyleNodeId>,
     /// The values the paragraph itself has on the first line.
     root_values: ComputedValues,
+    /// The block-level `::before` or `::after` of the paragraph itself whose
+    /// first line is the first line, when it holds it among the paragraph's
+    /// lines. shodo gives its first-line styles only to the line that starts
+    /// the paragraph, and the line of a block box starts after the box's start
+    /// token: values that shape or size the line cannot reach it, and only
+    /// those looked up when it is painted do.
+    own_block: Option<PseudoElem>,
     styles: FirstLineStyles,
 }
 
@@ -81,31 +88,34 @@ impl FirstLine {
         root: usize,
         line_origins: &[usize],
     ) -> Option<Self> {
-        if line_origins.is_empty()
-            || !cascade.has_first_line_styles()
-            || starts_with_block(doc, cascade, root)
-        {
+        if line_origins.is_empty() || !cascade.has_first_line_styles() {
             return None;
         }
+        let own_block = match first_content(doc, cascade, root) {
+            Start::Block => return None,
+            Start::OwnBlockBox(pseudo) => Some(pseudo),
+            Start::Inline => None,
+        };
         let root_id = StyleNodeId::new(root as u64);
         let origins: Vec<StyleNodeId> = line_origins
             .iter()
             .map(|&id| StyleNodeId::new(id as u64))
             .collect();
         // Resolve the root and each decorating origin in one inheritance walk.
-        // The ordinary pseudo decides whether a box paints a decoration.
+        // The ordinary pseudo decides whether a box paints a decoration. When
+        // the line is that of a block box, its decoration and background are
+        // known only once the box's content is: see `generated_block`.
         let mut decorating = Vec::new();
         let mut background = None;
         let root_values =
             cascade.first_line_block_style(doc, &origins, root_id, |origin, style| {
-                if let Some(ordinary) = cascade.pseudo.get(&(origin, PseudoElem::FirstLine))
-                    && has_paintable_line(ordinary.text_decoration_line)
-                {
+                if own_block.is_some() {
+                    return;
+                }
+                if decorates(cascade, origin) {
                     decorating.push((origin.0 as usize, style.clone()));
                 }
-                if origins.last() == Some(&origin)
-                    && (style.background_color.a > 0 || style.has_background_image())
-                {
+                if origins.last() == Some(&origin) && paints_background(style) {
                     background = Some((origin.0 as usize, style.clone()));
                 }
             })?;
@@ -113,6 +123,7 @@ impl FirstLine {
             root: root_id,
             origins,
             root_values,
+            own_block,
             styles: FirstLineStyles {
                 decorating,
                 background,
@@ -126,6 +137,13 @@ impl FirstLine {
         &self.root_values
     }
 
+    /// Whether the first line is the first line of a block-level `::before`
+    /// or `::after` of the paragraph itself. The paragraph's own values and
+    /// those of its content are then no concern of its first line.
+    pub(crate) fn in_own_block(&self) -> bool {
+        self.own_block.is_some()
+    }
+
     /// The values of `element` on the first line.
     pub(crate) fn element(
         &self,
@@ -133,6 +151,9 @@ impl FirstLine {
         cascade: &CascadeResult,
         element: usize,
     ) -> Option<ComputedValues> {
+        if self.in_own_block() {
+            return None;
+        }
         cascade.first_line_style(
             doc,
             &self.origins,
@@ -150,6 +171,9 @@ impl FirstLine {
         element: usize,
         pseudo: PseudoElem,
     ) -> Option<ComputedValues> {
+        if self.in_own_block() {
+            return None;
+        }
         cascade.first_line_style(
             doc,
             &self.origins,
@@ -157,6 +181,30 @@ impl FirstLine {
             StyleNodeId::new(element as u64),
             Some(pseudo),
         )
+    }
+
+    /// The values the text of the block-level `pseudo` of `element` has on
+    /// the first line, when the first line is the first line of that very box.
+    /// `text` is the content of the box once resolved, and `has_images`
+    /// whether it holds any image: a box whose content collapses to nothing
+    /// has no line, and so no first line.
+    pub(crate) fn generated_block(
+        &self,
+        cascade: &CascadeResult,
+        element: usize,
+        pseudo: PseudoElem,
+        text: &str,
+        has_images: bool,
+    ) -> Option<ComputedValues> {
+        let element = StyleNodeId::new(element as u64);
+        if self.own_block != Some(pseudo) || element != self.root {
+            return None;
+        }
+        let ordinary = cascade.pseudo.get(&(element, pseudo))?;
+        if !has_images && is_collapsed_white_space(text, ordinary.effective_white_space_collapse) {
+            return None;
+        }
+        cascade.first_line_block_pseudo_style(&self.origins, self.root, pseudo)
     }
 
     /// Record the values the text node `text` has on the first line.
@@ -182,10 +230,50 @@ impl FirstLine {
         self.styles.elements.insert(id, values);
     }
 
+    /// Record `values`, those the text of the block-level generated box `id`
+    /// has on the first line. The box itself keeps its own style: only the
+    /// text inside it is on the `::first-line`.
+    ///
+    /// The line belongs to the block box and the innermost `::first-line`
+    /// sits inside it, so its decoration and background are those of that
+    /// box alone, resolved over the values of the block (`currentColor` is
+    /// the block's color), and the boxes around do not reach the line.
+    pub(crate) fn note_generated_block_text(
+        &mut self,
+        cascade: &CascadeResult,
+        id: usize,
+        values: ComputedValues,
+    ) {
+        if let Some(&origin) = self.origins.last() {
+            if decorates(cascade, origin) {
+                self.styles
+                    .decorating
+                    .push((origin.0 as usize, values.clone()));
+            }
+            if paints_background(&values) {
+                self.styles.background = Some((origin.0 as usize, values.clone()));
+            }
+        }
+        self.styles.texts.insert(id, values);
+    }
+
     /// The values recorded.
     pub(crate) fn into_styles(self) -> FirstLineStyles {
         self.styles
     }
+}
+
+/// Whether the `::first-line` box of `origin` has a text decoration to paint.
+fn decorates(cascade: &CascadeResult, origin: StyleNodeId) -> bool {
+    cascade
+        .pseudo
+        .get(&(origin, PseudoElem::FirstLine))
+        .is_some_and(|ordinary| has_paintable_line(ordinary.text_decoration_line))
+}
+
+/// Whether a `::first-line` box with `style` has a background to paint.
+fn paints_background(style: &ComputedValues) -> bool {
+    style.background_color.a > 0 || style.has_background_image()
 }
 
 /// Whether text of only white space in a box with `cv` generates no content.
@@ -194,10 +282,33 @@ fn collapses_blank_text(cv: &ComputedValues) -> bool {
         || cv.effective_white_space_collapse == WhiteSpaceCollapse::Discard
 }
 
-/// Whether the first in-flow content of paragraph `root` is a block: the
-/// first formatted line is then the first line of that block, not of the
-/// paragraph's own lines.
-fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bool {
+/// Whether the block-level generated box with `cv` holds content a line can
+/// show. A `content` that is resolved while the paragraph is laid out, such
+/// as a counter, a quote or an attribute, is not judged here and counts as
+/// content; [`FirstLine::generated_block`] judges it once it is resolved.
+fn holds_lines(cv: &ComputedValues) -> bool {
+    !cv.content.iter().all(|part| {
+        matches!(part, ContentComponent::Literal(text)
+            if is_collapsed_white_space(text, cv.effective_white_space_collapse))
+    })
+}
+
+/// What the first in-flow content of a paragraph is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Start {
+    /// Inline content: the first formatted line is the paragraph's own.
+    Inline,
+    /// A block of its own: the first formatted line is the first line of
+    /// that block, not of the paragraph's lines.
+    Block,
+    /// The block-level `::before` or `::after` of the paragraph itself, which
+    /// holds lines. Its lines stay among the paragraph's, so its first line is
+    /// the paragraph's first. One without lines is a [`Start::Block`].
+    OwnBlockBox(PseudoElem),
+}
+
+/// What the first in-flow content of paragraph `root` is.
+fn first_content(doc: &Document, cascade: &CascadeResult, root: usize) -> Start {
     enum Visit {
         Enter(usize),
         Pseudo(usize, PseudoElem),
@@ -217,7 +328,14 @@ fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bo
                 if is_in_flow_generated_text(cascade, id, pseudo)
                     && let Some(cv) = cascade.pseudo.get(&(StyleNodeId::new(id as u64), pseudo))
                 {
-                    return !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents);
+                    if cv.display.is_inline_flow() || cv.display == DisplayValue::Contents {
+                        return Start::Inline;
+                    }
+                    return if id == root && holds_lines(cv) {
+                        Start::OwnBlockBox(pseudo)
+                    } else {
+                        Start::Block
+                    };
                 }
             }
             Visit::Enter(id) => {
@@ -229,7 +347,7 @@ fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bo
                             .is_some_and(|parent| collapses_blank_text(&cascade.computed[parent]));
                         let text = node.text_content().unwrap_or("");
                         if !text.is_empty() && (!collapses || !text.trim().is_empty()) {
-                            return false;
+                            return Start::Inline;
                         }
                     }
                     NodeKind::Element => {
@@ -241,12 +359,12 @@ fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bo
                         if node.display() != DisplayValue::Contents {
                             match box_kind(cascade, doc, id) {
                                 Some(IfcBoxKind::OutOfFlow | IfcBoxKind::Float) => continue,
-                                Some(IfcBoxKind::Block) => return true,
-                                Some(_) => return false,
+                                Some(IfcBoxKind::Block) => return Start::Block,
+                                Some(_) => return Start::Inline,
                                 None => {}
                             }
                             if node.tag_name() == Some("br") {
-                                return false;
+                                return Start::Inline;
                             }
                         }
                         stack.push(Visit::Pseudo(id, PseudoElem::After));
@@ -258,5 +376,5 @@ fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bo
             }
         }
     }
-    false
+    Start::Inline
 }
