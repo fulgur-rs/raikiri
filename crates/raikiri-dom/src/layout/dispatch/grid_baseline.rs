@@ -312,3 +312,85 @@ fn relative_block_offset(tree: &LayoutSession<'_>, item: usize, basis: Option<f3
     let (start, end) = (inset.top.resolve(basis), inset.bottom.resolve(basis));
     start.or(end.map(|end| -end)).unwrap_or(0.0)
 }
+
+/// Replace the first baseline in `output`, the result of the vertical grid
+/// container `idx` whose block flow runs from right to left when
+/// `right_to_left`, with the one of the item that gives it its baseline when
+/// that item runs against the block direction of the container and takes part
+/// in baseline alignment.
+///
+/// Such an item is aligned by the container only once the algorithm is done,
+/// so [`with_first_baseline`] leaves it out; its border box is where that
+/// alignment moved it, and its baseline is the one it was aligned by. The baseline of the container is an
+/// offset from its block-start edge, the right one when `right_to_left`.
+pub(super) fn with_opposed_first_baseline(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    right_to_left: bool,
+    mut output: LayoutOutput,
+) -> LayoutOutput {
+    if output.baselines.first.is_none() {
+        return output;
+    }
+    let view = ItemView::of(&tree.nodes[idx]);
+    // A grid with no opposed item keeps the baseline the algorithm found.
+    if !view
+        .rows
+        .iter()
+        .any(|&(item, _)| tree.nodes[item].opposed_baseline_group)
+    {
+        return output;
+    }
+    let container = tree.physical_style(idx);
+    // The bridge leaves an opposed item at `start` for the algorithm, so it
+    // does not align by a baseline there.
+    let aligns = |item: usize| {
+        tree.nodes[item].opposed_baseline_group
+            || aligns_by_baseline(&container, &tree.physical_style(item), true)
+    };
+    let Some(item) = first_baseline_in(&view, |_| true, aligns)
+        .filter(|&item| tree.nodes[item].opposed_baseline_group)
+    else {
+        return output;
+    };
+    let layout = tree.nodes[item].layout;
+    let from_left = super::inline_baseline::opposed_baseline_from_left(tree, idx, item);
+    let basis = view
+        .areas
+        .iter()
+        .find(|&&(held, _)| held == item)
+        .map(|&(_, area)| area.width);
+    let x = layout.location.x - relative_x_offset(tree, item, right_to_left, basis) + from_left;
+    output.baselines.first = Some(if right_to_left {
+        output.size.width - x
+    } else {
+        x
+    });
+    output
+}
+
+/// How far being positioned relatively moved the item `item` of a vertical
+/// grid container to the right: the inset at the block-start side of the
+/// container wins, the right one when `right_to_left`. A percentage refers to
+/// `basis`, the width of the item's grid area.
+fn relative_x_offset(
+    tree: &LayoutSession<'_>,
+    item: usize,
+    right_to_left: bool,
+    basis: Option<f32>,
+) -> f32 {
+    let style = tree.physical_style(item);
+    if style.position() != Position::Relative || tree.nodes[item].needs_relative_block_paint_offset
+    {
+        return 0.0;
+    }
+    let inset = style.inset();
+    let left = inset.left.resolve(basis);
+    let right = inset.right.resolve(basis).map(|right| -right);
+    if right_to_left {
+        right.or(left)
+    } else {
+        left.or(right)
+    }
+    .unwrap_or(0.0)
+}

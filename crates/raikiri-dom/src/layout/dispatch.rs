@@ -5536,6 +5536,11 @@ fn grid_layout_sized(
     } else {
         in_flow_overflow
     };
+    if inputs.run_mode == RunMode::PerformLayout
+        && let Some(right_to_left) = right_to_left
+    {
+        output = grid_baseline::with_opposed_first_baseline(tree, idx, right_to_left, output);
+    }
     let areas = grid_oof::GridAreas::of(grid.as_ref(), axes);
     if let Some(areas) = &areas {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(areas));
