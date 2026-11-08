@@ -2466,7 +2466,9 @@ impl PaginationState {
     /// that crosses a page end starts the next page, and the lines that keep
     /// the widows move down with it. The rest of the
     /// paragraph follows the moved lines. The text's `first_line_shift` takes
-    /// how far the moves took the run's first line.
+    /// how far the moves took the run's first line. A run with a gap between
+    /// two of its lines, which a float leaves, is not judged: its lines stay
+    /// where the layout put them.
     pub(super) fn keep_lines_after_block(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -2514,6 +2516,13 @@ impl PaginationState {
         let Some(mut metrics) = run_metrics(document).filter(|_| first_visit) else {
             return Ok(());
         };
+        // A float that a line cannot sit beside, or a clearance below one,
+        // leaves a gap of at least a fraction of a pixel between two lines of
+        // the run: they do not break as one block of lines, and the gap is not
+        // theirs to move.
+        if metrics.windows(2).any(|pair| pair[1].0 - pair[0].1 > 0.5) {
+            return Ok(());
+        }
         let first_owned_line = text_lines
             .get(node_id)
             .and_then(|owned| owned.lines.first())
@@ -2529,9 +2538,11 @@ impl PaginationState {
         } else {
             0.0
         };
-        let mut page = self
-            .current_page
-            .max(page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001));
+        // The run is judged from where its own first line lies. A float that
+        // the paragraph holds before the lines may sit lower than they do, on
+        // the next page, and take the flow's page there before the lines are
+        // reached; the lines still start on the page they are on.
+        let mut page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
         let mut moved = false;
         loop {
             let page_start = page_origins.origin(page);
