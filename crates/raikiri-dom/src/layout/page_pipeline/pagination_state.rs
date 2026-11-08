@@ -1461,7 +1461,12 @@ impl PaginationState {
         let column_crosses = column_piece.is_some_and(|end| {
             effective_y - relative_offset + end > fit_page_start + page_origins.step_at(fit_page)
         });
-        let holder = if (candidate.context.is_unbreakable() && crosses_page_end || column_crosses)
+        let unbreakable_crosses = effective_y - relative_offset
+            + candidate.context.unbreakable_extent(height)
+            + trailing_margin
+            > fit_page_start + page_origins.step_at(fit_page);
+        let holder = if (candidate.context.is_unbreakable() && unbreakable_crosses
+            || column_crosses)
             && !keeps_margin_at_break
             && is_block_flow_box(document, cascade, candidate)
             && !candidate.context.is_float_descendant()
