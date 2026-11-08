@@ -10199,11 +10199,12 @@ fn lines_can_shift_inside(
 
 /// Whether the lines of the paragraph `block_id` that follow its block
 /// children can move down inside it: its height grows with them, it is in one
-/// column, and the only boxes it lays out are atomic inlines, floats, those
-/// block children, which follow the moved lines when pagination reaches them,
-/// and out-of-flow boxes that a block-axis inset places away from the lines or
-/// that follow them (see [`out_of_flow_follow`]). A float is a page candidate
-/// of its own, placed where the layout put it; the lines move around it.
+/// column, and the only boxes it lays out are atomic inlines, floats, block
+/// children and out-of-flow boxes. The block children follow the moved lines
+/// when pagination reaches them. An out-of-flow box is one that a block-axis
+/// inset places away from the lines or that follows them (see
+/// [`out_of_flow_follow`]). A float is a page candidate of its own, placed
+/// where the layout put it: the lines move, the float does not follow them.
 fn lines_can_shift_between_blocks(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -10219,11 +10220,10 @@ fn lines_can_shift_between_blocks(
                         matches!(
                             b.kind,
                             IfcBoxKind::Block | IfcBoxKind::Atomic | IfcBoxKind::Float
-                        )
-                            || (b.kind == IfcBoxKind::OutOfFlow
-                                && (has_explicit_block_axis_inset(document, cascade, b.node)
-                                    || out_of_flow_follow(document, cascade, block_id, b.node)
-                                        .is_some()))
+                        ) || (b.kind == IfcBoxKind::OutOfFlow
+                            && (has_explicit_block_axis_inset(document, cascade, b.node)
+                                || out_of_flow_follow(document, cascade, block_id, b.node)
+                                    .is_some()))
                     })
             })
 }

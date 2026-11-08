@@ -2517,12 +2517,10 @@ impl PaginationState {
             return Ok(());
         };
         // A float that a line cannot sit beside, or a clearance below one,
-        // leaves a gap between two lines of the run: they do not break as one
-        // block of lines, and the gap is not theirs to move.
-        if metrics
-            .windows(2)
-            .any(|pair| (pair[1].0 - pair[0].1).abs() > 0.5)
-        {
+        // leaves a gap of at least a fraction of a pixel between two lines of
+        // the run: they do not break as one block of lines, and the gap is not
+        // theirs to move.
+        if metrics.windows(2).any(|pair| pair[1].0 - pair[0].1 > 0.5) {
             return Ok(());
         }
         let first_owned_line = text_lines

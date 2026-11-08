@@ -2760,10 +2760,7 @@ fn lines_that_fit_beside_a_float_stay_on_the_page() {
 #[test]
 fn a_float_after_the_first_word_of_the_line_moves_the_line_like_one_before_it() {
     let left = float_box("left", 20, "");
-    assert_eq!(
-        lines(&format!("{}z{left} z", spacer(90))),
-        [(1, 20.0, 5.0)]
-    );
+    assert_eq!(lines(&format!("{}z{left} z", spacer(90))), [(1, 20.0, 5.0)]);
     // The line after a second block, with the float among its words.
     assert_eq!(
         lines(&format!(
@@ -2814,10 +2811,7 @@ fn lines_with_a_gap_that_a_float_leaves_between_them_stay_where_the_layout_put_t
     // bottom margin (a block, a block, then the text).
     let float = float_box("left", 20, "margin-bottom:60px");
     assert_eq!(
-        lines(&format!(
-            "{}{float}<br style='clear:both'>z",
-            spacer(60)
-        )),
+        lines(&format!("{}{float}<br style='clear:both'>z", spacer(60))),
         [(1, 0.0, 45.0)]
     );
 }
