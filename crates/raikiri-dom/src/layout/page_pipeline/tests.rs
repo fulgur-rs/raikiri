@@ -20952,7 +20952,10 @@ fn a_marker_only_item_shorter_than_its_line_ends_where_the_box_does() {
 }
 
 #[test]
-fn a_vertical_marker_only_item_keeps_its_own_placement() {
+fn a_vertical_marker_only_item_moves_whole_as_an_orthogonal_flow() {
+    // The vertical item is an orthogonal flow, which no page break goes
+    // through: the 20px box that would cross the page end at 100 moves to the
+    // next page whole, as Chromium prints it.
     let ys = paginated_ys(
         |doc, body| {
             let spacer = doc.append_element(Some(body), "div", Some("display:block;height:90px"));
@@ -20965,7 +20968,7 @@ fn a_vertical_marker_only_item_keeps_its_own_placement() {
         },
         &[],
     );
-    assert_eq!(ys, [0.0, 90.0]);
+    assert_eq!(ys, [0.0, 100.0]);
 }
 
 #[test]
