@@ -7,7 +7,7 @@ use crate::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::block_flow::context::BlockContext;
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
-use raikiri_layout_geometry::Edges;
+use raikiri_layout_geometry::{Edges, Line};
 use raikiri_layout_style::values::Clear;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
@@ -52,6 +52,12 @@ pub(crate) struct FlowGeometry {
     /// the basis for the percentage widths of its empty atomic `::before`
     /// and `::after` boxes. `None` when the width depends on the content.
     pub(crate) vertical_width: Option<f32>,
+    /// Whether the margins of a vertical root's block children at its
+    /// block-start and block-end edges stay inside it, which is all that a
+    /// `stretch` width leaves out of its room. A margin escapes through an edge
+    /// that has no border or padding when the root shares its parent's
+    /// formatting context.
+    pub(crate) held_margins: Line<bool>,
     /// The blocks of the paragraph are not laid out with its lines: the lines
     /// stand as if the blocks took no room, and the caller places the blocks
     /// once it knows where the lines end up.
@@ -75,6 +81,7 @@ impl FlowGeometry {
             definite_height: None,
             height_cap: None,
             vertical_width: None,
+            held_margins: Line::TRUE,
             blocks_apart: false,
         }
     }

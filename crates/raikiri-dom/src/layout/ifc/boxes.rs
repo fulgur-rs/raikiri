@@ -2945,9 +2945,38 @@ fn layout_vertical_block_child_with_edges(
     // A border box is never narrower than its padding and border, whatever
     // width it states: a flex container takes the width it is given as it is.
     let narrowest = horizontal_padding_border(tree, node, inline_basis);
-    let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis).map(|width| {
-        clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width).max(narrowest)
-    });
+    // A `stretch` width fills the width of the root, the block extent, less the
+    // margins the root holds in (CSS Sizing 4 §5.1). While the content of the
+    // root decides that width, a vertical child acts as `auto` and a horizontal
+    // one, an orthogonal flow, fills the page area that stands in for the
+    // initial containing block (CSS Writing Modes 4 §7.3.1).
+    let stretched_width = geometry
+        .vertical_width
+        .or_else(|| {
+            page_area_width(tree)
+                .filter(|_| !crate::layout::dispatch::used_writing_mode(tree, node).is_vertical())
+        })
+        .filter(|_| {
+            matches!(
+                tree.physical_style(node).size().width.expand(),
+                ExpandedDimension::Stretch
+            )
+        })
+        .map(|room| {
+            let (held_left, held_right) = if vertical_rl {
+                (geometry.held_margins.end, geometry.held_margins.start)
+            } else {
+                (geometry.held_margins.start, geometry.held_margins.end)
+            };
+            let taken = if held_left { margin.left } else { 0.0 }
+                + if held_right { margin.right } else { 0.0 };
+            (room - taken).max(0.0)
+        });
+    let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis)
+        .or(stretched_width)
+        .map(|width| {
+            clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width).max(narrowest)
+        });
     let parent_size = Size {
         width: Some(geometry.content_size.width),
         height: Some(inline_basis),
@@ -2973,10 +3002,24 @@ fn layout_vertical_block_child_with_edges(
             DisplayValue::Table | DisplayValue::InlineTable
         )
         && !crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
+    // A `stretch` height fills the inline extent of the root, less the margins,
+    // when that is definite; a horizontal child would otherwise be as high as
+    // its content.
+    let stretches_inline_size = geometry.definite_height.is_some()
+        && matches!(
+            tree.physical_style(node).size().height.expand(),
+            ExpandedDimension::Stretch
+        );
     let own_inline_size = stated_height
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
-        .or_else(|| orthogonal_content_height(tree, node, width, parent_size, shares_context));
+        .or_else(|| {
+            if stretches_inline_size {
+                None
+            } else {
+                orthogonal_content_height(tree, node, width, parent_size, shares_context)
+            }
+        });
     let clear = tree.physical_style(node).clear();
     let clear_y = ctx
         .cleared_threshold(clear)
@@ -3354,6 +3397,40 @@ fn shares_vertical_root_context(
                     WritingMode::VerticalRl | WritingMode::SidewaysRl
                 )
         })
+}
+
+/// Whether the margins of the block children of the vertical root `root` at
+/// its block-start and block-end edges stay inside it, for a `stretch` width of
+/// a child to leave out of its room. A margin escapes through an edge when the
+/// root takes part in the formatting context of its parent, which offers its
+/// margins to `collapsible`, and no border or padding of `insets` lies at the
+/// edge (CSS 2.1 8.3.1). A root that is a context of its own, or flows across
+/// its parent, holds both.
+pub(crate) fn held_block_margins(
+    tree: &LayoutSession<'_>,
+    root: usize,
+    root_writing_mode: WritingMode,
+    collapsible: Line<bool>,
+    insets: Edges<f32>,
+) -> Line<bool> {
+    let shares = tree.taffy_parent_of(root).is_some_and(|parent| {
+        super::style::shodo_writing_mode(
+            crate::layout::dispatch::used_writing_mode(tree, parent),
+            parent,
+        )
+        .is_ok_and(|parent_writing_mode| {
+            parent_writing_mode == root_writing_mode
+                && shares_vertical_root_context(tree, root, parent_writing_mode)
+        })
+    });
+    let (start_inset, end_inset) = match root_writing_mode {
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => (insets.right, insets.left),
+        _ => (insets.left, insets.right),
+    };
+    Line {
+        start: !(shares && collapsible.start && start_inset == 0.0),
+        end: !(shares && collapsible.end && end_inset == 0.0),
+    }
 }
 
 /// Lay out a block child that establishes a formatting context of its own
