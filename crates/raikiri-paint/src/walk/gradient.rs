@@ -13,6 +13,7 @@ use raikiri_style::property::{
 };
 
 mod budget;
+mod polar_stops;
 pub(super) use budget::{ConicBudget, ConicPaintBudget};
 
 fn stop_vector<T>(capacity: usize, budget: Option<&ConicBudget<'_>>) -> Option<Vec<T>> {
@@ -792,6 +793,23 @@ pub(super) fn try_fixed_up_stops(
     Some(fixed)
 }
 
+/// The stops of one period with the hue Chromium gives each stop of an
+/// `lch` or `oklch` gradient (see the `polar_stops` module). A stop that
+/// takes a different hue toward each neighbor becomes two stops at its
+/// offset, so this runs after a too-short repeating period has been
+/// averaged: the average weighs the authored stops, not the split ones.
+pub(super) fn try_polar_resolved_stops(
+    stops: Vec<(f64, DynamicColor)>,
+    interpolation: &GradientColorInterpolation,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<Vec<(f64, DynamicColor)>> {
+    polar_stops::chromium_polar_stops(
+        stops,
+        conic_interpolation_tag(interpolation.color_space),
+        budget,
+    )
+}
+
 /// Number of samples in each of the two grids that sample a hint's curve.
 const HINT_SAMPLES: usize = 16;
 
@@ -1057,6 +1075,8 @@ fn normalize_stops(
     if repeating && period <= MIN_REPEATING_PERIOD {
         return Some(Normalized::Solid(ramp_average_color(&stops, interpolation)));
     }
+    let stops = try_polar_resolved_stops(stops, interpolation, None)
+        .expect("unbounded stop buffers have no allocation budget");
     let (start, end) = if repeating {
         (first, last)
     } else {
@@ -1155,11 +1175,18 @@ pub(super) fn any_out_of_gamut(stops: &[(f32, DynamicColor)]) -> bool {
         .any(|(_, color)| !in_gamut(color.to_alpha_color::<Srgb>()))
 }
 
-/// Every sRGB channel lies in 0..=1.
+/// How far outside 0..=1 an sRGB channel may lie and still count as inside
+/// the gamut: clipping it moves the channel by less than half an 8-bit
+/// level. Colors kept in Lab-like coordinates, and achromatic stops of a
+/// polar gradient (whose hue comes from a slight chroma), convert to sRGB
+/// with rounding that lands just past 0 or 1.
+const GAMUT_SLACK: f32 = 0.5 / 255.0;
+
+/// Every sRGB channel lies in 0..=1, within [`GAMUT_SLACK`].
 fn in_gamut(color: AlphaColor<Srgb>) -> bool {
     color.components[..3]
         .iter()
-        .all(|channel| (0.0..=1.0).contains(channel))
+        .all(|channel| (-GAMUT_SLACK..=1.0 + GAMUT_SLACK).contains(channel))
 }
 
 /// The color clipped to the sRGB gamut, as it is drawn.
@@ -1370,6 +1397,7 @@ pub(super) fn try_repeat_over_turn(
             Some(budget),
         )?));
     }
+    let stops = try_polar_resolved_stops(stops, interpolation, Some(budget))?;
     // The first period that starts at or before 0, and the first that ends at
     // or after 1. A period longer than the turn is the only one.
     let lowest = (-first / period).floor() as i64;

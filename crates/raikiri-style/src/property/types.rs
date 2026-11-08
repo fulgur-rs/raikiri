@@ -9077,10 +9077,12 @@ pub enum GradientStopColor {
     CurrentColor,
     /// Resolved `<color>` value.
     Resolved(CssColor),
-    /// A `<color>` outside the sRGB gamut, kept in the space it was given
-    /// in. Gradients interpolate it before any gamut mapping (CSS Color 4
-    /// §12 "Color Interpolation"), so clipping it to [`CssColor`] first
-    /// would change the colors between the stops.
+    /// A `<color>` outside the sRGB gamut, or one given in Lab, LCH, Oklab
+    /// or OKLCh, kept in the space it was given in. Gradients interpolate it
+    /// before any gamut mapping (CSS Color 4 §12 "Color Interpolation"), so
+    /// clipping it to [`CssColor`] first would change the colors between
+    /// the stops, and a polar gradient takes a low-chroma stop's hue from
+    /// the space it was given in.
     Unbounded(UnboundedColor),
 }
 

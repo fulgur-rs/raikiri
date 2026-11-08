@@ -2825,3 +2825,328 @@ fn programmatic_gradient_comparison_sizes_use_the_positioning_area() {
         Some((30.0, 10.0))
     );
 }
+
+/// Assert each `linear-gradient(...)` drawn over 200px matches the Chromium
+/// pixels at the given x positions, within 4 per channel.
+fn assert_ramps(ramps: &[(&str, Ramp)]) {
+    for (stops, expected) in ramps {
+        let rgba = raster_layer(
+            &format!("background-image: linear-gradient({stops})"),
+            200,
+            1,
+        );
+        let expected: Vec<_> = expected.iter().map(|&(x, rgb)| ((x, 0), rgb)).collect();
+        assert_pixels_near(&rgba, 200, &expected, 4);
+    }
+}
+
+#[test]
+fn achromatic_stops_take_the_hue_chromium_interpolates() {
+    // Chromium measures white with two Lab white points, so white keeps a
+    // little chroma with a hue near 100 degrees, and a ramp to it runs
+    // through yellow. Gray and black lose their hue and carry the neighbor's.
+    assert_ramps(&[
+        (
+            "to right in lch, lch(50% 100 40), white",
+            [
+                (0, [235, 0, 5]),
+                (50, [235, 116, 39]),
+                (100, [234, 171, 99]),
+                (150, [239, 216, 173]),
+                (198, [254, 254, 252]),
+            ],
+        ),
+        (
+            "to right in lch, white, lch(50% 100 40)",
+            [
+                (0, [254, 254, 254]),
+                (50, [239, 215, 171]),
+                (100, [235, 170, 98]),
+                (150, [235, 114, 38]),
+                (198, [235, 7, 5]),
+            ],
+        ),
+        (
+            "to right in lch, lch(0% 100 40), white",
+            [
+                (0, [85, 0, 0]),
+                (50, [122, 12, 0]),
+                (100, [162, 106, 37]),
+                (150, [204, 182, 140]),
+                (198, [253, 252, 251]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), gray",
+            [
+                (0, [235, 0, 5]),
+                (50, [214, 67, 42]),
+                (100, [190, 94, 71]),
+                (150, [163, 113, 99]),
+                (198, [129, 127, 127]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), black",
+            [
+                (0, [234, 0, 5]),
+                (50, [171, 21, 10]),
+                (100, [112, 25, 11]),
+                (150, [58, 19, 7]),
+                (198, [3, 0, 0]),
+            ],
+        ),
+        (
+            "to right in oklch, oklch(60% 0.25 40), white",
+            [
+                (0, [239, 26, 0]),
+                (50, [238, 124, 0]),
+                (100, [229, 182, 88]),
+                (150, [229, 224, 177]),
+                (198, [253, 254, 252]),
+            ],
+        ),
+        (
+            "to right in oklch, oklch(60% 0.25 40), gray",
+            [
+                (0, [238, 25, 0]),
+                (50, [203, 92, 0]),
+                (100, [164, 119, 0]),
+                (150, [134, 130, 86]),
+                (198, [127, 128, 127]),
+            ],
+        ),
+        (
+            "to right in oklch longer hue, oklch(60% 0.25 40), white",
+            [
+                (0, [239, 23, 0]),
+                (50, [221, 108, 212]),
+                (100, [144, 190, 255]),
+                (150, [174, 236, 232]),
+                (198, [253, 254, 253]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_transition_hint_next_to_an_achromatic_stop_keeps_the_neighbor_hue() {
+    // Blink draws a transition hint with stops it mixes itself, where white
+    // carries the neighbor's hue, so the ramp stays red. Blink places fewer
+    // stops along the hint's curve, so the pixels between them are left out.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in lch, lch(50% 100 40), 30%, white)",
+        200,
+        1,
+    );
+    assert_pixels_near(
+        &rgba,
+        200,
+        &[
+            ((50, 0), [255, 145, 116]),
+            ((100, 0), [255, 190, 170]),
+            ((198, 0), [254, 254, 253]),
+        ],
+        4,
+    );
+}
+
+#[test]
+fn an_achromatic_stop_between_two_hues_takes_each_side_from_its_neighbor() {
+    assert_ramps(&[(
+        "to right in lch, lch(50% 100 40), white, lch(50% 100 200)",
+        [
+            (0, [235, 2, 5]),
+            (50, [234, 171, 100]),
+            (100, [253, 254, 254]),
+            (150, [0, 208, 206]),
+            (198, [0, 153, 176]),
+        ],
+    )]);
+}
+
+#[test]
+fn stops_written_in_lab_like_spaces_take_the_hue_chromium_interpolates() {
+    // A stop written in the interpolation space keeps its hue whatever its
+    // chroma. One written in another Lab-like space is measured through
+    // Blink's white point or Oklab matrices, not as an 8-bit sRGB color.
+    assert_ramps(&[
+        (
+            "to right in oklch, oklch(60% 0.25 40), oklch(90% 0.015 250)",
+            [
+                (0, [239, 24, 0]),
+                (50, [240, 88, 141]),
+                (100, [215, 144, 220]),
+                (150, [194, 191, 243]),
+                (198, [213, 222, 232]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), lch(90% 0.015 250)",
+            [
+                (0, [235, 0, 3]),
+                (50, [179, 138, 0]),
+                (100, [133, 185, 95]),
+                (150, [148, 211, 189]),
+                (198, [223, 226, 226]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), lch(100% 0 none)",
+            [
+                (0, [235, 0, 4]),
+                (50, [200, 138, 0]),
+                (100, [172, 193, 95]),
+                (150, [185, 231, 193]),
+                (198, [252, 254, 254]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), lab(100% 0 0)",
+            [
+                (0, [235, 0, 4]),
+                (50, [200, 138, 0]),
+                (100, [172, 193, 95]),
+                (150, [185, 231, 193]),
+                (198, [252, 254, 254]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), oklch(100% 0 0)",
+            [
+                (0, [235, 0, 4]),
+                (50, [216, 129, 0]),
+                (100, [202, 185, 89]),
+                (150, [208, 225, 177]),
+                (198, [253, 254, 253]),
+            ],
+        ),
+        (
+            "to right in lch, lch(50% 100 40), oklab(1 0 0)",
+            [
+                (0, [235, 0, 4]),
+                (50, [216, 129, 0]),
+                (100, [202, 185, 89]),
+                (150, [208, 225, 177]),
+                (198, [253, 254, 253]),
+            ],
+        ),
+        (
+            "to right in oklch, oklch(60% 0.25 40), oklab(1 0 0)",
+            [
+                (0, [239, 26, 0]),
+                (50, [216, 141, 0]),
+                (100, [177, 202, 108]),
+                (150, [186, 235, 210]),
+                (198, [252, 254, 254]),
+            ],
+        ),
+        (
+            "to right in oklch, oklch(60% 0.25 40), lch(100% 0 0)",
+            [
+                (0, [239, 26, 0]),
+                (50, [222, 137, 0]),
+                (100, [191, 198, 98]),
+                (150, [195, 234, 200]),
+                (198, [252, 254, 254]),
+            ],
+        ),
+        (
+            "to right in oklch, oklch(60% 0.25 40), lab(50% 0 0)",
+            [
+                (0, [238, 25, 0]),
+                (50, [185, 103, 0]),
+                (100, [124, 130, 20]),
+                (150, [95, 132, 101]),
+                (198, [117, 119, 119]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_missing_component_of_a_polar_stop_comes_from_the_neighbor_on_each_side() {
+    // Blink takes a missing component, alpha too, from the stop next to it,
+    // so a stop between two others draws two colors at its offset.
+    let cv = computed_for("background-image: linear-gradient(in lch, red, blue)");
+    let Gradient::Linear(linear) = gradient_of(&cv) else {
+        panic!("expected a linear gradient");
+    };
+    let lch = |components: [f32; 4], missing: &[usize]| {
+        let mut flags = peniko::color::Missing::default();
+        for &index in missing {
+            flags.insert(index);
+        }
+        DynamicColor {
+            cs: ColorSpaceTag::Lch,
+            flags: peniko::color::Flags::from_missing(flags),
+            components,
+        }
+    };
+    let raw = [
+        lch([50.0, 100.0, 40.0, 1.0], &[]),
+        lch([0.0, 30.0, 200.0, 0.0], &[0, 3]),
+        lch([80.0, 50.0, 300.0, 0.5], &[]),
+    ]
+    .map(|color| gradient::RawStop {
+        position: None,
+        hint: None,
+        color,
+    });
+    let stops = gradient::try_polar_resolved_stops(
+        gradient::fixed_up_stops(&raw, &linear.interpolation),
+        &linear.interpolation,
+        None,
+    )
+    .expect("no budget");
+    assert_eq!(stops.len(), 4);
+    let (before, after) = (stops[1].1.components, stops[2].1.components);
+    assert_eq!((stops[1].0, stops[2].0), (0.5, 0.5));
+    assert!(
+        (before[0] - 50.0).abs() < 0.1 && before[3] == 1.0,
+        "{before:?}"
+    );
+    assert!(
+        (after[0] - 80.0).abs() < 0.1 && after[3] == 0.5,
+        "{after:?}"
+    );
+    assert!((before[2] - 200.0).abs() < 1.0 && (after[2] - 200.0).abs() < 1.0);
+}
+#[test]
+fn zz_probe() {
+    for stops in [
+        "to right in lch, lch(50% 100 40), 30%, white",
+        "to right in lch, lch(50% 100 40), 30%, lch(100% 0.5 40)",
+        "to right in srgb, red, 30%, white",
+    ] {
+        let rgba = raster_layer(
+            &format!("background-image: linear-gradient({stops})"),
+            200,
+            1,
+        );
+        let px: Vec<_> = [0usize, 5, 50, 100, 150, 198]
+            .iter()
+            .map(|&x| (rgba[x * 4], rgba[x * 4 + 1], rgba[x * 4 + 2]))
+            .collect();
+        eprintln!("{stops} {px:?}");
+    }
+}
+
+#[test]
+fn a_too_short_polar_period_averages_the_authored_stops() {
+    // A stop split in two for its two neighbors' hues would count as one
+    // more pair of the average. With every stop inside the gamut the
+    // average does not depend on the interpolation space.
+    let raster = |space: &str| {
+        raster_layer(
+            &format!(
+                "background-image: repeating-linear-gradient(to right in {space}, \
+                 red 0px, black 0px, blue 0px)"
+            ),
+            20,
+            20,
+        )
+    };
+    let (got, want) = (raster("lch"), raster("lab"));
+    assert_eq!(pixel(&got, 20, 10, 10), pixel(&want, 20, 10, 10));
+}

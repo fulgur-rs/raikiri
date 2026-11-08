@@ -1007,9 +1007,18 @@ impl ParsedColor {
     /// the boundary color, while a gradient interpolates from the
     /// coordinates, as `lab(0% 125 125)` is not black to the colors it mixes
     /// with.
+    ///
+    /// A Lab, LCH, Oklab or OKLCh color keeps its coordinates inside the
+    /// gamut as well. A gradient interpolated in a polar space takes the hue
+    /// of a low-chroma stop from these coordinates, which an 8-bit sRGB
+    /// color no longer holds.
     pub(crate) fn to_unbounded(self) -> Option<UnboundedColor> {
         let own = self.to_srgb_for_interpolation();
-        if own.iter().all(|component| (0.0..=1.0).contains(component))
+        let rgb = matches!(
+            self.space,
+            ParsedColorSpace::Srgb | ParsedColorSpace::SrgbLinear
+        );
+        if (rgb && own.iter().all(|component| (0.0..=1.0).contains(component)))
             || !own
                 .iter()
                 .all(|component| component.abs() <= MAX_UNBOUNDED_SRGB)
