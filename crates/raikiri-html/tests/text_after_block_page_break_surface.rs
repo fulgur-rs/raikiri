@@ -2684,3 +2684,140 @@ fn the_float_stays_on_the_page_above_the_large_retained_margin() {
         }
     }
 }
+
+/// A 20px float with `style` added.
+fn float_box(side: &str, height: u32, style: &str) -> String {
+    format!("<div style='float:{side};width:20px;height:{height}px;{style}'></div>")
+}
+
+#[test]
+fn lines_beside_a_float_after_a_block_start_the_next_page_when_they_cross_the_page_end() {
+    // The float and the line beside it begin 90px down a page of 100px: the
+    // line would cross the page end, so it starts the next page, where the
+    // float's width still indents it, and the line below it is clear of the
+    // float.
+    let left = float_box("left", 20, "");
+    assert_eq!(
+        lines(&format!("{}{left}z z z", spacer(90))),
+        [(1, 20.0, 5.0), (1, 0.0, 35.0)]
+    );
+    // The float is as tall as two of the lines, so both stay beside it.
+    let tall = float_box("left", 50, "");
+    assert_eq!(
+        lines(&format!("{}{tall}z z z", spacer(90))),
+        [(1, 20.0, 5.0), (1, 20.0, 35.0)]
+    );
+    // A float on the right leaves the lines at the left edge.
+    let right = float_box("right", 20, "");
+    assert_eq!(
+        lines(&format!("{}{right}z z z", spacer(90))),
+        [(1, 0.0, 5.0), (1, 0.0, 35.0)]
+    );
+    // One on each side leaves room for a single word between them.
+    assert_eq!(
+        lines(&format!("{}{left}{right}z z", spacer(90))),
+        [(1, 20.0, 5.0)]
+    );
+}
+
+#[test]
+fn the_margin_of_a_float_does_not_hold_the_lines_beside_it_on_the_page_before() {
+    // The float's border box starts exactly at the page end when its top
+    // margin is added to the 90px of the block above, so the float is on the
+    // next page. The lines beside it still start on the page before, cross its
+    // end, and move to the next page like the lines of a float without margins.
+    for (style, expected) in [
+        ("margin-top:10px", vec![(1, 20.0, 5.0), (1, 0.0, 35.0)]),
+        ("margin:10px", vec![(1, 40.0, 5.0), (1, 40.0, 35.0)]),
+        ("margin-left:10px", vec![(1, 30.0, 5.0), (1, 0.0, 35.0)]),
+        ("margin-bottom:10px", vec![(1, 20.0, 5.0), (1, 0.0, 35.0)]),
+    ] {
+        let float = float_box("left", 20, style);
+        assert_eq!(
+            lines(&format!("{}{float}z z z", spacer(90))),
+            expected,
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn lines_that_fit_beside_a_float_stay_on_the_page() {
+    let left = float_box("left", 20, "");
+    // Two words on one line, from 60px to 90px.
+    assert_eq!(
+        lines(&format!("{}{left}z z", spacer(60))),
+        [(0, 20.0, 65.0)]
+    );
+    // Seven words on four lines: one line would stay on the first page, which
+    // is fewer than the two lines orphans asks for, so all of them move.
+    assert_eq!(
+        lines(&format!("{}{left}z z z z z z z", spacer(60))),
+        [(1, 20.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)]
+    );
+}
+
+#[test]
+fn a_float_after_the_first_word_of_the_line_moves_the_line_like_one_before_it() {
+    let left = float_box("left", 20, "");
+    assert_eq!(
+        lines(&format!("{}z{left} z", spacer(90))),
+        [(1, 20.0, 5.0)]
+    );
+    // The line after a second block, with the float among its words.
+    assert_eq!(
+        lines(&format!(
+            "{}z<div style='height:10px'></div>{left}z z z",
+            spacer(50)
+        )),
+        [(0, 0.0, 55.0), (1, 20.0, 5.0), (1, 0.0, 35.0)]
+    );
+}
+
+#[test]
+fn the_lines_between_two_blocks_beside_a_float_move_and_the_block_after_them_follows() {
+    let tall = float_box("left", 50, "");
+    assert_eq!(
+        lines(&format!(
+            "{}{tall}z<div style='height:10px'></div>z",
+            spacer(90)
+        )),
+        [(1, 20.0, 5.0), (1, 20.0, 45.0)]
+    );
+    assert_eq!(
+        lines(&format!(
+            "{}{tall}z z z<div style='height:10px'></div>z",
+            spacer(90)
+        )),
+        [(1, 20.0, 5.0), (1, 20.0, 35.0), (1, 0.0, 75.0)]
+    );
+}
+
+#[test]
+fn lines_beside_a_float_in_a_flow_root_move_with_the_block_after_them() {
+    let left = float_box("left", 20, "");
+    let mut found = lines(&format!(
+        "<div style='display:flow-root'>{}{left}z z z</div>w",
+        spacer(90)
+    ));
+    // The text after the flow root is reported first.
+    found.sort_by(|a, b| a.2.total_cmp(&b.2));
+    assert_eq!(found, [(1, 20.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)]);
+}
+
+#[test]
+fn lines_with_a_gap_that_a_float_leaves_between_them_stay_where_the_layout_put_them() {
+    // The line with the break sits above the float's margin, and the text
+    // after the clearance comes 80px below it. The lines are not one block of
+    // lines to move whole: the text stays where the margin of the float puts
+    // it, as in the reference of the print test of a float with a large
+    // bottom margin (a block, a block, then the text).
+    let float = float_box("left", 20, "margin-bottom:60px");
+    assert_eq!(
+        lines(&format!(
+            "{}{float}<br style='clear:both'>z",
+            spacer(60)
+        )),
+        [(1, 0.0, 45.0)]
+    );
+}
