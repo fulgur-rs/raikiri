@@ -204,8 +204,9 @@ fn sideways_percentage_padding_uses_the_containing_block_inline_extent() {
     }
 }
 
-/// A hundred three-letter words, 299 Ahem glyphs: a 60px-tall column of 10px
-/// glyphs takes 20 words, so the 600px page area holds 5 columns of it.
+/// A hundred two-letter words, 299 Ahem glyphs with the spaces: a 600px-tall
+/// column of 10px glyphs takes 20 words, so the 600px page area holds 5
+/// columns of it.
 fn long_text() -> String {
     vec!["aa"; 100].join(" ")
 }
@@ -698,4 +699,139 @@ fn provisional_grid_row_rooms_restore_the_previous_scope_after_a_panic() {
     }));
     assert!(result.is_err());
     assert_eq!(tree.context.grid_row_rooms, [(0, Vec::new())]);
+}
+
+/// An item of [`vertical_flex_rects`]: its style and the text it holds.
+type Item<'a> = (&'a str, &'a str);
+
+/// A border-box rect, as `(x, y, width, height)`.
+type Rect = (f32, f32, f32, f32);
+
+/// A box of its own 10px size that does not shrink.
+const BOX: Item<'static> = ("width:10px;height:10px;flex:none", "");
+
+/// The border-box rects of a vertical flex container `css` under a block
+/// `parent_css`, and of its `items`.
+fn vertical_flex_rects(parent_css: &str, css: &str, items: &[Item<'_>]) -> (Rect, Vec<Rect>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(parent_css));
+    let container = doc.append_element(
+        Some(parent),
+        "div",
+        Some(format!("{VERTICAL_TEXT};display:flex;{css}").as_str()),
+    );
+    let items: Vec<usize> = items
+        .iter()
+        .map(|&(style, text)| {
+            let node = doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;{style}").as_str()),
+            );
+            if !text.is_empty() {
+                doc.append_text(node, text);
+            }
+            node
+        })
+        .collect();
+    lay_out(&mut doc);
+    let rects = items
+        .iter()
+        .map(|&item| absolute_rect(&doc, item))
+        .collect();
+    (absolute_rect(&doc, container), rects)
+}
+
+/// [`vertical_flex_rects`] under a plain block, with one item of
+/// [`long_text`].
+fn long_vertical_flex_rects(css: &str) -> (Rect, Vec<Rect>) {
+    vertical_flex_rects("display:block", css, &[("", &long_text())])
+}
+
+#[test]
+fn a_vertical_flex_container_fits_its_items_in_the_page_height() {
+    // As a vertical paragraph does, the auto height of the container is
+    // fit-content within the page area: one item of 5 columns of 600px, not
+    // one column of 2990px.
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl"] {
+        let (container, items) = long_vertical_flex_rects(&format!("writing-mode:{mode}"));
+        assert_eq!(container, (0.0, 0.0, 50.0, 600.0), "{mode}");
+        assert_eq!(items, [(0.0, 0.0, 50.0, 600.0)], "{mode}");
+    }
+    for css in ["flex-direction:column", "width:100px"] {
+        let (container, _) = long_vertical_flex_rects(css);
+        assert_eq!(container.3, 600.0, "{css}");
+    }
+    // Two items share the 600px main axis; wrapped, each takes a line of it.
+    let text = long_text();
+    let two = [("", text.as_str()), ("", text.as_str())];
+    let (container, items) = vertical_flex_rects("display:block", "", &two);
+    assert_eq!(container, (0.0, 0.0, 100.0, 600.0));
+    assert_eq!(
+        items,
+        [(0.0, 0.0, 100.0, 300.0), (0.0, 300.0, 100.0, 300.0)]
+    );
+    let (container, items) = vertical_flex_rects("display:block", "flex-wrap:wrap", &two);
+    assert_eq!(container, (0.0, 0.0, 100.0, 600.0));
+    assert_eq!(items, [(50.0, 0.0, 50.0, 600.0), (0.0, 0.0, 50.0, 600.0)]);
+}
+
+#[test]
+fn a_vertical_flex_container_takes_its_margins_off_the_page_height() {
+    // 19 words fit a 570px column, so the item takes 6 columns.
+    let (container, items) = long_vertical_flex_rects("margin:15px");
+    assert_eq!(container, (15.0, 15.0, 60.0, 570.0));
+    assert_eq!(items, [(15.0, 15.0, 60.0, 570.0)]);
+    // Percentages of the margins refer to the 800px width of the parent.
+    let (container, _) = long_vertical_flex_rects("margin:5% 0");
+    assert_eq!(container, (0.0, 40.0, 60.0, 520.0));
+}
+
+#[test]
+fn a_vertical_flex_container_fits_its_padding_and_border_box_in_the_page_height() {
+    // The room is that of the border box, whatever the box sizing.
+    for sizing in ["content-box", "border-box"] {
+        let (container, items) =
+            long_vertical_flex_rects(&format!("box-sizing:{sizing};padding:10px"));
+        assert_eq!(container, (0.0, 0.0, 80.0, 600.0), "{sizing}");
+        assert_eq!(items, [(10.0, 10.0, 60.0, 580.0)], "{sizing}");
+        let (container, items) =
+            long_vertical_flex_rects(&format!("box-sizing:{sizing};border:5px solid"));
+        assert_eq!(container, (0.0, 0.0, 60.0, 600.0), "{sizing}");
+        assert_eq!(items, [(5.0, 5.0, 50.0, 590.0)], "{sizing}");
+    }
+}
+
+#[test]
+fn a_vertical_flex_container_fits_the_height_of_its_parent_or_its_own() {
+    let text = long_text();
+    let item = [("", text.as_str())];
+    for parent in [
+        "display:block;height:300px",
+        "display:block;max-height:300px",
+    ] {
+        let (container, _) = vertical_flex_rects(parent, "", &item);
+        assert_eq!(container, (0.0, 0.0, 100.0, 300.0), "{parent}");
+    }
+    let (container, _) = long_vertical_flex_rects("max-height:300px");
+    assert_eq!(container, (0.0, 0.0, 100.0, 300.0));
+    let (container, _) = long_vertical_flex_rects("height:200px");
+    assert_eq!(container, (0.0, 0.0, 150.0, 200.0));
+}
+
+#[test]
+fn a_vertical_flex_container_is_no_shorter_than_its_min_content_height() {
+    // Forty boxes that do not shrink, on one line, are 400px tall, more than
+    // the 300px of the parent; wrapped, they take two lines of 300px.
+    let boxes = [BOX; 40];
+    let (container, _) = vertical_flex_rects("display:block;height:300px", "", &boxes);
+    assert_eq!(container, (0.0, 0.0, 10.0, 400.0));
+    let (container, _) =
+        vertical_flex_rects("display:block;height:300px", "flex-wrap:wrap", &boxes);
+    assert_eq!(container, (0.0, 0.0, 20.0, 300.0));
+    // A few words take only their own height.
+    let (container, _) = vertical_flex_rects("display:block", "", &[("", "aa aa aa")]);
+    assert_eq!(container, (0.0, 0.0, 10.0, 80.0));
 }
