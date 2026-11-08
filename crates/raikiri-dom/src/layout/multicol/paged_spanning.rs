@@ -1,8 +1,16 @@
 use super::*;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
-use crate::fragment::{LayoutFragment, MulticolGroup};
+use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use lineless::EPSILON;
 use std::collections::HashSet;
+
+/// The origin of the container's space, with no size.
+const ORIGIN: FragmentRect = FragmentRect {
+    x: 0.0,
+    y: 0.0,
+    width: 0.0,
+    height: 0.0,
+};
 
 /// Whether `fragments` cut a paragraph that paints with an offset of its own,
 /// a `position: relative` inset or a transform. A cut piece is clipped at its
@@ -171,20 +179,87 @@ pub(in crate::layout) fn paginate_spanning_columns(
             {
                 let new_end = planned.end;
                 groups.extend(planned.groups);
+                // A wrapper whose boxes joined the flow gets one record from
+                // its first piece to its lowest, and the records of what it
+                // holds are placed in it. A wrapper that has no record of its
+                // own leaves them to the nearest one that has.
+                let mut wrappers = HashMap::<usize, (usize, FragmentRect)>::new();
+                let rects: HashMap<usize, FragmentRect> = planned
+                    .wrappers
+                    .iter()
+                    .map(|wrapper| (wrapper.node, wrapper.rect))
+                    .collect();
+                for wrapper in &planned.wrappers {
+                    let (record, origin) = wrapper
+                        .wrapper
+                        .and_then(|outer| wrappers.get(&outer).copied())
+                        .unwrap_or((container, ORIGIN));
+                    let parent_origin = wrapper
+                        .wrapper
+                        .and_then(|outer| rects.get(&outer).copied())
+                        .unwrap_or(ORIGIN);
+                    let node = &mut tree.nodes[wrapper.node];
+                    node.layout.location = Point {
+                        x: wrapper.rect.x - parent_origin.x,
+                        y: wrapper.rect.y - parent_origin.y,
+                    };
+                    node.layout.size.height = wrapper.rect.height;
+                    let rect = FragmentRect {
+                        x: wrapper.rect.x - origin.x,
+                        y: wrapper.rect.y - origin.y,
+                        ..wrapper.rect
+                    };
+                    let had_records = edits.first(wrapper.node).is_some();
+                    edits.replace(
+                        wrapper.node,
+                        vec![LayoutFragment {
+                            node_id: wrapper.node,
+                            parent: Some(record),
+                            fragmentainer: 0,
+                            rect,
+                            fragmentainer_clip: None,
+                            fragment_index: 0,
+                            fragment_count: 1,
+                            line_start: None,
+                            line_end: None,
+                        }],
+                    );
+                    let entry = edits
+                        .first(wrapper.node)
+                        .filter(|_| had_records)
+                        .map_or((record, origin), |own| (own, wrapper.rect));
+                    wrappers.insert(wrapper.node, entry);
+                }
                 let mut per_child = HashMap::<usize, Vec<paragraph_group::PagedFragment>>::new();
+                let mut wrapped = Vec::new();
                 for fragment in planned.fragments {
+                    if fragment.wrapper.is_some() && !per_child.contains_key(&fragment.child) {
+                        wrapped.push(fragment.child);
+                    }
                     per_child.entry(fragment.child).or_default().push(fragment);
                 }
-                for &id in segment {
-                    let Some(fragments) = per_child.remove(&id) else {
+                for &id in segment.iter().chain(&wrapped) {
+                    if rects.contains_key(&id) {
+                        continue;
+                    }
+                    let Some(mut fragments) = per_child.remove(&id) else {
                         shift_child(tree, &mut shifts, id, delta);
                         continue;
                     };
+                    // The pieces inside a wrapper are placed in its record,
+                    // and the box in the wrapper's box.
+                    let wrapper = fragments[0].wrapper;
+                    let (record, origin) = wrapper
+                        .and_then(|wrapper| wrappers.get(&wrapper).copied())
+                        .unwrap_or((container, ORIGIN));
+                    let parent_origin = wrapper
+                        .and_then(|wrapper| rects.get(&wrapper).copied())
+                        .unwrap_or(ORIGIN);
                     let first = fragments[0].rect;
                     let node = &mut tree.nodes[id];
                     node.layout.location = Point {
-                        x: first.x,
-                        y: first.y,
+                        x: first.x - parent_origin.x,
+                        y: first.y - parent_origin.y,
                     };
                     node.layout.size = Size {
                         width: first.width,
@@ -205,13 +280,21 @@ pub(in crate::layout) fn paginate_spanning_columns(
                         );
                         root.multicol_fragment_origins_recorded = true;
                     } // cov:ignore: planned text ranges only originate from a paragraph with an IFC.
+                    for fragment in &mut fragments {
+                        fragment.rect.x -= origin.x;
+                        fragment.rect.y -= origin.y;
+                        if let Some(clip) = &mut fragment.clip {
+                            clip.rect.x -= origin.x;
+                            clip.rect.y -= origin.y;
+                        }
+                    }
                     replacements.push((
                         id,
                         fragments
                             .into_iter()
                             .map(|f| LayoutFragment {
                                 node_id: id,
-                                parent: Some(container),
+                                parent: Some(record),
                                 fragmentainer: f.fragmentainer,
                                 rect: f.rect,
                                 fragmentainer_clip: f.clip,

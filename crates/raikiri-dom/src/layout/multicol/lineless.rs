@@ -306,12 +306,22 @@ fn is_plain_block_apart_from_margins(
     allow_flow_root: bool,
     allow_lines: bool,
 ) -> bool {
+    let display = layout_node(tree, child).display();
+    (display == DisplayValue::Block || allow_flow_root && display == DisplayValue::FlowRoot)
+        && is_plain_box_apart_from_display(tree, child, allow_lines)
+}
+
+/// [`is_plain_block_apart_from_margins`] for a box of any display, which the
+/// caller checks.
+pub(super) fn is_plain_box_apart_from_display(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_lines: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
-    let display = node.display();
-    !(display != DisplayValue::Block && !(allow_flow_root && display == DisplayValue::FlowRoot)
-        // An orthogonal flow is monolithic in the column's block axis.
-        || !is_horizontal(node)
+    // An orthogonal flow is monolithic in the column's block axis.
+    !(!is_horizontal(node)
         // So is a box with size containment (CSS Contain 2, 3.1).
         || node.size_containment.height
         || node.layout_position() != Position::Relative

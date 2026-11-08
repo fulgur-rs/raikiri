@@ -1592,6 +1592,55 @@ fn constrained_chain_budget_rejects_before_installing_partial_origins() {
 }
 
 #[test]
+fn wrapped_paragraphs_stop_when_the_fragment_budget_is_exhausted() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let mut saw_limit_error = false;
+    let mut saw_success = false;
+    for limit in 1..=24 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some("display:block;margin:0;font:20px/20px sans-serif"),
+        );
+        let mc = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:200px;column-count:2;column-gap:0"),
+        );
+        let list = doc.append_element(Some(mc), "div", Some("display:block;margin:0"));
+        for letter in ["A", "B"] {
+            let item = doc.append_element(Some(list), "div", Some("display:block;margin:0"));
+            for index in 0..4 {
+                if index > 0 {
+                    doc.append_element(Some(item), "br", None::<&str>);
+                }
+                doc.append_text(item, letter);
+            }
+        }
+        doc.fragment_tree.limit = limit;
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 200.0;
+        page.height = 200.0;
+
+        let result = layout_single_page(&mut doc, &cascade, page);
+        if matches!(result, Err(LayoutError::FragmentLimitExceeded { .. })) {
+            saw_limit_error = true;
+            assert_eq!(doc.fragment_tree.fragments.len(), limit);
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            saw_success = true;
+        }
+    }
+    assert!(saw_limit_error && saw_success);
+}
+
+#[test]
 fn nested_multicol_child_stops_when_the_shared_fragment_budget_is_exhausted() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::{LayoutError, PageBox};
