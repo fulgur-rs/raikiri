@@ -94,7 +94,6 @@ impl HeaderRepeats {
         cascade: &CascadeResult,
         body: usize,
         page_height: f32,
-        footer_tail_ends: &HashMap<usize, f32>,
         absolute_y: impl Fn(usize) -> f32,
         monolithic: impl Fn(usize) -> bool,
     ) -> Self {
@@ -164,27 +163,16 @@ impl HeaderRepeats {
                     height.is_finite() && height > 0.0 && height <= page_height / 4.0
                 })
             };
-            let header = repeatable(header);
-            let footer = repeatable(footer).filter(|&footer| {
-                // Breakable multi-row footers with closing tails use ordinary
-                // rows instead of moving the whole source group. Preserve the
-                // existing direct-child repeat behavior when there is no tail.
-                (document.parent_of(table) == Some(body) && !footer_tail_ends.contains_key(&footer))
-                    || matches!(
-                        cascade.computed[footer].break_inside,
-                        BreakInside::Avoid | BreakInside::AvoidPage
-                    )
-                    || grid_rows
-                        .iter()
-                        .filter(|row| {
-                            document
-                                .inclusive_ancestors(row.marker)
-                                .any(|id| id == footer)
-                        })
-                        .take(2)
-                        .count()
-                        < 2
-            });
+            // A group that may break inside does not repeat: its rows are
+            // ordinary rows of the table, wherever the table stands.
+            let does_not_break = |group: usize| {
+                matches!(
+                    cascade.computed[group].break_inside,
+                    BreakInside::Avoid | BreakInside::AvoidPage
+                )
+            };
+            let header = repeatable(header).filter(|&header| does_not_break(header));
+            let footer = repeatable(footer).filter(|&footer| does_not_break(footer));
             if header.is_none() && footer.is_none() {
                 continue;
             }

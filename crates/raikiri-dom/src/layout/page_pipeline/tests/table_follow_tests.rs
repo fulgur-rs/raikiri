@@ -321,7 +321,11 @@ fn a_later_row_group_of_a_table_with_a_repeated_header_follows_its_row() {
             "table",
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let head = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+        let head = doc.append_element(
+            Some(table),
+            "thead",
+            Some("display:table-header-group;break-inside:avoid"),
+        );
         append_row(doc, head, "", 10.0);
         for rows in [&[20.0, 40.0][..], &[10.0]] {
             let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
@@ -350,7 +354,11 @@ fn a_footer_written_before_the_body_moves_without_the_body_rows() {
             "table",
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let footer = doc.append_element(Some(table), "tfoot", Some("display:table-footer-group"));
+        let footer = doc.append_element(
+            Some(table),
+            "tfoot",
+            Some("display:table-footer-group;break-inside:avoid"),
+        );
         let footer_row = append_row(doc, footer, "", 20.0).0;
         let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         let body_row = append_row(doc, group, "", 20.0).0;
@@ -379,7 +387,11 @@ fn a_footer_inside_a_contents_wrapper_moves_without_the_body_rows() {
             Some("display:table;width:100px;border-spacing:2px"),
         );
         let wrapper = doc.append_element(Some(table), "div", Some("display:contents"));
-        let footer = doc.append_element(Some(wrapper), "tfoot", Some("display:table-footer-group"));
+        let footer = doc.append_element(
+            Some(wrapper),
+            "tfoot",
+            Some("display:table-footer-group;break-inside:avoid"),
+        );
         let footer_row = append_row(doc, footer, "", 20.0).0;
         let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         let body_row = append_row(doc, group, "", 20.0).0;

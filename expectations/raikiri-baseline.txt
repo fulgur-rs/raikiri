@@ -638,6 +638,7 @@ css/css-tables/parsing/border-spacing-valid.html
 css/css-tables/parsing/table-layout-valid.html
 css/css-tables/rowspan-cell-border-after-color.html
 css/css-tables/rules-groups.html
+css/css-tables/table-cell-child-overflow-measure.html
 css/css-tables/table-cell-inline-size-box-sizing-quirks.html
 css/css-tables/table-cell-overflow-auto.html
 css/css-tables/table-colspan-percent-auto.html

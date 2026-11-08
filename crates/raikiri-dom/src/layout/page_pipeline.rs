@@ -4324,7 +4324,6 @@ fn paginate_flow(
         cascade,
         roots.contents,
         page_step,
-        &footer_tail_ends,
         |id| root_flow_offset + current_abs_y(document, id),
         |id| {
             super::page::is_monolithic_for_pagination_with_transposed_axes(

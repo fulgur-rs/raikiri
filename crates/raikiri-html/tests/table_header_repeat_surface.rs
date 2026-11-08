@@ -348,7 +348,7 @@ fn explicit_css_rows_and_hidden_cells_keep_their_header_spacing() {
         &format!(
             "<div class='table'><div class='head'><div class='row'><div class='cell' id='h'>H</div></div></div>{rows}</div>"
         ),
-        ".table{display:table;border-spacing:0}.head{display:table-header-group}.row{display:table-row}.cell{display:table-cell;width:20px;height:20px;padding:0}.head .cell{height:10px}",
+        ".table{display:table;border-spacing:0}.head{display:table-header-group;break-inside:avoid}.row{display:table-row}.cell{display:table-cell;width:20px;height:20px;padding:0}.head .cell{height:10px}",
     );
     assert_eq!(document.page_count(), 3);
     for (row, page) in [(0, 0), (4, 1), (8, 2)] {
@@ -487,8 +487,8 @@ fn headers_and_footers_repeat_beside_monolithic_content_of_an_anonymous_row() {
     // bottom of the pages it runs out of, over the box.
     let document = lay_out(
         "<div style='display:table;width:80px'>\
-         <div id='h' style='display:table-header-group'>H</div>\
-         <div id='f' style='display:table-footer-group'>F</div>\
+         <div id='h' style='display:table-header-group;break-inside:avoid'>H</div>\
+         <div id='f' style='display:table-footer-group;break-inside:avoid'>F</div>\
          <div id='m' style='contain:size;height:250px'></div>tail</div>",
     );
     assert_eq!(document.page_count(), 3);
@@ -516,8 +516,8 @@ fn a_footer_only_table_whose_first_row_starts_the_next_page_keeps_its_footer_aft
 fn header_and_footer_copies_paint_over_the_body_content_under_them() {
     let document = lay_out(
         "<div style='display:table;width:80px'>\
-         <div id='h' style='display:table-header-group;background:cyan'>H</div>\
-         <div id='f' style='display:table-footer-group;background:pink'>F</div>\
+         <div id='h' style='display:table-header-group;break-inside:avoid;background:cyan'>H</div>\
+         <div id='f' style='display:table-footer-group;break-inside:avoid;background:pink'>F</div>\
          <div id='m' style='contain:size;height:250px;background:black'></div></div>",
     );
     for page_index in 0..2 {
@@ -538,4 +538,204 @@ fn header_and_footer_copies_paint_over_the_body_content_under_them() {
             "page {page_index}: {boxes:?}"
         );
     }
+}
+
+/// A table of `rows` 10px body rows (`r1` to `rN`) between a two-row header
+/// (`h1`, `h2`) and a two-row footer (`f1`, `f2`), followed by `z`. Each group
+/// may carry an inline style.
+fn grouped_table(head_style: &str, foot_style: &str, rows: usize) -> String {
+    let cell = |id: &str| format!("<tr><td id='{id}'>{id}</td></tr>");
+    let body: String = (1..=rows).map(|row| cell(&format!("r{row}"))).collect();
+    format!(
+        "<table><thead style='{head_style}'>{}{}</thead><tbody>{body}</tbody>\
+         <tfoot style='{foot_style}'>{}{}</tfoot></table><div id='z'>Z</div>",
+        cell("h1"),
+        cell("h2"),
+        cell("f1"),
+        cell("f2"),
+    )
+}
+
+const TEN_PX_ROWS: &str = "td,th{width:auto}td{height:10px}";
+
+fn lay_out_groups(head_style: &str, foot_style: &str, rows: usize) -> DocumentLayout {
+    lay_out_with_css(&grouped_table(head_style, foot_style, rows), TEN_PX_ROWS)
+}
+
+const AVOID: &str = "break-inside:avoid";
+const AUTO: &str = "break-inside:auto";
+
+#[test]
+fn header_and_footer_groups_repeat_by_default_and_with_an_explicit_avoid() {
+    // Ten rows on 100px pages: the header and footer take 40px of each page,
+    // so six rows fit on the first page and the rest follow on the second.
+    for (head, foot) in [("", ""), (AVOID, AVOID), ("", AVOID), (AVOID, "")] {
+        let document = lay_out_groups(head, foot, 10);
+        let label = format!("head {head:?} foot {foot:?}");
+        assert_eq!(document.page_count(), 2, "{label}");
+        assert_eq!(tops(&document, "h1"), [(0, 0.0), (1, 0.0)], "{label}");
+        assert_eq!(tops(&document, "h2"), [(0, 10.0), (1, 10.0)], "{label}");
+        assert_eq!(tops(&document, "f1"), [(0, 80.0), (1, 60.0)], "{label}");
+        assert_eq!(tops(&document, "f2"), [(0, 90.0), (1, 70.0)], "{label}");
+        assert_eq!(tops(&document, "r6"), [(0, 70.0)], "{label}");
+        assert_eq!(tops(&document, "r7"), [(1, 20.0)], "{label}");
+        assert_eq!(tops(&document, "z"), [(1, 80.0)], "{label}");
+    }
+}
+
+#[test]
+fn an_author_auto_break_inside_stops_both_groups_from_repeating() {
+    // Neither group repeats, so the rows fill the first page after the header
+    // and the footer follows the last row once, on the second page.
+    let document = lay_out_groups(AUTO, AUTO, 10);
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(tops(&document, "h1"), [(0, 0.0)]);
+    assert_eq!(tops(&document, "h2"), [(0, 10.0)]);
+    assert_eq!(tops(&document, "r8"), [(0, 90.0)]);
+    assert_eq!(tops(&document, "r9"), [(1, 0.0)]);
+    assert_eq!(tops(&document, "r10"), [(1, 10.0)]);
+    assert_eq!(tops(&document, "f1"), [(1, 20.0)]);
+    assert_eq!(tops(&document, "f2"), [(1, 30.0)]);
+    assert_eq!(tops(&document, "z"), [(1, 40.0)]);
+}
+
+#[test]
+fn each_group_keeps_its_own_default_when_the_other_one_is_overridden() {
+    // An auto footer leaves the header's default intact: the header repeats and
+    // the footer follows the last row on the second page only.
+    let document = lay_out_groups("", AUTO, 10);
+    assert_eq!(tops(&document, "h1"), [(0, 0.0), (1, 0.0)]);
+    assert_eq!(tops(&document, "r8"), [(0, 90.0)]);
+    assert_eq!(tops(&document, "r9"), [(1, 20.0)]);
+    assert_eq!(tops(&document, "f1"), [(1, 40.0)]);
+    assert_eq!(tops(&document, "f2"), [(1, 50.0)]);
+    assert_eq!(tops(&document, "z"), [(1, 60.0)]);
+
+    // An auto header leaves the footer's default intact: the footer copy
+    // closes the first page and the header stays on the first page alone.
+    let document = lay_out_groups(AUTO, "", 10);
+    assert_eq!(tops(&document, "h1"), [(0, 0.0)]);
+    assert_eq!(tops(&document, "r6"), [(0, 70.0)]);
+    assert_eq!(tops(&document, "f1"), [(0, 80.0), (1, 40.0)]);
+    assert_eq!(tops(&document, "f2"), [(0, 90.0), (1, 50.0)]);
+    assert_eq!(tops(&document, "r7"), [(1, 0.0)]);
+    assert_eq!(tops(&document, "z"), [(1, 60.0)]);
+}
+
+/// Ten 10px rows under a header or in front of a footer built from `div`s that
+/// carry the row-group displays, with `style` added to the group.
+fn div_group_table(head: bool, style: &str) -> String {
+    let cell = |id: &str| {
+        format!(
+            "<div style='display:table-row'><div id='{id}' style='display:table-cell;height:10px'>{id}</div></div>"
+        )
+    };
+    let rows: String = (1..=10).map(|row| cell(&format!("r{row}"))).collect();
+    let group = |display: &str, ids: [&str; 2]| {
+        format!(
+            "<div style='display:{display};{style}'>{}{}</div>",
+            cell(ids[0]),
+            cell(ids[1])
+        )
+    };
+    let (before, after) = if head {
+        (group("table-header-group", ["h1", "h2"]), String::new())
+    } else {
+        (String::new(), group("table-footer-group", ["f1", "f2"]))
+    };
+    format!(
+        "<div style='display:table'>{before}<div style='display:table-row-group'>{rows}</div>{after}</div><div id='z'>Z</div>"
+    )
+}
+
+#[test]
+fn groups_written_as_divs_repeat_only_when_they_ask_not_to_break() {
+    // Only thead and tfoot carry the avoid default; a group set up with the
+    // display values alone is an ordinary row group.
+    let plain = lay_out(&div_group_table(true, ""));
+    assert_eq!(tops(&plain, "h1"), [(0, 0.0)]);
+    assert_eq!(tops(&plain, "r9"), [(1, 0.0)]);
+    let repeating = lay_out(&div_group_table(true, AVOID));
+    assert_eq!(tops(&repeating, "h1"), [(0, 0.0), (1, 0.0)]);
+    assert_eq!(tops(&repeating, "r9"), [(1, 20.0)]);
+    assert_eq!(tops(&repeating, "z"), [(1, 40.0)]);
+
+    let plain = lay_out(&div_group_table(false, ""));
+    assert_eq!(tops(&plain, "f1"), [(1, 0.0)]);
+    assert_eq!(tops(&plain, "z"), [(1, 20.0)]);
+    let repeating = lay_out(&div_group_table(false, AVOID));
+    assert_eq!(tops(&repeating, "f1"), [(0, 80.0), (1, 20.0)]);
+    assert_eq!(tops(&repeating, "f2"), [(0, 90.0), (1, 30.0)]);
+    assert_eq!(tops(&repeating, "r9"), [(1, 0.0)]);
+    assert_eq!(tops(&repeating, "z"), [(1, 40.0)]);
+}
+
+/// A table inside a padded wrapper, so that the wrapper's closing padding has
+/// to follow the footer onto the next page.
+fn nested_footer_table(foot_style: &str) -> String {
+    format!(
+        "<div style='padding-bottom:30px'><div style='height:100px'>A</div>\
+         <div style='height:50px'>B</div>\
+         <table><tbody><tr><td id='c'>c</td></tr><tr><td id='d'>d</td></tr></tbody>\
+         <tfoot style='{foot_style}'><tr><td id='f'>f</td></tr><tr><td id='g'>g</td></tr></tfoot>\
+         </table></div><div id='z'>Z</div>"
+    )
+}
+
+#[test]
+fn a_nested_two_row_footer_moves_as_a_group_unless_the_author_allows_a_break() {
+    // 200px pages: A, B, c and d end at 170px, and the 30px padding that
+    // closes the wrapper no longer fits behind the footer.
+    let css = "@page{size:200px 200px}td,th{width:auto}td{height:10px}";
+    for foot in ["", AVOID] {
+        let document = lay_out_with_css(&nested_footer_table(foot), css);
+        assert_eq!(document.page_count(), 2, "footer {foot:?}");
+        assert_eq!(tops(&document, "d"), [(0, 160.0)], "footer {foot:?}");
+        assert_eq!(tops(&document, "f"), [(1, 0.0)], "footer {foot:?}");
+        assert_eq!(tops(&document, "g"), [(1, 10.0)], "footer {foot:?}");
+        assert_eq!(tops(&document, "z"), [(1, 50.0)], "footer {foot:?}");
+    }
+    // With break-inside:auto only the last footer row moves.
+    let document = lay_out_with_css(&nested_footer_table(AUTO), css);
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(tops(&document, "f"), [(0, 170.0)]);
+    assert_eq!(tops(&document, "g"), [(1, 0.0)]);
+    assert_eq!(tops(&document, "z"), [(1, 40.0)]);
+}
+
+/// A five-row header (50px, too tall to repeat on 100px pages) over six body
+/// rows, behind 60px of content.
+fn tall_header_table(head_style: &str) -> String {
+    let cell = |id: &str| format!("<tr><td id='{id}'>{id}</td></tr>");
+    let head: String = (1..=5).map(|row| cell(&format!("h{row}"))).collect();
+    let body: String = (1..=6).map(|row| cell(&format!("r{row}"))).collect();
+    format!(
+        "<div style='height:60px'></div>\
+         <table><thead style='{head_style}'>{head}</thead><tbody>{body}</tbody></table>\
+         <div id='z'>Z</div>"
+    )
+}
+
+#[test]
+fn a_header_too_tall_to_repeat_still_moves_whole_unless_the_author_allows_a_break() {
+    // The default avoids a break inside the header, so it moves to the next
+    // page whole although no copy of it is ever repeated.
+    for style in ["", AVOID] {
+        let document = lay_out_with_css(&tall_header_table(style), TEN_PX_ROWS);
+        assert_eq!(document.page_count(), 3, "header {style:?}");
+        assert_eq!(tops(&document, "h1"), [(1, 0.0)], "header {style:?}");
+        assert_eq!(tops(&document, "h5"), [(1, 40.0)], "header {style:?}");
+        assert_eq!(tops(&document, "r5"), [(1, 90.0)], "header {style:?}");
+        assert_eq!(tops(&document, "r6"), [(2, 0.0)], "header {style:?}");
+        assert_eq!(tops(&document, "z"), [(2, 10.0)], "header {style:?}");
+    }
+    // With break-inside:auto the header fills the first page and continues.
+    let document = lay_out_with_css(&tall_header_table(AUTO), TEN_PX_ROWS);
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(tops(&document, "h1"), [(0, 60.0)]);
+    assert_eq!(tops(&document, "h4"), [(0, 90.0)]);
+    assert_eq!(tops(&document, "h5"), [(1, 0.0)]);
+    assert_eq!(tops(&document, "r1"), [(1, 10.0)]);
+    assert_eq!(tops(&document, "r6"), [(1, 60.0)]);
+    assert_eq!(tops(&document, "z"), [(1, 70.0)]);
 }
