@@ -221,6 +221,9 @@ fn normalize_grid(
     let align_items = parent.align_items();
     let justify_items = parent.justify_items();
     let mut shifts = Vec::new();
+    if !vertical_parent {
+        settle_table_widths(tree, idx, &items, &sizes, &mut shifts);
+    }
     for &child in &items {
         let Some(measured) = sizes.get(&child) else {
             continue;
@@ -269,6 +272,79 @@ fn normalize_grid(
     }
     finish(tree, idx, inputs, &items, &shifts, output);
 }
+
+/// Give the tables among the items of a horizontal grid the widths they were
+/// laid out at.
+///
+/// Taffy sizes a grid item by the size it assigns, which a table answers with
+/// its own: the stretch to the whole grid area and the `width`, `min-width`
+/// and `max-width` it clamps by do not know that a keyword limit stands for
+/// the columns' widths, nor that the table never gets narrower than its
+/// narrowest columns. The item is then aligned in its area at the width the
+/// table reports.
+fn settle_table_widths(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    items: &[usize],
+    sizes: &HashMap<usize, Measured>,
+    shifts: &mut Vec<(usize, Point<f32>)>,
+) {
+    let parent = tree.query_style(idx, ReadRole::GridContainer);
+    let parent_direction = parent.direction();
+    let rtl = parent_direction == Direction::Rtl;
+    let justify_items = parent.justify_items();
+    for &child in items {
+        let Some(measured) = sizes.get(&child) else {
+            continue;
+        };
+        if !crate::layout::table::item_sized_by_columns(tree, child) {
+            continue;
+        }
+        let style = crate::layout::table::item_style(tree, child, ReadRole::GridItem);
+        let margin = style.margin();
+        let alignment = style
+            .bridge_justify_self()
+            .unwrap_or(justify_items)
+            .resolve_self_relative(style.direction(), parent_direction, true);
+        let mut layout = tree.nodes[child].layout;
+        let delta = layout.size.width - measured.size.width;
+        if delta.abs() <= WIDTH_EPSILON {
+            continue;
+        }
+        // The share of what the item gave up that it makes up on its left.
+        // The auto margins take the room the item leaves and no alignment is
+        // left to move it; otherwise it sits against the side its alignment
+        // names, which is the right one in a right-to-left grid.
+        let share = match (margin.left.is_auto(), margin.right.is_auto()) {
+            (true, true) => 0.5,
+            (true, false) => 1.0,
+            (false, true) => 0.0,
+            (false, false) => {
+                let start_share = match alignment.keyword {
+                    AlignItemsKeyword::Normal
+                    | AlignItemsKeyword::Stretch
+                    | AlignItemsKeyword::Start
+                    | AlignItemsKeyword::FlexStart
+                    | AlignItemsKeyword::SelfStart
+                    | AlignItemsKeyword::Baseline => 0.0,
+                    AlignItemsKeyword::End
+                    | AlignItemsKeyword::FlexEnd
+                    | AlignItemsKeyword::SelfEnd => 1.0,
+                    AlignItemsKeyword::Center => 0.5,
+                };
+                if rtl { 1.0 - start_share } else { start_share }
+            }
+        };
+        let shift = delta * share;
+        layout.size.width = measured.size.width;
+        layout.location.x += shift;
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
+        shifts.push((child, Point { x: shift, y: 0.0 }));
+    }
+}
+
+/// Widths this close are the same width.
+const WIDTH_EPSILON: f32 = 0.001;
 
 fn normalize_flex(
     tree: &mut LayoutSession<'_>,
@@ -394,7 +470,12 @@ pub(super) fn finish(
     }
     // Local out-of-flow layout runs after this pass. Only the candidates
     // already translated by the container need to follow their moved item now.
-    let moved: FxHashMap<usize, Point<f32>> = shifts.iter().copied().collect();
+    let mut moved: FxHashMap<usize, Point<f32>> = FxHashMap::default();
+    for &(item, shift) in shifts {
+        let total = moved.entry(item).or_insert(Point { x: 0.0, y: 0.0 });
+        total.x += shift.x;
+        total.y += shift.y;
+    }
     output.oof_candidates.for_each_mut(|candidate| {
         let node = usize::from(candidate.node);
         let Some(shift) =

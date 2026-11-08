@@ -2319,6 +2319,20 @@ pub(super) fn item_owns_width(doc: &LayoutSession<'_>, table: usize) -> bool {
     table_has_collapsed_rows(doc, table)
 }
 
+/// Whether the width of `table`, an item of a grid, is the one the table
+/// lays itself out at rather than the one the grid assigns: a table in a
+/// horizontal writing mode keeps the width its columns and its `width`,
+/// `min-width` and `max-width` give it (CSS 2.1 section 17.5.2), whichever
+/// size the grid stretched it to or clamped it by.
+pub(super) fn item_sized_by_columns(doc: &LayoutSession<'_>, table: usize) -> bool {
+    doc.nodes[table].formatting_context == FormattingContext::Table
+        && doc.nodes[table].layout_position() != Position::Absolute
+        && !table_writing_mode(doc, table).is_vertical()
+        && doc
+            .taffy_parent_of(table)
+            .is_some_and(|parent| doc.nodes[parent].formatting_context == FormattingContext::Grid)
+}
+
 fn table_has_collapsed_rows(doc: &LayoutSession<'_>, table: usize) -> bool {
     let mut pending = doc.nodes[table].children.clone();
     while let Some(child) = pending.pop() {
