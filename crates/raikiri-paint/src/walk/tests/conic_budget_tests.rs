@@ -121,13 +121,16 @@ fn period_threshold_keeps_the_average_below_and_hard_seams_at_or_above() {
 
 #[test]
 fn hint_expansion_is_counted_before_repeating() {
-    let expanded = "background-image:repeating-conic-gradient(in srgb, red 0, .006103515625%, blue .0244140625%)";
-    assert_blue_fallback(fill(expanded, &ImageBrushCache::default()));
+    for expanded in [
+        "background-image:repeating-conic-gradient(in srgb, red 0, .006103515625%, blue .0244140625%)",
+        "background-image:repeating-conic-gradient(in oklch longer hue, red 0, .006103515625%, blue .0244140625%)",
+    ] {
+        assert_blue_fallback(fill(expanded, &ImageBrushCache::default()));
+    }
     for ordinary in [
         "background-image:repeating-conic-gradient(in srgb, red 0, blue .0244140625%)",
         "background-image:repeating-conic-gradient(in srgb, red 0, .01220703125%, blue .0244140625%)",
         "background-image:repeating-conic-gradient(in srgb, red 0, .006103515625%, red .0244140625%)",
-        "background-image:repeating-conic-gradient(in oklch longer hue, red 0, .006103515625%, blue .0244140625%)",
     ] {
         assert!(matches!(
             fill(ordinary, &ImageBrushCache::default()),

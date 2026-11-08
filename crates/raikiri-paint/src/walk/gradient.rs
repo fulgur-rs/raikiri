@@ -468,8 +468,12 @@ fn linear_fill(
         current_color,
         &linear.interpolation,
     );
+    let interpolation = drawn_interpolation(
+        &linear.interpolation,
+        linear.stops.iter().any(|stop| stop.hint.is_some()),
+    );
     let (first, last, stops) =
-        match normalize_stops(stops, linear.repeating, length, &linear.interpolation)? {
+        match normalize_stops(stops, linear.repeating, length, &interpolation)? {
             Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
             Normalized::Stops { first, last, stops } => (first, last, stops),
         };
@@ -479,8 +483,8 @@ fn linear_fill(
             brush,
             &stops,
             linear.repeating,
-            linear.interpolation.color_space,
-            linear.interpolation.hue_method,
+            interpolation.color_space,
+            interpolation.hue_method,
         )),
         None,
     ))
@@ -568,6 +572,10 @@ fn radial_fill(
 ) -> Option<GradientFill> {
     let center = conic_center(&radial.position, tile);
     let (rx, ry) = radial_radii(radial, center, tile);
+    let interpolation = drawn_interpolation(
+        &radial.interpolation,
+        radial.stops.iter().any(|stop| stop.hint.is_some()),
+    );
     if !(rx >= 0.0 && ry >= 0.0 && rx.is_finite() && ry.is_finite()) {
         return None;
     }
@@ -591,7 +599,7 @@ fn radial_fill(
         // only its last color, or the average of a repeating one, shows.
         let stops = resolved_stops(&radial.stops, rx, rx, current_color, &radial.interpolation);
         let color = if radial.repeating {
-            ramp_average_color(&stops, &radial.interpolation)
+            ramp_average_color(&stops, &interpolation)
         } else {
             let (_, last) = *stops.last()?;
             solid_color(last)
@@ -616,13 +624,13 @@ fn radial_fill(
                 stop.0 += shift;
             }
         }
-    } else if let Some(color) = clip_stops_at_zero(&mut stops, &radial.interpolation) {
+    } else if let Some(color) = clip_stops_at_zero(&mut stops, &interpolation) {
         return Some(GradientFill::Solid(color));
     }
     // An ellipse stretches the period along its longer radius, where it is
     // most visible.
     let (first, last, stops) =
-        match normalize_stops(stops, radial.repeating, rx.max(ry), &radial.interpolation)? {
+        match normalize_stops(stops, radial.repeating, rx.max(ry), &interpolation)? {
             Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
             Normalized::Stops { first, last, stops } => (first, last, stops),
         };
@@ -642,8 +650,8 @@ fn radial_fill(
             brush,
             &stops,
             radial.repeating,
-            radial.interpolation.color_space,
-            radial.interpolation.hue_method,
+            interpolation.color_space,
+            interpolation.hue_method,
         )),
         ellipse,
     ))
@@ -773,24 +781,94 @@ pub(super) fn try_fixed_up_stops(
         budget.charge::<f32>(positions.len())?;
     }
     let offsets = fixup_stop_offsets(&positions);
+    let split_longer = splits_longer_hue(interpolation, raw.iter().any(|stop| stop.hint.is_some()));
     let mut fixed = stop_vector(raw.len(), budget)?;
     for (stop, (hint, at)) in raw.iter().zip(slots) {
         let offset = f64::from(offsets[at]);
-        if let (Some(hint), Some(&before)) = (hint, fixed.last()) {
+        if let Some(&before) = fixed.last() {
+            let after = (offset, stop.color);
             // The fixup never lets offsets run backward, so the hint lies
             // between the two stops it is written between.
-            expand_hint(
-                before,
-                (offset, stop.color),
-                f64::from(offsets[hint]),
-                interpolation,
-                &mut fixed,
-                budget,
-            )?;
+            let curved = match hint {
+                Some(hint) => expand_hint(
+                    before,
+                    after,
+                    f64::from(offsets[hint]),
+                    interpolation,
+                    &mut fixed,
+                    budget,
+                )?,
+                None => false,
+            };
+            if split_longer && !curved {
+                push_longer_hue_pieces(before, after, interpolation, &mut fixed, budget)?;
+            }
         }
         push_stop(&mut fixed, (offset, stop.color), budget)?;
     }
     Some(fixed)
+}
+
+/// Pieces a plain `longer hue` ramp is cut into when the gradient is drawn
+/// with `shorter` ramps (see [`drawn_interpolation`]). The longer arc turns
+/// at most once round, so each piece turns at most a quarter of the way,
+/// where the shorter arc between its ends is the arc it follows.
+const LONGER_HUE_PIECES: usize = 4;
+
+/// A `longer hue` gradient in a polar space with a transition hint. Its
+/// stops are joined with `shorter` ramps instead, since the samples of a
+/// hint's curve lie a few degrees apart along the long arc, and a `longer`
+/// ramp between two of them would go round the hue wheel the other way. The
+/// other segments are cut into [`LONGER_HUE_PIECES`] that keep their arc.
+fn splits_longer_hue(interpolation: &GradientColorInterpolation, hinted: bool) -> bool {
+    hinted
+        && interpolation.hue_method == HueInterpolationMethod::Longer
+        && matches!(
+            conic_interpolation_tag(interpolation.color_space),
+            ColorSpaceTag::Lch | ColorSpaceTag::Oklch
+        )
+}
+
+/// The interpolation that joins the stops [`fixed_up_stops`] returns for a
+/// gradient with `interpolation`: `shorter hue` in place of `longer hue`
+/// when a transition hint makes it cut the long arcs into pieces (see
+/// [`splits_longer_hue`]), the authored one otherwise.
+pub(super) fn drawn_interpolation(
+    interpolation: &GradientColorInterpolation,
+    hinted: bool,
+) -> GradientColorInterpolation {
+    let mut drawn = *interpolation;
+    if splits_longer_hue(interpolation, hinted) {
+        drawn.hue_method = HueInterpolationMethod::Shorter;
+    }
+    drawn
+}
+
+/// Push the points that cut the `longer hue` ramp between two stops into
+/// [`LONGER_HUE_PIECES`], so that `shorter` ramps between them draw the same
+/// arc. Two equal colors turn once round. Coincident stops make a hard
+/// transition, which has no arc to keep.
+fn push_longer_hue_pieces(
+    before: (f64, DynamicColor),
+    after: (f64, DynamicColor),
+    interpolation: &GradientColorInterpolation,
+    out: &mut Vec<(f64, DynamicColor)>,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<()> {
+    let span = after.0 - before.0;
+    if span <= 0.0 {
+        return Some(());
+    }
+    let ramp = before.1.interpolate(
+        after.1,
+        conic_interpolation_tag(interpolation.color_space),
+        HueDirection::Longer,
+    );
+    for piece in 1..LONGER_HUE_PIECES {
+        let t = piece as f64 / LONGER_HUE_PIECES as f64;
+        push_stop(out, (before.0 + span * t, ramp.eval(t as f32)), budget)?;
+    }
+    Some(())
 }
 
 /// The stops of one period with the hue Chromium gives each stop of an
@@ -827,10 +905,14 @@ const HINT_MIDDLE_TOLERANCE: f64 = 1e-6;
 /// stops and at the same multiples along the mix, which finds the places it
 /// bends sharply, near whichever end the hint lies closer to.
 ///
-/// The samples are joined by ramps again when the brush is built, and a ramp
-/// between two neighboring samples takes the hue the long way round under
-/// `longer hue`, so that method draws the plain ramp and leaves the hint out.
-/// The other hue methods follow the samples.
+/// The samples are joined by ramps again when the brush is built. Under
+/// `longer hue` neighboring samples lie at most a sixteenth of the long arc
+/// apart, and the gradient joins its stops with `shorter` ramps (see
+/// [`splits_longer_hue`]).
+///
+/// Returns whether the segment drew a curve or a step, and `false` when it
+/// draws the plain ramp: between coincident stops, between equal colors and
+/// with the hint in the middle.
 fn expand_hint(
     before: (f64, DynamicColor),
     after: (f64, DynamicColor),
@@ -838,26 +920,24 @@ fn expand_hint(
     interpolation: &GradientColorInterpolation,
     out: &mut Vec<(f64, DynamicColor)>,
     budget: Option<&ConicBudget<'_>>,
-) -> Option<()> {
+) -> Option<bool> {
     let span = after.0 - before.0;
-    // Between equal colors every curve draws the same solid color.
-    if span <= 0.0
-        || before.1 == after.1
-        || interpolation.hue_method == HueInterpolationMethod::Longer
-    {
-        return Some(());
+    // Between equal colors every curve draws the same ramp, which is solid
+    // unless `longer hue` turns it once round.
+    if span <= 0.0 || before.1 == after.1 {
+        return Some(false);
     }
     let h = ((hint - before.0) / span).clamp(0.0, 1.0);
     if (h - 0.5).abs() < HINT_MIDDLE_TOLERANCE {
-        return Some(());
+        return Some(false);
     }
     if h <= 0.0 {
         push_stop(out, (before.0, after.1), budget)?;
-        return Some(());
+        return Some(true);
     }
     if h >= 1.0 {
         push_stop(out, (after.0, before.1), budget)?;
-        return Some(());
+        return Some(true);
     }
     let exponent = 0.5f64.ln() / h.ln();
     let mut fractions = stop_vector((HINT_SAMPLES - 1).checked_mul(2)?, budget)?;
@@ -881,7 +961,7 @@ fn expand_hint(
             push_stop(out, (offset, ramp.eval(t.powf(exponent) as f32)), budget)?;
         }
     }
-    Some(())
+    Some(true)
 }
 
 /// Drop stops below zero from a radial gradient, keeping the color the line
