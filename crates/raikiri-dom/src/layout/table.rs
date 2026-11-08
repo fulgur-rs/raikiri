@@ -5089,6 +5089,13 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
             .table_cell_replaced_height_bases
             .push((cell.node_id, height));
     }
+    // The row pass measures the cell with an automatic height, yet a vertical
+    // box in it still fits its lines in the height the cell states.
+    let stated_room = if authored_height.is_auto() {
+        None
+    } else {
+        cell_orthogonal_room(doc, cell.node_id, cell_width, None)
+    };
     let measure = |doc: &mut LayoutSession<'_>| {
         #[cfg(test)]
         tests::cell_scope_tests::before_measure(doc, cell.node_id);
@@ -5117,6 +5124,7 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
                 },
                 vertical_margins_are_collapsible: Line::FALSE,
             },
+            stated_room,
         )
     };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -5277,7 +5285,59 @@ fn horizontal_cell_alignment_height(
 /// row's content or the height the row gives its children. A vertical cell
 /// keeps its maximum height to constrain inline text wrapping. Descendant
 /// limits still apply.
+///
+/// `room` is the height a vertical box in the cell fits its lines in, when
+/// the cell gives one (see [`cell_orthogonal_room`]).
 fn layout_cell_contents(
+    doc: &mut LayoutSession<'_>,
+    cell: usize,
+    inputs: LayoutInput,
+    room: Option<f32>,
+) -> LayoutOutput {
+    let Some(room) = room else {
+        return layout_capped_cell_contents(doc, cell, inputs);
+    };
+    doc.context.table_cell_orthogonal_rooms.push((cell, room));
+    let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        layout_capped_cell_contents(doc, cell, inputs)
+    }));
+    doc.context.table_cell_orthogonal_rooms.pop();
+    output.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
+/// The content height that a horizontal cell which states a length `height`
+/// makes definite for a vertical box in it to fit its lines in (CSS Writing
+/// Modes 4 §7.3.1): the height of its row, `stretched_height`, when the row
+/// stretches it past its content, else the one it states. Its `max-height`
+/// does not lower it, as in Chromium. A cell
+/// without such a height leaves the height open however far its row stretches
+/// it, and a vertical cell lays its content out on its own axes: `None`.
+fn cell_orthogonal_room(
+    doc: &LayoutSession<'_>,
+    cell: usize,
+    cell_width: f32,
+    stretched_height: Option<f32>,
+) -> Option<f32> {
+    if table_writing_mode(doc, cell).is_vertical() {
+        return None;
+    }
+    let style = doc.table_style(cell);
+    let stated = resolve_dimension(style.size().height, None)?;
+    let edges = (style.padding().resolve_or_zero(Some(cell_width))
+        + style.border().resolve_or_zero(Some(cell_width)))
+    .sum_axes()
+    .height;
+    let content = match stretched_height {
+        Some(height) => height - edges,
+        None if style.box_sizing() == BoxSizing::ContentBox => stated,
+        None => stated - edges,
+    };
+    Some(content.max(0.0))
+}
+
+/// [`layout_cell_contents`] past the room it records: the layout of a cell
+/// with a `max-height`, which is dropped from its style and recorded instead.
+fn layout_capped_cell_contents(
     doc: &mut LayoutSession<'_>,
     cell: usize,
     inputs: LayoutInput,
@@ -5487,6 +5547,12 @@ fn place_cells(
                             }),
                     );
                 }
+                let room = cell_orthogonal_room(
+                    doc,
+                    cell.node_id,
+                    cell_width,
+                    grew.then_some(cell_height),
+                );
                 let lay_out = |doc: &mut LayoutSession<'_>| {
                     layout_cell_contents(
                         doc,
@@ -5513,6 +5579,7 @@ fn place_cells(
                             },
                             vertical_margins_are_collapsible: Line::FALSE,
                         },
+                        room,
                     )
                 };
                 let output = if replaced_heights.is_empty() {
@@ -5940,7 +6007,7 @@ fn reposition_cells_for_vertical_writing(
             vertical_margins_are_collapsible: Line::FALSE,
         };
         let output = super::dispatch::with_final_vertical_table_cell(doc, cell.node_id, |doc| {
-            let mut output = layout_cell_contents(doc, cell.node_id, inputs);
+            let mut output = layout_cell_contents(doc, cell.node_id, inputs, None);
             let shift = align_vertical_cell_on_block_axis(
                 doc,
                 cell.node_id,
@@ -5981,6 +6048,8 @@ fn relayout_horizontal_cell(
 ) -> (f32, OofCandidates) {
     let height = layout.size.height;
     doc.nodes[cell_node].auto_block_size = None;
+    let grew = height > natural_height + SAME_EDGE_TOLERANCE;
+    let room = cell_orthogonal_room(doc, cell_node, cell_width, grew.then_some(height));
     let output = layout_cell_contents(
         doc,
         cell_node,
@@ -6006,6 +6075,7 @@ fn relayout_horizontal_cell(
             },
             vertical_margins_are_collapsible: Line::FALSE,
         },
+        room,
     );
     layout.scrollable_overflow_rect = output.scrollable_overflow_rect;
     let aligned_by_its_end = matches!(

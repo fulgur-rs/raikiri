@@ -48,7 +48,7 @@ fn cell_content_maximum_scope_restores_limits_and_separates_cached_sizes() {
         for _ in 0..3 {
             let ordinary = session.compute_child_layout(cell.into(), inputs);
             assert_eq!(ordinary.size.height, 50.0);
-            let contents = super::super::layout_cell_contents(session, cell, inputs);
+            let contents = super::super::layout_cell_contents(session, cell, inputs, None);
             assert_eq!(contents.size.height, 80.0);
             assert_eq!(session.nodes[child].layout.size.height, 80.0);
             let restored = session.compute_child_layout(cell.into(), inputs);

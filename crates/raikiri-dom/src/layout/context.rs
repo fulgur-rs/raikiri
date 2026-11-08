@@ -96,6 +96,12 @@ pub(crate) struct LayoutContext {
     /// vertical box in the cell still fits its lines in (see
     /// `layout_cell_contents` in [`crate::layout::table`]).
     pub(crate) table_cell_max_height_caps: Vec<(usize, f32)>,
+    /// The content height that each cell being laid out, which states a
+    /// length `height`, offers a vertical box in it to fit its lines in: the
+    /// stated height while the row pass measures the cell with an automatic
+    /// one, and the height of its row once it is placed (see
+    /// `layout_cell_contents` in [`crate::layout::table`]).
+    pub(crate) table_cell_orthogonal_rooms: Vec<(usize, f32)>,
     /// The vertical margins of the block children being laid out that their
     /// parent holds in, which a `stretch` height limit leaves out of its room
     /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).
