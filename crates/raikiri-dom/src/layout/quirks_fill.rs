@@ -14,13 +14,14 @@
 //! `min-height` or `max-height`, keeps its usual height here.
 
 use crate::layout::context::LayoutSession;
+use crate::layout::ifc::assign::text_makes_a_line;
 use crate::layout::protocol::{LayoutInput, SizingMode};
 use crate::{NodeData, NodeFlags};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_style::values::{ExpandedDimension, MaybeResolve, ResolveOrZero};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::{
-    BoxSizing, DisplayValue, FloatValue, OverflowValue, OverflowXY, PositionValue,
+    BoxSizing, ClearValue, DisplayValue, FloatValue, OverflowValue, OverflowXY, PositionValue,
 };
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::QuirksMode;
@@ -295,16 +296,11 @@ fn collect_adjoining(
 /// no height, so that its margins collapse through it.
 fn is_empty(doc: &LayoutSession<'_>, cascade: &CascadeResult, idx: usize, basis: f32) -> bool {
     let cv = &cascade.computed[idx];
-    let zero = |value: &ComputedLengthPercentageOrAuto| {
-        matches!(value, ComputedLengthPercentageOrAuto::Auto) || length(value, basis) == Some(0.0)
-    };
-    zero(&cv.height)
-        && zero(&cv.min_height)
+    is_zero_or_auto(&cv.height, basis)
+        && is_zero_or_auto(&cv.min_height, basis)
         && block_edges(cv, basis) == 0.0
         && doc.nodes[idx].children.iter().all(|&child| {
-            doc.nodes[child]
-                .text_content()
-                .is_some_and(|text| text.chars().all(|c| c.is_ascii_whitespace()))
+            doc.nodes[child].text_content().is_some() && !text_makes_a_line(doc, cascade, child)
         })
 }
 
@@ -346,14 +342,15 @@ fn edge_children(
         Box::new(children.iter())
     };
     let mut blocks = Vec::new();
+    let mut after_float = false;
     for &child in ordered {
         let node = &doc.nodes[child];
-        if let Some(text) = node.text_content() {
-            // White space alone makes no line box.
-            if text.chars().all(|c| c.is_ascii_whitespace()) {
-                continue;
+        if node.text_content().is_some() {
+            // Collapsible white space alone makes no line box.
+            if text_makes_a_line(doc, cascade, child) {
+                break;
             }
-            break;
+            continue;
         }
         if !matches!(node.data, NodeData::Element(_)) {
             continue;
@@ -361,11 +358,17 @@ fn edge_children(
         let cv = &cascade.computed[child];
         if cv.display == DisplayValue::None
             || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-            || cv.float != FloatValue::None
         {
             continue;
         }
-        if cv.display.is_inline_level() || cv.display == DisplayValue::Contents {
+        if cv.float != FloatValue::None {
+            after_float = true;
+            continue;
+        }
+        // Clearance past an earlier float keeps the start margin from
+        // adjoining the parent's (CSS 2.1 §8.3.1).
+        let cleared = !end && after_float && cv.clear != ClearValue::None;
+        if cleared || cv.display.is_inline_level() || cv.display == DisplayValue::Contents {
             break;
         }
         blocks.push(child);

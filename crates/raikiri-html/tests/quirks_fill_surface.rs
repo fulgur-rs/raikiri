@@ -461,3 +461,40 @@ fn collapsed_margins_run_through_empty_boxes_and_stop_at_minimums() {
         "p0: b=(0, 0, 800, 600) c=(0, 0, 800, 100) h=(0, 0, 800, 600)"
     );
 }
+
+#[test]
+fn preserved_white_space_and_clearance_keep_margins_out() {
+    // Preserved white space makes a line before the child.
+    assert_eq!(
+        quirks(
+            "body{margin:0;white-space:pre}",
+            ">&#10;<div id=c style='height:10px;margin-top:40px'></div>"
+        ),
+        "p0: b=(0, 0, 800, 600) c=(0, 50, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // So a box holding only preserved white space is not empty.
+    assert_eq!(
+        quirks(
+            "body{margin:0}div{white-space:pre}",
+            "><div id=c style='margin-top:40px'> </div><div id=d style='height:10px;margin-top:20px'></div>"
+        ),
+        "p0: b=(0, 40, 800, 560) c=(0, 40, 800, 10) d=(0, 70, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // Clearance past a float separates the margin; without it the margin
+    // still adjoins the body's.
+    let float = "><div style='float:left;width:10px;height:100px'></div>";
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            &format!("{float}<div id=c style='clear:both;height:10px;margin-top:40px'></div>")
+        ),
+        "p0: b=(0, 0, 800, 600) c=(0, 100, 800, 10) h=(0, 0, 800, 600)"
+    );
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            &format!("{float}<div id=c style='height:10px;margin-top:40px'></div>")
+        ),
+        "p0: b=(0, 40, 800, 560) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
+    );
+}
