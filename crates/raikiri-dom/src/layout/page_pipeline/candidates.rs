@@ -1275,17 +1275,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // overflow of that block, which Chromium cuts at the page end
                 // rather than moving the block on. A box with something before
                 // it in its parent has a break before it to take instead, and
-                // moves whole as usual. A replaced or size-contained float that
-                // fits on a page is not overflow of the blocks around it: it
-                // moves on whole. One that establishes an orthogonal flow is
-                // cut as before.
+                // moves whole as usual. A float that cannot be split and whose
+                // margin box fits on a page is not overflow of the blocks
+                // around it: it moves on whole. One that establishes an
+                // orthogonal flow is cut as before.
+                let margin = node.layout.margin;
                 let moves_on_whole = is_float
-                    && node.layout.size.height <= page_step
-                    && (super::is_replaced_for_pagination(document, node_id)
-                        || super::size_contained_for_pagination(
-                            BoxTree::for_layout(document),
-                            node_id,
-                        ));
+                    && unbreakable_box
+                    && margin.top.max(0.0) + node.layout.size.height + margin.bottom.max(0.0)
+                        <= page_step
+                    && !super::super::page::establishes_orthogonal_flow(document, cascade, node_id);
                 let unbreakable_room = (unbreakable_box
                     && !moves_on_whole
                     && !direct_body_child

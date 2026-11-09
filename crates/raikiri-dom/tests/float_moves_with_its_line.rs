@@ -5,6 +5,12 @@
 //! earlier line stays with that line, and a float with no line beside it is
 //! cut at the page end like any box.
 //!
+//! A float that cannot be split, such as an image, and does not fit in the
+//! rest of the page starts the next page whole, also when it sits inside a
+//! block: it is not cut as overflow of a block that ends above its bottom,
+//! and the block that moves to the next page after it does not move it down
+//! a second time.
+//!
 //! The pages are 100px by 100px with no margin, and the text is 20px Ahem on
 //! 30px lines. The expected boxes are the ones Chromium 153 prints for the
 //! same markup.
@@ -235,4 +241,86 @@ fn a_float_in_a_relatively_positioned_inline_goes_by_its_line() {
         2,
         &[(0, 90.0, 100.0), (1, 0.0, 10.0)],
     );
+}
+
+/// An image float `height` tall after a block `before` tall, in a block that
+/// holds `rest` after the float.
+fn image_float(before: u32, height: u32, rest: &str) -> String {
+    format!(
+        "<div style=\"height:{before}px\"></div><div><img id=o style=\"float:left;width:20px;\
+         height:{height}px\">{rest}</div>"
+    )
+}
+
+/// A block that holds nothing but the float ends above the float's bottom;
+/// the float still starts the next page whole.
+#[test]
+fn a_float_alone_in_its_block_is_not_cut() {
+    check("image", &image_float(80, 40, ""), 2, &[(1, 0.0, 40.0)]);
+    check(
+        "size containment",
+        "<div style=\"height:80px\"></div><div><div id=o style=\"float:left;width:20px;\
+         height:40px;contain:size\"></div></div>",
+        2,
+        &[(1, 0.0, 40.0)],
+    );
+}
+
+/// The lines after the float move to the next page too, and take their
+/// block along: the float stays at the top of the page.
+#[test]
+fn a_float_that_went_ahead_is_not_moved_again_by_its_block() {
+    check("short", &image_float(80, 40, "z z z"), 2, &[(1, 0.0, 40.0)]);
+    check(
+        "taller",
+        &image_float(60, 50, "z z z"),
+        2,
+        &[(1, 0.0, 50.0)],
+    );
+    check(
+        "tallest",
+        &image_float(50, 60, "z z z"),
+        2,
+        &[(1, 0.0, 60.0)],
+    );
+    check(
+        "in an inline box",
+        "<div style=\"height:80px\"></div><div><span><img id=o style=\"float:left;\
+         width:20px;height:40px\"></span>z z z</div>",
+        2,
+        &[(1, 0.0, 40.0)],
+    );
+}
+
+/// Only the padding of its block comes before the float on the page: the
+/// float still starts the next page, even when it is as tall as the page.
+#[test]
+fn a_float_below_padding_alone_starts_the_next_page() {
+    for height in [80.0, 100.0] {
+        check(
+            &format!("{height}px"),
+            &format!(
+                "<div style=\"padding-top:30px\"><img id=o style=\"float:left;width:20px;\
+                 height:{height}px\"></div>"
+            ),
+            2,
+            &[(1, 0.0, height)],
+        );
+    }
+}
+
+/// The formatting context that grew to hold the float on the next page
+/// gives the growth back when it moves there itself, so the box after it
+/// follows the float's bottom.
+#[test]
+fn a_float_that_went_ahead_does_not_grow_its_context_twice() {
+    let flow_root = |root: &str, after: &str| {
+        format!(
+            "<div style=\"height:80px\"></div><div{root} style=\"display:flow-root\"><img \
+             style=\"float:left;width:20px;height:40px\">z</div><div{after} \
+             style=\"height:10px\"></div>"
+        )
+    };
+    check("context", &flow_root(" id=o", ""), 2, &[(1, 0.0, 40.0)]);
+    check("box after", &flow_root("", " id=o"), 2, &[(1, 40.0, 50.0)]);
 }
