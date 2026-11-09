@@ -1375,6 +1375,11 @@ impl PaginationState {
         );
         let effective_y = if uses_positioned_coordinates {
             current_abs_y(document, node_id)
+        } else if self.subtree_shifts.line_moved_floats.remove(&node_id) {
+            // The lines of its paragraph that came before it in the source
+            // took the float along to a later page (see
+            // `floats_on_moved_lines`): it stays with them.
+            current_abs_y(document, node_id)
         } else {
             raw_y + self.flow_shift
         };
@@ -2811,7 +2816,9 @@ impl PaginationState {
                     let y = current_abs_y(document, root) + shift;
                     materialize_y(document, root, y);
                 } else {
-                    let growth = shift_paragraph_lines(
+                    // Floats here keep positioned coordinates and stay where
+                    // the lines put them.
+                    let (growth, _) = shift_paragraph_lines(
                         document,
                         cascade,
                         &LineMove {

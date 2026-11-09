@@ -42,7 +42,7 @@ pub(super) fn discard(
         .filter(|item| item.kind == IfcBoxKind::Float)
         .map(|item| item.node)
         .collect();
-    let growth = shift_paragraph_lines(
+    let (growth, _) = shift_paragraph_lines(
         document,
         cascade,
         &LineMove {
