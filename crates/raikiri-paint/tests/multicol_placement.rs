@@ -3161,3 +3161,93 @@ fn a_narrow_block_beside_a_float_in_a_right_to_left_column_sits_at_its_right_edg
         "<div style='position:absolute;left:80px;top:0'>A<br>B<br>E<br>F</div>",
     );
 }
+
+/// An absolutely placed `text` at `left`, `top`.
+fn glyphs_at(left: u32, top: u32, text: &str) -> String {
+    format!("<div style='position:absolute;left:{left}px;top:{top}px'>{text}</div>")
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_sits_beside_a_float_in_a_column() {
+    // A box that establishes a formatting context goes in the room the float
+    // leaves, as narrow as that room, and the block after it starts below
+    // it. The positions are Chromium's.
+    for css in [
+        "overflow:hidden",
+        "display:flow-root",
+        "display:flex;flex-direction:column",
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><p style='float:left'>A<br>B</p><div style='{css}'><p>E</p><p>F</p><p>G</p></div><p>N</p></div>"
+            ),
+            ".mc{height:80px;column-fill:auto}",
+            &[
+                glyphs_at(0, 0, "A<br>B"),
+                glyphs_at(20, 0, "E<br>F<br>G"),
+                glyphs_at(0, 60, "N"),
+            ]
+            .concat(),
+        );
+    }
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_too_wide_for_the_room_goes_below_the_float() {
+    // The 40px box does not fit the 20px beside the float, so it goes below
+    // it, in either direction; one that clears the float goes there too.
+    let below = [glyphs_at(0, 0, "A<br>B"), glyphs_at(0, 40, "E")].concat();
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &below,
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;clear:left'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &below,
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px'>E</p></div>",
+        ".mc{height:80px;column-fill:auto;direction:rtl}",
+        &[glyphs_at(60, 0, "A<br>B"), glyphs_at(80, 40, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_margins() {
+    // The box sits beside a right float, and beside a left float its left
+    // margin lies under the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><p style='overflow:hidden'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(20, 0, "A<br>B"), glyphs_at(0, 0, "E")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;margin-left:10px;margin-top:10px'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 10, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_follows_a_paragraph_beside_a_float() {
+    // The box starts below the paragraph beside the float, and a float after
+    // it goes beside the first float, below the box. The positions are
+    // Chromium's, in a container with a height and in a balanced one.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>C</p><p style='overflow:hidden'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "C<br>E")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden'>E</p><p style='float:left'>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "E<br>F")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden'>E</p></div>",
+        "",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "E")].concat(),
+    );
+}
