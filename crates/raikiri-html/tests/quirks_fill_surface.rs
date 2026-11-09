@@ -323,3 +323,78 @@ fn the_body_fills_the_clamped_root_height() {
         "p0: b=(0, 0, 800, 400) c=(0, 0, 800, 200) h=(0, 0, 800, 400)"
     );
 }
+
+#[test]
+fn the_body_fills_what_its_collapsed_margins_leave() {
+    // The body fills what the margins it collapses with leave.
+    assert_eq!(
+        quirks("", "><div id=c style='margin:20px 0 30px'>x</div>"),
+        "p0: b=(8, 20, 784, 550) c=(8, 20, 784, 10) h=(0, 0, 800, 600)"
+    );
+    // Its children still resolve percentages against what its own margins leave.
+    assert_eq!(
+        quirks(
+            "",
+            "><div id=c style='margin:20px 0 30px;height:50%'></div>"
+        ),
+        "p0: b=(8, 20, 784, 550) c=(8, 20, 784, 292) h=(0, 0, 800, 600)"
+    );
+    // Text before the first child keeps its top margin out.
+    assert_eq!(
+        quirks("", ">x<div id=c style='margin:20px 0'></div>"),
+        "p0: b=(8, 8, 784, 572) c=(8, 38, 784, 0) h=(0, 0, 800, 600)"
+    );
+    // White space, comments and boxes out of flow are passed over, and the margins of nested boxes join, negative ones too.
+    assert_eq!(
+        quirks(
+            "",
+            "> <!-- n --> <div style='display:none'></div><div style='float:left'></div><div style='position:absolute'></div><div id=c><div style='margin:30px 0 -5px'>x</div></div> "
+        ),
+        "p0: b=(8, 30, 784, 567) c=(8, 30, 784, 10) h=(0, 0, 800, 600)"
+    );
+    // The margins of an empty box collapse through it; a box with a height keeps its last child's end margin.
+    assert_eq!(
+        quirks(
+            "",
+            "><div id=c style='height:20px'><div style='margin-bottom:40px'></div></div>"
+        ),
+        "p0: b=(8, 40, 784, 552) c=(8, 40, 784, 20) h=(0, 0, 800, 600)"
+    );
+    // A body whose `overflow` goes to the viewport still collapses its margins.
+    assert_eq!(
+        quirks(
+            "body{overflow:hidden}",
+            "><div id=c style='margin:20px 0'>x</div>"
+        ),
+        "p0: b=(8, 20, 784, 560) c=(8, 20, 784, 10) h=(0, 0, 800, 600)"
+    );
+    // A body that scrolls keeps them inside.
+    assert_eq!(
+        quirks(
+            "html{overflow:hidden}body{overflow:hidden}",
+            "><div id=c style='margin:20px 0'>x</div>"
+        ),
+        "p0: b=(8, 8, 784, 584) c=(8, 28, 784, 10) h=(0, 0, 800, 600)"
+    );
+    // An inline box first keeps the top margin out.
+    assert_eq!(
+        quirks("", "><span id=c>x</span><div style='margin:20px 0'></div>"),
+        "p0: b=(8, 8, 784, 572) c=(8, 8, 10, 10) h=(0, 0, 800, 600)"
+    );
+    // Padding keeps a nested margin out.
+    assert_eq!(
+        quirks(
+            "",
+            "><div id=c style='padding-top:1px'><div style='margin-top:30px'>x</div></div>"
+        ),
+        "p0: b=(8, 8, 784, 584) c=(8, 8, 784, 41) h=(0, 0, 800, 600)"
+    );
+    // So does a box that roots a formatting context.
+    assert_eq!(
+        quirks(
+            "",
+            "><div id=c style='display:flow-root'><div style='margin-top:30px'>x</div></div>"
+        ),
+        "p0: b=(8, 8, 784, 584) c=(8, 8, 784, 40) h=(0, 0, 800, 600)"
+    );
+}
