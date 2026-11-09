@@ -1275,11 +1275,22 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // overflow of that block, which Chromium cuts at the page end
                 // rather than moving the block on. A box with something before
                 // it in its parent has a break before it to take instead, and
-                // moves whole as usual.
-                let unbreakable_room =
-                    (unbreakable_box && !direct_body_child && frame.clip_end.is_infinite())
-                        .then(|| unbreakable_room(document, cascade, body_id, node_id))
-                        .flatten();
+                // moves whole as usual. A float that cannot be split and whose
+                // margin box fits on a page is not overflow of the blocks
+                // around it: it moves on whole. One that establishes an
+                // orthogonal flow is cut as before.
+                let margin = node.layout.margin;
+                let moves_on_whole = is_float
+                    && unbreakable_box
+                    && margin.top.max(0.0) + node.layout.size.height + margin.bottom.max(0.0)
+                        <= page_step
+                    && !super::super::page::establishes_orthogonal_flow(document, cascade, node_id);
+                let unbreakable_room = (unbreakable_box
+                    && !moves_on_whole
+                    && !direct_body_child
+                    && frame.clip_end.is_infinite())
+                .then(|| unbreakable_room(document, cascade, body_id, node_id))
+                .flatten();
                 let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid

@@ -10956,9 +10956,72 @@ struct SubtreeShifts {
     /// Floats that the lines of their paragraph took down before the float
     /// became a candidate: the float starts where the lines put it.
     line_moved_floats: HashSet<usize>,
+    /// Floats that went down to a later page on their own, with how far
+    /// they moved past their place in the flow.
+    floats_ahead: Vec<(usize, f32)>,
 }
 
 impl SubtreeShifts {
+    /// A box that moves down by `delta` takes the floats inside it along. A
+    /// float there that already went down on its own keeps its place: it
+    /// gives back as much of its own move as the box adds, so it does not
+    /// move twice, and the formatting context that grew to hold its own move
+    /// gives back that much of its growth too.
+    fn take_back_floats_ahead(
+        &mut self,
+        document: &mut super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        moved: usize,
+        delta: f32,
+    ) {
+        if delta <= 0.0 {
+            return;
+        }
+        let mut taken = Vec::new();
+        for (float, ahead) in &mut self.floats_ahead {
+            // A float inside another float moves with that one, which gives
+            // back its own move.
+            let inside = *float != moved
+                && document
+                    .layout_ancestors(*float)
+                    .take_while(|&id| id != moved)
+                    .all(|id| !is_floating_box_for_pagination(document, cascade, id))
+                && is_descendant_or_self(document, *float, moved);
+            if inside {
+                let back = ahead.min(delta);
+                document.translate_pagination_y(*float, -back);
+                *ahead -= back;
+                taken.push((*float, back));
+            }
+        }
+        self.floats_ahead.retain(|&(_, ahead)| ahead > 0.001);
+        for (float, back) in taken {
+            let context = float_context_root(document, cascade, float, body_id);
+            let Some(entry) = self
+                .growth
+                .iter_mut()
+                .find(|(grown, growth)| *grown == context && *growth > 0.001)
+            else {
+                continue;
+            };
+            let shrink = back.min(entry.1);
+            entry.1 -= shrink;
+            document.nodes[context].layout.size.height -= shrink;
+            document.mark_pagination_extent_dirty(context);
+            shrink_ancestors_after_content_change(
+                document,
+                cascade,
+                context,
+                -shrink,
+                -shrink,
+                body_id,
+                &IfcBoxShifts::default(),
+                None,
+            );
+        }
+    }
+
     /// End the shifts of the subtrees `node_id` is outside of, applying
     /// them to `flow_shift`, and return the page the flow returns to when a
     /// bounded subtree ends.
@@ -10967,6 +11030,14 @@ impl SubtreeShifts {
     /// earliest of them started from.
     fn leave(&mut self, document: &Document, node_id: usize, flow_shift: &mut f32) -> Option<u32> {
         let mut restored_page: Option<u32> = None;
+        // Only the boxes around the float's paragraph move with its lines.
+        self.floats_ahead.retain(|&(float, _)| {
+            let paragraph = document
+                .ifc_root_of(float)
+                .or_else(|| document.layout_parent_of(float))
+                .unwrap_or(float);
+            is_descendant_or_self(document, node_id, paragraph)
+        });
         self.growth.retain(|&(context, growth)| {
             if is_descendant_or_self(document, node_id, context) {
                 return true;
@@ -11547,6 +11618,7 @@ fn move_line_block(
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
+        shifts.take_back_floats_ahead(document, cascade, body_id, moved, delta);
         grow_ancestors_for_shift(
             document,
             cascade,
@@ -11621,6 +11693,14 @@ fn move_box_for_transition(
         "an ancestor moves for a page edge or its first child forced boundary"
     );
     document.translate_pagination_y(holder, node_delta);
+    if holder == node_id
+        && node_delta > 0.0
+        && is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        shifts.floats_ahead.push((node_id, node_delta));
+    } else {
+        shifts.take_back_floats_ahead(document, cascade, body_id, holder, node_delta);
+    }
     let followed_ifc_boxes = follow_moved_ifc_block(document, holder, node_delta);
     // A nested avoiding block that moves to the next page lengthens the
     // ancestors whose content box holds it, so their continuation (and any
