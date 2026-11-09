@@ -934,7 +934,7 @@ pub(super) fn paint_shift(
                 return Err(TextRunOmission::Transform);
             }
             clipped |= column_clip_owner(document, cascade, context, id)
-                || crate::paint_rules::clips_element_overflow(document, cascade, id);
+                || crate::paint_rules::element_has_overflow_clip(document, cascade, id);
             if clipped && shift.offset != (0.0, 0.0) {
                 return Err(TextRunOmission::ShiftedClip);
             }
