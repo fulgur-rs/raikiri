@@ -2042,8 +2042,10 @@ fn layout_after_column_floats(
     let slot = placed.slot;
     // Auto margins share the room the box leaves, and otherwise a
     // right-to-left column puts a narrower box at the right edge of the room.
-    let free = (slot.border_width - placed.width).max(0.0);
-    let x = slot.x
+    // The room keeps the margin on the trailing side, as block flow keeps it.
+    let (area_start, area_width) = placed.stretch_room(direction);
+    let free = (area_width - placed.width).max(0.0);
+    let x = area_start
         + match (margin_left, margin_right) {
             (None, None) => free / 2.0,
             (None, Some(_)) => free,

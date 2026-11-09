@@ -3414,3 +3414,27 @@ fn a_box_with_its_own_formatting_context_beside_a_float_keeps_the_limits_its_asp
         .concat(),
     );
 }
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_trailing_margin() {
+    // The 10px right margin stays when the auto left margin takes the rest
+    // of the room beside the float, and in a right-to-left column the box
+    // ends at the float with its 10px left margin left over, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;width:40px;height:20px;margin:0 10px 0 auto;background:lime'></div></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:40px;top:0;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;width:40px;height:20px;margin-left:10px;background:lime'></div></div>",
+        ".mc{width:200px;height:80px;column-fill:auto;direction:rtl}",
+        &[
+            "<div style='position:absolute;left:140px;top:0;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
