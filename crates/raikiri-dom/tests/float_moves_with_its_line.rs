@@ -181,3 +181,38 @@ fn a_float_without_a_moved_line_stays() {
         &[(0, 90.0, 100.0), (1, 0.0, 10.0)],
     );
 }
+
+/// A float that cannot be split and does not fit goes to the next page by
+/// itself, and its line follows it there: the float starts the page beside
+/// the line and does not move down again with it.
+#[test]
+fn a_float_that_went_ahead_stays_at_the_top_of_the_page() {
+    check(
+        "image",
+        "<div style=\"height:80px\"></div><img id=o style=\"float:left;width:20px;height:40px\">\
+         z z z",
+        2,
+        &[(1, 0.0, 40.0)],
+    );
+}
+
+/// A paragraph with a definite height keeps it when its last line moves to
+/// the next page; the float placed after it goes there too, and the
+/// formatting context around them still holds the float.
+#[test]
+fn a_float_past_a_paragraph_of_fixed_height_stays_in_its_context() {
+    let paragraph = |root: &str, float: &str| {
+        format!(
+            "<div{root} style=\"display:flow-root\"><div style=\"height:60px\"></div>\
+             <div style=\"height:30px\">z<br><div{float} style=\"float:left;width:20px;\
+             height:50px\"></div>z</div></div>"
+        )
+    };
+    check("float", &paragraph("", " id=o"), 2, &[(1, 30.0, 80.0)]);
+    check(
+        "formatting context",
+        &paragraph(" id=o", ""),
+        2,
+        &[(0, 0.0, 100.0), (1, 0.0, 80.0)],
+    );
+}
