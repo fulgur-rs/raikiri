@@ -1474,7 +1474,15 @@ impl PaginationState {
         {
             Some(leading_holder(document, cascade, body_id, node_id, true)).filter(
                 |&(holder, lead)| {
+                    // The walk cannot see what an anonymous block holds: a
+                    // box that no break goes through, further below the
+                    // holder than the edges and margins between them, follows
+                    // something there and moves alone.
                     holder != node_id
+                        && (column_piece.is_some()
+                            || lead
+                                <= super::leading_space_between(document, cascade, node_id, holder)
+                                    + 0.01)
                         && (lead <= 0.0
                             || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001
                             || super::contained_cloned_leading_holder(

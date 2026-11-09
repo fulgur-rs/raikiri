@@ -8296,6 +8296,28 @@ fn lineless_piece_end(
     node_id: usize,
     depth: usize,
 ) -> Option<(f32, bool)> {
+    lineless_piece(document, cascade, body_id, node_id, depth)
+        .map(|piece| (piece.end, piece.has_edges))
+}
+
+/// The first piece of a block that holds no line (see [`lineless_piece_end`]).
+#[derive(Clone, Copy)]
+struct LinelessPiece {
+    /// Where the piece ends, from the border-box top of the block.
+    end: f32,
+    /// Whether padding or border sit above the content that decides it.
+    has_edges: bool,
+    /// Whether the piece ends with a box that no break goes through.
+    monolithic: bool,
+}
+
+fn lineless_piece(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    depth: usize,
+) -> Option<LinelessPiece> {
     if depth > FIRST_PIECE_DEPTH
         || !(if depth == 0 {
             has_block_leading_content(document, node_id)
@@ -8318,12 +8340,21 @@ fn lineless_piece_end(
     // The box the walk starts at is judged by the rules of its own.
     if depth > 0 {
         if is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false) {
-            return Some((node.layout.size.height, false));
+            return Some(LinelessPiece {
+                end: node.layout.size.height,
+                has_edges: false,
+                monolithic: true,
+            });
         }
         if avoids_page_break_inside(cascade.computed[node_id].break_inside) {
             // A box that forces a break inside it splits there instead.
-            return (!has_mandatory_break_inside(document, cascade, node_id))
-                .then_some((node.layout.size.height, false));
+            return (!has_mandatory_break_inside(document, cascade, node_id)).then_some(
+                LinelessPiece {
+                    end: node.layout.size.height,
+                    has_edges: false,
+                    monolithic: false,
+                },
+            );
         }
     }
     if node.is_ifc_root() {
@@ -8365,12 +8396,30 @@ fn lineless_piece_end(
         } else {
             layout.size.height.max(CUT_ANYWHERE_PIECE)
         };
-        return Some((end, edges_above > 0.0));
+        return Some(LinelessPiece {
+            end,
+            has_edges: edges_above > 0.0,
+            monolithic: false,
+        });
     };
     // The page breaks before the relative offset moves the box.
     let top = normal_flow_y(document, cascade, body_id, child);
-    let (end, child_has_edges) = lineless_piece_end(document, cascade, body_id, child, depth + 1)?;
-    Some((top + end, child_has_edges || edges_above > 0.0))
+    let piece = lineless_piece(document, cascade, body_id, child, depth + 1)?;
+    // A box that no break goes through and that runs out past the bottom of
+    // a block whose height is held below its content is visible overflow of
+    // that block there, which the page cuts rather than moving the block on
+    // for it. A box that only avoids a break inside it still takes the block
+    // along, as Chromium prints it.
+    let end = top + piece.end;
+    Some(LinelessPiece {
+        end: if piece.monolithic {
+            end.min(layout.size.height)
+        } else {
+            end
+        },
+        has_edges: piece.has_edges || edges_above > 0.0,
+        monolithic: piece.monolithic,
+    })
 }
 
 /// Whether a box with padding or border above its content moves to the next

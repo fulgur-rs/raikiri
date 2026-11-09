@@ -155,10 +155,11 @@ pub(super) struct ElementContext {
     /// inline-level box that no page break goes through (see
     /// [`super::box_is_unbreakable`]).
     pub(super) unbreakable: bool,
-    /// The block size of the part of an unbreakable box that lies inside its
-    /// parent, when the rest of it is visible overflow of that parent. Only
-    /// that part decides whether the box crosses the page end: Chromium does
-    /// not move overflow of a parent that ends on the page, it cuts it.
+    /// The block size of the part of an unbreakable box that lies inside the
+    /// blocks it begins, when the rest of it is visible overflow of one of
+    /// them (see [`unbreakable_room`]). Only that part decides whether the box
+    /// crosses the page end: Chromium does not move overflow of a block that
+    /// ends on the page, it cuts it.
     pub(super) unbreakable_room: Option<f32>,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
@@ -1268,25 +1269,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     node_id,
                     document.context.pagination_on_transposed_axes,
                 );
-                // The part of such a box that lies inside its parent, when the
-                // box runs out past the bottom of a parent whose height is held
+                // The part of such a box that lies inside the blocks it begins,
+                // when it runs out past the bottom of one whose height is held
                 // below its content and nothing clips it: the rest is visible
-                // overflow of the parent.
-                // The box is measured at its normal-flow place: a relative
-                // offset moves it after fragmentation.
-                let flow_top = node.layout.location.y
-                    - super::layout_relative_offset_y(document, cascade, body_id, node_id);
-                // The parent is the box the box is laid out in, past any
-                // `display: contents` element between them.
-                let box_parent_height = candidate_parent(document, node_id)
-                    .map_or(f32::INFINITY, |parent| {
-                        document.nodes[parent].layout.size.height
-                    });
-                let unbreakable_room = (unbreakable_box
-                    && !direct_body_child
-                    && frame.clip_end.is_infinite()
-                    && flow_top + node.layout.size.height > box_parent_height)
-                    .then(|| (box_parent_height - flow_top).max(0.0));
+                // overflow of that block, which Chromium cuts at the page end
+                // rather than moving the block on. A box with something before
+                // it in its parent has a break before it to take instead, and
+                // moves whole as usual.
+                let unbreakable_room =
+                    (unbreakable_box && !direct_body_child && frame.clip_end.is_infinite())
+                        .then(|| unbreakable_room(document, cascade, body_id, node_id))
+                        .flatten();
                 let avoids_by_property = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid
@@ -2181,4 +2174,83 @@ fn text_moves_with_orthogonal_flow(
     std::iter::successors(Some(root), |&id| document.parent_of(id))
         .take_while(|&id| id != body_id)
         .any(|id| super::super::page::establishes_orthogonal_flow(document, cascade, id))
+}
+
+/// The block size of the part of the unbreakable box `node_id` that lies
+/// inside the blocks it begins, when it runs out past the bottom of one of
+/// them: how far below its normal-flow top the first of their bottoms comes.
+/// The walk goes up as [`super::leading_holder`] does, and takes in the box
+/// the walk stops below as well, since the box begins that one too. `None`
+/// when the box begins no block, when it ends inside all of those it begins,
+/// or when something comes before it: then there is a break before the box,
+/// which moves whole.
+fn unbreakable_room(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    // Positions in the flow, before any relative offset: the page breaks
+    // before the offsets move the boxes.
+    let flow_y = |id: usize| {
+        super::current_abs_y(document, id)
+            - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let node = &document.nodes[node_id];
+    let top = flow_y(node_id);
+    let height = node.layout.size.height;
+    // A negative bottom margin lets the blocks around the box end above its
+    // bottom without holding their height below their content.
+    let overflows = |bottom: f32| bottom - top < height + node.layout.margin.bottom.min(0.0) - 0.01;
+    let mut room = f32::INFINITY;
+    let mut child = node_id;
+    for ancestor in document
+        .layout_ancestors(node_id)
+        .take_while(|&id| id != body_id)
+    {
+        if renders_in_flow_before(document, ancestor, child) {
+            break;
+        }
+        child = ancestor;
+        if document.nodes[ancestor].display() == DisplayValue::Contents {
+            continue;
+        }
+        // Positions inside an inline formatting context or out of the flow
+        // are not those of the flow: the walk stops below such a box.
+        if super::has_unusual_coordinates(document, ancestor) {
+            break;
+        }
+        room = room.min(flow_y(ancestor) + document.nodes[ancestor].layout.size.height - top);
+        if !is_plain_block_box(document, ancestor)
+            || document.nodes[ancestor].is_multicol_container()
+            || is_floating_box_for_pagination(document, cascade, ancestor)
+        {
+            break;
+        }
+    }
+    if !overflows(top + room) {
+        return None;
+    }
+    // The walk cannot see what an anonymous block holds, so a box further
+    // below the outermost block it begins than the edges and margins between
+    // them put it follows something there.
+    (top - flow_y(child) <= super::leading_space_between(document, cascade, node_id, child) + 0.01)
+        .then_some(room.max(0.0))
+}
+
+/// Whether something in the flow of `parent` comes before `child`: a box
+/// placed out of the flow leaves no break before it.
+fn renders_in_flow_before(document: &Document, parent: usize, child: usize) -> bool {
+    document.nodes[parent]
+        .layout_children()
+        .iter()
+        .take_while(|&&sibling| sibling != child)
+        .any(|&sibling| {
+            super::sibling_renders(document, sibling)
+                && !(document.nodes[sibling].kind() == NodeKind::Element
+                    && matches!(
+                        document.nodes[sibling].position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ))
+        })
 }
