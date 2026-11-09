@@ -7395,23 +7395,63 @@ fn a_sized_box_between_paragraphs_follows_the_first_and_leads_the_second() {
 }
 
 #[test]
-fn a_sized_box_that_does_not_fit_under_the_lines_goes_whole_to_the_next_column() {
-    // Ten pixels are left in the first column. The planner does not split the
-    // box between the two columns, so it starts the second.
+fn a_sized_box_that_does_not_fit_under_the_lines_breaks_at_the_column_end() {
+    // Ten pixels are left in the first column. Like a browser, the box fills
+    // them and continues at the top of the second column.
     let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
         ("background:green", 4),
         ("height:20px;background:green", 0),
     ]);
-    assert_eq!(fragment_places(&doc, children[1]), [(1, 0.0, 20.0)]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(0, 40.0, 10.0), (1, 0.0, 10.0)]
+    );
 }
 
 #[test]
-fn a_sized_box_taller_than_a_column_leaves_the_paragraphs_to_the_other_strategies() {
+fn a_sized_box_taller_than_a_column_breaks_and_the_next_paragraph_follows_it() {
     let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
         ("height:60px;background:green", 0),
         ("background:green", 2),
     ]);
-    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 60.0)]);
+    assert_eq!(
+        fragment_places(&doc, children[0]),
+        [(0, 0.0, 50.0), (1, 0.0, 10.0)]
+    );
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 2, 1)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (10.0, 20.0));
+}
+
+#[test]
+fn a_sized_box_taller_than_two_columns_fills_the_middle_one() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:120px;background:green", 0),
+        ("background:green", 1),
+    ]);
+    assert_eq!(
+        fragment_places(&doc, children[0]),
+        [(0, 0.0, 50.0), (1, 0.0, 50.0), (2, 0.0, 20.0)]
+    );
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 1, 2)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (20.0, 10.0));
+}
+
+#[test]
+fn a_sized_box_between_paragraphs_breaks_between_their_columns() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("background:green", 2),
+        ("height:60px;background:green", 0),
+        ("background:green", 1),
+    ]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(0, 20.0, 30.0), (1, 0.0, 30.0)]
+    );
+    let (ranges, boxes) = paragraph_pieces(&doc, children[2]);
+    assert_eq!(ranges, [(0, 1, 1)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (30.0, 10.0));
 }
 
 #[test]
@@ -8567,4 +8607,155 @@ fn content_sized_text_bearing_multicol_items_still_balance_their_height() {
             "{container};{item_style}"
         );
     }
+}
+
+#[test]
+fn a_sliced_box_keeps_its_whole_block_size() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:60px;background:green", 0),
+        ("background:green", 2),
+    ]);
+    assert_eq!(doc.nodes[children[0]].layout.size.height, 60.0);
+}
+
+#[test]
+fn a_sized_box_that_avoids_breaks_goes_whole_to_the_next_column() {
+    // A browser keeps a box with `break-inside: avoid` whole.
+    for avoid in ["avoid", "avoid-column"] {
+        let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+            ("background:green", 4),
+            (
+                format!("height:20px;break-inside:{avoid};background:green").as_str(),
+                0,
+            ),
+        ]);
+        assert_eq!(
+            fragment_places(&doc, children[1]),
+            [(1, 0.0, 20.0)],
+            "{avoid}"
+        );
+    }
+}
+
+#[test]
+fn a_sliced_box_with_a_border_slices_it_at_the_break() {
+    // Each piece paints the whole 60px box, moved up by what the pieces
+    // before it took, and the column clips it, so no border shows where the
+    // box breaks.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        (
+            "height:60px;box-sizing:border-box;border:2px solid red;background:green",
+            0,
+        ),
+        ("background:green", 2),
+    ]);
+    let pieces: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == children[0])
+        .collect();
+    let rects: Vec<_> = pieces
+        .iter()
+        .map(|piece| (piece.fragmentainer, piece.rect.y, piece.rect.height))
+        .collect();
+    assert_eq!(rects, [(0, 0.0, 60.0), (1, -50.0, 60.0)]);
+    for piece in &pieces {
+        let clip = piece.fragmentainer_clip.expect("a cut box is clipped");
+        assert_eq!((clip.rect.y, clip.rect.height), (0.0, 50.0));
+    }
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 2, 1)]);
+    assert_eq!(boxes[0].0, 10.0);
+}
+
+#[test]
+fn a_sized_box_cut_into_too_many_pieces_is_left_to_the_other_strategies() {
+    // A box far taller than the columns would take more pieces than the
+    // planner cuts; layout still ends.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("background:green", 1),
+        ("height:300000000px;background:green", 0),
+    ]);
+    assert!(fragment_places(&doc, children[1]).len() < 1024);
+}
+
+#[test]
+fn a_sliced_box_stops_layout_when_its_pieces_reach_the_fragment_limit() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // Every limit below the fragments the layout needs fails with the limit
+    // error, whichever piece of the box it stops at.
+    let (whole, _, _) = boxes_and_paragraphs_in_columns(&[
+        ("height:120px;background:green", 0),
+        ("background:green", 1),
+    ]);
+    let needed = whole.fragment_tree.fragments.len();
+    for limit in 1..needed {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some(
+                "display:block;width:300px;height:50px;columns:3;column-gap:0;\
+                 column-fill:auto;orphans:1;widows:1",
+            ),
+        );
+        doc.append_element(
+            Some(container),
+            "div",
+            Some("display:block;height:120px;background:green"),
+        );
+        let paragraph = doc.append_element(
+            Some(container),
+            "div",
+            Some("display:block;background:green"),
+        );
+        doc.append_text(paragraph, "x");
+        doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+        doc.fragment_tree.limit = limit;
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 400.0;
+        page.height = 300.0;
+        let result = layout_single_page(&mut doc, &cascade, page);
+        assert!(
+            matches!(result, Err(LayoutError::FragmentLimitExceeded { .. })),
+            "{limit}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn a_balanced_sized_box_breaks_across_the_balanced_columns() {
+    // A browser balances the 60px box and the two lines into columns of
+    // about 26.67px; the box fills two of them and the lines follow its
+    // last piece.
+    let (doc, _, children) = boxes_and_paragraphs_in_container(
+        "column-fill:balance",
+        &[("height:60px;background:green", 0), ("background:green", 2)],
+    );
+    let places = fragment_places(&doc, children[0]);
+    let columns: Vec<usize> = places.iter().map(|place| place.0).collect();
+    assert_eq!(columns, [0, 1, 2]);
+    assert!((places[0].2 - 80.0 / 3.0).abs() < 0.01, "{places:?}");
+    assert!((places[2].2 - 20.0 / 3.0).abs() < 0.01, "{places:?}");
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 2, 2)]);
+    assert!((boxes[0].0 - places[2].2).abs() < 0.01, "{boxes:?}");
+}
+
+#[test]
+fn a_balanced_sized_box_leaves_no_sliver_in_a_full_column() {
+    // Balancing leaves a fraction of a pixel under the lines in the second
+    // column. A browser starts the box in the third column instead.
+    let (doc, _, children) = boxes_and_paragraphs_in_container(
+        "column-fill:balance",
+        &[("background:green", 4), ("height:20px;background:green", 0)],
+    );
+    assert_eq!(fragment_places(&doc, children[1]), [(2, 0.0, 20.0)]);
 }

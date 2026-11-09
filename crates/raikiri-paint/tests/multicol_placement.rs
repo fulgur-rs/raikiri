@@ -2992,3 +2992,15 @@ fn an_empty_block_with_painting_content_still_cuts_the_boxes_beside_it() {
         );
     }
 }
+
+#[test]
+fn a_sized_box_cut_at_a_column_end_slices_its_border() {
+    // The box breaks after its first 20px. The first piece has no bottom
+    // border and the second no top border, and the line after the box
+    // follows its second piece.
+    compare(
+        "<div class=mc><p>A</p><div style='height:30px;box-sizing:border-box;border:2px solid red;background:lime'></div><p>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:0;top:20px;box-sizing:border-box;width:40px;height:20px;border:2px solid red;border-bottom:0;background:lime'></div><div style='position:absolute;left:60px;top:0;box-sizing:border-box;width:40px;height:10px;border:2px solid red;border-top:0;background:lime'></div><div style='position:absolute;left:60px;top:10px'>B</div>",
+    );
+}
