@@ -946,6 +946,7 @@ impl LayoutSession<'_> {
         if let Some(height) = self.table_cell_replaced_height_basis(idx) {
             inputs.parent_size.height = Some(height);
         }
+        inputs = super::quirks_fill::with_filled_parent(self, idx, inputs);
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
                 .context
@@ -2061,6 +2062,22 @@ fn compute_ifc_root(
         output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
     }
     output.top_margin = leading_margin;
+    // A filled body in quirks mode fills the root element less its margins
+    // as they collapse with those that adjoin its edges. The fill is only a
+    // minimum, so a taller height the aspect ratio gives is kept.
+    let quirks_fill = crate::layout::quirks_fill::BodyFill::of(tree, idx)
+        .zip(measured_size)
+        .map(|(fill, measured)| {
+            let content = measured.height + measure.insets.top + measure.insets.bottom;
+            let ratio = fill.ratio_height(
+                tree,
+                output.size.width,
+                measure.insets.left + measure.insets.right,
+            );
+            let (height, separates) = fill.height(content, ratio, leading_margin, escaping_margin);
+            output.size.height = height;
+            separates
+        });
     // The baseline of a horizontal root lies below the top edge of its border
     // box; that of a vertical root, along the block axis from the edge its
     // block starts at.
@@ -2138,7 +2155,7 @@ fn compute_ifc_root(
             };
         min > 0.0 && min_border_box >= block_size
     });
-    output.bottom_margin = if constrained_by_min_block_size {
+    output.bottom_margin = if quirks_fill.unwrap_or(constrained_by_min_block_size) {
         CollapsibleMarginSet::ZERO
     } else {
         escaping_margin

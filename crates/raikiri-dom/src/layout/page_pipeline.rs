@@ -1504,6 +1504,7 @@ fn layout_single_page_with_table_projection(
                 content_width,
                 content_height,
             );
+            super::quirks_fill::prepare(document, cascade, body_id, content_width, content_height);
             let available_space = Size {
                 width: AvailableSpace::Definite(content_width),
                 height: AvailableSpace::Definite(content_height),

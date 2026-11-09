@@ -631,6 +631,10 @@ fn layout_context(
     let collapse_start = shares_context(style)
         && inputs.vertical_margins_are_collapsible.start
         && metrics.inset.top == 0.0;
+    let body_fill = crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node)).map(|fill| {
+        let ratio = fill.ratio_height(tree, width, metrics.inset.left + metrics.inset.right);
+        (fill, ratio)
+    });
     let adjoining_end = shares_context(style)
         && inputs.vertical_margins_are_collapsible.end
         && metrics.inset.bottom == 0.0;
@@ -639,7 +643,10 @@ fn layout_context(
             style.size.height.expand(),
             ExpandedDimension::Auto | ExpandedDimension::Stretch
         )
-        && metrics.preferred.height.is_none();
+        && (metrics.preferred.height.is_none()
+            // A filled body whose aspect ratio gives no more than the fill is
+            // as tall as an `auto` one.
+            || body_fill.is_some_and(|(fill, ratio)| !fill.ratio_exceeds_override(ratio)));
     if ctx.is_bfc_root() {
         ctx.set_width(width);
         ctx.set_origin_resolved(!collapse_start);
@@ -674,11 +681,35 @@ fn layout_context(
     // child's bottom margin no longer adjoins the bottom edge. As in
     // browsers, it then neither escapes nor adds to the height that
     // `min-height` fixed.
+    let content_height = natural_end + metrics.inset.bottom;
     let minimum_separates = collapse_end
         && metrics
             .min
             .height
-            .is_some_and(|min| min > 0.0 && min > natural_end + metrics.inset.bottom);
+            .is_some_and(|min| min > 0.0 && min > content_height);
+    // A filled body in quirks mode fills the root element less its margins
+    // as they collapse with those that adjoin its edges. The fill is only a
+    // minimum, so a taller height the aspect ratio gives is kept.
+    let (height, minimum_separates) = match body_fill {
+        Some((fill, ratio)) => {
+            let (height, separates) = fill.height(
+                content_height,
+                ratio,
+                if collapse_start {
+                    flow.leading
+                } else {
+                    CollapsibleMarginSet::ZERO
+                },
+                if collapse_end {
+                    flow.trailing
+                } else {
+                    CollapsibleMarginSet::ZERO
+                },
+            );
+            (height, collapse_end && separates)
+        }
+        None => (height, minimum_separates),
+    };
     let size = Size { width, height };
     children::align(
         tree,

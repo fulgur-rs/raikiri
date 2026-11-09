@@ -2475,7 +2475,7 @@ fn pipeline_keeps_an_inline_holding_a_float_to_its_line() {
     // so the span keeps its line's height and the normal block stays 100px.
     // The outer flow-root still includes the float's extent and its padding.
     let doc = parse(
-        "<style>@page{size:250px 250px;margin:0} body{margin:0;display:flow-root;padding-bottom:60px}</style>\
+        "<!DOCTYPE html><style>@page{size:250px 250px;margin:0} body{margin:0;display:flow-root;padding-bottom:60px}</style>\
          <div style='line-height:50px'>a<br>b<span id=s><span style='float:left;width:10px;height:80px'></span></span></div>",
     );
     let out = run(&doc);
