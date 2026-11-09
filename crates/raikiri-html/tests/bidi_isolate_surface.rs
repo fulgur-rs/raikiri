@@ -71,9 +71,10 @@ fn an_inside_marker_starts_a_right_to_left_line() {
 #[test]
 fn html_elements_that_isolate_by_default() {
     // HTML "Bidirectional text": `bdi, output, [dir]` isolate and `bdo`
-    // isolates and overrides.
+    // isolates and overrides. A bdi without `dir` takes the direction of
+    // its first strong character, here left to right.
     for (body, cd) in [
-        ("<div dir=rtl><bdi>CD </bdi>AB</div>", 180.0),
+        ("<div dir=rtl><bdi>CD </bdi>AB</div>", 170.0),
         ("<div dir=rtl><output>CD </output>AB</div>", 180.0),
         ("<div dir=rtl><span dir=rtl>CD </span>AB</div>", 180.0),
         ("<div dir=rtl><span dir=ltr>CD </span>AB</div>", 170.0),
@@ -85,4 +86,59 @@ fn html_elements_that_isolate_by_default() {
             "{body}"
         );
     }
+}
+
+#[test]
+fn block_elements_made_inline_isolate_and_an_invalid_dir_does_not() {
+    // The isolate list of HTML "Bidirectional text" also names the block
+    // elements, which matters once an author makes one inline.
+    for body in [
+        "<div dir=rtl><p style='display:inline'>CD </p>AB</div>",
+        "<div dir=rtl><li style='display:inline'>CD </li>AB</div>",
+    ] {
+        assert_eq!(
+            runs(body),
+            [("CD".to_owned(), 180.0), ("AB".to_owned(), 150.0)],
+            "{body}"
+        );
+    }
+    // Only the `ltr`, `rtl` and `auto` keywords isolate.
+    assert_eq!(
+        runs("<div dir=rtl><span dir=foo>CD </span>AB</div>"),
+        [("AB".to_owned(), 180.0), ("CD".to_owned(), 150.0)]
+    );
+}
+
+#[test]
+fn bdo_overrides_the_order_of_its_content() {
+    assert_eq!(
+        runs("<div><bdo dir=rtl><span>A</span><span>B</span></bdo></div>"),
+        [("B".to_owned(), 0.0), ("A".to_owned(), 10.0)]
+    );
+}
+
+#[test]
+fn bdi_takes_the_direction_of_its_first_strong_character() {
+    // A Hebrew letter makes the bdi right to left, so `CD EF` is one
+    // left-to-right run at the left of it. Without the bdi the letter
+    // comes first.
+    let bdi = runs("<div><bdi>\u{5d0}<span>CD</span> <span>EF</span></bdi></div>");
+    let at =
+        |runs: &[(String, f32)], text: &str| runs.iter().find(|(t, _)| t == text).map(|(_, x)| *x);
+    assert_eq!((at(&bdi, "CD"), at(&bdi, "EF")), (Some(0.0), Some(30.0)));
+    let span = runs("<div><span>\u{5d0}<span>CD</span> <span>EF</span></span></div>");
+    assert!(at(&span, "CD").unwrap() > 0.0, "{span:?}");
+}
+
+#[test]
+fn pre_with_dir_auto_sets_the_direction_of_each_line() {
+    // `pre[dir=auto]` is `unicode-bidi: plaintext`: the second line starts
+    // with a Hebrew letter, so it is right to left and aligned right.
+    let auto =
+        runs("<pre dir=auto style='margin:0;font:inherit'>AB\n\u{5d0} <span>CD</span></pre>");
+    let cd = auto.iter().find(|(t, _)| t == "CD").unwrap().1;
+    assert!(cd > 100.0, "{auto:?}");
+    let ltr = runs("<pre style='margin:0;font:inherit'>AB\n\u{5d0} <span>CD</span></pre>");
+    let cd = ltr.iter().find(|(t, _)| t == "CD").unwrap().1;
+    assert!(cd < 100.0, "{ltr:?}");
 }

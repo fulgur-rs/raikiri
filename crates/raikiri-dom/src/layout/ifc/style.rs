@@ -764,8 +764,18 @@ fn hanging_punctuation(
 pub(crate) fn paragraph_style(
     cv: &ComputedValues,
     node: usize,
-    root: InlineStyle,
+    mut root: InlineStyle,
 ) -> Result<ParagraphStyle, IfcError> {
+    // `embed` and `isolate` only act on inline boxes (CSS Writing Modes 4
+    // §2.2), so a block root keeps its content in the paragraph's own
+    // embedding. Dropping them here also keeps a block that only carries
+    // `[dir]` or the UA `unicode-bidi: isolate` rules off the bidi pass.
+    if matches!(
+        root.unicode_bidi,
+        s::UnicodeBidi::Embed | s::UnicodeBidi::Isolate
+    ) {
+        root.unicode_bidi = s::UnicodeBidi::Normal;
+    }
     Ok(ParagraphStyle {
         writing_mode: shodo_writing_mode(cv.cssom_writing_mode, node)?,
         direction: root.direction,

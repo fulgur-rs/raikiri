@@ -39,12 +39,11 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 /// The quoted `Auto` arm above elides two branches of the referenced "auto
 /// directionality" algorithm that this crate does not implement — see
 /// [`contained_text_auto_directionality`]'s own doc for the precise cut and why each is out
-/// of scope. Also elided from the `Undefined` arm: the `bdi` element and
-/// `input[type=tel]` special cases (raikiri has no notion of
-/// element-specific behavior at this layer — `bdi` without an explicit
-/// `dir` attribute still falls through to the ancestor walk below, same as
-/// any other element with no `dir`) and the shadow-tree host step of
-/// "parent directionality" (raikiri has no shadow DOM).
+/// of scope. The `Undefined` arm's `bdi` case is carried: a `bdi` without a
+/// valid `dir` takes its auto directionality, as `dir="auto"` does. Elided
+/// from that arm: the `input[type=tel]` case (form controls are not laid
+/// out as text here) and the shadow-tree host step of "parent
+/// directionality" (raikiri has no shadow DOM).
 ///
 /// `known` supplies an ancestor's nearest explicit/default inheritance value,
 /// not its own `dir="auto"` text result. A successful result's `Some(index)`
@@ -62,6 +61,16 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     match own_dir_attribute_state(elem) {
         DirAttributeState::Ltr => return Ok((Direction::Ltr, Some(ancestors.len()))),
         DirAttributeState::Rtl => return Ok((Direction::Rtl, Some(ancestors.len()))),
+        // HTML's Undefined arm: "If element is a bdi element: Let result be
+        // the auto directionality of element. If result is null, then return
+        // 'ltr'. Return result."
+        DirAttributeState::Undefined if is_html_bdi(elem) => {
+            return Ok((
+                contained_text_auto_directionality(dom, elem_id, &mut visit)?
+                    .unwrap_or(Direction::Ltr),
+                None,
+            ));
+        }
         DirAttributeState::Auto => {
             return Ok((
                 contained_text_auto_directionality(dom, elem_id, &mut visit)?
@@ -155,6 +164,12 @@ fn own_dir_attribute_state<E: StyleElement>(elem: &E) -> DirAttributeState {
         Some(v) if v.eq_ignore_ascii_case("auto") => DirAttributeState::Auto,
         _ => DirAttributeState::Undefined,
     }
+}
+
+/// Whether `elem` is the HTML `bdi` element, which takes its auto
+/// directionality when its own `dir` is in the Undefined state.
+fn is_html_bdi<E: StyleElement>(elem: &E) -> bool {
+    elem.namespace_uri().is_none() && elem.tag_name().eq_ignore_ascii_case("bdi")
 }
 
 /// HTML's `dir` attribute LTR/RTL states only — `Undefined`/`Auto` (missing,

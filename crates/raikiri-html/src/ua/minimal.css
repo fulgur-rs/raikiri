@@ -237,27 +237,33 @@ details[open] > summary:first-of-type { list-style-type: disclosure-open; }
 area, base, basefont, datalist, head, link, meta, noembed, noframes, param, rp,
 template { display: none; }
 
-/* HTML Living Standard "Rendering" §15.3.5 "Bidirectional text" —
- * directionality mapping (verbatim spec rules, narrowed):
+/* HTML Living Standard "Rendering" §15.3.5 "Bidirectional text" (spec
+ * rules, narrowed as noted):
  *   [dir]:dir(ltr), bdi:dir(ltr), input[type=tel i]:dir(ltr) { direction: ltr; }
  *   [dir]:dir(rtl), bdi:dir(rtl) { direction: rtl; }
- * Only the `[dir]:dir(...)` pair is carried: `bdi` and the `input[type=tel]`
- * special cases are out of scope (no test coverage needs them yet).
- * `dir=auto` works through `:dir()`'s own first-strong resolution
- * (raikiri-style resolves it, same as the `:dir()` selector tests pin) —
- * no separate auto handling here.
- * The same section isolates these elements from the surrounding text:
- *   bdi, output, [dir] { unicode-bidi: isolate; }
+ *   address, blockquote, ..., li, bdi, output,
+ *   [dir=ltr i], [dir=rtl i], [dir=auto i] { unicode-bidi: isolate; }
  *   bdo, bdo[dir] { unicode-bidi: isolate-override; }
- * They are carried verbatim. The block-level rule of that section
- * (`address, blockquote, ... { unicode-bidi: isolate; }`) and the
- * `dir=auto` plaintext rule for form controls and `pre` are left out:
- * isolation only affects inline content, and those elements are block
- * boxes or form controls here. */
-[dir]:dir(ltr) { direction: ltr; }
-[dir]:dir(rtl) { direction: rtl; }
-bdi, output, [dir] { unicode-bidi: isolate; }
+ *   input[dir=auto i]:is(...), textarea[dir=auto i], pre[dir=auto i] {
+ *     unicode-bidi: plaintext; }
+ * The `input[type=tel i]` case is left out: form controls have no text
+ * layout here. `:heading` in the isolate list is spelled `h1` to `h6`.
+ * `dir=auto` and `bdi` take their direction from `:dir()`, which
+ * raikiri-style resolves by the first strong character.
+ * `isolate` on a box laid out as a block has no effect on its own lines
+ * (the inline layout drops it for a paragraph root); the list matters
+ * when an author makes one of these elements inline. */
+[dir]:dir(ltr), bdi:dir(ltr) { direction: ltr; }
+[dir]:dir(rtl), bdi:dir(rtl) { direction: rtl; }
+address, blockquote, center, div, figure, figcaption, footer, form, header, hr,
+legend, listing, main, p, plaintext, pre, summary, xmp, article, aside,
+h1, h2, h3, h4, h5, h6, hgroup, nav, search, section, table, caption, colgroup,
+col, thead, tbody, tfoot, tr, td, th, dir, dd, dl, dt, menu, ol, ul, li, bdi,
+output, [dir=ltr i], [dir=rtl i], [dir=auto i] {
+  unicode-bidi: isolate;
+}
 bdo, bdo[dir] { unicode-bidi: isolate-override; }
+textarea[dir=auto i], pre[dir=auto i] { unicode-bidi: plaintext; }
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,

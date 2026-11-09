@@ -253,6 +253,11 @@ fn the_lines_a_wrapper_holds_keep_their_layout() {
     // Lines laid out as in the container.
     assert!(lifts_with_lines(COLUMNS, BLOCK, "text"));
     assert!(lifts_with_lines(COLUMNS, BLOCK, "inline"));
+    // `embed` and `isolate` do nothing for the lines of a block.
+    for css in ["unicode-bidi:isolate", "unicode-bidi:embed"] {
+        let css = format!("{BLOCK};{css}");
+        assert!(lifts_with_lines(COLUMNS, &css, "text"), "{css}");
+    }
     // What the container does not do to its lines the wrapper must not do
     // either: the lines would take the container's layout and style.
     for css in [

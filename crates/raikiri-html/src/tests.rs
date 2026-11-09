@@ -3807,17 +3807,17 @@ fn minimal_ua_css_covers_required_display_block_selectors() {
         "MINIMAL_UA_CSS is missing selector rule `dialog[open] {{ … }}`",
     );
     // `dir` directionality mapping (HTML LS Rendering §15.3.5, see
-    // minimal.css comment): both `[dir]:dir(...)` rules must be present.
+    // minimal.css comment): both `[dir]:dir(...), bdi:dir(...)` rules must be present.
     // Non-vacuous cascade behavior is pinned end-to-end in
     // `crates/raikiri/tests/build_cascaded.rs`
     // (`div_direction_reflects_dir_attribute_via_ua_css`).
     assert!(
-        has_selector_rule("[dir]:dir(ltr)"),
-        "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(ltr) {{ … }}`",
+        has_selector_rule("[dir]:dir(ltr), bdi:dir(ltr)"),
+        "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(ltr), bdi:dir(ltr) {{ … }}`",
     );
     assert!(
-        has_selector_rule("[dir]:dir(rtl)"),
-        "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(rtl) {{ … }}`",
+        has_selector_rule("[dir]:dir(rtl), bdi:dir(rtl)"),
+        "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(rtl), bdi:dir(rtl) {{ … }}`",
     );
     // Check for the spec-reference comment, a sign of independent implementation based on CSS 2.1 App.D.
     assert!(
