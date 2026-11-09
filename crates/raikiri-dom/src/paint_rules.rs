@@ -148,9 +148,42 @@ pub fn overflow_clip(
     border_box: PaintRect,
     border: PaintInsets,
 ) -> Option<PaintClip> {
-    let clip = clips_element_overflow(document, cascade, node_id).then(|| {
-        let padding = document.nodes[node_id].layout.padding;
-        let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
+    let padding = document.get_node(node_id)?.layout.padding;
+    let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
+    overflow_clip_geometry(document, cascade, node_id, border_box, border, padding)
+        .map(|geometry| geometry.at(border_box))
+}
+
+/// Whether the element clips what it holds when painted: it clips its own
+/// overflow, or it is a cell that spans a collapsed table row or column.
+pub(crate) fn element_has_overflow_clip(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    clips_collapsed_table_span(document, node_id)
+        || clips_element_overflow(document, cascade, node_id)
+}
+
+/// Whether the element is a cell that spans a collapsed table row or column,
+/// which clips its contents to its border box.
+pub(crate) fn clips_collapsed_table_span(document: &Document, node_id: usize) -> bool {
+    document
+        .get_node(node_id)
+        .is_some_and(|node| node.clips_collapsed_table_span)
+}
+
+/// The clip geometry of an element that clips its overflow or spans a
+/// collapsed table row or column, or `None` when its contents are not clipped.
+pub(crate) fn overflow_clip_geometry(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    border_box: PaintRect,
+    border: PaintInsets,
+    padding: PaintInsets,
+) -> Option<OverflowClipGeometry> {
+    let geometry = clips_element_overflow(document, cascade, node_id).then(|| {
         OverflowClipGeometry::new(
             &cascade.computed[node_id],
             border_box,
@@ -158,60 +191,15 @@ pub fn overflow_clip(
             padding,
             is_replaced_element(document, node_id),
         )
-        .at(border_box)
     });
-    if !document
-        .get_node(node_id)
-        .is_some_and(|node| node.clips_collapsed_table_span)
-    {
-        return clip;
+    if !clips_collapsed_table_span(document, node_id) {
+        return geometry;
     }
-    // A cell that spans a collapsed row keeps the rows that remain and clips
-    // its contents to its border box (CSS Tables 3, "Visibility-collapse cell
-    // rendering"). An axis the element already clips keeps its own edges
-    // where they lie inside the border box; an `overflow-clip-margin` that
-    // reaches past it is cut back to the border box.
-    let Some(clip) = clip else {
-        return Some(PaintClip::new(border_box));
-    };
-    let (x, width) = clamp_clip_axis(
-        clip.clip_x,
-        clip.rect.x,
-        clip.rect.width,
-        border_box.x,
-        border_box.width,
-    );
-    let (y, height) = clamp_clip_axis(
-        clip.clip_y,
-        clip.rect.y,
-        clip.rect.height,
-        border_box.y,
-        border_box.height,
-    );
-    let rect = PaintRect::new(x, y, width, height);
-    if rect == clip.rect && clip.clip_x && clip.clip_y {
-        return Some(clip);
-    }
-    // The element's curves were shaped for its own clip edge, so a trimmed
-    // or newly bounded rectangle takes square corners.
-    Some(PaintClip::new(rect))
-}
-
-/// One axis of a collapsed-span clip: the element's own clip edges intersected
-/// with the border box, or the border box when that axis did not clip.
-fn clamp_clip_axis(
-    clips: bool,
-    start: f32,
-    size: f32,
-    box_start: f32,
-    box_size: f32,
-) -> (f32, f32) {
-    if !clips {
-        return (box_start, box_size);
-    }
-    let lo = start.max(box_start);
-    let hi = (start + size).min(box_start + box_size);
-    (lo, (hi - lo).max(0.0))
+    Some(
+        geometry
+            .unwrap_or(OverflowClipGeometry::UNCLIPPED)
+            .within_border_box(),
+    )
 }
 
 /// Whether the element is a replaced element, whose overflow and
@@ -275,6 +263,13 @@ pub(crate) struct OverflowClipGeometry {
 }
 
 impl OverflowClipGeometry {
+    /// The geometry of a box that does not clip its own overflow.
+    const UNCLIPPED: Self = Self {
+        edges: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
+        overflow: OverflowXY::new(OverflowValue::Visible, OverflowValue::Visible),
+        corner_radii: None,
+    };
+
     /// An `overflow: clip` axis clips at the overflow clip edge: the box and
     /// outset that `overflow-clip-margin` names (CSS Overflow 4 §3.2), unless
     /// the other axis is `visible`, which leaves the clip at the padding box
@@ -352,6 +347,37 @@ impl OverflowClipGeometry {
             edges,
             overflow,
             corner_radii: None,
+        }
+    }
+
+    /// This clip bounded by the border box, for a cell that spans a collapsed
+    /// row or column: such a cell keeps the rows that remain and clips its
+    /// contents to its border box (CSS Tables 3, "Visibility-collapse cell
+    /// rendering"). An axis the element already clips keeps its own edges
+    /// where they lie inside the border box; an `overflow-clip-margin` that
+    /// reaches past it is cut back to the border box. An axis that did not
+    /// clip now clips at the border box.
+    pub(crate) fn within_border_box(self) -> Self {
+        let axis = |overflow, start: f32, end: f32| {
+            if overflow == OverflowValue::Visible {
+                (OverflowValue::Clip, 0.0, 0.0)
+            } else {
+                (overflow, start.max(0.0), end.max(0.0))
+            }
+        };
+        let (x, left, right) = axis(self.overflow.x, self.edges.left, self.edges.right);
+        let (y, top, bottom) = axis(self.overflow.y, self.edges.top, self.edges.bottom);
+        let edges = PaintInsets::new(top, right, bottom, left);
+        let overflow = OverflowXY::new(x, y);
+        // The element's curves were shaped for its own clip edge, so a trimmed
+        // or newly bounded clip takes square corners.
+        let corner_radii = self
+            .corner_radii
+            .filter(|_| edges == self.edges && overflow == self.overflow);
+        Self {
+            edges,
+            overflow,
+            corner_radii,
         }
     }
 

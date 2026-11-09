@@ -404,16 +404,18 @@ fn pagination_overflow(
     }
 }
 
-/// Whether the element hides block-axis overflow when painted.
+/// Whether the element hides block-axis overflow when painted. A cell that
+/// spans a collapsed table row or column clips on both axes.
 fn element_clips_overflow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    !matches!(
-        pagination_overflow(document, cascade, node_id).y,
-        OverflowValue::Visible
-    ) && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
+    crate::paint_rules::clips_collapsed_table_span(document, node_id)
+        || !matches!(
+            pagination_overflow(document, cascade, node_id).y,
+            OverflowValue::Visible
+        ) && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
 }
 
 /// The block offset at which the overflow clip of `node_id` hides what its
@@ -437,6 +439,11 @@ fn clip_block_end(
         PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
         crate::paint_rules::is_replaced_element(document, node_id),
     );
+    let geometry = if crate::paint_rules::clips_collapsed_table_span(document, node_id) {
+        geometry.within_border_box()
+    } else {
+        geometry
+    };
     y + layout.size.height + geometry.block_end_outset()
 }
 

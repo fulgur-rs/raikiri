@@ -664,3 +664,86 @@ fn paint_space_queries_without_motion_keep_layout_geometry() {
     );
     assert!(doc.page_link_paint_quads(&cascade, 99).is_empty());
 }
+
+/// The page projection clips a cell that spans a collapsed row to its border
+/// box, as the paint rules do: in the block axis when the cell itself clips
+/// only inline-axis overflow, and on both axes when it clips nothing.
+#[test]
+fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box_on_the_page() {
+    for (cell_css, clip_x) in [("", 0.0), ("overflow-x:clip;border-left:2px solid", 2.0)] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        let table =
+            doc.append_element(Some(body), "div", Some("display:table;border-spacing:10px"));
+        let group = doc.append_element(Some(table), "div", Some("display:table-row-group"));
+        let mut span = 0;
+        for row_css in [
+            "display:table-row",
+            "display:table-row;visibility:collapse",
+            "display:table-row",
+        ] {
+            let row = doc.append_element(Some(group), "div", Some(row_css));
+            doc.append_element(
+                Some(row),
+                "div",
+                Some("display:table-cell;width:20px;height:20px;padding:0"),
+            );
+            if span == 0 {
+                span = doc.append_element(
+                    Some(row),
+                    "div",
+                    Some(&format!(
+                        "display:table-cell;width:20px;padding:0;{cell_css}"
+                    )),
+                );
+                doc.set_element_attributes(span, vec![("rowspan".into(), "3".into())]);
+                doc.append_element(
+                    Some(span),
+                    "div",
+                    Some("display:block;width:100px;height:10px;position:relative;top:60px"),
+                );
+            }
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        let mut page = PageBox::new();
+        page.width = 400.0;
+        page.height = 400.0;
+        layout_single_page(&mut doc, &cascade, page).expect("layout");
+        assert!(doc.nodes[span].clips_collapsed_table_span);
+        project(
+            &mut doc,
+            &cascade,
+            page,
+            &[PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+        );
+        let entry = doc
+            .page_overflow_clips(0)
+            .find(|entry| entry.node == NodeId(span as u64))
+            .expect("clip");
+        let border_box = entry.border_box;
+        assert_eq!(border_box.height, 50.0, "{cell_css}");
+        assert_eq!(
+            entry.clip.rect,
+            raikiri_traits::PaintRect::new(
+                border_box.x + clip_x,
+                border_box.y,
+                border_box.width - clip_x,
+                border_box.height,
+            ),
+            "{cell_css}"
+        );
+        assert!(entry.clip.clip_x && entry.clip.clip_y, "{cell_css}");
+        let fragment = doc
+            .page_fragments(0)
+            .find(|fragment| fragment.node() == NodeId(span as u64))
+            .expect("fragment");
+        assert_eq!(fragment.overflow_clip(), Some(entry.clip), "{cell_css}");
+    }
+}

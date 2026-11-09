@@ -198,6 +198,38 @@ fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
 }
 
 #[test]
+fn a_collapsed_row_span_clip_snaps_like_its_own_clip() {
+    // On a border box at fractional offsets, a clip inside it keeps its curves
+    // and snaps like the element's own clip; a newly bounded axis snaps too.
+    let border_box = PaintRect::new(10.3, 20.6, 100.0, 50.0);
+    let no_border = PaintInsets::new(0.0, 0.0, 0.0, 0.0);
+    for css in [
+        "display:block;overflow:clip;border-radius:8px",
+        "display:block",
+    ] {
+        let mut doc = Document::new();
+        let node = doc.append_element(Some(doc.root_index()), "div", Some(css));
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        let mut expected = PaintClip::new(PaintRect::new(10.0, 21.0, 100.0, 50.0));
+        if css.contains("radius") {
+            expected.corner_radii = Some([[8.0; 2]; 4]);
+            assert_eq!(
+                overflow_clip(&doc, &cascade, node, border_box, no_border),
+                Some(expected),
+                "{css}"
+            );
+        }
+        doc.nodes[node].clips_collapsed_table_span = true;
+        assert_eq!(
+            overflow_clip(&doc, &cascade, node, border_box, no_border),
+            Some(expected),
+            "{css}"
+        );
+    }
+}
+
+#[test]
 fn negative_z_index_sorts_before_static_and_positive_after() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);

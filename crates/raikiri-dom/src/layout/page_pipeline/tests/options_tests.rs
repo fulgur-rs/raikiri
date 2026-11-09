@@ -571,3 +571,67 @@ fn options_page_limit_ignores_pushed_edges_that_a_clip_hides() {
     );
     assert!(matches!(result, Err(LayoutError::PageLimitExceeded { .. })));
 }
+
+/// A table whose second cell spans three rows, the middle one styled
+/// `middle_row`, and holds a block that paints 2000px past the cell.
+fn spanning_cell_with_overflow_document(
+    middle_row: &str,
+) -> (Document, raikiri_style::CascadeResult) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = document.append_element(Some(body), "div", Some("display:table"));
+    let group = document.append_element(Some(table), "div", Some("display:table-row-group"));
+    for (index, row_css) in ["display:table-row", middle_row, "display:table-row"]
+        .into_iter()
+        .enumerate()
+    {
+        let row = document.append_element(Some(group), "div", Some(row_css));
+        document.append_element(
+            Some(row),
+            "div",
+            Some("display:table-cell;width:20px;height:20px;padding:0"),
+        );
+        if index == 0 {
+            let span = document.append_element(
+                Some(row),
+                "div",
+                Some("display:table-cell;width:20px;padding:0"),
+            );
+            document.set_element_attributes(span, vec![("rowspan".into(), "3".into())]);
+            document.append_element(
+                Some(span),
+                "div",
+                Some("display:block;height:2010px;margin-bottom:-2000px"),
+            );
+        }
+    }
+    document.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    (document, cascade)
+}
+
+#[test]
+fn options_page_limit_ignores_overflow_a_collapsed_row_span_clips() {
+    // The cell spanning a collapsed row clips what it holds to its border box,
+    // so the block painting past it starts no page; without the collapsed row
+    // the block paints onto three more pages.
+    for (middle_row, fits) in [
+        ("display:table-row;visibility:collapse", true),
+        ("display:table-row", false),
+    ] {
+        let (mut document, cascade) = spanning_cell_with_overflow_document(middle_row);
+        let control = PageLayoutControl::new(Some(1));
+        let result = layout_pages_with_options(
+            &mut document,
+            &cascade,
+            page_box_800x600(),
+            PageLayoutOptions {
+                control: Some(&control),
+                ..Default::default()
+            },
+        );
+        assert_eq!(result.is_ok(), fits, "{middle_row}");
+    }
+}
