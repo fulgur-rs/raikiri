@@ -3438,3 +3438,191 @@ fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_trailing_margi
         .concat(),
     );
 }
+
+#[test]
+fn balanced_columns_split_a_paragraph_wrapped_beside_a_float() {
+    // The lines beside the float take one glyph each. The columns balance
+    // to the height that holds them, and the lines past it go on in the next
+    // column, at full width there. `N` after the container shows its height.
+    // The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E F G H</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            glyphs_at(20, 0, "E<br>F"),
+            glyphs_at(60, 0, "G<br>H"),
+            glyphs_at(0, 40, "N"),
+        ]
+        .concat(),
+    );
+    // A line below a short float uses the whole column.
+    compare(
+        "<div class=mc><p style='float:left'>A</p><p>E F G H</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "A"),
+            glyphs_at(20, 0, "E"),
+            glyphs_at(0, 20, "F"),
+            glyphs_at(60, 0, "G<br>H"),
+            glyphs_at(0, 40, "N"),
+        ]
+        .concat(),
+    );
+    // Beside a right float, the lines start at the left edge.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B<br>C</p><p>E F G H I</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(20, 0, "A<br>B<br>C"),
+            glyphs_at(0, 0, "E<br>F<br>G"),
+            glyphs_at(60, 0, "H<br>I"),
+            glyphs_at(0, 60, "N"),
+        ]
+        .concat(),
+    );
+    // The top margin of the paragraph moves its lines down beside the float.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='margin-top:10px'>E F G H</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            glyphs_at(20, 10, "E<br>F"),
+            glyphs_at(60, 0, "G<br>H"),
+            glyphs_at(0, 50, "N"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn balanced_columns_split_a_paragraph_beside_a_float_between_other_blocks() {
+    // The column breaks between lines, so the block after the paragraph
+    // follows its last line in the next column.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E F G H</p><p>Z</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            glyphs_at(20, 0, "E<br>F"),
+            glyphs_at(0, 40, "G"),
+            glyphs_at(60, 0, "H<br>Z"),
+            glyphs_at(0, 60, "N"),
+        ]
+        .concat(),
+    );
+    // A paragraph that starts down the column breaks where its lines reach
+    // the end of the column, instead of moving whole to the next one.
+    compare(
+        "<div class=mc><p>Q</p><p style='float:left'>A<br>B</p><p>E F G H</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "Q"),
+            glyphs_at(0, 20, "A<br>B"),
+            glyphs_at(20, 20, "E<br>F"),
+            glyphs_at(60, 0, "G<br>H"),
+            glyphs_at(0, 60, "N"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn definite_height_columns_split_a_paragraph_beside_a_float_down_the_column() {
+    // Columns 60px tall: the paragraph beside the float starts below `Q` and
+    // breaks where its lines reach the end of the column, as in Chromium.
+    compare(
+        "<div class=mc><p>Q</p><p style='float:left'>A<br>B</p><p>E F G H</p><p>Z</p></div>",
+        ".mc{height:60px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "Q"),
+            glyphs_at(0, 20, "A<br>B"),
+            glyphs_at(20, 20, "E<br>F"),
+            glyphs_at(60, 0, "G<br>H<br>Z"),
+        ]
+        .concat(),
+    );
+    // At the top of the column, the line below the float uses the whole
+    // column, and the block after the paragraph follows its last line.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E F G H</p><p>Z</p></div>",
+        ".mc{height:60px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            glyphs_at(20, 0, "E<br>F"),
+            glyphs_at(0, 40, "G"),
+            glyphs_at(60, 0, "H<br>Z"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_paragraph_split_beside_a_float_keeps_its_orphans_and_widows() {
+    // With two orphans and two widows, the five lines split three and two,
+    // and a paragraph with room for one line under `Q` and `R` stays whole
+    // there, the columns growing to hold it. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E F G H I</p></div><p>N</p>",
+        ".mc{orphans:2;widows:2}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            glyphs_at(20, 0, "E<br>F"),
+            glyphs_at(0, 40, "G"),
+            glyphs_at(60, 0, "H<br>I"),
+            glyphs_at(0, 60, "N"),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p>Q</p><p>R</p><p style='float:left'>A<br>B</p><p>E F G H</p></div><p>N</p>",
+        ".mc{orphans:2;widows:2}",
+        &[
+            glyphs_at(0, 0, "Q<br>R<br>A<br>B"),
+            glyphs_at(20, 40, "E<br>F"),
+            glyphs_at(60, 0, "G<br>H"),
+            glyphs_at(0, 80, "N"),
+        ]
+        .concat(),
+    );
+    // In 60px columns, the float does not fit under `Q` and `R`, so it and
+    // the paragraph beside it start the next column.
+    compare(
+        "<div class=mc><p>Q</p><p>R</p><p style='float:left'>A<br>B</p><p>E F G H</p></div>",
+        ".mc{orphans:2;widows:2;height:60px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "Q<br>R"),
+            glyphs_at(60, 0, "A<br>B"),
+            glyphs_at(80, 0, "E<br>F"),
+            glyphs_at(120, 0, "G<br>H"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_paragraph_that_avoids_breaks_beside_a_float_moves_to_the_next_column() {
+    // `break-inside: avoid` keeps the paragraph whole in the next column,
+    // at full width there, and only splits it where it is taller than the
+    // 60px columns. The positions are Chromium's.
+    compare(
+        "<div class=mc><p>Q</p><p style='float:left'>A<br>B</p><p style='break-inside:avoid'>E F G H</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "Q<br>A<br>B"),
+            glyphs_at(60, 0, "E<br>F<br>G<br>H"),
+            glyphs_at(0, 80, "N"),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p>Q</p><p style='float:left'>A<br>B</p><p style='break-inside:avoid'>E F G H</p></div>",
+        ".mc{height:60px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "Q<br>A<br>B"),
+            glyphs_at(60, 0, "E<br>F<br>G"),
+            glyphs_at(120, 0, "H"),
+        ]
+        .concat(),
+    );
+}
