@@ -665,6 +665,30 @@ struct TextRun {
     members: Vec<usize>,
 }
 
+/// The item of the flex or grid container `container` when it has only one:
+/// an element that generates a box, with no anonymous text item and no
+/// `::before` or `::after` box beside it. Items are collected as for the
+/// taffy tree, through `display: contents` children.
+pub(crate) fn only_item(doc: &Document, container: usize) -> Option<usize> {
+    if doc.nodes[container].has_before_or_after_content
+        || !anonymous_text_runs(doc, container).is_empty()
+    {
+        return None;
+    }
+    let mut items = doc
+        .children_through_contents(container)
+        .into_iter()
+        .filter(|&child| {
+            let node = &doc.nodes[child];
+            node.is_in_document()
+                && node.kind() == NodeKind::Element
+                && node.display() != DisplayValue::None
+                && !node.is_non_rendered_html_element()
+        });
+    let item = items.next()?;
+    items.next().is_none().then_some(item)
+}
+
 /// The runs of text that the flex or grid container `container` wraps in
 /// anonymous items.
 ///
