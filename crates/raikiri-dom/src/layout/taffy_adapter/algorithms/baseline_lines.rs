@@ -21,7 +21,7 @@ use raikiri_layout_style::values::{AlignContent, AlignSelf, Direction};
 
 /// How far apart two edges that are the same may be, in pixels, for rounding
 /// of the sums that the flex algorithm makes of them.
-const SAME_EDGE: f32 = 0.01;
+pub(crate) const SAME_EDGE: f32 = 0.01;
 
 /// The room that a flex line gives an item.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,6 +34,13 @@ pub(crate) struct LineRoom {
     /// runs vertically: the replay is made on the layout axes of the container,
     /// where the inline axis is the physical vertical one in that case.
     pub(crate) edges: (f32, f32),
+}
+
+impl LineRoom {
+    /// The size of the line across the container.
+    pub(crate) fn size(&self) -> f32 {
+        (self.edges.1 - self.edges.0).max(0.0)
+    }
 }
 
 /// The room the line of each of the `members` gives it, where `members` are
@@ -50,6 +57,23 @@ pub(crate) fn rooms(
     size: Size<f32>,
     members: &HashSet<usize>,
     content: Option<AlignContent>,
+) -> Option<HashMap<usize, LineRoom>> {
+    cross_rooms(tree, node, inputs, calls, size, members, content, false)
+}
+
+/// [`rooms`] for a container whose lines run along its rows when `row`, so
+/// that its lines lie across the vertical axis and their edges are the top
+/// and bottom edges of a line, or along its columns otherwise.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn cross_rooms(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    inputs: LayoutInput,
+    calls: &[FlexReplayCall],
+    size: Size<f32>,
+    members: &HashSet<usize>,
+    content: Option<AlignContent>,
+    row: bool,
 ) -> Option<HashMap<usize, LineRoom>> {
     let replay = |alignment| {
         replay_with(
@@ -73,6 +97,14 @@ pub(crate) fn rooms(
     let mut edges = Vec::with_capacity(members.len());
     for &child in members {
         let (start, end) = (at_start.get(&child)?, at_end.get(&child)?);
+        if row {
+            edges.push((
+                start.location.y - start.margin.top,
+                end.location.y + end.size.height + end.margin.bottom,
+                child,
+            ));
+            continue;
+        }
         // `start` is the left edge of the line in a left-to-right container and
         // the right edge in a right-to-left one, and `end` the other.
         let (left, right) = if rtl {
