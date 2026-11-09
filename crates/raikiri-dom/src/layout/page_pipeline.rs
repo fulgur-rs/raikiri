@@ -11402,7 +11402,8 @@ fn shift_paragraph_lines(
 /// of them. A float is placed on the line it comes in, or lower, so it starts
 /// the next page with that line (Chromium); one placed beside an earlier line
 /// stays. A float that already starts at or below where the line goes, as one
-/// that went to the next page by itself does, stays too. Lines that move up
+/// that went to the next page by itself does, stays too. Positions are
+/// compared without the offsets of relatively positioned inlines. Lines that move up
 /// leave the floats to their caller.
 fn floats_on_moved_lines(document: &Document, moved: &LineMove) -> Vec<usize> {
     let node = document
@@ -11425,8 +11426,17 @@ fn floats_on_moved_lines(document: &Document, moved: &LineMove) -> Vec<usize> {
         .filter(|b| b.kind == IfcBoxKind::Float)
         .map(|b| b.node)
         .filter(|&float| {
-            let margin_top =
-                document.pagination_local_y(float) - document.nodes[float].layout.margin.top;
+            // A relatively positioned inline around the float offsets it from
+            // the line it was placed on.
+            let relative: f32 = document
+                .ancestors(float)
+                .take_while(|&id| id != moved.block_id)
+                .filter_map(|id| ifc.relative_offset(id))
+                .map(|(_, y)| y)
+                .sum();
+            let margin_top = document.pagination_local_y(float)
+                - relative
+                - document.nodes[float].layout.margin.top;
             margin_top >= top - 0.01 && margin_top < moved_top - 0.01
         })
         .collect()

@@ -216,3 +216,23 @@ fn a_float_past_a_paragraph_of_fixed_height_stays_in_its_context() {
         &[(0, 0.0, 100.0), (1, 0.0, 80.0)],
     );
 }
+
+/// A relatively positioned inline around the float shifts the float but not
+/// the line it sits on: the line decides whether the float moves.
+#[test]
+fn a_float_in_a_relatively_positioned_inline_goes_by_its_line() {
+    check(
+        "line moves",
+        "<div style=\"height:90px\"></div><span style=\"position:relative;top:5px\">\
+         <div id=o style=\"float:left;width:20px;height:20px\"></div></span>z z z",
+        2,
+        &[(1, 5.0, 25.0)],
+    );
+    check(
+        "line stays",
+        "<div style=\"height:30px\"></div><span style=\"position:relative;top:60px\">\
+         <div id=o style=\"float:left;width:20px;height:20px\"></div></span>z z z z z z z z",
+        2,
+        &[(0, 90.0, 100.0), (1, 0.0, 10.0)],
+    );
+}
