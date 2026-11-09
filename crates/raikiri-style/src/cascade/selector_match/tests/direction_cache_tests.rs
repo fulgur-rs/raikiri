@@ -62,7 +62,9 @@ fn leaf_first_queries_compress_only_the_explicit_inheritance_path() {
 }
 
 #[test]
-fn auto_own_results_and_inheritance_memos_stay_separate_in_both_query_orders() {
+fn children_of_an_auto_element_take_its_auto_result_in_both_query_orders() {
+    // HTML "parent directionality" is the directionality of the parent, so
+    // a child of `dir=auto` takes the parent's text result, as in Chromium.
     let mut doc = TestDoc::new();
     let root = doc.push_element_with_attrs(0, "html", None, &[("dir", "RTL")]);
     let auto = doc.push_element_with_attrs(root, "div", None, &[("dir", "aUtO")]);
@@ -84,13 +86,13 @@ fn auto_own_results_and_inheritance_memos_stay_separate_in_both_query_orders() {
         (
             default_child,
             vec![default_root, default_auto],
-            Direction::Ltr,
+            Direction::Rtl,
         ),
         (root, vec![], Direction::Rtl),
         (auto, vec![root], Direction::Ltr),
-        (child, vec![root, auto], Direction::Rtl),
+        (child, vec![root, auto], Direction::Ltr),
         (empty_auto, vec![root], Direction::Ltr),
-        (empty_child, vec![root, empty_auto], Direction::Rtl),
+        (empty_child, vec![root, empty_auto], Direction::Ltr),
         (foreign, vec![root], Direction::Rtl),
         (explicit, vec![root, auto, child], Direction::Ltr),
         (
@@ -125,7 +127,7 @@ fn auto_own_results_and_inheritance_memos_stay_separate_in_both_query_orders() {
         );
         assert_eq!(
             caches.inherited_directions.borrow().get(&node_id(auto)),
-            Some(&Direction::Rtl)
+            Some(&Direction::Ltr)
         );
     }
 }
@@ -222,7 +224,7 @@ fn public_direction_budget_charges_cached_ancestors_and_stays_terminal() {
 fn scoped_and_detached_queries_keep_real_ancestor_inheritance_and_fresh_memos() {
     let mut doc = TestDoc::new();
     let root = doc.push_element_with_attrs(0, "html", None, &[("dir", "rtl")]);
-    let scope = doc.push_element_with_attrs(root, "section", None, &[("dir", "auto")]);
+    let scope = doc.push_element(root, "section", None);
     doc.push_text(scope, "abc");
     let child = doc.push_element(scope, "span", None);
     let detached = doc.push_element(0, "div", None);
@@ -230,7 +232,7 @@ fn scoped_and_detached_queries_keep_real_ancestor_inheritance_and_fresh_memos() 
     let query = crate::SelectorQuery::parse(":dir(rtl)").unwrap();
     {
         let matcher = query.matcher(&doc, Some(node_id(scope)));
-        assert!(!matcher.matches(node_id(scope), &[node_id(root)]));
+        assert!(matcher.matches(node_id(scope), &[node_id(root)]));
         assert!(matcher.matches(node_id(child), &[node_id(root), node_id(scope)]));
     }
     assert!(

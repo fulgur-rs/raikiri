@@ -805,12 +805,18 @@ fn bdi_without_dir_takes_its_auto_directionality() {
     let explicit = doc.push_element(outer, "bdi", None);
     doc.set_attr(explicit, "dir", "ltr");
     doc.push_text(explicit, "\u{05d0}");
+    // A child of a bdi takes the bdi's directionality, not the outer one.
+    let latin = doc.push_element(outer, "bdi", None);
+    let latin_child = doc.push_element(latin, "span", None);
+    doc.push_text(latin_child, "ABC");
 
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(r.computed[hebrew].background_color, RED);
     assert_eq!(r.computed[neutral].background_color, BLUE);
     assert_eq!(r.computed[explicit].background_color, BLUE);
+    assert_eq!(r.computed[latin].background_color, BLUE);
+    assert_eq!(r.computed[latin_child].background_color, BLUE);
 }
 
 #[test]
