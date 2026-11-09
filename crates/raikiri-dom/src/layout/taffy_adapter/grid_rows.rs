@@ -12,18 +12,21 @@ use taffy::{
 /// so its items grow with what they hold.
 pub(crate) fn rows_size_to_content(style: &LayoutStyleView<'_>) -> bool {
     let style = TaffyStyle::new(*style);
-    // `auto`, `min-content` and `max-content` grow with the content;
-    // `fit-content()` caps it.
-    let auto = |track: TrackSizingFunction| {
-        track.min.is_intrinsic()
-            && (track.max.is_auto() || track.max.is_min_content() || track.max.is_max_content())
-    };
     style.grid_template_rows().is_none_or(|mut components| {
         components.all(|component| match component {
-            GenericGridTemplateComponent::Single(track) => auto(track),
-            GenericGridTemplateComponent::Repeat(repetition) => repetition.tracks().all(auto),
+            GenericGridTemplateComponent::Single(track) => grows_with_content(track),
+            GenericGridTemplateComponent::Repeat(repetition) => {
+                repetition.tracks().all(grows_with_content)
+            }
         })
-    }) && style.grid_auto_rows().all(auto)
+    }) && style.grid_auto_rows().all(grows_with_content)
+}
+
+/// Whether the track sized by `track` grows with its content: `auto`,
+/// `min-content` and `max-content` do; `fit-content()` caps it.
+fn grows_with_content(track: TrackSizingFunction) -> bool {
+    track.min.is_intrinsic()
+        && (track.max.is_auto() || track.max.is_min_content() || track.max.is_max_content())
 }
 
 /// Whether no column of the grid laid out with `style`, explicit or implicit,
@@ -140,6 +143,15 @@ impl RowSizing {
         // implicit rows after them.
         functions.extend((0..explicit - template_len + positive).map(implicit));
         Self(functions)
+    }
+
+    /// Whether the rows `spanned`, numbered from the first row of the grid,
+    /// include one that grows with its content as [`rows_size_to_content`]
+    /// counts it. `false` when `spanned` reaches past the last row.
+    pub(crate) fn any_sized_to_content(&self, spanned: Range<usize>) -> bool {
+        self.0
+            .get(spanned)
+            .is_some_and(|rows| rows.iter().copied().any(grows_with_content))
     }
 
     /// Whether the rows `spanned`, numbered from the first row of the grid,

@@ -463,6 +463,9 @@ pub(crate) struct GridItemRow {
     pub(crate) start: u16,
     pub(crate) end: u16,
     pub(crate) block_start: f32,
+    /// Whether a row the item spans takes its size from its content, so it
+    /// grows with the item.
+    pub(crate) grows: bool,
 }
 
 /// Arena node implemented with a NodeData tagged union.

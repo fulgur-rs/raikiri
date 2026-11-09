@@ -11205,10 +11205,11 @@ fn grow_container_beside_item(
         item_offset,
     )];
     let mut row_end = before;
-    if let Some(area_end) = grid_area_end(document, container, item) {
-        // A row of a set size does not grow, and an item that still fits the
-        // rows it spans, stretched or not, leaves the row as it is.
-        if !grid_rows_size_to_content(document, container) {
+    let grid_area = grid_item_area(document, container, item);
+    if let Some((area, area_end)) = grid_area {
+        // Rows of a set size do not grow, and an item that still fits the
+        // rows it spans, stretched or not, leaves them as they are.
+        if !area.grows {
             return;
         }
         row_end = row_end.max(area_end);
@@ -11256,7 +11257,11 @@ fn grow_container_beside_item(
         if !same_line.contains(&child.id) && child.top >= before - 0.001 {
             later.insert(child.id);
             later_end = later_end.max(child.bottom);
-        } else if child.bottom > item_top + 0.001 {
+        } else if child.bottom > item_top + 0.001
+            && (grid_area.is_none() || same_line.contains(&child.id))
+        {
+            // A grid item that spans other rows than the grown item ends
+            // with them, not with its row.
             row_end = row_end.max(child.bottom);
             row.push((
                 child.id,
@@ -11313,21 +11318,17 @@ fn grow_container_beside_item(
     });
 }
 
-/// Where the grid area of `item` in the grid `container` ends, from the top
-/// of the border box of the container.
-fn grid_area_end(
+/// The rows that `item` spans in the grid `container`, and where its grid
+/// area ends from the top of the border box of the container.
+fn grid_item_area(
     document: &super::context::LayoutSession<'_>,
     container: usize,
     item: usize,
-) -> Option<f32> {
+) -> Option<(crate::node::GridItemRow, f32)> {
     let node = &document.nodes[container];
-    let start = node
-        .grid_item_rows
-        .iter()
-        .find(|row| row.item == item)?
-        .block_start;
+    let rows = *node.grid_item_rows.iter().find(|row| row.item == item)?;
     let (_, area) = node.grid_item_areas.iter().find(|&&(id, _)| id == item)?;
-    Some(start + area.height)
+    Some((rows, rows.block_start + area.height))
 }
 
 /// An in-flow item of a flex or grid container, measured in normal flow
@@ -11344,8 +11345,8 @@ struct PlacedItem {
 /// item aligned to the end of a tall line starts below the end of an item
 /// aligned to its start. A single-line row flex container has one line, the
 /// items of a multi-line one fill a line in order until one starts over at
-/// the inline start of an item already on it, and grid items share the row
-/// they start in. The items the result does not claim are placed by where
+/// the inline start of an item already on it, and grid items share the rows
+/// of `item` when they span the same ones. The items the result does not claim are placed by where
 /// their margin boxes are.
 fn items_on_line_of(
     document: &super::context::LayoutSession<'_>,
@@ -11393,16 +11394,12 @@ fn items_on_line_of(
                 same.extend(line);
             }
         }
-    } else if let Some(&(_, item_row)) = node
-        .grid_item_row_starts
-        .iter()
-        .find(|&&(id, _)| id == item)
-    {
+    } else if let Some(rows) = node.grid_item_rows.iter().find(|row| row.item == item) {
         same.extend(
-            node.grid_item_row_starts
+            node.grid_item_rows
                 .iter()
-                .filter(|&&(_, row)| row == item_row)
-                .map(|&(id, _)| id),
+                .filter(|other| (other.start, other.end) == (rows.start, rows.end))
+                .map(|other| other.item),
         );
     }
     same

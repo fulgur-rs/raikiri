@@ -839,6 +839,19 @@ const ROWS_10PX_LINES: &[Row] = &[
 /// on later rows or lines, and the boxes after the block in its own item, move
 /// down with it.
 const ROWS_BESIDE_OTHERS: &[Row] = &[
+    // Only the rows the grown item spans decide whether it grows, and an item spanning more rows does not end the row.
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:auto 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:10px auto"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 10), (0, 20)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="grid-row:1/4;grid-column:2;height:200px">T</div><div style="height:50px">U</div><div style="height:50px">V</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 80), (2, 30)],
+    ),
     // A grown item that still fits the row its container sets or stretches leaves the content after it where it is, and a row of a set size does not grow.
     (
         r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:200px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
