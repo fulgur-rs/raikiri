@@ -229,3 +229,117 @@ fn a_caption_of_many_lines_breaks_at_every_page_end() {
         format!("A@0 t1@175 t1@185 | {} | {} c@80 Z@90", words(20), words(8))
     );
 }
+
+/// [`captioned`] with the caption content `inner` in place of its words.
+fn holding(before: u32, style: &str, inner: &str) -> String {
+    format!(
+        "<div style='height:{before}px'>A</div><table>\
+         <caption style='width:16px;{style}'>{inner}</caption>\
+         <tbody><tr><td>c</td></tr></tbody></table><div>Z</div>"
+    )
+}
+
+#[test]
+fn the_blocks_inside_a_caption_break_between_their_lines() {
+    let broken = "A@0 t1@175 t1@185 | t1@0 t1@10 c@20 Z@30";
+    assert_eq!(
+        pages(&holding(175, "", "<p style='margin:0'>t1 t1 t1 t1</p>")),
+        broken
+    );
+    assert_eq!(
+        pages(&holding(175, "", "<div><div>t1 t1 t1 t1</div></div>")),
+        broken
+    );
+    // The second block breaks, and the block after it follows its lines.
+    assert_eq!(
+        pages(&holding(175, "", "<div>t1 t1</div><div>t2 t2</div>")),
+        "A@0 t1@175 t1@185 | t2@0 t2@10 c@20 Z@30"
+    );
+    assert_eq!(
+        pages(&holding(165, "", "<div>t1</div><div>t2 t2 t2 t2</div>")),
+        "A@0 t1@165 t2@175 t2@185 | t2@0 t2@10 c@20 Z@30"
+    );
+    assert_eq!(
+        pages(&holding(175, "", "<div>t1 t1 t1 t1</div><div>q</div>")),
+        "A@0 t1@175 t1@185 | t1@0 t1@10 q@20 c@30 Z@40"
+    );
+    // The orphans and widows of the block decide the break.
+    assert_eq!(
+        pages(&holding(
+            165,
+            "",
+            "<p style='margin:0;orphans:3;widows:3'>t1 t1 t1 t1 t1 t1 t1</p>"
+        )),
+        "A@0 t1@165 t1@175 t1@185 | t1@0 t1@10 t1@20 t1@30 c@40 Z@50"
+    );
+}
+
+#[test]
+fn the_space_around_the_blocks_inside_a_caption_moves_with_their_lines() {
+    assert_eq!(
+        pages(&holding(165, "", "<p style='margin:5px 0'>t1 t1 t1 t1</p>")),
+        "A@0 t1@170 t1@180 | t1@0 t1@10 c@25 Z@35"
+    );
+    assert_eq!(
+        pages(&holding(
+            175,
+            "padding-bottom:5px",
+            "<p style='margin:0'>t1 t1 t1 t1</p>"
+        )),
+        "A@0 t1@175 t1@185 | t1@0 t1@10 c@25 Z@35"
+    );
+    // A bottom caption under a 60px row.
+    let html = "<div style='height:100px'>A</div><table>\
+        <tbody><tr><td style='height:60px'>c</td></tr></tbody>\
+        <caption style='width:16px;caption-side:bottom'>\
+        <p style='margin:0'>t1 t1 t1 t1 t1 t1</p></caption></table><div>Z</div>";
+    assert_eq!(
+        pages(html),
+        "A@0 c@125 t1@160 t1@170 t1@180 t1@190 | t1@0 t1@10 Z@20"
+    );
+}
+
+#[test]
+fn a_caption_or_a_block_in_it_that_may_not_break_inside_moves_whole() {
+    let moved = "A@0 | t1@0 t1@10 t1@20 t1@30 c@40 Z@50";
+    let paragraph = "<p style='margin:0'>t1 t1 t1 t1</p>";
+    assert_eq!(pages(&holding(175, "break-inside:avoid", paragraph)), moved);
+    let avoiding = "<p style='margin:0;break-inside:avoid'>t1 t1 t1 t1</p>";
+    assert_eq!(pages(&holding(175, "", avoiding)), moved);
+    // A block before the avoiding one stays.
+    assert_eq!(
+        pages(&holding(165, "", &format!("<div>u</div>{avoiding}"))),
+        "A@0 u@165 | t1@0 t1@10 t1@20 t1@30 c@40 Z@50"
+    );
+}
+
+#[test]
+fn a_caption_of_a_table_alone_in_a_flex_container_breaks_between_its_lines() {
+    // The lines match Chromium; the rows after them are left out, as
+    // Chromium puts them 1px to 3px lower after the break than in block flow.
+    let flex = |caption_style: &str, inner: &str| {
+        format!(
+            "<div style='height:175px'>A</div><div style='display:flex'><table>\
+             <caption style='width:16px;{caption_style}'>{inner}</caption>\
+             <tbody><tr><td>c</td></tr></tbody></table></div><div>Z</div>"
+        )
+    };
+    let split = "A@0 t1@175 t1@185 | t1@0 t1@10 c@";
+    assert!(pages(&flex("", "t1 t1 t1 t1")).starts_with(split));
+    assert!(pages(&flex("", "<p style='margin:0'>t1 t1 t1 t1</p>")).starts_with(split));
+    // A caption that may not break inside moves whole, and so does one whose
+    // first line is all that fits.
+    let moved = "A@0 | t1@0 t1@10 t1@20 t1@30 c@40 Z@50";
+    assert_eq!(pages(&flex("break-inside:avoid", "t1 t1 t1 t1")), moved);
+    assert_eq!(
+        pages(&flex(
+            "break-inside:avoid",
+            "<p style='margin:0'>t1 t1 t1 t1</p>"
+        )),
+        moved
+    );
+    assert_eq!(
+        pages(&flex("", "t1 t1 t1 t1").replace("175px", "185px")),
+        moved
+    );
+}
