@@ -525,6 +525,10 @@ pub struct Node {
     pub(crate) caption_side: CaptionSideValue,
     /// The table grid's border box within its wrapper, excluding captions.
     pub(crate) table_grid_box: Option<PaintRect>,
+    /// The border box of the rendered legend of this `fieldset`, before any
+    /// relative offset, within the fieldset's border box: the part of the
+    /// block-start border it hides. Set by block layout.
+    pub(crate) legend_cutout: Option<PaintRect>,
     /// First-row baseline relative to the table wrapper's border edge.
     pub(crate) table_first_baseline: Option<f32>,
     /// First baseline of a flex container from its border edge, as its last
@@ -801,6 +805,7 @@ impl Node {
             clips_collapsed_table_span: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
+            legend_cutout: None,
             table_first_baseline: None,
             flex_first_baseline: None,
             vertical_first_baseline: None,
@@ -1399,7 +1404,7 @@ impl Node {
 
     /// Whether this is an HTML `fieldset`.
     #[inline]
-    fn is_html_fieldset(&self) -> bool {
+    pub(crate) fn is_html_fieldset(&self) -> bool {
         self.tag_name() == Some("fieldset") && self.namespace_uri().is_none()
     }
 

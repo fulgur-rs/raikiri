@@ -2,6 +2,7 @@
 
 mod children;
 pub(crate) mod context;
+mod legend;
 mod positioned;
 mod sizing;
 pub(crate) mod style_input;

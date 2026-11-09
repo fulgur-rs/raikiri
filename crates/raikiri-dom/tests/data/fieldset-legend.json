@@ -1,0 +1,824 @@
+[
+ {
+  "name": "basic",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "tall legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='font-size:20px;line-height:20px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "thick border",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='border-top-width:30px'><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    51.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    51.75
+   ],
+   "l": [
+    11.5,
+    10,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    33.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend margins",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='margin:5px 3px 4px 6px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    35.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    35.75
+   ],
+   "l": [
+    17.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    17.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend block padding",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='padding:3px 2px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    37.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    37.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    16
+   ],
+   "t": [
+    11.5,
+    19.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "second legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><legend id=m>mm</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "m": [
+    11.5,
+    13.5,
+    177,
+    10
+   ],
+   "t": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "floated legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='float:left'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    23.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    23.75
+   ],
+   "l": [
+    11.5,
+    5.5,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    5.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "absolute legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='position:absolute'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    23.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    23.75
+   ],
+   "l": [
+    11.5,
+    5.5,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    5.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend after content",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><div id=t>aaaa</div><legend id=l>ll</legend></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ]
+  }
+ },
+ {
+  "name": "auto start margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='margin-left:auto'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "auto margins",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='margin-inline:auto'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    88,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend width",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='width:100px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    104,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "wide legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>llllllllllllllllllllllll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    263,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    244,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    244,
+    10
+   ]
+  }
+ },
+ {
+  "name": "sized fieldset",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='height:50px'><legend id=l style='font-size:20px;line-height:20px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    63.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    63.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "border-box fieldset",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='height:50px;box-sizing:border-box'><legend id=l style='font-size:20px;line-height:20px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    50
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    50
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend only",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    21.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    21.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ]
+  }
+ },
+ {
+  "name": "child margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='margin-bottom:4px'>ll</legend><div id=t style='margin-top:5px'>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    40.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    40.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    22.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "no padding",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='padding:0'><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    22
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    22
+   ],
+   "l": [
+    4,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    4,
+    10,
+    192,
+    10
+   ]
+  }
+ },
+ {
+  "name": "no border",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='border:0'><legend id=l style='font-size:20px;line-height:20px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    39.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    39.75
+   ],
+   "l": [
+    9.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    9.5,
+    23.5,
+    181,
+    10
+   ]
+  }
+ },
+ {
+  "name": "negative start margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='margin-top:-5px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "relative legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='position:relative;top:3px;left:4px'>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    15.5,
+    3,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "display none legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend style='display:none'>xx</legend><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "float child",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><div id=f style='float:left;width:20px;height:20px'></div><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "f": [
+    11.5,
+    13.5,
+    20,
+    20
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "after fieldset",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><div id=t>aaaa</div></fieldset><div id=n>bb</div></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ],
+   "n": [
+    0,
+    31.75,
+    200,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline-block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='display:inline-block'><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    59,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "flex item",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><div style='display:flex'><fieldset id=c><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    59,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ }
+]

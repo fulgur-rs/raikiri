@@ -57,7 +57,7 @@ fn measure_in_flow_child(
     }
 }
 
-fn place_inline_axis(
+pub(super) fn place_inline_axis(
     style: &Style,
     direction: Direction,
     container_width: f32,
@@ -89,7 +89,7 @@ fn place_inline_axis(
     area_start + offset
 }
 
-fn margins(style: &Style, basis: f32) -> Edges<f32> {
+pub(super) fn margins(style: &Style, basis: f32) -> Edges<f32> {
     style
         .margin
         .map(|edge| edge.resolve(Some(basis)).unwrap_or(0.0))
@@ -246,7 +246,7 @@ pub(super) fn relative(
     }
 }
 
-fn overflow(
+pub(super) fn overflow(
     style: &Style,
     metrics: Metrics,
     output: &LayoutOutput,
@@ -332,6 +332,20 @@ pub(super) fn layout(
         oof_candidates: OofCandidates::new(),
     };
     let children: Vec<_> = tree.child_ids(node).collect();
+    // The rendered legend of a fieldset sits over its block-start border, out
+    // of the flow of the other children, which start below it.
+    let legend = super::legend::rendered_legend(tree, node);
+    if let Some(legend) = legend {
+        let order = children
+            .iter()
+            .position(|&child| child == legend)
+            .unwrap_or(0);
+        let placed = super::legend::place(
+            tree, node, legend, order, inputs, container, metrics, width, parent,
+        );
+        flow.end += placed.content_offset;
+        flow.overflow = flow.overflow.union(placed.overflow);
+    }
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut pending_has_clearance = false;
     let mut completed_boundary = None;
@@ -342,6 +356,9 @@ pub(super) fn layout(
         ctx.commit_strut();
     }
     for (order, child) in children.into_iter().enumerate() {
+        if Some(child) == legend {
+            continue;
+        }
         let mut style = child_style(tree, child);
         if style.box_generation_mode() == BoxGenerationMode::None {
             if inputs.run_mode == RunMode::PerformLayout {

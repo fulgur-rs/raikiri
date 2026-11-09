@@ -2332,6 +2332,21 @@ pub fn find_paint_root(doc: &Document) -> Option<usize> {
     crate::layout::find_body(doc)
 }
 
+/// The border box of the rendered legend of the `fieldset` `node_id`,
+/// within the fieldset's border box and before any relative offset of the
+/// legend, or `None` when the fieldset has no rendered legend laid out over
+/// its border.
+///
+/// The fieldset paints its background, shadows and border from a border box
+/// whose block-start edge moves down to the middle of a legend that is
+/// taller than the block-start border, and leaves out its border where the
+/// legend lies, from the border-box edge down to the farther of the legend's
+/// end and the border's (HTML Living Standard, "Rendering", §15.3.13 "The
+/// fieldset and legend elements"; the extent of the gap follows Chromium).
+pub fn fieldset_legend_cutout(document: &Document, node_id: usize) -> Option<PaintRect> {
+    document.get_node(node_id)?.legend_cutout
+}
+
 /// Whether separate-border `empty-cells: hide` suppresses this cell's box ink.
 /// Out-of-flow content does not make a cell nonempty; floated and in-flow
 /// elements do, even when their own box has no content (CSS 2.2 section 17.6.1.1).
