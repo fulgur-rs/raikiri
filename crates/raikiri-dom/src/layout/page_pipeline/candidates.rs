@@ -10,7 +10,7 @@ use super::{
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     avoids_page_break_inside, box_forces_break_after, box_is_unbreakable, boxes_are_tied,
     breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, first_owned_text_line_top,
+    container_item_tail, content_bottom_edges, edges_break_container, first_owned_text_line_top,
     has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
@@ -791,6 +791,10 @@ pub(super) struct EdgesBreak {
     /// How much room the clip leaves below the edges where they are, in the
     /// coordinates of the candidates; infinity without a clip that holds.
     pub(super) clip_room: f32,
+    /// The flex or grid container whose items sit beside the one that holds
+    /// the block, if any: the edges then move that item and the container,
+    /// not the items beside it.
+    pub(super) beside: Option<usize>,
 }
 
 /// Collects the page candidates of a laid-out subtree. Page membership is
@@ -1309,13 +1313,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree;
-                let in_flow_block_level = participates_in_flow
+                // A box in the flow of its container, among blocks or among the
+                // items of a flex container.
+                let in_container_flow = participates_in_flow
                     && !inside_table
-                    && !inside_flex
                     && !out_of_flow_subtree
                     && !inside_float
                     && !inline_level
                     && !is_float;
+                let in_flow_block_level = in_container_flow && !inside_flex;
                 // A block box in the flow that is a candidate to move to the
                 // next page, along with the box it holds or the edges it ends.
                 let in_flow_block = in_flow_block_level && is_plain_block_box(document, node_id);
@@ -2125,14 +2131,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // breaks before them when they do not fit below it on its
                 // page. A monolithic box, such as an image, keeps its edges.
                 // Like the page fit of the boxes, the end is that of the normal
-                // flow: a relative offset only moves the paint. The flow does
-                // not advance for a block beside others (in a grid of columns or
-                // in columns), as it does not for a box that moves.
-                if in_flow_block_level
+                // flow: a relative offset only moves the paint. In an item of a
+                // flex container or of a grid of columns, the edges move that
+                // item and the container but not the items beside it. They stay
+                // in columns, whose balance the move would change.
+                if in_container_flow
                     && !monolithic
                     && let Some(edges) = content_bottom_edges(document, node_id)
                     && candidate_raw_y + node.layout.size.height <= frame.clip_end
-                    && !candidate_ancestor_constraints(document, cascade, node_id, body_id, None).0
+                    && let Some(beside) = edges_break_container(document, node_id, body_id)
                 {
                     let offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
                     let bottom = candidate_raw_y + node.layout.size.height;
@@ -2150,6 +2157,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         edges,
                         clip_end,
                         clip_room,
+                        beside,
                     });
                 }
             }
