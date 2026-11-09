@@ -67,6 +67,11 @@ impl Document {
             return None;
         }
         let offset = match computed.list_style_position {
+            // An inside bullet starts 1px in, as in a paragraph (see
+            // `inside_symbol_marker_margins`).
+            raikiri_style::ListStylePosition::Inside if is_symbol_marker(computed) => {
+                padding_left + INSIDE_SYMBOL_GAP
+            }
             raikiri_style::ListStylePosition::Inside => padding_left,
             _ => match outside_symbol_gutter(&shaped, computed) {
                 Some(gutter) => -gutter,
@@ -112,21 +117,59 @@ fn outside_symbol_gutter(
     shaped: &crate::StandaloneText,
     computed: &raikiri_style::ComputedValues,
 ) -> Option<f32> {
-    if bullet_marker_text(&computed.list_style_type).is_none() || !computed.content.is_empty() {
+    if !is_symbol_marker(computed) {
         return None;
     }
+    Some(symbol_extent(shaped)? + 7.0)
+}
+
+/// Whether `computed`, a marker's values, gives a `disc`, `circle` or
+/// `square` bullet rather than text.
+pub(crate) fn is_symbol_marker(computed: &raikiri_style::ComputedValues) -> bool {
+    bullet_marker_text(&computed.list_style_type).is_some() && computed.content.is_empty()
+}
+
+/// Chromium's `ascent * 2 / 3` for a symbol marker shaped as `shaped`, where
+/// `ascent` is the ascent of the font the marker is shaped with.
+fn symbol_extent(shaped: &crate::StandaloneText) -> Option<f32> {
     // The ascent of the font the marker is shaped with, not of a fallback font
     // that happens to supply the bullet glyph: the distance from the baseline
     // to the root font's over edge.
     let metrics = shaped.lines().first()?.metrics();
-    // Whole and bounded, so a degenerate metric cannot give an infinite offset,
-    // and non-negative, so the floor is the truncating division.
-    let ascent = (metrics.text_over - metrics.baseline)
-        .abs()
-        .round()
-        .clamp(0.0, 1.0e6);
-    Some((ascent * 2.0 / 3.0).floor() + 7.0)
+    Some(two_thirds_of_ascent(metrics.text_over - metrics.baseline))
 }
+
+/// `ascent * 2 / 3` with `ascent` rounded to whole pixels and the division
+/// truncating, as Chromium sizes its symbol markers.
+fn two_thirds_of_ascent(ascent: f32) -> f32 {
+    // Whole and bounded, so a degenerate metric cannot give an infinite
+    // length, and non-negative, so the floor is the truncating division.
+    let ascent = ascent.abs().round().clamp(0.0, 1.0e6);
+    (ascent * 2.0 / 3.0).floor()
+}
+
+/// The inline-start and inline-end margins of an inside `disc`, `circle` or
+/// `square` marker of `font_size` whose glyphs advance `advance` in a font of
+/// `ascent`.
+///
+/// Chromium does not lay these out as text. Its marker box is a bullet of
+/// `(ascent * 2 / 3 + 1) / 2` px with a 1px gap before it and one font size
+/// after it (the divisions truncate). The bullet is a glyph here, so the
+/// margins take the box from the glyph's advance to Chromium's width, with
+/// the glyph starting where Chromium's bullet does.
+pub(crate) fn inside_symbol_marker_margins(
+    font_size: f32,
+    advance: f32,
+    ascent: f32,
+) -> (f32, f32) {
+    let bullet = ((two_thirds_of_ascent(ascent) + 1.0) / 2.0).floor();
+    let width = INSIDE_SYMBOL_GAP + bullet + font_size;
+    (INSIDE_SYMBOL_GAP, width - INSIDE_SYMBOL_GAP - advance)
+}
+
+/// The gap, in px, before the bullet of an inside `disc`, `circle` or
+/// `square` marker.
+const INSIDE_SYMBOL_GAP: f32 = 1.0;
 
 fn list_item_counter_value(counters: &impl CounterSnapshotLookup, ordinal: u32) -> i32 {
     counters

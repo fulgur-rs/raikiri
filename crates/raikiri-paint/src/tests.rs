@@ -3284,7 +3284,7 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
     let red = "p::first-line{background:rgb(255,0,0)}";
     let vertical = "p{width:auto;height:100px;writing-mode:vertical-rl}";
     // (css, body, the box of the red fill)
-    let cases: [(&str, &str, [f64; 4]); 23] = [
+    let cases: [(&str, &str, [f64; 4]); 24] = [
         (
             "",
             "<p><span style=\"margin:0 7px\">XX</span>XX</p>",
@@ -3412,10 +3412,51 @@ fn first_line_background_covers_the_margins_of_the_inline_elements_at_its_ends()
             "<p>XX</p>",
             [40.0, 0.0, 70.0, 10.0],
         ),
+        (
+            "p{display:list-item;list-style:inside square;margin-left:40px}",
+            "<p>XX</p>",
+            [40.0, 0.0, 74.0, 10.0],
+        ),
     ];
     for (css, body, expected) in cases {
         let fills = first_line_fills(&format!("{red}{css}"), body);
         assert_eq!(fills, [(FIRST_LINE_RED, expected)], "{css} {body}");
+    }
+}
+
+/// An inside `disc`, `circle` or `square` marker is as wide as Chromium's:
+/// a bullet of `(ascent * 2 / 3 + 1) / 2` px with 1px before it and one font
+/// size after it, whatever the advance of its glyph. The first line's
+/// background shows where the text after it ends.
+#[test]
+fn inside_symbol_markers_are_as_wide_as_chromiums() {
+    // (list-style-type, font size, the end of the text after the marker),
+    // measured in Chromium with Ahem, whose ascent is 0.8em.
+    let cases = [
+        ("disc", 10.0, 34.0),
+        ("circle", 10.0, 34.0),
+        ("square", 10.0, 34.0),
+        ("disc", 20.0, 66.0),
+        ("square", 33.0, 109.0),
+    ];
+    for (style, size, end) in cases {
+        for rtl in [false, true] {
+            let css = format!(
+                "p{{width:200px;font-size:{size}px;line-height:1;display:list-item;list-style:inside {style}{}}}p::first-line{{background:rgb(255,0,0)}}",
+                if rtl { ";direction:rtl" } else { "" }
+            );
+            let fills = first_line_fills(&css, "<p>XX</p>");
+            let [(color, [x0, _, x1, _])] = fills[..] else {
+                panic!("{css}: {fills:?}");
+            };
+            assert_eq!(color, FIRST_LINE_RED, "{css}");
+            let expected = if rtl {
+                [200.0 - end, 200.0]
+            } else {
+                [0.0, end]
+            };
+            assert_eq!([x0, x1], expected, "{css}");
+        }
     }
 }
 

@@ -444,18 +444,10 @@ impl Shaped {
             direction: style.direction,
             ..ParagraphStyle::default()
         };
-        let mut cx = LayoutContext::new();
         if images.is_empty() {
-            let paragraph = RichText::with_limits(&paragraph_style, limits)
-                .push(text, &inline)
-                .build(&mut cx, fonts)
-                .ok()?;
-            return Some(Self {
-                paragraph,
-                cx,
-                atomics: AtomicSizes::new(),
-            });
+            return Self::from_run(fonts, limits, text, &inline, &paragraph_style);
         }
+        let mut cx = LayoutContext::new();
         // Text between images goes in as spans of their own, numbered after
         // the images, whose ids are their positions in the list.
         let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
@@ -508,6 +500,26 @@ impl Shaped {
         })
     }
 
+    /// `text` shaped as one run in `inline`.
+    fn from_run(
+        fonts: &FontCollection,
+        limits: &Limits,
+        text: &str,
+        inline: &InlineStyle,
+        paragraph_style: &ParagraphStyle,
+    ) -> Option<Self> {
+        let mut cx = LayoutContext::new();
+        let paragraph = RichText::with_limits(paragraph_style, limits)
+            .push(text, inline)
+            .build(&mut cx, fonts)
+            .ok()?;
+        Some(Self {
+            paragraph,
+            cx,
+            atomics: AtomicSizes::new(),
+        })
+    }
+
     fn lines(&mut self, width: Option<f32>, align: StandaloneAlign) -> Vec<Line> {
         let options = LineOptions {
             text_align: align_of(align),
@@ -520,6 +532,44 @@ impl Shaped {
             &self.atomics,
         )
     }
+}
+
+/// The advance of `text` laid out alone in `inline`, the style of a run of a
+/// paragraph that runs in `writing_mode`, with its blanks kept, and the
+/// ascent of the first font the style selects, as a distance. `None` when
+/// the text does not lay out.
+pub(crate) fn measure_run(
+    fonts: &FontCollection,
+    inline: &InlineStyle,
+    writing_mode: WritingMode,
+    text: &str,
+) -> Option<(f32, f32)> {
+    // Alone, a trailing blank would end the paragraph and could collapse;
+    // in the paragraph it is followed by the item's content.
+    let inline = InlineStyle {
+        white_space_collapse: WhiteSpaceCollapse::Preserve,
+        ..inline.clone()
+    };
+    let paragraph_style = ParagraphStyle {
+        root: inline.clone(),
+        writing_mode,
+        direction: inline.direction,
+        ..ParagraphStyle::default()
+    };
+    let mut shaped = Shaped::from_run(fonts, &Limits::default(), text, &inline, &paragraph_style)?;
+    let lines = shaped.lines(None, StandaloneAlign::Start);
+    let line = lines.first()?;
+    let metrics = line.metrics();
+    Some((
+        advance_of(line),
+        (metrics.text_over - metrics.baseline).abs(),
+    ))
+}
+
+/// The advance of `line` with its trailing blanks, whether shodo keeps them
+/// in the line or lets them hang.
+fn advance_of(line: &Line) -> f32 {
+    line.inline_size() + line.hang_end()
 }
 
 /// The inline constraint of a standalone run.
@@ -744,9 +794,7 @@ impl Document {
             _ => Vec::new(),
         };
         // `inline_size + hang_end` does not change when shodo retains a space.
-        let advance = lines
-            .first()
-            .map_or(line_width, |line| line.inline_size() + line.hang_end());
+        let advance = lines.first().map_or(line_width, advance_of);
         let block_size = lines.iter().map(Line::block_size).sum();
         let inline_extent = width.unwrap_or(line_width).max(0.0);
         let container = if style.writing_mode.is_vertical() {

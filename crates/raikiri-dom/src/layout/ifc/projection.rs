@@ -479,6 +479,20 @@ fn push_generated(
     };
     text_nowrap.insert(id.0, cv.effective_text_wrap_mode == TextWrapMode::Nowrap);
     let mut inline_style = styled(doc, cascade, cv, element, fonts)?;
+    // An inside bullet is as wide as Chromium's, whatever its glyph's advance.
+    let mut edges = edges;
+    if pseudo == PseudoElem::Marker
+        && crate::generated_content::markers::is_symbol_marker(cv)
+        && let Some((advance, ascent)) =
+            super::standalone::measure_run(fonts, &inline_style, images.writing_mode, &text)
+    {
+        (edges.margin.inline_start, edges.margin.inline_end) =
+            crate::generated_content::markers::inside_symbol_marker_margins(
+                cv.font_size.px(),
+                advance,
+                ascent,
+            );
+    }
     let marker_body_style = if pseudo == PseudoElem::Marker
         && inline_style.text_wrap_mode == shodo::style::TextWrapMode::NoWrap
         && text.ends_with([' ', '\t'])
