@@ -11382,14 +11382,61 @@ fn shift_paragraph_lines(
             _ => None,
         })
         .collect();
+    let floats = floats_on_moved_lines(document, moved);
     shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
-    for node in atomics {
+    for node in atomics.into_iter().chain(floats) {
         document.translate_pagination_y(node, moved.shift);
     }
     for (node, delta) in follows {
         document.translate_pagination_y(node, delta);
     }
     growth
+}
+
+/// The floats of the paragraph `moved.block_id` that sit on the lines from
+/// `moved.line` on: those whose top is not above the first of them. A float
+/// is placed on the line it comes in, or lower, so it starts the next page
+/// with that line (Chromium); one placed beside an earlier line stays.
+fn floats_on_moved_lines(document: &Document, moved: &LineMove) -> HashSet<usize> {
+    let Some(node) = document.ifc_layout_node(moved.block_id) else {
+        return HashSet::new();
+    };
+    let Some((ifc, lines)) = node
+        .ifc
+        .as_ref()
+        .and_then(|ifc| Some((ifc, ifc.lines.as_ref()?)))
+    else {
+        return HashSet::new();
+    };
+    let Some(line) = lines.lines.get(moved.line) else {
+        return HashSet::new();
+    };
+    let top = node.layout.border.top
+        + node.layout.padding.top
+        + line.block_offset()
+        + lines.shifts.of(moved.line);
+    ifc.boxes
+        .iter()
+        .filter(|b| b.kind == IfcBoxKind::Float)
+        .map(|b| b.node)
+        .filter(|&float| document.pagination_local_y(float) >= top - 0.01)
+        .collect()
+}
+
+/// Whether `node_id` is a float placed among the lines of a paragraph, which
+/// the lines that come before it in the source may take to a later page (see
+/// [`floats_on_moved_lines`]).
+fn is_paragraph_float(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    is_floating_box_for_pagination(document, cascade, node_id)
+        && document
+            .ifc_root_of(node_id)
+            .and_then(|root| document.ifc_layout_node(root))
+            .and_then(|root| root.ifc.as_ref())
+            .is_some_and(|ifc| {
+                ifc.boxes
+                    .iter()
+                    .any(|b| b.node == node_id && b.kind == IfcBoxKind::Float)
+            })
 }
 
 /// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`

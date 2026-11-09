@@ -1375,6 +1375,11 @@ impl PaginationState {
         );
         let effective_y = if uses_positioned_coordinates {
             current_abs_y(document, node_id)
+        } else if super::is_paragraph_float(document, cascade, node_id) {
+            // The lines of its paragraph that came before it in the source
+            // took the float along to a later page (see
+            // `floats_on_moved_lines`): it stays with them.
+            (raw_y + self.flow_shift).max(current_abs_y(document, node_id))
         } else {
             raw_y + self.flow_shift
         };
