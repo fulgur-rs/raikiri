@@ -17,13 +17,14 @@ use super::{
     collapses_with_previous_block, content_overflow, current_abs_y, first_box_ancestor_at_start,
     first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
     floats_put_first_line_down, follows_flow_content, forced_line_breaks, forced_line_moves,
-    forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
-    has_fixed_height, has_footnote_ancestor, is_floating_box_for_pagination,
-    is_unfixed_absolute_box, lead_below_ancestor, lead_below_edges, leading_edges_move,
-    leading_holder, line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    forced_target_page, grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
+    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
+    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
+    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
+    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, lines_move_grows_box, make_room_for_caption_header,
+    make_room_for_table_header, margin_box_starts_page, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
@@ -1144,18 +1145,57 @@ impl PaginationState {
                 .map(|owner| (owner, document.nodes[owner].layout.size.height))
                 .collect()
         };
-        document.nodes[edges_break.node_id].layout.size.height += gap;
-        document.mark_pagination_extent_dirty(edges_break.node_id);
-        grow_ancestors_for_shift(
-            document,
-            cascade,
-            edges_break.node_id,
-            gap,
-            body_id,
-            &mut self.subtree_shifts,
-            page,
-            &IfcBoxShifts::default(),
-        );
+        // The item of a flex or grid container that holds the block, and
+        // where its margin box ends in the container.
+        let beside = edges_break.beside.map(|container| {
+            let item = item_of(document, container, node_id).unwrap_or(node_id);
+            (container, item, item_bottom_in(document, container, item))
+        });
+        document.nodes[node_id].layout.size.height += gap;
+        document.mark_pagination_extent_dirty(node_id);
+        if let Some((container, item, before)) = beside {
+            // The boxes in the item grow and follow the edges, but the items
+            // beside it stay where they are: the shift that reaches the item
+            // ends with it.
+            let (_, passed) = grow_ancestors_below(
+                document,
+                cascade,
+                node_id,
+                gap,
+                body_id,
+                &mut self.subtree_shifts,
+                page,
+                &IfcBoxShifts::default(),
+                Some(container),
+            );
+            self.flow_shift += gap;
+            if passed > 0.001 {
+                self.subtree_shifts.bounded.push((item, passed, page));
+            }
+            let after = item_bottom_in(document, container, item);
+            grow_container_beside_item(
+                document,
+                cascade,
+                body_id,
+                container,
+                item,
+                (before, after),
+                &mut self.subtree_shifts,
+                (page, next_page),
+            );
+        } else {
+            grow_ancestors_for_shift(
+                document,
+                cascade,
+                node_id,
+                gap,
+                body_id,
+                &mut self.subtree_shifts,
+                page,
+                &IfcBoxShifts::default(),
+            );
+            self.flow_shift += gap;
+        }
         // Bounds and float extents can absorb part of the gap. Record each
         // box's actual growth rather than subtracting the raw gap everywhere.
         for (owner, height) in heights {
@@ -1164,7 +1204,6 @@ impl PaginationState {
                 *self.edge_growth.entry(owner).or_default() += growth;
             }
         }
-        self.flow_shift += gap;
         self.current_page = self.current_page.max(next_page);
         if visible > 0.001 {
             self.record_pages(control, page_origins.end_page(page_end, visible), true)?;

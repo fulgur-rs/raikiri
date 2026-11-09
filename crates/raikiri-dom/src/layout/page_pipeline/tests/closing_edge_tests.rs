@@ -4102,11 +4102,11 @@ fn an_avoiding_paragraph_with_a_height_of_its_own_moves_whole_with_the_edges() {
 #[test]
 fn the_edges_of_a_block_in_a_grid_column_leave_the_items_beside_it_where_they_are() {
     // The items of a grid of two columns start the page together. The padding
-    // below the 80px box of the first one does not fit under it, but the flow
-    // does not advance for it: the second item, with the same top as the first,
-    // is not pushed down by it. A grid of one column stacks its items, so the
-    // block in its one item still pushes the flow after it.
-    for (columns, beside, after) in [("50px 50px", 0.0, 110.0), ("50px", 130.0, 150.0)] {
+    // below the 80px box of the first one does not fit under it, so it begins
+    // the next page and the grid grows to hold it, but the second item, with
+    // the same top as the first, is not pushed down by it. A grid of one
+    // column stacks its items, so the second item follows the first.
+    for (columns, beside, after) in [("50px 50px", 0.0, 130.0), ("50px", 130.0, 150.0)] {
         let (mut second, mut last) = (0, 0);
         let (doc, _) = paged_body_with_ifc(|doc, body| {
             let grid = block(
@@ -4125,6 +4125,103 @@ fn the_edges_of_a_block_in_a_grid_column_leave_the_items_beside_it_where_they_ar
             "{columns}"
         );
     }
+}
+
+#[test]
+fn an_item_stretched_beside_one_whose_edges_move_stretches_with_its_row() {
+    // The padding below the 80px box of the first item begins the next page,
+    // so the line of the flex container ends 20px lower, and the item beside
+    // it, stretched to the line by the container or by its own `align-self`,
+    // grows with it as Chromium paints it, up to its `max-height`. An item
+    // aligned to the start keeps its height.
+    for (align, height) in [
+        ("align-items:stretch", 130.0),
+        ("align-items:flex-start", 20.0),
+        ("align-items:flex-start;--self:stretch", 130.0),
+        ("align-items:stretch;--self:auto;max-height:120px", 120.0),
+    ] {
+        let (items, own) = align.split_once(";--self:").unwrap_or((align, "auto"));
+        let (own, limit) = own.split_once(';').unwrap_or((own, ""));
+        let mut second = 0;
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let flex = block(doc, body, &format!("display:flex;{items}"));
+            let first = block(doc, flex, "display:block;width:50px;padding-bottom:30px");
+            block(doc, first, "display:block;height:80px");
+            second = block(
+                doc,
+                flex,
+                &format!("display:block;width:50px;min-height:20px;align-self:{own};{limit}"),
+            );
+            block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(doc.nodes[second].layout.size.height, height, "{align}");
+    }
+}
+
+#[test]
+fn items_side_by_side_whose_edges_both_move_grow_their_row_once() {
+    // Both items of a flex row end their 80px boxes with 30px of padding that
+    // does not fit the page: each grows by 20px, so the row ends at 130px as
+    // Chromium prints it, whether or not anything follows the container. The
+    // second item, stretched to the row after the first grew, is not grown a
+    // second time by its own edges.
+    for after in [true, false] {
+        let (mut flex, mut items) = (0, Vec::new());
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            flex = block(doc, body, "display:flex");
+            for _ in 0..2 {
+                let item = block(doc, flex, "display:block;width:50px;padding-bottom:30px");
+                block(doc, item, "display:block;height:80px");
+                items.push(item);
+            }
+            if after {
+                block(doc, body, "display:block;height:10px");
+            }
+        });
+        let heights: Vec<f32> = [flex, items[0], items[1]]
+            .iter()
+            .map(|&id| doc.nodes[id].layout.size.height)
+            .collect();
+        assert_eq!(heights, [130.0, 130.0, 130.0], "{after}");
+    }
+}
+
+#[test]
+fn edges_on_a_later_grid_row_leave_the_rows_above_it_unstretched() {
+    // The second row of a stretching grid grows for the padding below a
+    // 60px box that starts at 20px; the items of the first row end above it
+    // and keep their 20px.
+    let mut first_row = Vec::new();
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let grid = block(doc, body, "display:grid;grid-template-columns:50px 50px");
+        for _ in 0..2 {
+            first_row.push(block(doc, grid, "display:block;height:20px"));
+        }
+        let item = block(doc, grid, "display:block;padding-bottom:30px");
+        block(doc, item, "display:block;height:60px");
+        block(doc, grid, "display:block;min-height:10px");
+        block(doc, body, "display:block;height:10px");
+    });
+    let heights: Vec<f32> = first_row
+        .iter()
+        .map(|&id| doc.nodes[id].layout.size.height)
+        .collect();
+    assert_eq!(heights, [20.0, 20.0]);
+}
+
+#[test]
+fn an_empty_item_stretched_beside_a_grown_one_stretches_at_the_end_of_the_document() {
+    // The flex container is the last box of the document, so the flow never
+    // leaves it; the empty item beside the grown one still stretches to the
+    // 130px of its line, as Chromium paints it.
+    let mut second = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let flex = block(doc, body, "display:flex");
+        let first = block(doc, flex, "display:block;width:50px;padding-bottom:30px");
+        block(doc, first, "display:block;height:80px");
+        second = block(doc, flex, "display:block;width:50px");
+    });
+    assert_eq!(doc.nodes[second].layout.size.height, 130.0);
 }
 
 #[test]
