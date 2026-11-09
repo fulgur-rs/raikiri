@@ -8370,7 +8370,13 @@ fn lineless_piece_end(
     // The page breaks before the relative offset moves the box.
     let top = normal_flow_y(document, cascade, body_id, child);
     let (end, child_has_edges) = lineless_piece_end(document, cascade, body_id, child, depth + 1)?;
-    Some((top + end, child_has_edges || edges_above > 0.0))
+    // What runs out past the bottom of a box whose height is held below its
+    // content is visible overflow of that box, which the page cuts rather
+    // than moving the box on for it.
+    Some((
+        (top + end).min(layout.size.height),
+        child_has_edges || edges_above > 0.0,
+    ))
 }
 
 /// Whether a box with padding or border above its content moves to the next
