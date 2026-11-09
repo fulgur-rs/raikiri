@@ -10956,9 +10956,30 @@ struct SubtreeShifts {
     /// Floats that the lines of their paragraph took down before the float
     /// became a candidate: the float starts where the lines put it.
     line_moved_floats: HashSet<usize>,
+    /// Floats that went down to a later page on their own, with how far
+    /// they moved past their place in the flow.
+    floats_ahead: Vec<(usize, f32)>,
 }
 
 impl SubtreeShifts {
+    /// A box that moves down by `delta` takes the floats inside it along. A
+    /// float there that already went down on its own keeps its place: it
+    /// gives back as much of its own move as the box adds, so it does not
+    /// move twice.
+    fn take_back_floats_ahead(&mut self, document: &mut Document, moved: usize, delta: f32) {
+        if delta <= 0.0 {
+            return;
+        }
+        for (float, ahead) in &mut self.floats_ahead {
+            if *float != moved && is_descendant_or_self(document, *float, moved) {
+                let back = ahead.min(delta);
+                document.translate_pagination_y(*float, -back);
+                *ahead -= back;
+            }
+        }
+        self.floats_ahead.retain(|&(_, ahead)| ahead > 0.001);
+    }
+
     /// End the shifts of the subtrees `node_id` is outside of, applying
     /// them to `flow_shift`, and return the page the flow returns to when a
     /// bounded subtree ends.
@@ -11547,6 +11568,7 @@ fn move_line_block(
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
+        shifts.take_back_floats_ahead(document, moved, delta);
         grow_ancestors_for_shift(
             document,
             cascade,
@@ -11621,6 +11643,14 @@ fn move_box_for_transition(
         "an ancestor moves for a page edge or its first child forced boundary"
     );
     document.translate_pagination_y(holder, node_delta);
+    if holder == node_id
+        && node_delta > 0.0
+        && is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        shifts.floats_ahead.push((node_id, node_delta));
+    } else {
+        shifts.take_back_floats_ahead(document, holder, node_delta);
+    }
     let followed_ifc_boxes = follow_moved_ifc_block(document, holder, node_delta);
     // A nested avoiding block that moves to the next page lengthens the
     // ancestors whose content box holds it, so their continuation (and any
