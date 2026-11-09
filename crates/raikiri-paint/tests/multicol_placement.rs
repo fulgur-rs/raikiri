@@ -3303,3 +3303,52 @@ fn a_float_after_an_empty_box_below_a_float_goes_below_the_box() {
         &glyphs_at(0, 0, "A<br>B<br>F"),
     );
 }
+
+#[test]
+fn a_box_with_its_own_formatting_context_fits_the_room_of_every_float_it_reaches() {
+    // The two lines of the box reach past the first float to a narrower one,
+    // and the room both leave is as wide as the box, so it stays beside them
+    // at the top, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A</p><div style='float:left;clear:left;width:10px;height:20px;background:lime'></div><p style='overflow:hidden'>E<br>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A"),
+            "<div style='position:absolute;left:0;top:20px;width:10px;height:20px;background:lime'></div>".to_string(),
+            glyphs_at(20, 0, "E<br>F"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_counts_its_padding_in_its_width_limits() {
+    // The maximum width holds the content box, so the border box is 15px
+    // wide with its padding, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:10px;padding-left:5px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:20px;top:0;width:15px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_and_an_auto_right_margin_starts_the_room_in_a_right_to_left_column()
+ {
+    // The auto right margin takes the rest of the 70px room the right float
+    // leaves, so the box starts the room even in a right-to-left column, as
+    // in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;width:40px;height:20px;margin:0 auto 0 0;background:lime'></div></div>",
+        ".mc{width:200px;height:80px;column-fill:auto;direction:rtl}",
+        &[
+            glyphs_at(180, 0, "A<br>B"),
+            "<div style='position:absolute;left:110px;top:0;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
