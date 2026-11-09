@@ -260,3 +260,25 @@ fn a_box_inside_its_parent_moves_with_it_or_stays() {
         &[(0, 540.0, 590.0)],
     );
 }
+
+/// A box that only avoids a break inside it takes the block it begins along
+/// even when it overflows that block, and a box whose negative bottom margin
+/// lets its parent end above its bottom is no overflow of the parent: both
+/// move to the next page.
+#[test]
+fn avoided_boxes_and_negative_margins_still_move() {
+    check(
+        "break-inside: avoid",
+        "<div style=\"height:300px\"></div><div style=\"height:250px;padding-top:240px\">\
+         <div id=o style=\"height:100px;break-inside:avoid\"></div></div>",
+        2,
+        &[(1, 240.0, 340.0)],
+    );
+    check(
+        "negative bottom margin",
+        "<div style=\"height:320px\"></div><div><div id=o style=\"height:300px;width:10px;\
+         contain:size;margin-bottom:-50px\"></div></div>",
+        2,
+        &[(1, 0.0, 300.0)],
+    );
+}
