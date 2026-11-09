@@ -1996,10 +1996,9 @@ fn layout_after_column_floats(
     let margins = [margin_left.unwrap_or(0.0), margin_right.unwrap_or(0.0)];
     let direction = if rtl { Direction::Rtl } else { Direction::Ltr };
     let clear = style.clear();
-    let (least, most) = column_width_limits(tree, &style, column_width);
-    // An `auto` width fills the room the floats leave, within the box's
-    // minimum and maximum width, as it fills the column; any other width is
-    // the one the box has in the column.
+    // An `auto` width fills the room the floats leave, held to the limits
+    // block flow holds it to, as it fills the column; any other width is the
+    // one the box has in the column.
     let stretches = inputs.known_dimensions.width.is_some();
     let at_width = |width: f32| {
         let mut input = inputs;
@@ -2015,7 +2014,18 @@ fn layout_after_column_floats(
         |probe| match probe {
             BoxProbe::Width { stretch } => {
                 if stretches {
-                    stretch.min(most).max(least).max(0.0)
+                    crate::layout::dispatch::block_flow::clamp_child_width(
+                        tree,
+                        NodeId::from(child),
+                        LayoutInput {
+                            parent_size: Size {
+                                width: Some(column_width),
+                                ..inputs.parent_size
+                            },
+                            ..inputs
+                        },
+                        stretch.max(0.0),
+                    )
                 } else {
                     width
                 }
@@ -2054,36 +2064,6 @@ fn layout_after_column_floats(
         top,
         x: Some(x),
     }
-}
-
-/// The least and the most border-box width `style` lets a box have in a
-/// column of `column_width`: its minimum and maximum width, and never less
-/// than its padding and borders.
-fn column_width_limits(
-    tree: &LayoutSession<'_>,
-    style: &LayoutStyleView<'_>,
-    column_width: f32,
-) -> (f32, f32) {
-    let (padding, border) = (style.padding(), style.border());
-    let insets: f32 = [padding.left, padding.right, border.left, border.right]
-        .into_iter()
-        .map(|inset| multicol_resolve_inset(tree, inset, column_width))
-        .sum();
-    // A content-box limit holds the content; the border box is never
-    // narrower than its padding and borders either way.
-    let content_insets = if style.box_sizing() == BoxSizing::BorderBox {
-        0.0
-    } else {
-        insets
-    };
-    let resolve = |value: Dimension| {
-        multicol_definite_dimension(tree, value, Some(column_width))
-            .map(|width| (width + content_insets).max(insets))
-    };
-    (
-        resolve(style.min_size().width.into()).unwrap_or(insets),
-        resolve(style.max_size().width.into()).unwrap_or(f32::INFINITY),
-    )
 }
 
 /// Whether `child`, `needed` high in its column, leaves the line of floats

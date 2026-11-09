@@ -3387,3 +3387,30 @@ fn a_box_with_its_own_formatting_context_is_never_narrower_than_its_padding_besi
         .concat(),
     );
 }
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_the_limits_its_aspect_ratio_carries()
+{
+    // A minimum height carried across the square ratio makes the box 30px
+    // wide, too wide for the 20px beside the right float, so it goes below
+    // it, 40px square; a maximum height carried across keeps it 10px square
+    // beside the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;aspect-ratio:1;min-height:30px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:40px;width:40px;height:40px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;aspect-ratio:1;max-height:10px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:0;width:10px;height:10px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
