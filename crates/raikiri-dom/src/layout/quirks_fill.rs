@@ -170,6 +170,8 @@ pub(crate) struct BodyFill {
     maximum: f32,
     /// The body's top and bottom padding and border.
     edges: f32,
+    /// The border-box height its `min-height` override gives it.
+    overridden: f32,
 }
 
 impl BodyFill {
@@ -197,6 +199,14 @@ impl BodyFill {
         let height = clamp(content).max(clamp(self.room - top - bottom));
         let separates = self.minimum > 0.0 && self.minimum > content && self.minimum >= height;
         (height, separates)
+    }
+
+    /// `preferred`, a border-box height the body's aspect ratio gives it,
+    /// when the ratio rather than the `min-height` override gives it. That
+    /// override fills what the body's own margins leave, which is more than
+    /// the fill once they collapse with larger ones.
+    pub(crate) fn ratio_height(&self, preferred: Option<f32>) -> Option<f32> {
+        preferred.filter(|&height| height > self.overridden)
     }
 }
 
@@ -263,6 +273,7 @@ fn fill(
             minimum: border_box(minimum),
             maximum: border_box(maximum),
             edges,
+            overridden: border_box(used(margin_top + margin_bottom)),
         });
     }
     // Its children resolve percentages against what its own margins leave.

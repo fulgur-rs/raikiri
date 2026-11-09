@@ -609,7 +609,11 @@ fn layout_context(
             style.size.height.expand(),
             ExpandedDimension::Auto | ExpandedDimension::Stretch
         )
-        && metrics.preferred.height.is_none();
+        && (metrics.preferred.height.is_none()
+            // A filled body whose aspect ratio gives less than the fill is
+            // as tall as an `auto` one.
+            || crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node))
+                .is_some_and(|fill| fill.ratio_height(metrics.preferred.height).is_none()));
     if ctx.is_bfc_root() {
         ctx.set_width(width);
         ctx.set_origin_resolved(!collapse_start);
@@ -651,12 +655,14 @@ fn layout_context(
             .height
             .is_some_and(|min| min > 0.0 && min > content_height);
     // A filled body in quirks mode fills the root element less its margins
-    // as they collapse with those that adjoin its edges.
+    // as they collapse with those that adjoin its edges. The fill is only a
+    // minimum, so a taller height the aspect ratio gives is kept.
     let (height, minimum_separates) =
         match crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node)) {
             Some(fill) => {
                 let (height, separates) = fill.height(
-                    content_height,
+                    fill.ratio_height(metrics.preferred.height)
+                        .unwrap_or(content_height),
                     if collapse_start {
                         flow.leading
                     } else {

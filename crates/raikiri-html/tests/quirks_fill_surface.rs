@@ -559,3 +559,50 @@ fn a_minimum_body_height_keeps_the_last_margin_only_when_it_gives_the_height() {
         );
     }
 }
+
+#[test]
+fn an_aspect_ratio_taller_than_the_fill_gives_the_body_height() {
+    // The fill is only a minimum: a taller ratio height is kept and goes on
+    // to the next page, whether the body holds lines or only blocks.
+    for content in ["x", "<div id=c style='height:10px'></div>"] {
+        let child = if content == "x" {
+            ""
+        } else {
+            " c=(0, 0, 400, 10)"
+        };
+        assert_eq!(
+            quirks(
+                "body{margin:0;width:400px;aspect-ratio:1/2}",
+                &format!(">{content}")
+            ),
+            format!(
+                "p0: b=(0, 0, 400, 600){child} h=(0, 0, 800, 600) p1: b=(0, 0, 400, 200) h=(0, 0, 800, 200)"
+            )
+        );
+        // A shorter ratio height leaves the body filling the root element.
+        assert_eq!(
+            quirks(
+                "body{margin:0;width:400px;aspect-ratio:2/1}",
+                &format!(">{content}")
+            ),
+            format!("p0: b=(0, 0, 400, 600){child} h=(0, 0, 800, 600)")
+        );
+    }
+    // The last margin stays inside a body its ratio gives the height ...
+    let child = "<div id=c style='height:10px;margin:30px 0'></div>";
+    assert_eq!(
+        quirks(
+            "body{margin:20px 0;width:400px;aspect-ratio:1/2}",
+            &format!(">{child}")
+        ),
+        "p0: b=(0, 30, 400, 570) c=(0, 30, 400, 10) h=(0, 0, 800, 600) p1: b=(0, 0, 400, 230) h=(0, 0, 800, 250)"
+    );
+    // ... and collapses through one the fill gives the height.
+    assert_eq!(
+        quirks(
+            "body{margin:20px 0;width:400px;aspect-ratio:2/1}",
+            &format!(">{child}")
+        ),
+        "p0: b=(0, 30, 400, 540) c=(0, 30, 400, 10) h=(0, 0, 800, 600)"
+    );
+}

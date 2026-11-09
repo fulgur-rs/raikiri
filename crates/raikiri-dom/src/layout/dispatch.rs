@@ -2063,11 +2063,19 @@ fn compute_ifc_root(
     }
     output.top_margin = leading_margin;
     // A filled body in quirks mode fills the root element less its margins
-    // as they collapse with those that adjoin its edges.
+    // as they collapse with those that adjoin its edges. The fill is only a
+    // minimum, so a taller height the aspect ratio gives is kept.
     let quirks_fill = crate::layout::quirks_fill::BodyFill::of(tree, idx)
         .zip(measured_size)
         .map(|(fill, measured)| {
-            let content = measured.height + measure.insets.top + measure.insets.bottom;
+            let content = fill
+                .ratio_height(
+                    inputs
+                        .known_dimensions
+                        .height
+                        .or(ratio_height_follows.then_some(output.size.height)),
+                )
+                .unwrap_or(measured.height + measure.insets.top + measure.insets.bottom);
             let (height, separates) = fill.height(content, leading_margin, escaping_margin);
             output.size.height = height;
             separates
