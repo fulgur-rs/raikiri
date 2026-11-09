@@ -9,7 +9,6 @@ use raikiri_style::{
         OverflowValue, PositionValue,
     },
 };
-use raikiri_traits::NodeKind;
 use std::collections::{BTreeMap, HashMap};
 
 /// A header or footer group repeated on each page of its table.
@@ -87,7 +86,7 @@ pub(crate) struct HeaderRepeats {
 }
 
 impl HeaderRepeats {
-    /// Finds ordinary block-flow tables below `body` whose first header
+    /// Finds block-flow tables below `body` (see `block_flow_tables`) whose first header
     /// group, first footer group, or both, repeat on each page of the table.
     ///
     /// A body row is a row outside those groups, or a box of the table's
@@ -618,8 +617,10 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
 }
 
 /// Table sources whose ancestor boxes follow the shared block flow when a
-/// repeated header adds room. Bounded or independently placed flows stop the
-/// search so their internal shifts cannot escape into their outer siblings.
+/// repeated header adds room, a single-line row flex container that holds
+/// only the table counting as such a box (see [`sole_flex_table`]). Bounded
+/// or independently placed flows stop the search so their internal shifts
+/// cannot escape into their outer siblings.
 fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) -> Vec<usize> {
     let mut tables = Vec::new();
     let mut pending: Vec<_> = document.nodes[body]
@@ -680,18 +681,8 @@ pub(crate) fn sole_flex_table(
     {
         return None;
     }
-    let mut items = node.children.iter().copied().filter(|&child| {
-        let child = &document.nodes[child];
-        match child.text_content() {
-            Some(text) => !text
-                .chars()
-                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
-            None => child.kind() == NodeKind::Element && !child.is_display_none(),
-        }
-    });
-    let item = items.next()?;
-    (items.next().is_none() && document.nodes[item].display() == DisplayValue::Table)
-        .then_some(item)
+    crate::layout::ifc::assign::only_item(document, id)
+        .filter(|&item| document.nodes[item].display() == DisplayValue::Table)
 }
 
 fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {

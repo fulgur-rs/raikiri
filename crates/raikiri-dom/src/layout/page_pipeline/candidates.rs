@@ -1091,6 +1091,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document);
                 let is_direct_flex_item = parent_box.is_some_and(|parent| {
                     document.nodes[parent].formatting_context == FormattingContext::Flex
+                        && crate::layout::table::headers::sole_flex_table(document, cascade, parent)
+                            .is_none()
                 });
                 let own_page_name = if !inline_level
                     && !float_subtree
@@ -1118,6 +1120,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (false, None)
                 };
                 let is_flex = document.nodes[node_id].formatting_context == FormattingContext::Flex;
+                // A single-line row flex container holding only a table
+                // fragments it as block flow does, so that its header and
+                // footer repeat on each page.
+                let holds_sole_table = is_flex
+                    && crate::layout::table::headers::sole_flex_table(document, cascade, node_id)
+                        .is_some();
                 let column_flex = is_flex
                     && matches!(
                         computed.flex_direction,
@@ -1138,7 +1146,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
-                let row_flex = is_flex && !column_flex;
+                let row_flex = is_flex && !column_flex && !holds_sole_table;
                 let flex_names_stay_on_items = column_flex
                     || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after);
@@ -2070,10 +2078,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 && document.nodes[node_id].grid_column_count == 1,
                             inside_flex: inside_flex
                                 || (document.nodes[node_id].display().is_flex_container()
-                                    && crate::layout::table::headers::sole_flex_table(
-                                        document, cascade, node_id,
-                                    )
-                                    .is_none()),
+                                    && !holds_sole_table),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {

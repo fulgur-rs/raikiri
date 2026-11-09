@@ -20,16 +20,33 @@ const AHEM: &[u8] = include_bytes!(concat!(
 /// table of `rows` body rows in a holder styled `holder`, followed in the
 /// holder by `extra`, on 5in x 3in pages with 0.5in margins.
 fn pages(holder: &str, rows: usize, extra: &str) -> Vec<String> {
+    let table = table(rows, true, "");
+    laid_out(&format!(".holder{{{holder}}}"), &format!("{table}{extra}"))
+}
+
+/// A table of `rows` body rows, with a one-row header and footer when
+/// `groups`, and `style` on the table element.
+fn table(rows: usize, groups: bool, style: &str) -> String {
     let body: String = (1..=rows)
         .map(|row| format!("<tr id=r{row}><td>{row}</td></tr>"))
         .collect();
+    let groups = if groups {
+        "<thead><tr id=h><td>Header</td></tr></thead><tfoot><tr id=f><td>Footer</td></tr></tfoot>"
+    } else {
+        ""
+    };
+    format!("<table id=t style=\"{style}\">{groups}<tbody>{body}</tbody></table>")
+}
+
+/// The pages of [`pages`] for a holder with `content`, under the extra
+/// style sheet `style`.
+fn laid_out(style: &str, content: &str) -> Vec<String> {
     let html = format!(
         "<!DOCTYPE html><html><head><style>@page{{size:5in 3in;margin:.5in}}\
-         body{{margin:0;font:10px/10px Ahem}}.holder{{border:.25in solid black;{holder}}}\
-         table{{border-spacing:0}}.text,tr{{block-size:.25in}}td{{padding:0}}</style></head>\
-         <body><div id=before class=text>Before</div><div id=holder class=holder>\
-         <table id=t><thead><tr id=h><td>Header</td></tr></thead>\
-         <tfoot><tr id=f><td>Footer</td></tr></tfoot><tbody>{body}</tbody></table>{extra}</div>\
+         @page wide{{size:6in 3in}}body{{margin:0;font:10px/10px Ahem}}\
+         .holder{{border:.25in solid black}}table{{border-spacing:0}}\
+         .text,tr{{block-size:.25in}}td{{padding:0}}{style}</style></head>\
+         <body><div id=before class=text>Before</div><div id=holder class=holder>{content}</div>\
          <div id=after class=text>After</div></body></html>"
     );
     let fonts = FontCollectionBuilder::new()
@@ -122,4 +139,42 @@ fn other_flex_containers_keep_their_items_unrepeated() {
             pages[1]
         );
     }
+}
+
+#[test]
+fn a_sole_table_flex_item_fragments_as_in_block_flow() {
+    let block = |content: &str| laid_out(".holder{display:block}", content);
+    let flex = |content: &str| laid_out(".holder{display:flex}", content);
+    // Without groups to repeat, the rows still break as in a block.
+    let plain = table(9, false, "");
+    assert_eq!(flex(&plain), block(&plain));
+    // A `display: contents` wrapper generates no item of its own.
+    let groups = table(7, true, "");
+    assert_eq!(
+        flex(&format!("<div style=display:contents>{groups}</div>")),
+        block(&groups)
+    );
+    // A named page on the table starts the holder on that page, as Chromium
+    // prints both holders.
+    let named = table(3, true, "page:wide");
+    assert_eq!(
+        flex(&named),
+        [
+            "before=(48, 384, 24)",
+            "f=(168, 60, 24) h=(72, 60, 24) holder=(48, 480, 168) r1=(96, 60, 24) \
+             r2=(120, 60, 24) r3=(144, 60, 24) t=(72, 60, 120)",
+            "after=(48, 384, 24)",
+        ]
+    );
+    assert_eq!(flex(&named), block(&named));
+}
+
+#[test]
+fn a_generated_item_beside_the_table_keeps_the_flex_path() {
+    let pages = laid_out(
+        ".holder{display:flex}.holder::before{content:'L'}",
+        &table(7, true, ""),
+    );
+    assert!(!pages[0].contains(" f="), "{}", pages[0]);
+    assert!(!pages[1].contains(" h="), "{}", pages[1]);
 }
