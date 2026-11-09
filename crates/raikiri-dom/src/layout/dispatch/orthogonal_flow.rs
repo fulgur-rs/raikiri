@@ -220,13 +220,13 @@ pub(super) fn with_page_room(
         inputs.available_space.height = offered_height(tree, idx, &inputs);
         if inputs.parent_size.height.is_none() && has_percentage_height(tree, idx) {
             // A percentage of the inline size of an orthogonal flow whose
-            // parent leaves its height indefinite refers to the initial
-            // containing block, as the room of its lines does (CSS Writing
-            // Modes 4 section 7.3.1).
-            inputs.parent_size.height = tree
-                .fixed_page_area
-                .map(|(_, height)| height)
-                .filter(|&height| height > 0.0);
+            // parent leaves its height indefinite refers to the height of the
+            // initial containing block within the `max-height` of the parent,
+            // the room its lines get too (CSS Writing Modes 4 section 7.3.1).
+            let cap = tree
+                .taffy_parent_of(idx)
+                .and_then(|parent| max_height_cap(tree, parent));
+            inputs.parent_size.height = open_height_room(tree, cap);
         }
         inputs
     } else {
@@ -244,13 +244,7 @@ fn has_percentage_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
         style.max_size().height.into(),
     ]
     .into_iter()
-    .any(
-        |size: raikiri_layout_style::values::Dimension| match size.expand() {
-            ExpandedDimension::Percent(_) => true,
-            ExpandedDimension::Calc(calc) => calc.has_percentage(),
-            _ => false,
-        },
-    )
+    .any(|size: raikiri_layout_style::values::Dimension| size.uses_percentage())
 }
 
 /// `inputs` for the vertical item `idx` of a horizontal grid with the height it

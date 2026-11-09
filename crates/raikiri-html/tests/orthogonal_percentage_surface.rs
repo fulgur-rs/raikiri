@@ -170,6 +170,42 @@ fn a_percentage_height_of_a_vertical_box_in_horizontal_flow_refers_to_the_page_a
 }
 
 #[test]
+fn a_size_limit_of_the_container_caps_what_the_percentages_refer_to() {
+    let text = "xxxx xxxx xxxx";
+    for container in ["max-height:100px", "display:flex;max-height:100px"] {
+        assert_boxes(
+            container,
+            "writing-mode:vertical-rl;height:50%",
+            text,
+            [[0., 0., 800., 50.], [0., 0., 30., 50.]],
+        );
+    }
+    assert_boxes(
+        "display:flex;flex-direction:column;max-height:100px",
+        "writing-mode:vertical-rl;height:50%;flex:none",
+        text,
+        [[0., 0., 800., 50.], [0., 0., 800., 50.]],
+    );
+    assert_boxes(
+        "display:flex;flex-direction:column;max-height:100px;padding:10px;border:5px solid",
+        "writing-mode:vertical-rl;height:50%;flex:none",
+        text,
+        [[0., 0., 800., 65.], [15., 15., 770., 35.]],
+    );
+    for container in [
+        "display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:100px",
+        "display:flex;writing-mode:vertical-rl;max-width:100px",
+    ] {
+        assert_boxes(
+            container,
+            "writing-mode:horizontal-tb;width:50%;flex:none",
+            text,
+            [[0., 0., 50., 30.], [0., 0., 50., 30.]],
+        );
+    }
+}
+
+#[test]
 fn percentage_main_margins_of_column_items_refer_to_the_settled_cross_size() {
     let h = |container: &str, item: &str, expected| {
         assert_boxes(

@@ -116,7 +116,8 @@ fn constraints(
             || item.box_generation_mode() == BoxGenerationMode::None
             || outer_constraints_resolve(&item, vertical, percentage_basis)
     });
-    let cyclic_main_margins = inline_basis.is_none()
+    let cyclic_main_margins = measure_cross
+        && inline_basis.is_none()
         && tree.child_ids(node).any(|child| {
             let item = tree.physical_style(usize::from(child));
             let margin = item.margin();
@@ -126,6 +127,7 @@ fn constraints(
                 [margin.top, margin.bottom]
             };
             item.position() != Position::Absolute
+                && item.box_generation_mode() != BoxGenerationMode::None
                 && margins
                     .into_iter()
                     .any(|margin| !margin.is_auto() && margin.maybe_resolve(None::<f32>).is_none())
@@ -168,7 +170,7 @@ pub(super) fn layout(
         return algorithm(tree, node, inputs);
     };
     if !original.supported {
-        // Retain legacy behavior for unresolved minima and cyclic main margins.
+        // Retain legacy behavior for unresolved minima.
         return with_entry(tree, original, |tree| algorithm(tree, node, inputs));
     }
     let idx = usize::from(node);
