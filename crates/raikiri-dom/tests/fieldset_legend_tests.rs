@@ -54,8 +54,10 @@ fn the_rendered_legend_sits_over_the_block_start_border_of_its_fieldset() {
     // a stated and a content width, a fieldset with a stated height, an
     // inline-block and a flex item fieldset, legends that are not rendered (a
     // second, floated, absolutely positioned or hidden one), a legend after
-    // the content, a relatively positioned legend, a float in the content
-    // and the box after the fieldset.
+    // the content, a relatively positioned legend, a float in the content,
+    // the box after the fieldset, a percentage height below a legend that
+    // reaches past the border, `min-content` and `max-content` legend widths
+    // and an absolutely positioned box in the legend.
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("data/fieldset-legend.json")).unwrap();
     for case in cases.as_array().unwrap() {

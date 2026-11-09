@@ -820,5 +820,167 @@
     10
    ]
   }
+ },
+ {
+  "name": "percent height child",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='height:100px'><legend id=l style='font-size:30px;line-height:30px'>ll</legend><div id=t style='height:100%'>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    64,
+    30
+   ],
+   "t": [
+    11.5,
+    33.5,
+    177,
+    72
+   ]
+  }
+ },
+ {
+  "name": "max-content legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='width:max-content'>llll llll llll llll llll llll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    313,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    294,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    294,
+    10
+   ]
+  }
+ },
+ {
+  "name": "min-content legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style='width:min-content'>llll llll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend abspos child",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='position:relative'><legend id=l>ll<span id=a style='position:absolute;right:0;top:0;width:10px;height:10px'></span></legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "a": [
+    186,
+    2,
+    10,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "legend abspos static",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='position:relative;border-top-width:20px'><legend id=l style='margin-left:15px'>ll<span id=a style='position:absolute;width:10px;height:10px'></span></legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    26.5,
+    5,
+    24,
+    10
+   ],
+   "a": [
+    48.5,
+    5,
+    10,
+    10
+   ],
+   "t": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
  }
 ]

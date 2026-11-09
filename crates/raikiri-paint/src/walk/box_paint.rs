@@ -44,17 +44,10 @@ struct PageCut {
     after: bool,
 }
 
-/// The clip that cuts the rectangle `(x, y, width, height)` at the edges of
-/// `area` that it leaves by more than rounding error, or `None` when it stays
-/// inside. `top_cuts` tells whether the top edge cuts at all: an absolutely
-/// positioned box above the page area of the first page is not cut there.
-///
-/// A rectangle that stays inside needs no clip, which would only change the
-/// anti-aliasing of its edges.
 /// The box `own` of a `fieldset` with its block-start edge moved down to the
-/// middle of its rendered `legend` when that is taller than the
-/// `border_top` of the fieldset, from where the fieldset paints its background,
-/// shadows and border (HTML Living Standard, "Rendering", §15.3.13).
+/// middle of its rendered `legend` when that is taller than the `border_top`
+/// of the fieldset, from where the fieldset paints its background, shadows
+/// and border (HTML Living Standard, "Rendering", §15.3.13).
 fn legend_centered_box(legend: Option<PaintRect>, border_top: f32, own: OwnBox) -> OwnBox {
     let Some(legend) = legend else {
         return own;
@@ -68,6 +61,13 @@ fn legend_centered_box(legend: Option<PaintRect>, border_top: f32, own: OwnBox) 
     }
 }
 
+/// The clip that cuts the rectangle `(x, y, width, height)` at the edges of
+/// `area` that it leaves by more than rounding error, or `None` when it stays
+/// inside. `top_cuts` tells whether the top edge cuts at all: an absolutely
+/// positioned box above the page area of the first page is not cut there.
+///
+/// A rectangle that stays inside needs no clip, which would only change the
+/// anti-aliasing of its edges.
 fn page_area_clip(
     (x, y, width, height): (f32, f32, f32, f32),
     area: Rect,
@@ -224,12 +224,23 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         };
         // The box's own geometry, which its outline follows.
         let (fragment_paint_y, fragment_paint_height) = (own.y, own.height);
-        let own = legend_centered_box(
-            raikiri_dom::paint_rules::fieldset_legend_cutout(self.document, node_id),
-            element.painted_border.top.width().px(),
-            own,
-        );
         let (own, sliced) = self.open_block_slice(element, own);
+        // A fieldset leaves its border out where its rendered legend lies, from
+        // the top of the box down to the farther of the legend's end and the
+        // border's.
+        let legend = raikiri_dom::paint_rules::fieldset_legend_cutout(self.document, node_id);
+        let border_top = element.painted_border.top.width().px();
+        let legend_gap = legend.map(|legend| {
+            let left = f64::from(own.x + legend.x);
+            let top = f64::from(own.y);
+            Rect::new(
+                left,
+                top,
+                left + f64::from(legend.width),
+                top + f64::from(legend.height.max(border_top)),
+            )
+        });
+        let own = legend_centered_box(legend, border_top, own);
         // A `display: contents` element has no box whose
         // background, borders or outline could paint; its
         // generated content still does. Neither does a box that
@@ -238,7 +249,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if paints_own_box {
             self.paint_background(element, &own);
         }
-        self.paint_borders(element, &own, paints_own_box);
+        self.paint_borders(element, &own, paints_own_box, legend_gap);
         let scene = &mut *self.scene;
         if sliced {
             scene.pop_layer();
@@ -661,7 +672,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
 
     /// Paint the border of the box `own` of `element` over its background,
     /// or its border image, which replaces the border styles.
-    fn paint_borders(&mut self, element: &ElementBox<'w>, own: &OwnBox, paints_own_box: bool) {
+    fn paint_borders(
+        &mut self,
+        element: &ElementBox<'w>,
+        own: &OwnBox,
+        paints_own_box: bool,
+        legend_gap: Option<Rect>,
+    ) {
         let ElementBox {
             cv,
             paint_border_radius,
@@ -693,9 +710,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     border_box.height,
                 ),
             );
+        let legend_gap = paints_own_box && self.push_legend_gap_clip(legend_gap);
         // A border image replaces the border styles (CSS
         // Backgrounds 3 §6).
-        let legend_gap = paints_own_box && self.push_legend_gap_clip(element);
         let border_image_drawn = paints_own_box
             && !collapsed_internal_table_box(cv)
             && self.paint_border_image(element, own);
@@ -736,19 +753,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         }
     }
 
-    /// Leave out the block-start border of a `fieldset` where its rendered
-    /// legend lies, and return whether a clip was pushed.
-    fn push_legend_gap_clip(&mut self, element: &ElementBox<'w>) -> bool {
-        let Some(legend) =
-            raikiri_dom::paint_rules::fieldset_legend_cutout(self.document, element.node_id)
-        else {
+    /// Leave out the block-start border of a `fieldset` in the `gap` its
+    /// rendered legend makes, and return whether a clip was pushed.
+    fn push_legend_gap_clip(&mut self, gap: Option<Rect>) -> bool {
+        let Some(gap) = gap else {
             return false;
         };
         const UNBOUNDED: f64 = 1.0e7;
-        let left = f64::from(element.paint_x + legend.x);
-        let right = left + f64::from(legend.width);
-        let top = f64::from(element.paint_y);
-        let bottom = top + f64::from(legend.height.max(element.painted_border.top.width().px()));
         // Everything but the gap: the outer square runs clockwise and the gap
         // counterclockwise, so the gap is a hole under the nonzero rule.
         let mut path = BezPath::new();
@@ -757,10 +768,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         path.line_to((UNBOUNDED, UNBOUNDED));
         path.line_to((-UNBOUNDED, UNBOUNDED));
         path.close_path();
-        path.move_to((left, top));
-        path.line_to((left, bottom));
-        path.line_to((right, bottom));
-        path.line_to((right, top));
+        path.move_to((gap.x0, gap.y0));
+        path.line_to((gap.x0, gap.y1));
+        path.line_to((gap.x1, gap.y1));
+        path.line_to((gap.x1, gap.y0));
         path.close_path();
         self.scene.scene.push_clip_layer(Affine::IDENTITY, &path);
         true

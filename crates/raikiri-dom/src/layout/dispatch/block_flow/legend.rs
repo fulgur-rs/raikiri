@@ -12,17 +12,34 @@
 use super::children::{margins, overflow, place_inline_axis, relative};
 use super::{Metrics, child_inputs, child_style, commit};
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::content_limits;
 use crate::layout::dispatch::used_writing_mode;
-use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, RunMode};
+use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, OofCandidates, RunMode};
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
-use raikiri_layout_style::values::{BoxGenerationMode, Float, Position};
+use raikiri_layout_style::values::{
+    BoxGenerationMode, ExpandedDimension, Float, Overflow, Position,
+};
 use raikiri_traits::PaintRect;
 
-/// The rendered legend among the layout children of `node`, if `node` is an
-/// HTML `fieldset` that has one.
-pub(super) fn rendered_legend(tree: &LayoutSession<'_>, node: NodeId) -> Option<NodeId> {
-    if !tree.nodes[usize::from(node)].is_html_fieldset() {
+/// The rendered legend among the layout children of `node`, the container
+/// whose style is `container`, if `node` is an HTML `fieldset` that has one
+/// and lays it out over its border.
+///
+/// A fieldset in a vertical writing mode, and one that clips its overflow,
+/// keep the legend as an ordinary block for now: the first would need the
+/// legend over its block-start border on the physical axes, and the second a
+/// content box of its own that clips and scrolls without the legend.
+pub(super) fn rendered_legend(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    container: &Style,
+) -> Option<NodeId> {
+    if !tree.nodes[usize::from(node)].is_html_fieldset()
+        || used_writing_mode(tree, usize::from(node)).is_vertical()
+        || container.overflow.x != Overflow::Visible
+        || container.overflow.y != Overflow::Visible
+    {
         return None;
     }
     tree.child_ids(node).find(|&child| {
@@ -44,11 +61,14 @@ pub(super) struct PlacedLegend {
     pub content_offset: f32,
     /// The scrollable overflow rectangle the legend adds to the fieldset.
     pub overflow: Edges<f32>,
+    /// The absolutely positioned descendants of the legend that the fieldset
+    /// passes on, in the fieldset's coordinates.
+    pub oof_candidates: OofCandidates,
 }
 
-/// Lay out the rendered `legend` of `fieldset`, whose border box is
-/// `width` wide and whose content box is `content_width` wide, and place it
-/// over the fieldset's block-start border.
+/// Lay out the rendered `legend` of `fieldset`, whose border box is `width`
+/// wide and whose content box is `parent.width` wide, and place it over the
+/// fieldset's block-start border.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn place(
     tree: &mut LayoutSession<'_>,
@@ -62,12 +82,15 @@ pub(super) fn place(
     parent: Size<Option<f32>>,
 ) -> PlacedLegend {
     let content_width = parent.width.unwrap_or(0.0);
-    let style = child_style(tree, legend);
+    let mut style = child_style(tree, legend);
     let mut margin = margins(&style, content_width);
     let room = (content_width - margin.horizontal_axis_sum()).max(0.0);
     let mut child_input = child_inputs(parent, None, inputs.run_mode);
     let mut metrics_input = child_input;
     metrics_input.available_space.width = AvailableSpace::Definite(room);
+    // A keyword `min-width` or `max-width` limits the width, as it does for
+    // the other children.
+    content_limits::resolve_width_in_style(tree, legend, &mut style, &metrics_input);
     let legend_metrics = Metrics::resolve(
         &style,
         tree.nodes[usize::from(legend)].svg_width_follows_available,
@@ -94,7 +117,11 @@ pub(super) fn place(
             None => {
                 let maximum = width_of(tree, AvailableSpace::MaxContent);
                 let minimum = width_of(tree, AvailableSpace::MinContent);
-                legend_metrics.clamp_width(maximum.min(room).max(minimum))
+                legend_metrics.clamp_width(match style.size.width.expand() {
+                    ExpandedDimension::MinContent => minimum,
+                    ExpandedDimension::MaxContent => maximum,
+                    _ => maximum.min(room).max(minimum),
+                })
             }
         },
     );
@@ -122,7 +149,12 @@ pub(super) fn place(
         x: left + offset.x,
         y: top + offset.y,
     };
+    let mut oof_candidates = OofCandidates::new();
     if inputs.run_mode == RunMode::PerformLayout {
+        if !output.oof_candidates.is_empty() {
+            oof_candidates = output.oof_candidates.clone();
+            oof_candidates.translate(location);
+        }
         commit(
             tree,
             legend,
@@ -133,14 +165,17 @@ pub(super) fn place(
             margin,
         );
         // The legend hides the block-start border where it lies, before its
-        // relative offset moves it. On transposed axes the rectangle would
-        // not be physical, so a vertical fieldset keeps its whole border.
-        tree.nodes[usize::from(fieldset)].legend_cutout =
-            (!used_writing_mode(tree, usize::from(fieldset)).is_vertical())
-                .then(|| PaintRect::new(left, top, output.size.width, output.size.height));
+        // relative offset moves it.
+        tree.nodes[usize::from(fieldset)].legend_cutout = Some(PaintRect::new(
+            left,
+            top,
+            output.size.width,
+            output.size.height,
+        ));
     }
     PlacedLegend {
         content_offset,
         overflow: overflow(&style, legend_metrics, &output, location),
+        oof_candidates,
     }
 }

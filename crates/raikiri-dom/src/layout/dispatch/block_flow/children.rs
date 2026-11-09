@@ -307,7 +307,7 @@ pub(super) fn layout(
         usize::from(node),
     );
     let content_width = (width - metrics.inset.horizontal_axis_sum()).max(0.0);
-    let parent = Size {
+    let mut parent = Size {
         width: Some(content_width),
         height: metrics.percent_height,
     };
@@ -334,17 +334,23 @@ pub(super) fn layout(
     let children: Vec<_> = tree.child_ids(node).collect();
     // The rendered legend of a fieldset sits over its block-start border, out
     // of the flow of the other children, which start below it.
-    let legend = super::legend::rendered_legend(tree, node);
+    let legend = super::legend::rendered_legend(tree, node, container);
     if let Some(legend) = legend {
         let order = children
             .iter()
             .position(|&child| child == legend)
             .unwrap_or(0);
-        let placed = super::legend::place(
+        let mut placed = super::legend::place(
             tree, node, legend, order, inputs, container, metrics, width, parent,
         );
         flow.end += placed.content_offset;
         flow.overflow = flow.overflow.union(placed.overflow);
+        flow.oof_candidates.append(&mut placed.oof_candidates);
+        // The part of the legend below the border takes room off the height
+        // the percentages of the other children resolve against.
+        parent.height = parent
+            .height
+            .map(|height| (height - placed.content_offset).max(0.0));
     }
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut pending_has_clearance = false;
