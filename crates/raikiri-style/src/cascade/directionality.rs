@@ -17,11 +17,12 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 /// > parentNode be element's parent node. \[...\] If parentNode is an
 /// > element, then return the directionality of parentNode. Return 'ltr'.
 ///
-/// i.e. own `dir="ltr"`/`dir="rtl"` wins; own `dir="auto"` uses
-/// [`contained_text_auto_directionality`]'s text scan (falling back to `'ltr'`, *not* the
-/// parent's directionality, when the scan finds nothing); otherwise
-/// (missing/invalid `dir`) walk up to the nearest ancestor with an explicit
-/// `ltr`/`rtl` `dir`; if none exists anywhere (including at the document
+/// i.e. own `dir="ltr"`/`dir="rtl"` wins; own `dir="auto"` (or a `bdi`
+/// without a valid `dir`) uses [`contained_text_auto_directionality`]'s text
+/// scan (falling back to `'ltr'`, *not* the parent's directionality, when
+/// the scan finds nothing); otherwise (missing/invalid `dir`) walk up to the
+/// nearest ancestor that has an explicit `ltr`/`rtl` `dir` or takes its auto
+/// directionality, and take that ancestor's directionality; if none exists anywhere (including at the document
 /// root, which has no parent element), the default is `'ltr'` — this
 /// successful resolution always yields a `Direction`, matching the spec's
 /// "always ltr or rtl, never undetermined" shape. A failed visit budget is
@@ -39,18 +40,17 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 /// The quoted `Auto` arm above elides two branches of the referenced "auto
 /// directionality" algorithm that this crate does not implement — see
 /// [`contained_text_auto_directionality`]'s own doc for the precise cut and why each is out
-/// of scope. Also elided from the `Undefined` arm: the `bdi` element and
-/// `input[type=tel]` special cases (raikiri has no notion of
-/// element-specific behavior at this layer — `bdi` without an explicit
-/// `dir` attribute still falls through to the ancestor walk below, same as
-/// any other element with no `dir`) and the shadow-tree host step of
-/// "parent directionality" (raikiri has no shadow DOM).
+/// of scope. The `Undefined` arm's `bdi` case is carried: a `bdi` without a
+/// valid `dir` takes its auto directionality, as `dir="auto"` does. Elided
+/// from that arm: the `input[type=tel]` case (form controls are not laid
+/// out as text here) and the shadow-tree host step of "parent
+/// directionality" (raikiri has no shadow DOM).
 ///
-/// `known` supplies an ancestor's nearest explicit/default inheritance value,
-/// not its own `dir="auto"` text result. A successful result's `Some(index)`
-/// identifies the suffix `ancestors[index..]` and the subject that can share
-/// that inheritance value. `None` marks an own Auto result, which must not be
-/// published to an inheritance memo.
+/// `known` supplies an ancestor's directionality as it passes to its
+/// children, which is its own `dir="auto"` or `bdi` text result when it has
+/// one ("parent directionality" returns "the directionality of
+/// parentNode"). A successful result's `Some(index)` identifies the suffix
+/// `ancestors[index..]` and the subject that share that value.
 pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
@@ -59,17 +59,13 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     mut known: impl FnMut(StyleNodeId) -> Option<Direction>,
     mut visit: impl FnMut() -> Result<(), crate::CascadeError>,
 ) -> Result<(Direction, Option<usize>), crate::CascadeError> {
-    match own_dir_attribute_state(elem) {
-        DirAttributeState::Ltr => return Ok((Direction::Ltr, Some(ancestors.len()))),
-        DirAttributeState::Rtl => return Ok((Direction::Rtl, Some(ancestors.len()))),
-        DirAttributeState::Auto => {
-            return Ok((
-                contained_text_auto_directionality(dom, elem_id, &mut visit)?
-                    .unwrap_or(Direction::Ltr),
-                None,
-            ));
-        }
-        DirAttributeState::Undefined => {}
+    if let Some(dir) = own_explicit_direction(elem) {
+        return Ok((dir, Some(ancestors.len())));
+    }
+    if takes_auto_directionality(elem) {
+        let dir =
+            contained_text_auto_directionality(dom, elem_id, &mut visit)?.unwrap_or(Direction::Ltr);
+        return Ok((dir, Some(ancestors.len())));
     }
     for (index, &ancestor_id) in ancestors.iter().enumerate().rev() {
         visit()?;
@@ -82,9 +78,15 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
         // temporary that must stay alive across the call.
         if let Some(node) = dom.node(ancestor_id)
             && let Some(ancestor_elem) = node.as_element()
-            && let Some(dir) = own_explicit_direction(&ancestor_elem)
         {
-            return Ok((dir, Some(index)));
+            if let Some(dir) = own_explicit_direction(&ancestor_elem) {
+                return Ok((dir, Some(index)));
+            }
+            if takes_auto_directionality(&ancestor_elem) {
+                let dir = contained_text_auto_directionality(dom, ancestor_id, &mut visit)?
+                    .unwrap_or(Direction::Ltr);
+                return Ok((dir, Some(index)));
+            }
         }
     }
     Ok((Direction::Ltr, Some(0)))
@@ -157,12 +159,24 @@ fn own_dir_attribute_state<E: StyleElement>(elem: &E) -> DirAttributeState {
     }
 }
 
+/// Whether `elem` takes its auto directionality: its `dir` is `auto`, or it
+/// is the HTML `bdi` element and its `dir` is in the Undefined state
+/// (HTML's Undefined arm: "If element is a bdi element: Let result be the
+/// auto directionality of element. If result is null, then return 'ltr'.
+/// Return result.").
+fn takes_auto_directionality<E: StyleElement>(elem: &E) -> bool {
+    let state = own_dir_attribute_state(elem);
+    state == DirAttributeState::Auto
+        || state == DirAttributeState::Undefined
+            && elem.namespace_uri().is_none()
+            && elem.tag_name().eq_ignore_ascii_case("bdi")
+}
+
 /// HTML's `dir` attribute LTR/RTL states only — `Undefined`/`Auto` (missing,
 /// invalid, or `auto`) both collapse to `None` here, since the only caller
-/// ([`resolve_directionality`]'s ancestor walk) needs exactly "does this
-/// ancestor have an explicit winner to inherit", and per HTML LS's "parent
-/// directionality" an ancestor's own `Auto`/`Undefined` state is not such a
-/// winner (the walk keeps going past it toward that ancestor's own parent).
+/// ([`resolve_directionality`]) checks an ancestor's auto directionality
+/// separately, through [`takes_auto_directionality`]; an ancestor in the
+/// Undefined state that is not a `bdi` passes its parent's directionality on.
 /// See [`own_dir_attribute_state`]'s doc for the full 4-state read this
 /// delegates to, including the namespace gate and case-insensitivity.
 pub(crate) fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {

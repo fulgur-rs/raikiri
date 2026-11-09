@@ -788,6 +788,38 @@ fn auto_directionality_skips_bdi_descendant_text() {
 }
 
 #[test]
+fn bdi_without_dir_takes_its_auto_directionality() {
+    let mut doc = TestDoc::new();
+    let s = doc.push_element(0, "style", None);
+    doc.push_text(
+        s,
+        ":dir(rtl) { background-color: red } :dir(ltr) { background-color: blue }",
+    );
+    let outer = doc.push_element(0, "div", None);
+    doc.set_attr(outer, "dir", "rtl");
+    let hebrew = doc.push_element(outer, "bdi", None);
+    doc.push_text(hebrew, "\u{05d0}");
+    // No strong character: `ltr`, not the parent's `rtl`.
+    let neutral = doc.push_element(outer, "bdi", None);
+    doc.push_text(neutral, "123");
+    let explicit = doc.push_element(outer, "bdi", None);
+    doc.set_attr(explicit, "dir", "ltr");
+    doc.push_text(explicit, "\u{05d0}");
+    // A child of a bdi takes the bdi's directionality, not the outer one.
+    let latin = doc.push_element(outer, "bdi", None);
+    let latin_child = doc.push_element(latin, "span", None);
+    doc.push_text(latin_child, "ABC");
+
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[hebrew].background_color, RED);
+    assert_eq!(r.computed[neutral].background_color, BLUE);
+    assert_eq!(r.computed[explicit].background_color, BLUE);
+    assert_eq!(r.computed[latin].background_color, BLUE);
+    assert_eq!(r.computed[latin_child].background_color, BLUE);
+}
+
+#[test]
 fn auto_directionality_skips_script_and_style_descendant_text() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);

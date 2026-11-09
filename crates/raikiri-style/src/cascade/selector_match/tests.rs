@@ -2927,7 +2927,8 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
         (html, "en", Direction::Rtl),
         (plain, "en", Direction::Rtl),
         (french_auto, "fr", Direction::Ltr),
-        (nested, "fr", Direction::Rtl),
+        // A child of `dir=auto` takes the parent's text result.
+        (nested, "fr", Direction::Ltr),
         (hebrew_auto, "en", Direction::Rtl),
         (explicit_ltr, "he", Direction::Ltr),
     ];

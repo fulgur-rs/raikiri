@@ -123,8 +123,8 @@ pub(crate) struct MatchCaches {
     languages: RefCell<FxHashMap<StyleNodeId, Rc<str>>>,
     /// Resolved directionality per element id; see [`resolve_directionality`].
     directions: RefCell<FxHashMap<StyleNodeId, Direction>>,
-    /// Explicit/default inheritance per element id, separate from its own
-    /// `dir="auto"` text result; see [`resolve_directionality`].
+    /// Directionality each element passes to its children, recorded for the
+    /// ancestors a resolution walked through; see [`resolve_directionality`].
     inherited_directions: RefCell<FxHashMap<StyleNodeId, Direction>>,
     /// `:has()` results per anchor; see [`HasCache`].
     has: RefCell<HasCache>,

@@ -395,6 +395,25 @@ fn rtl_and_plaintext_bidi_set_the_paragraph_style() {
 }
 
 #[test]
+fn a_block_root_drops_embed_and_isolate_but_keeps_override() {
+    for (value, expected) in [
+        ("isolate", s::UnicodeBidi::Normal),
+        ("embed", s::UnicodeBidi::Normal),
+        ("bidi-override", s::UnicodeBidi::BidiOverride),
+        ("isolate-override", s::UnicodeBidi::IsolateOverride),
+    ] {
+        let fixture = block_fixture(&format!("unicode-bidi:{value}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let cv = &fixture.cascade.computed[fixture.root];
+        let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
+        let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph");
+        assert_eq!(paragraph.root.unicode_bidi, expected, "{value}");
+        assert!(!paragraph.unicode_bidi_plaintext, "{value}");
+    }
+}
+
+#[test]
 fn supported_vertical_writing_modes_reach_the_paragraph() {
     for (mode, expected) in [
         ("horizontal-tb", WritingMode::HorizontalTb),

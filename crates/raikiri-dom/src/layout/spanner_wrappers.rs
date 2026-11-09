@@ -19,7 +19,7 @@ use super::*;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_style::values::Position;
-use raikiri_style::property::WhiteSpaceCollapse;
+use raikiri_style::property::{UnicodeBidi, WhiteSpaceCollapse};
 
 /// Lets the spanners of multicol containers reach the columns through the
 /// wrappers around them, by laying those wrappers out as `display: contents`.
@@ -218,6 +218,19 @@ fn keeps_line_layout(doc: &Document, cascade: &CascadeResult, id: usize, contain
     // Both are blocks, and the margins were checked to take no space.
     anonymous.display = wrapper.display;
     anonymous.margin = wrapper.margin.clone();
+    // `embed` and `isolate` do nothing for the lines of a block (CSS Writing
+    // Modes 4 §2.2), and the UA sheet isolates `div` and the other block
+    // elements, so they do not tell a block wrapper's lines apart either.
+    // An inline wrapper does isolate its content.
+    if !wrapper.display.is_inline_level()
+        && matches!(
+            wrapper.unicode_bidi,
+            UnicodeBidi::Embed | UnicodeBidi::Isolate
+        )
+        && anonymous.unicode_bidi == UnicodeBidi::Normal
+    {
+        anonymous.unicode_bidi = wrapper.unicode_bidi;
+    }
     anonymous == *wrapper
 }
 

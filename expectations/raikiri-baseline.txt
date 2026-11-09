@@ -1318,6 +1318,8 @@ css/css-text/shaping/shaping-008.html
 css/css-text/shaping/shaping-009.html
 css/css-text/shaping/shaping-010.html
 css/css-text/shaping/shaping-011.html
+css/css-text/shaping/shaping-012.html
+css/css-text/shaping/shaping-013.html
 css/css-text/shaping/shaping-014.html
 css/css-text/shaping/shaping-016.html
 css/css-text/shaping/shaping-017.html
@@ -3726,7 +3728,6 @@ css/css-text/white-space/pre-wrap-tab-001.html
 css/css-text/white-space/pre-wrap-tab-002.html
 css/css-text/white-space/seg-break-transformation-018.tentative.html
 css/css-text/white-space/seg-break-transformation-019.tentative.html
-css/css-text/white-space/tab-bidi-001.html
 css/css-text/white-space/tab-stop-threshold-002.html
 css/css-text/white-space/tab-stop-threshold-004.html
 css/css-text/white-space/tab-stop-threshold-006.html
