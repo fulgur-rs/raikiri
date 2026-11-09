@@ -2068,13 +2068,8 @@ fn compute_ifc_root(
         .zip(measured_size)
         .map(|(fill, measured)| {
             let content = measured.height + measure.insets.top + measure.insets.bottom;
-            let separates = fill.minimum_separates(content);
-            let trailing = if separates {
-                CollapsibleMarginSet::ZERO
-            } else {
-                escaping_margin
-            };
-            output.size.height = fill.height(content, leading_margin, trailing);
+            let (height, separates) = fill.height(content, leading_margin, escaping_margin);
+            output.size.height = height;
             separates
         });
     // The baseline of a horizontal root lies below the top edge of its border

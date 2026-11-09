@@ -645,33 +645,33 @@ fn layout_context(
     // browsers, it then neither escapes nor adds to the height that
     // `min-height` fixed.
     let content_height = natural_end + metrics.inset.bottom;
-    let quirks_fill = crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node));
     let minimum_separates = collapse_end
-        && match quirks_fill {
-            Some(fill) => fill.minimum_separates(content_height),
-            None => metrics
-                .min
-                .height
-                .is_some_and(|min| min > 0.0 && min > content_height),
-        };
+        && metrics
+            .min
+            .height
+            .is_some_and(|min| min > 0.0 && min > content_height);
     // A filled body in quirks mode fills the root element less its margins
     // as they collapse with those that adjoin its edges.
-    let height = match quirks_fill {
-        Some(fill) => fill.height(
-            content_height,
-            if collapse_start {
-                flow.leading
-            } else {
-                CollapsibleMarginSet::ZERO
-            },
-            if collapse_end && !minimum_separates {
-                flow.trailing
-            } else {
-                CollapsibleMarginSet::ZERO
-            },
-        ),
-        None => height,
-    };
+    let (height, minimum_separates) =
+        match crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node)) {
+            Some(fill) => {
+                let (height, separates) = fill.height(
+                    content_height,
+                    if collapse_start {
+                        flow.leading
+                    } else {
+                        CollapsibleMarginSet::ZERO
+                    },
+                    if collapse_end {
+                        flow.trailing
+                    } else {
+                        CollapsibleMarginSet::ZERO
+                    },
+                );
+                (height, collapse_end && separates)
+            }
+            None => (height, minimum_separates),
+        };
     let size = Size { width, height };
     children::align(
         tree,

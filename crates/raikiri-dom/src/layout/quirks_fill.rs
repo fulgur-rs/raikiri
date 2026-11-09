@@ -178,27 +178,25 @@ impl BodyFill {
         tree.quirks_body_fill.filter(|fill| fill.node == node)
     }
 
-    /// Whether the authored minimum raises the body above `content`, its
-    /// border-box height from the content, so that the last child's bottom
-    /// margin no longer adjoins its bottom edge.
-    pub(crate) fn minimum_separates(&self, content: f32) -> bool {
-        self.minimum > 0.0 && self.minimum > content
-    }
-
     /// The border-box height of the body when its content makes it
     /// `content` tall and the margin sets `leading` and `trailing` adjoin its
-    /// top and bottom edges: at least what fills the root element less its
-    /// margins collapsed with theirs.
+    /// top and bottom edges, and whether its last child's bottom margin no
+    /// longer adjoins its bottom edge. The body is at least what fills the
+    /// root element less its margins collapsed with theirs. As in Chromium,
+    /// the last margin stays inside, though the fill still leaves room for
+    /// it, only when the authored minimum gives the height above the content.
     pub(crate) fn height(
         &self,
         content: f32,
         leading: CollapsibleMarginSet,
         trailing: CollapsibleMarginSet,
-    ) -> f32 {
+    ) -> (f32, bool) {
         let clamp = |height: f32| height.min(self.maximum).max(self.minimum).max(self.edges);
         let top = leading.collapse_with_margin(self.margin_top).resolve();
         let bottom = trailing.collapse_with_margin(self.margin_bottom).resolve();
-        clamp(content).max(clamp(self.room - top - bottom))
+        let height = clamp(content).max(clamp(self.room - top - bottom));
+        let separates = self.minimum > 0.0 && self.minimum > content && self.minimum >= height;
+        (height, separates)
     }
 }
 

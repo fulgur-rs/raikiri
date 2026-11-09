@@ -535,3 +535,27 @@ fn collapsed_margins_follow_block_layout() {
         "p0: b=(0, 40, 800, 300) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
     );
 }
+
+#[test]
+fn a_minimum_body_height_keeps_the_last_margin_only_when_it_gives_the_height() {
+    // The fill leaves room for the last child's margin; a smaller minimum
+    // changes nothing, whether the body holds lines or only blocks.
+    let child = "<div id=c style='height:10px;margin-bottom:40px'></div>";
+    for (text, top) in [("", 0), ("x", 10)] {
+        assert_eq!(
+            quirks(
+                "body{margin:0;min-height:300px}",
+                &format!(">{text}{child}")
+            ),
+            format!("p0: b=(0, 0, 800, 560) c=(0, {top}, 800, 10) h=(0, 0, 800, 600)")
+        );
+        // A larger one gives the height.
+        assert_eq!(
+            quirks(
+                "body{margin:0;min-height:580px}",
+                &format!(">{text}{child}")
+            ),
+            format!("p0: b=(0, 0, 800, 580) c=(0, {top}, 800, 10) h=(0, 0, 800, 600)")
+        );
+    }
+}
