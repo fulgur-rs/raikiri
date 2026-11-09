@@ -156,3 +156,35 @@ fn a_float_after_the_line_end_that_does_not_fit_goes_to_the_next_line() {
     );
     assert_eq!(floats, [(0.0, 30.0)]);
 }
+
+#[test]
+fn a_float_after_the_line_end_keeps_the_rules_of_the_floats_it_follows() {
+    // One that clears a float beside the line goes to the next line.
+    let (floats, _) = lay_out(&[
+        Err(FLOAT_20),
+        Ok("z z "),
+        Err("float:left;width:20px;height:20px;clear:left"),
+        Ok("z z z z"),
+    ]);
+    assert_eq!(floats, [(0.0, 0.0), (0.0, 30.0)]);
+    // One after a float placed below the line does not go above it.
+    let (floats, _) = lay_out(&[
+        Err("float:left;width:60px;height:20px"),
+        Err("float:left;width:60px;height:20px"),
+        Ok("z "),
+        Err(FLOAT_20),
+        Ok("z z z z"),
+    ]);
+    assert_eq!(floats, [(0.0, 0.0), (0.0, 20.0), (60.0, 30.0)]);
+}
+
+#[test]
+fn a_float_after_the_line_end_counts_the_indent_and_direction() {
+    // A 20px indent leaves the float its room; a 30px one does not.
+    for (css, top) in [("text-indent:20px", 0.0), ("text-indent:30px", 30.0)] {
+        let (floats, _) = lay_out_in(css, &[Ok("z z "), Err(FLOAT_20), Ok("z z z z")]);
+        assert_eq!(floats, [(0.0, top)], "{css}");
+    }
+    let (floats, _) = lay_out_in("direction:rtl", &[Ok("z z "), Err(FLOAT_20), Ok("z z z z")]);
+    assert_eq!(floats, [(0.0, 0.0)]);
+}
