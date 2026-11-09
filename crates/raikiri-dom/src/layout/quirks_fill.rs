@@ -13,6 +13,7 @@
 //! A box with a vertical writing mode, or with a sizing keyword for its
 //! `min-height` or `max-height`, keeps its usual height here.
 
+use crate::NodeFlags;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{LayoutInput, SizingMode};
 use raikiri_layout_geometry::MaybeMath;
@@ -51,35 +52,36 @@ fn fill_root_and_body(
 ) -> Option<()> {
     let root = super::initial_containing_block::root_element(doc)?;
     let root_content = match fill(doc, cascade, root, true, page_width, page_height) {
-        Some(filled) => {
+        Some(content_height) => {
             doc.quirks_percentage_height_bases
-                .push((root, filled.content_height));
-            filled.content_height
+                .push((root, content_height));
+            content_height
         }
         None => stated_content_height(&cascade.computed[root], page_width, page_height)?,
     };
     // Only a body that is a child of the root element fills it.
     (doc.nodes[body].parent == Some(root)).then_some(())?;
-    // The body's margins and padding resolve against the root element's
-    // content box, which the root's own inline edges narrow.
-    let body_basis = (page_width - inline_edges(&cascade.computed[root], page_width)).max(0.0);
-    let filled = fill(doc, cascade, body, false, body_basis, root_content)?;
+    // The body's margins and padding resolve against the width of the root
+    // element's content box.
+    let body_basis = content_width(&cascade.computed[root], page_width);
+    let body_content = fill(doc, cascade, body, false, body_basis, root_content)?;
     doc.quirks_percentage_height_bases
-        .push((body, filled.content_height));
+        .push((body, body_content));
     Some(())
 }
 
-/// `inputs` for box `idx` with the height a `stretch` height fills when the
-/// box is a child of a filled root element or body: the filled content box,
-/// less the margins that do not collapse through the parent
-/// (CSS Sizing 4 §3.1). Chromium takes that height as definite for the
-/// child, whatever the parent's content makes of the parent itself.
-pub(super) fn with_stretch_height(
+/// `inputs` for box `idx` when it is an in-flow child of a filled root
+/// element or body: the filled content box is the height its percentages
+/// resolve against, and a `stretch` height fills it, less the margins that
+/// do not collapse through the parent (CSS Sizing 4 §3.1). Chromium takes
+/// that height as definite for the child, whatever the parent's content
+/// makes of the parent itself.
+pub(super) fn with_filled_parent(
     tree: &LayoutSession<'_>,
     idx: usize,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
-    if inputs.known_dimensions.height.is_some() || inputs.sizing_mode != SizingMode::InherentSize {
+    if tree.quirks_percentage_height_bases.is_empty() {
         return inputs;
     }
     let Some(parent) = tree.nodes[idx].parent else {
@@ -93,7 +95,16 @@ pub(super) fn with_stretch_height(
         return inputs;
     };
     let style = tree.physical_style(idx);
-    if !matches!(style.size().height.expand(), ExpandedDimension::Stretch) {
+    // An absolutely positioned box takes its sizes from its containing
+    // block instead.
+    if style.position().is_out_of_flow() {
+        return inputs;
+    }
+    inputs.parent_size.height = Some(room);
+    if inputs.known_dimensions.height.is_some()
+        || inputs.sizing_mode != SizingMode::InherentSize
+        || !matches!(style.size().height.expand(), ExpandedDimension::Stretch)
+    {
         return inputs;
     }
     let basis = inputs.parent_size.width;
@@ -101,11 +112,20 @@ pub(super) fn with_stretch_height(
     let parent_style = tree.physical_style(parent);
     let parent_edges = parent_style.padding().resolve_or_zero(basis)
         + parent_style.border().resolve_or_zero(basis);
-    // A block-level child's margin collapses through a side of the parent
-    // that has no padding or border, and fills nothing there.
-    let block_level = !tree.nodes[idx].display().is_inline_level();
+    // An in-flow block-level child's margin collapses through a side of a
+    // parent that has no padding or border there, and fills nothing there.
+    // The root element, a scroll container and a parent that lays out no
+    // block flow of its own keep their children's margins inside.
+    let parent_node = &tree.nodes[parent];
+    let collapses_through = !parent_node.flags.contains(NodeFlags::IS_ROOT_ELEMENT)
+        && parent_node.display() == DisplayValue::Block
+        && !parent_node.roots_block_context()
+        && !parent_style.overflow().x.is_scroll_container()
+        && !parent_style.overflow().y.is_scroll_container()
+        && !tree.nodes[idx].display().is_inline_level()
+        && !style.float().is_floated();
     let kept = |margin: f32, parent_edge: f32| {
-        if block_level && parent_edge == 0.0 {
+        if collapses_through && parent_edge == 0.0 {
             0.0
         } else {
             margin
@@ -128,14 +148,9 @@ pub(super) fn with_stretch_height(
     inputs
 }
 
-/// The height a filled box takes.
-struct Filled {
-    /// The content-box height its children resolve percentages against.
-    content_height: f32,
-}
-
 /// Give `idx` the `min-height` that fills `room`, the content-box height of
-/// the box around it, when the quirk applies to it. `basis` is the width its
+/// the box around it, when the quirk applies to it, and return the
+/// content-box height its children resolve percentages against. `basis` is the width its
 /// margins and padding resolve against; a percentage `min-height` or
 /// `max-height` resolves against `room`.
 fn fill(
@@ -145,7 +160,7 @@ fn fill(
     is_root: bool,
     basis: f32,
     room: f32,
-) -> Option<Filled> {
+) -> Option<f32> {
     let cv = &cascade.computed[idx];
     if !fills(cv, is_root) || doc.nodes[idx].used_writing_mode.is_vertical() {
         return None;
@@ -178,29 +193,54 @@ fn fill(
     } else {
         used
     };
-    Some(Filled { content_height })
+    Some(content_height)
 }
 
 /// Whether the quirk applies to a root element or body with these values: an
-/// in-flow block-level box with an `auto` height. The root element is
-/// block-level whatever its `display` (CSS Display 3 §2.7).
+/// in-flow block-level box with an `auto` height. The root element is a
+/// block box whatever its `display` other than `none` (CSS Display 3 §2.7,
+/// §2.5).
 fn fills(cv: &ComputedValues, is_root: bool) -> bool {
     cv.height == ComputedLengthPercentageOrAuto::Auto
         && matches!(cv.position, PositionValue::Static | PositionValue::Relative)
         && matches!(cv.float, FloatValue::None)
         && (is_root || !cv.display.is_inline_level())
-        && !matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+        && cv.display != DisplayValue::None
+        && (is_root || cv.display != DisplayValue::Contents)
 }
 
 /// The content-box height of a root element that states its height, which
-/// the body then fills. A percentage resolves against the page area.
+/// the body then fills. Percentages resolve against the page area.
 fn stated_content_height(cv: &ComputedValues, basis: f32, page_height: f32) -> Option<f32> {
     let height = length(&cv.height, page_height)?;
+    let minimum = limit(&cv.min_height, page_height)?.unwrap_or(0.0);
+    let maximum = limit(&cv.max_height, page_height)?.unwrap_or(f32::INFINITY);
+    let height = height.min(maximum).max(minimum);
     Some(if cv.box_sizing == BoxSizing::BorderBox {
         (height - block_edges(cv, basis)).max(0.0)
     } else {
         height.max(0.0)
     })
+}
+
+/// The width of the content box of a root element in a page area
+/// `page_width` wide.
+fn content_width(cv: &ComputedValues, page_width: f32) -> f32 {
+    let edges = cv.padding.left.resolve(page_width)
+        + cv.padding.right.resolve(page_width)
+        + cv.border.left.width().px()
+        + cv.border.right.width().px();
+    let width = match length(&cv.width, page_width) {
+        Some(width) if cv.box_sizing == BoxSizing::BorderBox => width - edges,
+        Some(width) => width,
+        None => {
+            page_width
+                - margin(&cv.margin.left, page_width)
+                - margin(&cv.margin.right, page_width)
+                - edges
+        }
+    };
+    width.max(0.0)
 }
 
 /// A `min-height` or `max-height` against `basis`: `Some(None)` for `auto`
@@ -212,16 +252,17 @@ fn limit(value: &ComputedLengthPercentageOrAuto, basis: f32) -> Option<Option<f3
     }
 }
 
-/// A length, percentage or `calc()` against `basis`; `None` for `auto` and
-/// the sizing keywords.
+/// A length, percentage or `calc()` against `basis`; `None` for `auto`, the
+/// sizing keywords and a value that is not finite.
 fn length(value: &ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
-    match value {
+    let length = match value {
         ComputedLengthPercentageOrAuto::Px(px) => Some(*px),
         ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * percent / 100.0),
         ComputedLengthPercentageOrAuto::Calc(calc) => Some(calc.px + basis * calc.percent / 100.0),
         ComputedLengthPercentageOrAuto::Math(math) => Some(math.resolve(basis)),
         _ => None,
-    }
+    };
+    length.filter(|length| length.is_finite())
 }
 
 /// A margin against `basis`; `auto` is zero.
@@ -235,16 +276,6 @@ fn block_edges(cv: &ComputedValues, basis: f32) -> f32 {
         + cv.padding.bottom.resolve(basis)
         + cv.border.top.width().px()
         + cv.border.bottom.width().px()
-}
-
-/// The left and right margin, padding and border.
-fn inline_edges(cv: &ComputedValues, basis: f32) -> f32 {
-    margin(&cv.margin.left, basis)
-        + margin(&cv.margin.right, basis)
-        + cv.padding.left.resolve(basis)
-        + cv.padding.right.resolve(basis)
-        + cv.border.left.width().px()
-        + cv.border.right.width().px()
 }
 
 #[cfg(test)]

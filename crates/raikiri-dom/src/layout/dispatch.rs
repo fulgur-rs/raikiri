@@ -946,18 +946,17 @@ impl LayoutSession<'_> {
         if let Some(height) = self.table_cell_replaced_height_basis(idx) {
             inputs.parent_size.height = Some(height);
         }
+        inputs = super::quirks_fill::with_filled_parent(self, idx, inputs);
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
                 .context
                 .content_limit_percentage_height_bases
                 .iter()
                 .rev()
-                .chain(&self.quirks_percentage_height_bases)
                 .find(|(ancestor, _)| *ancestor == parent)
         {
             inputs.parent_size.height = Some(*height);
         }
-        let inputs = super::quirks_fill::with_stretch_height(self, idx, inputs);
         // A box that does not share its parent's block context is not part of
         // the parent's `text-group-align` group.
         let keeps_group = std::mem::take(&mut self.context.keep_text_group);

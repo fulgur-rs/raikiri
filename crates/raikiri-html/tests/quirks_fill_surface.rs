@@ -216,10 +216,13 @@ fn minimum_and_maximum_heights_clamp_the_fill() {
 
 #[test]
 fn the_root_element_fills_whatever_its_display() {
-    assert_eq!(
-        quirks("html{display:inline}body{margin:0}", HALF),
-        "p0: b=(0, 0, 800, 600) c=(0, 0, 800, 300) h=(0, 0, 800, 600)"
-    );
+    for display in ["inline", "contents"] {
+        assert_eq!(
+            quirks(&format!("html{{display:{display}}}body{{margin:0}}"), HALF),
+            "p0: b=(0, 0, 800, 600) c=(0, 0, 800, 300) h=(0, 0, 800, 600)",
+            "{display}"
+        );
+    }
 }
 
 #[test]
@@ -244,5 +247,75 @@ fn a_vertical_root_keeps_its_usual_size() {
     assert_eq!(
         quirks("html{writing-mode:vertical-rl}body{margin:0}", HALF),
         "p0: b=(800, 0, 0, 600) c=(800, 0, 0, 300) h=(800, 0, 0, 600)"
+    );
+}
+
+#[test]
+fn stretch_keeps_margins_that_cannot_collapse_through_the_parent() {
+    // The root element keeps its children's margins inside.
+    assert_eq!(
+        quirks("body{height:stretch}", HALF),
+        "p0: b=(8, 8, 784, 584) c=(8, 8, 784, 292) h=(0, 0, 800, 600)"
+    );
+    // So do a parent that roots a formatting context and a scroll
+    // container, and a float keeps its own.
+    let child = "><div id=c style='height:stretch;margin:10px 0'></div>";
+    assert_eq!(
+        quirks("body{margin:0;display:flow-root}", child),
+        "p0: b=(0, 0, 800, 600) c=(0, 10, 800, 580) h=(0, 0, 800, 600)"
+    );
+    assert_eq!(
+        quirks("body{margin:0;overflow:hidden}html{overflow:hidden}", child),
+        "p0: b=(0, 0, 800, 600) c=(0, 10, 800, 580) h=(0, 0, 800, 600)"
+    );
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div id=c style='float:left;height:stretch;margin:10px;width:10px'></div>"
+        ),
+        "p0: b=(0, 0, 800, 600) c=(10, 10, 10, 580) h=(0, 0, 800, 600)"
+    );
+}
+
+#[test]
+fn absolutely_positioned_children_size_against_their_containing_block() {
+    assert_eq!(
+        quirks(
+            "",
+            "><div id=c style='position:absolute;height:stretch;width:10px'></div>\
+             <div id=d style='position:absolute;height:50%;width:10px'></div>"
+        ),
+        "p0: b=(8, 8, 784, 584) c=(8, 8, 10, 592) d=(8, 8, 10, 300) h=(0, 0, 800, 600)"
+    );
+}
+
+#[test]
+fn body_margins_resolve_against_the_root_width() {
+    assert_eq!(
+        quirks("html{width:400px}body{margin:5% 0}", HALF),
+        "p0: b=(0, 20, 400, 560) c=(0, 20, 400, 280) h=(0, 0, 400, 600)"
+    );
+    assert_eq!(
+        quirks("html{margin-left:10%;width:300px}body{margin:10%}", HALF),
+        "p0: b=(110, 30, 240, 540) c=(110, 30, 240, 270) h=(80, 0, 300, 600)"
+    );
+    assert_eq!(
+        quirks(
+            "html{width:50%;box-sizing:border-box;padding:0 20px}body{margin:10% 0}",
+            HALF
+        ),
+        "p0: b=(20, 36, 360, 528) c=(20, 36, 360, 264) h=(0, 0, 400, 600)"
+    );
+}
+
+#[test]
+fn the_body_fills_the_clamped_root_height() {
+    assert_eq!(
+        quirks("html{height:300px;max-height:100px}body{margin:0}", HALF),
+        "p0: b=(0, 0, 800, 100) c=(0, 0, 800, 50) h=(0, 0, 800, 100)"
+    );
+    assert_eq!(
+        quirks("html{height:300px;min-height:400px}body{margin:0}", HALF),
+        "p0: b=(0, 0, 800, 400) c=(0, 0, 800, 200) h=(0, 0, 800, 400)"
     );
 }
