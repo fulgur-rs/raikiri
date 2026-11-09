@@ -2304,15 +2304,24 @@ fn a_transition_hint_between_equal_colors_adds_no_stops() {
         })
         .collect();
     assert_eq!(
-        gradient::fixed_up_stops(&raw, &conic.interpolation).len(),
+        gradient::fixed_up_stops(&raw, &conic.interpolation).0.len(),
         3
     );
 }
 
+/// The pixels at `x` of two one-row 200 px layers are within `slack` levels.
+fn assert_same_pixel(a: &[u8], ax: u32, b: &[u8], bx: u32, slack: u8) {
+    let (left, right) = (pixel(a, 200, ax, 0), pixel(b, 200, bx, 0));
+    for channel in 0..3 {
+        assert!(
+            left[channel].abs_diff(right[channel]) <= slack,
+            "{left:?} at {ax} vs {right:?} at {bx}"
+        );
+    }
+}
+
 #[test]
-fn a_transition_hint_is_left_out_under_longer_hue() {
-    // Joining the samples of the curve with ramps would send each of them
-    // round the hue wheel the long way, so the plain ramp is drawn instead.
+fn a_transition_hint_follows_the_long_hue_arc() {
     let hinted = raster_layer(
         "background-image: linear-gradient(to right in oklch longer hue, #e53935, 25%, #1e88e5)",
         200,
@@ -2323,7 +2332,145 @@ fn a_transition_hint_is_left_out_under_longer_hue() {
         200,
         1,
     );
-    assert_eq!(hinted, plain);
+    // The hint position, a quarter of the way along, holds the plain ramp's
+    // middle, which lies on the long arc, and the curve moves on from there.
+    assert_same_pixel(&hinted, 50, &plain, 100, 4);
+    assert_ne!(pixel(&hinted, 200, 150, 0), pixel(&plain, 200, 150, 0));
+    // Each sample of the curve stays near its neighbor: no ramp between two
+    // of them goes round the hue wheel the other way.
+    for x in 1..200 {
+        let (left, right) = (pixel(&hinted, 200, x - 1, 0), pixel(&hinted, 200, x, 0));
+        for channel in 0..3 {
+            assert!(
+                left[channel].abs_diff(right[channel]) <= 24,
+                "{left:?} next to {right:?} at {x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_transition_hint_keeps_the_long_arc_of_the_other_segments() {
+    // The segment without a hint keeps its long arc, and two equal colors
+    // still turn once round, beside a hinted segment.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red, blue 50%, 90%, lime)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red, blue 50%, lime)",
+        200,
+        1,
+    );
+    for x in [10, 30, 50, 70, 90] {
+        assert_same_pixel(&hinted, x, &plain, x, 4);
+    }
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red, red 50%, 75%, blue)",
+        200,
+        1,
+    );
+    let turn = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red, red)",
+        200,
+        1,
+    );
+    for x in [20, 40, 60, 80] {
+        assert_same_pixel(&hinted, x, &turn, 2 * x, 4);
+    }
+}
+
+#[test]
+fn a_transition_hint_keeps_the_long_arc_to_an_achromatic_stop() {
+    // White takes the hue Chromium gives it before the long arc to it is
+    // cut, so a hint elsewhere leaves that arc as it is.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, lch(50% 100 40), white 50%, 75%, blue)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, lch(50% 100 40), white 50%, blue)",
+        200,
+        1,
+    );
+    for x in [10, 30, 50, 70, 90] {
+        assert_same_pixel(&hinted, x, &plain, x, 4);
+    }
+}
+
+#[test]
+fn a_transition_hint_bends_the_turn_between_equal_colors() {
+    // Under `longer hue` the ramp between two equal colors turns once round,
+    // and the hint takes the middle of that turn.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, red, 25%, red)",
+        200,
+        1,
+    );
+    let turn = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, red, red)",
+        200,
+        1,
+    );
+    assert_same_pixel(&hinted, 50, &turn, 100, 4);
+}
+
+#[test]
+fn a_transition_hint_under_longer_hue_keeps_hard_transitions() {
+    // Coincident stops stay a hard transition, and a hint at a stop holds
+    // one color up to the other.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, red 50%, blue 50%, 75%, lime)",
+        200,
+        1,
+    );
+    assert_red_near(&rgba, 200, 98, 255.0, 2.0);
+    assert!(
+        pixel(&rgba, 200, 102, 0)[2] > 200,
+        "{:?}",
+        pixel(&rgba, 200, 102, 0)
+    );
+    let step = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, red, 0%, blue)",
+        200,
+        1,
+    );
+    assert_eq!(pixel(&step, 200, 10, 0), pixel(&step, 200, 190, 0));
+}
+
+#[test]
+fn conic_and_radial_hints_follow_the_long_hue_arc() {
+    let hinted = raster_conic(
+        "background-image: conic-gradient(in oklch longer hue, #e53935, 25%, #1e88e5)",
+        200,
+        200,
+    );
+    let plain = raster_conic(
+        "background-image: conic-gradient(in oklch longer hue, #e53935, #1e88e5)",
+        200,
+        200,
+    );
+    // A quarter turn on the hinted sweep shows the plain sweep's half turn.
+    let (at_hint, at_middle) = (pixel(&hinted, 200, 180, 100), pixel(&plain, 200, 100, 180));
+    for channel in 0..3 {
+        assert!(
+            at_hint[channel].abs_diff(at_middle[channel]) <= 6,
+            "{at_hint:?} vs {at_middle:?}"
+        );
+    }
+    let hinted = raster_layer(
+        "background-image: radial-gradient(circle 200px at left in oklch longer hue, #e53935, 25%, #1e88e5)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: radial-gradient(circle 200px at left in oklch longer hue, #e53935, #1e88e5)",
+        200,
+        1,
+    );
+    assert_same_pixel(&hinted, 50, &plain, 100, 4);
 }
 
 /// Pixels of a 200x200 conic gradient a little way in from the middle of each
@@ -3094,7 +3241,7 @@ fn a_missing_component_of_a_polar_stop_comes_from_the_neighbor_on_each_side() {
         color,
     });
     let stops = gradient::try_polar_resolved_stops(
-        gradient::fixed_up_stops(&raw, &linear.interpolation),
+        gradient::fixed_up_stops(&raw, &linear.interpolation).0,
         &linear.interpolation,
         None,
     )

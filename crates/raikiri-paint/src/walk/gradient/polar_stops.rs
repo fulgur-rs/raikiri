@@ -129,6 +129,26 @@ pub(super) fn chromium_polar_stops(
     if !matches!(space, ColorSpaceTag::Lch | ColorSpaceTag::Oklch) || stops.len() < 2 {
         return Some(stops);
     }
+    let sides = chromium_polar_sides(&stops, space, budget)?;
+    let mut out = stop_vector(stops.len(), budget)?;
+    for ((offset, _), [before, after]) in stops.iter().zip(sides) {
+        push_stop(&mut out, (*offset, before), budget)?;
+        if after != before {
+            push_stop(&mut out, (*offset, after), budget)?;
+        }
+    }
+    Some(out)
+}
+
+/// The color each stop of a gradient interpolated in `lch` or `oklch` takes
+/// toward its previous and its next neighbor, as Chromium resolves its hue
+/// (see the module comment). The first and the last stop take the color of
+/// their one side on both. `stops` holds at least two.
+pub(super) fn chromium_polar_sides(
+    stops: &[(f64, DynamicColor)],
+    space: ColorSpaceTag,
+    budget: Option<&ConicBudget<'_>>,
+) -> Option<Vec<[DynamicColor; 2]>> {
     let polar = Polar::of(space);
     if let Some(budget) = budget {
         budget.charge::<BlinkStop>(stops.len())?;
@@ -152,7 +172,7 @@ pub(super) fn chromium_polar_stops(
         })
         .collect();
     let mut out = stop_vector(stops.len(), budget)?;
-    for (i, (offset, color)) in stops.iter().enumerate() {
+    for (i, (_, color)) in stops.iter().enumerate() {
         // Skia takes a powerless hue from the color next to it in its own
         // list: the neighbor's side that faces this stop.
         let resolved = [0, 1].map(|side| {
@@ -173,17 +193,15 @@ pub(super) fn chromium_polar_stops(
                 .iter()
                 .flatten()
                 .all(|side| hue_distance(side.components[2], own.components[2]) < SAME_HUE_DEGREES);
-        if keeps_own {
-            push_stop(&mut out, (*offset, *color), budget)?;
-            continue;
-        }
-        // Every stop has a neighbor, so it has at least one side. The side
-        // after it is a second stop only where it differs.
+        // Every stop has a neighbor, so it has at least one side, which an
+        // end stop takes on both.
         let [before, after] = resolved;
-        let after = after.filter(|after| before.is_none_or(|before| before != *after));
-        for side in [before, after].into_iter().flatten() {
-            push_stop(&mut out, (*offset, side), budget)?;
-        }
+        let pair = if keeps_own {
+            [*color, *color]
+        } else {
+            [before.or(after), after.or(before)].map(|side| side.unwrap_or(*color))
+        };
+        push_stop(&mut out, pair, budget)?;
     }
     Some(out)
 }

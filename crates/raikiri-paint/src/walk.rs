@@ -4257,16 +4257,17 @@ fn try_conic_to_peniko(
             color: gradient_stop_dynamic(stop.color, current_color),
         });
     }
-    let mut fixed = gradient::try_fixed_up_stops(&raw, &conic.interpolation, Some(budget))?;
+    let (mut fixed, interpolation) =
+        gradient::try_fixed_up_stops(&raw, &conic.interpolation, Some(budget))?;
     if conic.repeating {
-        match gradient::try_repeat_over_turn(fixed, &conic.interpolation, budget)? {
+        match gradient::try_repeat_over_turn(fixed, &interpolation, budget)? {
             gradient::RepeatedTurn::Solid(color) => {
                 return Some(gradient::GradientFill::Solid(color));
             }
             gradient::RepeatedTurn::Stops(stops) => fixed = stops,
         }
     } else {
-        fixed = gradient::try_polar_resolved_stops(fixed, &conic.interpolation, Some(budget))?;
+        fixed = gradient::try_polar_resolved_stops(fixed, &interpolation, Some(budget))?;
     }
     let mut peniko_stops = budget.vector(fixed.len())?;
     for (offset, color) in fixed {
@@ -4285,8 +4286,8 @@ fn try_conic_to_peniko(
     // clamp the wrapped slice to the last stop and paint the starting
     // quadrant with the wrong color, so always repeat for the wrap.
     let extend = PenikoExtend::Repeat;
-    let space = conic_interpolation_tag(conic.interpolation.color_space);
-    let direction = conic_hue_direction(conic.interpolation.hue_method);
+    let space = conic_interpolation_tag(interpolation.color_space);
+    let direction = conic_hue_direction(interpolation.hue_method);
     let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle).with_extend(extend);
     // A renderer clips each stop to the sRGB gamut before interpolating, so
     // a sweep with a stop outside it gets clipped sRGB stops sampled from
