@@ -930,6 +930,10 @@ const ROWS_BESIDE_OTHERS: &[Row] = &[
         r#"<div style="display:flex"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="padding-bottom:30px;width:50px"><div style="height:50px">T</div></div></div><div style="height:10px">Z</div>"#,
         &[(0, 0), (1, 30)],
     ),
+    (
+        r#"<div style="display:flex;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;position:relative;top:120px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20), (1, 30)],
+    ),
 ];
 
 /// Boxes that hold no box of their own, after a spacer of 80px on pages 100px

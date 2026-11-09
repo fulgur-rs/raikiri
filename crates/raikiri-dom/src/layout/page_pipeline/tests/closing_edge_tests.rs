@@ -4210,6 +4210,21 @@ fn edges_on_a_later_grid_row_leave_the_rows_above_it_unstretched() {
 }
 
 #[test]
+fn an_empty_item_stretched_beside_a_grown_one_stretches_at_the_end_of_the_document() {
+    // The flex container is the last box of the document, so the flow never
+    // leaves it; the empty item beside the grown one still stretches to the
+    // 130px of its line, as Chromium paints it.
+    let mut second = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let flex = block(doc, body, "display:flex");
+        let first = block(doc, flex, "display:block;width:50px;padding-bottom:30px");
+        block(doc, first, "display:block;height:80px");
+        second = block(doc, flex, "display:block;width:50px");
+    });
+    assert_eq!(doc.nodes[second].layout.size.height, 130.0);
+}
+
+#[test]
 fn a_final_avoided_row_group_moves_whole_with_closing_edges() {
     let (ys, height) = card_with_edges(30, |doc, card| {
         let table = block(doc, card, "display:table;border-spacing:0");

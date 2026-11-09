@@ -4435,6 +4435,7 @@ fn paginate_flow(
         if !halted {
             break_before_edges(&mut state, document, &env, &mut edges_breaks, done)?;
         }
+        state.subtree_shifts.finish_rows(document);
         Ok(())
     })();
     document.finish_normal_block_shifts();
@@ -10981,8 +10982,9 @@ struct BesideGrowth {
     /// The items that begin below the grown one, on later rows or lines.
     later: HashSet<usize>,
     /// The items on the grown one's row or line, with whether each stretches
-    /// to the height of the row.
-    row: Vec<(usize, bool)>,
+    /// to the height of the row and the relative offset that layout applied
+    /// to it.
+    row: Vec<(usize, bool, f32)>,
     /// How far the end of the grown item's row or line moved.
     later_shift: f32,
     /// The later item the flow is in, which carries `later_shift`.
@@ -11131,6 +11133,16 @@ impl SubtreeShifts {
     }
 }
 
+impl SubtreeShifts {
+    /// Stretches the rows of the containers the flow has not left when it
+    /// ends, as leaving them would (see [`stretch_row_items`]).
+    fn finish_rows(&mut self, document: &mut super::context::LayoutSession<'_>) {
+        for beside in self.beside.drain(..) {
+            stretch_row_items(document, beside.container, &beside.row);
+        }
+    }
+}
+
 /// The item of the flex or grid `container` that holds `node_id`, which the
 /// container lays out, through any `display: contents` boxes.
 fn item_of(document: &Document, container: usize, node_id: usize) -> Option<usize> {
@@ -11168,9 +11180,17 @@ fn grow_container_beside_item(
     (flow_page, page): (u32, u32),
 ) {
     let mut later = HashSet::default();
+    // Rows are found and measured in normal flow: a relative offset only moves
+    // the paint of an item.
+    let offset = |document: &super::context::LayoutSession<'_>, id| {
+        layout_relative_offset_y(document, cascade, body_id, id)
+    };
+    let item_offset = offset(document, item);
+    let (before, after) = (before - item_offset, after - item_offset);
     let mut row = vec![(
         item,
         stretches_across_row(document, cascade, container, item),
+        item_offset,
     )];
     let mut row_end = before;
     let mut later_end = f32::NEG_INFINITY;
@@ -11178,7 +11198,8 @@ fn grow_container_beside_item(
     // above it are on earlier rows or lines, which the growth leaves alone.
     let item_top =
         pagination_child_parent_y(document, container, item, document.pagination_local_y(item))
-            - document.nodes[item].layout.margin.top;
+            - document.nodes[item].layout.margin.top
+            - item_offset;
     for child in document.children_through_contents(container) {
         let node = &document.nodes[child];
         let blank_text =
@@ -11190,13 +11211,14 @@ fn grow_container_beside_item(
         {
             continue;
         }
+        let child_offset = offset(document, child);
         let top = pagination_child_parent_y(
             document,
             container,
             child,
             document.pagination_local_y(child),
-        );
-        let bottom = item_bottom_in(document, container, child);
+        ) - child_offset;
+        let bottom = item_bottom_in(document, container, child) - child_offset;
         // A margin above an item on the same row or line can take it below
         // the end of the grown item; its margin box still starts on the row.
         if top - node.layout.margin.top >= before - 0.001 {
@@ -11207,6 +11229,7 @@ fn grow_container_beside_item(
             row.push((
                 child,
                 stretches_across_row(document, cascade, container, child),
+                child_offset,
             ));
         }
     }
@@ -11266,15 +11289,15 @@ fn grow_container_beside_item(
 fn stretch_row_items(
     document: &mut super::context::LayoutSession<'_>,
     container: usize,
-    row: &[(usize, bool)],
+    row: &[(usize, bool, f32)],
 ) {
     let end = row
         .iter()
-        .map(|&(child, _)| item_bottom_in(document, container, child))
+        .map(|&(child, _, offset)| item_bottom_in(document, container, child) - offset)
         .fold(f32::NEG_INFINITY, f32::max);
-    for &(child, stretches) in row {
+    for &(child, stretches, offset) in row {
         let layout = document.nodes[child].layout;
-        let room = end - item_bottom_in(document, container, child);
+        let room = end - (item_bottom_in(document, container, child) - offset);
         if !stretches || room <= 0.001 {
             continue;
         }
