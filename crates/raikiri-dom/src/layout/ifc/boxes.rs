@@ -810,6 +810,10 @@ fn run_boxes_segment(
     let mut earliest_float_top = f32::INFINITY;
     let mut cursor: Option<FloatCursor> = None;
     let mut first_late: Option<FloatCursor> = None;
+    let has_floats = root
+        .boxes
+        .iter()
+        .any(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Float);
     let mut y = 0.0_f32;
     let mut lines: Vec<shodo::Line> = Vec::new();
     let mut tentative: Vec<TentativeFloat> = Vec::new();
@@ -1039,7 +1043,49 @@ fn run_boxes_segment(
                     .iter()
                     .rev()
                     .find(|(node, _)| tentative.iter().any(|f| f.node == node.0 as usize));
-                if let Some(&(node, earlier)) = displaced {
+                // The first float after `through` when nothing but floats
+                // comes before it on the next line: Chromium places such a
+                // float on this line when the line's content leaves room for
+                // it, the spaces before it hanging at the end of the line.
+                let content =
+                    line.inline_size() + line_indent(&line_options, first_line, after_forced);
+                let after_break = |tree: &mut LayoutSession<'_>, through: Option<FloatCursor>| {
+                    if line.break_reason() == shodo::BreakReason::Forced {
+                        return None;
+                    }
+                    let next = with_state(tree, |state| {
+                        root.line_paragraph.next_line(
+                            &mut state.layout_cx,
+                            line.break_token(),
+                            &line_options,
+                            &LineConstraint {
+                                floats_placed_through: through,
+                                ..constraint
+                            },
+                            &atomics.sizes,
+                        )
+                    });
+                    match next {
+                        Some(LineResult::FloatEncountered {
+                            node,
+                            inline_position,
+                            float_cursor,
+                            ..
+                        }) if inline_position
+                            <= line_indent(&line_options, false, false) + 0.01 =>
+                        {
+                            Some((node.0 as usize, float_cursor))
+                        }
+                        _ => None,
+                    }
+                };
+                // A displaced float that comes right after the break stays.
+                let stays = displaced.is_some_and(|&(node, earlier)| {
+                    content <= space.inline_size + 0.01
+                        && after_break(tree, earlier.before())
+                            .is_some_and(|(met, _)| met == node.0 as usize)
+                });
+                if let Some(&(node, earlier)) = displaced.filter(|_| !stays) {
                     let node = node.0 as usize;
                     tentative.retain(|f| f.node != node);
                     withdrawn.push(node);
@@ -1074,6 +1120,27 @@ fn run_boxes_segment(
                     assumed_height = height;
                     retries += 1;
                     continue;
+                }
+                // A float that the line broke before without meeting it
+                // joins the line where it fits beside the line's content.
+                if has_floats
+                    && deferred.is_empty()
+                    && let Some((node, float_cursor)) = after_break(tree, cursor)
+                    && !withdrawn.contains(&node)
+                {
+                    let mut float = measure_float(tree, node, geometry);
+                    let clears = tentative.iter().any(|f| clears(float.clear, f.direction))
+                        || ctx
+                            .cleared_threshold(float.clear)
+                            .is_some_and(|bottom| bottom > top_edge + line_y);
+                    if !clears && content + float.margin_box.width <= space.inline_size + 0.01 {
+                        float.late = true;
+                        first_late =
+                            Some(first_late.map_or(float_cursor, |first| first.min(float_cursor)));
+                        cursor = Some(float_cursor);
+                        tentative.push(float);
+                        continue;
+                    }
                 }
                 if !lines.is_empty() // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
                     && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001)
