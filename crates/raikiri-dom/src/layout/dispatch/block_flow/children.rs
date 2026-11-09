@@ -28,6 +28,23 @@ pub(super) struct Flow {
     pub baselines: Baselines,
     pub placed: Vec<NodeId>,
     pub oof_candidates: OofCandidates,
+    /// The rendered legend of a fieldset, which stays over the border when
+    /// `align-content` moves the other children; [`Flow::add_legend`] adds
+    /// its overflow and candidates after that.
+    pub legend: Option<super::legend::PlacedLegend>,
+}
+
+impl Flow {
+    /// Add the overflow and the absolutely positioned descendants of the
+    /// rendered legend, which come first in document order.
+    pub(super) fn add_legend(&mut self) {
+        if let Some(mut legend) = self.legend.take() {
+            self.overflow = self.overflow.union(legend.overflow);
+            let mut rest = self.oof_candidates.take();
+            self.oof_candidates = legend.oof_candidates.take();
+            self.oof_candidates.append(&mut rest);
+        }
+    }
 }
 
 fn measure_in_flow_child(
@@ -57,7 +74,7 @@ fn measure_in_flow_child(
     }
 }
 
-fn place_inline_axis(
+pub(super) fn place_inline_axis(
     style: &Style,
     direction: Direction,
     container_width: f32,
@@ -89,7 +106,7 @@ fn place_inline_axis(
     area_start + offset
 }
 
-fn margins(style: &Style, basis: f32) -> Edges<f32> {
+pub(super) fn margins(style: &Style, basis: f32) -> Edges<f32> {
     style
         .margin
         .map(|edge| edge.resolve(Some(basis)).unwrap_or(0.0))
@@ -246,7 +263,7 @@ pub(super) fn relative(
     }
 }
 
-fn overflow(
+pub(super) fn overflow(
     style: &Style,
     metrics: Metrics,
     output: &LayoutOutput,
@@ -307,7 +324,7 @@ pub(super) fn layout(
         usize::from(node),
     );
     let content_width = (width - metrics.inset.horizontal_axis_sum()).max(0.0);
-    let parent = Size {
+    let mut parent = Size {
         width: Some(content_width),
         height: metrics.percent_height,
     };
@@ -330,8 +347,28 @@ pub(super) fn layout(
         baselines: Baselines::NONE,
         placed: Vec::new(),
         oof_candidates: OofCandidates::new(),
+        legend: None,
     };
     let children: Vec<_> = tree.child_ids(node).collect();
+    // The rendered legend of a fieldset sits over its block-start border, out
+    // of the flow of the other children, which start below it.
+    let legend = super::legend::rendered_legend(tree, node, container);
+    if let Some(legend) = legend {
+        let order = children
+            .iter()
+            .position(|&child| child == legend)
+            .unwrap_or(0);
+        let placed = super::legend::place(
+            tree, node, legend, order, inputs, container, metrics, width, parent,
+        );
+        flow.end += placed.content_offset;
+        // The part of the legend below the border takes room off the height
+        // the percentages of the other children resolve against.
+        parent.height = parent
+            .height
+            .map(|height| (height - placed.content_offset).max(0.0));
+        flow.legend = Some(placed);
+    }
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut pending_has_clearance = false;
     let mut completed_boundary = None;
@@ -342,6 +379,9 @@ pub(super) fn layout(
         ctx.commit_strut();
     }
     for (order, child) in children.into_iter().enumerate() {
+        if Some(child) == legend {
+            continue;
+        }
         let mut style = child_style(tree, child);
         if style.box_generation_mode() == BoxGenerationMode::None {
             if inputs.run_mode == RunMode::PerformLayout {

@@ -286,6 +286,7 @@ fn apply_computed_to_style_in_session_inner(
                 DisplayValue::TableColumn | DisplayValue::TableColumnGroup
             );
         doc.nodes[idx].clips_collapsed_table_span = false;
+        doc.nodes[idx].legend_cutout = None;
         doc.nodes[idx].caption_side = cv.caption_side;
         if !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable) {
             doc.nodes[idx].table_grid_box = None;

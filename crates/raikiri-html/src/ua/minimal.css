@@ -136,9 +136,11 @@ xmp       { display: block; }
  * A fieldset also gets the default margin, padding and border below, and may
  * not shrink below its min-content inline size. The border color is the
  * `ThreeDFace` of the browsers this renderer is checked against; the system
- * color keywords are approximated by black and white here. The placement of
- * the rendered legend over the top border is not implemented yet, so a legend
- * is an ordinary block at the start of the padding box. */
+ * color keywords are approximated by black and white here. Block layout
+ * places the rendered legend over the top border of a fieldset whose other
+ * children are blocks; in a fieldset whose content is a paragraph, or one in
+ * a vertical writing mode, the legend is still an ordinary block at the
+ * start of the padding box. */
 fieldset  {
   display: block;
   margin-inline: 2px;
