@@ -908,19 +908,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// that takes space ends the margin after that block, and a block that
     /// is not a candidate starts one (`bottom`).
     fn follow_sibling(&mut self, node_id: usize, candidate: bool, bottom: Option<f32>) {
-        let Some(parent) = candidate_parent(self.document, node_id) else {
-            return;
-        };
+        // Every box this is asked about is below the root, so it has a parent.
+        let parent = candidate_parent(self.document, node_id);
         let takes_space = !super::takes_no_block_space(self.document, node_id);
-        let pending = if takes_space {
-            self.pending_bottoms.remove(&parent)
-        } else {
-            self.pending_bottoms.get(&parent).copied()
-        };
+        let pending = parent.and_then(|parent| {
+            if takes_space {
+                self.pending_bottoms.remove(&parent)
+            } else {
+                self.pending_bottoms.get(&parent).copied()
+            }
+        });
         if candidate && let Some(pending) = pending {
             self.preceding_bottoms.insert(node_id, pending);
         }
-        if let Some(bottom) = bottom.filter(|_| takes_space) {
+        if let (Some(parent), Some(bottom)) = (parent, bottom.filter(|_| takes_space)) {
             self.pending_bottoms.insert(parent, (node_id, bottom));
         }
     }
