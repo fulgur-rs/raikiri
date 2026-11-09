@@ -403,7 +403,9 @@ fn clipped_paragraph_glyph_tops(
             .map(|clip| clip.rect);
         for run in page.text_runs() {
             let top = run.origin.1 - run.ascent;
-            let glyph = run.text.trim().chars().next().unwrap();
+            let Some(glyph) = run.text.trim().chars().next() else {
+                continue;
+            };
             if glyph == 'X'
                 && !window.is_some_and(|window| {
                     top < window.y + window.height - 0.01 && top + 20.0 > window.y + 0.01

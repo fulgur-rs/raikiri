@@ -2209,13 +2209,12 @@ impl PaginationState {
             .or(blocks.flex_line.map(|(root, _)| (root, true)))
             .or(blocks.column_paragraph.map(|root| (root, true)))
             && self.checked_paragraphs.orphans_widows.insert(block_id)
-            && let Some(line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
+            && let Some(mut line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
             // A clip hides the lines past its edge: they never move, and a
             // page that the box ends on, at or above the edge, has no break
             // inside the box for a line running over it. Chromium keeps no
             // widows once lines run past the clip.
-            let mut line_metrics = line_metrics;
             let mut widows = cascade.computed[block_id].widows;
             if let Some(&edge) = clip_edges.get(&block_id) {
                 let visible = edge - candidate.raw_y;
