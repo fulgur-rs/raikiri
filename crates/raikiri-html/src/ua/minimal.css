@@ -246,12 +246,18 @@ template { display: none; }
  * `dir=auto` works through `:dir()`'s own first-strong resolution
  * (raikiri-style resolves it, same as the `:dir()` selector tests pin) —
  * no separate auto handling here.
- * The accompanying `unicode-bidi: isolate` rules from the same spec section
- * are NOT carried: raikiri-dom has no bidi-isolation layout stage, so the
- * declarations would be cascade dead weight (same "no downstream consumer"
- * rationale as other documented non-goals in this file). */
+ * The same section isolates these elements from the surrounding text:
+ *   bdi, output, [dir] { unicode-bidi: isolate; }
+ *   bdo, bdo[dir] { unicode-bidi: isolate-override; }
+ * They are carried verbatim. The block-level rule of that section
+ * (`address, blockquote, ... { unicode-bidi: isolate; }`) and the
+ * `dir=auto` plaintext rule for form controls and `pre` are left out:
+ * isolation only affects inline content, and those elements are block
+ * boxes or form controls here. */
 [dir]:dir(ltr) { direction: ltr; }
 [dir]:dir(rtl) { direction: rtl; }
+bdi, output, [dir] { unicode-bidi: isolate; }
+bdo, bdo[dir] { unicode-bidi: isolate-override; }
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
