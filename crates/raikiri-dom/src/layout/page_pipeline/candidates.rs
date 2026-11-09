@@ -808,6 +808,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     clip_edges: HashMap<usize, f32>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
+    /// Whether each flex container looked at holds a sole table that
+    /// fragments as block flow does, so that its items are not scanned again
+    /// for each of them.
+    sole_table_holders: HashMap<usize, bool>,
     /// The selected inner tail of each plain block on its column-item path.
     inner_tail_paths: HashMap<usize, usize>,
     has_named_pages: bool,
@@ -843,6 +847,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             clip_edges: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
+            sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             has_named_pages,
             finds_nested_runs: !has_named_pages
@@ -886,6 +891,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// bottom edges of the blocks begin below their content.
     pub(super) fn into_outputs(self) -> (HashMap<usize, f32>, Vec<EdgesBreak>) {
         (self.clip_edges, self.edges_breaks)
+    }
+
+    /// Whether the flex container `id` holds a sole table that fragments as
+    /// block flow does, computed once per container.
+    fn holds_sole_table(&mut self, id: usize) -> bool {
+        let (document, cascade) = (self.document, self.cascade);
+        *self.sole_table_holders.entry(id).or_insert_with(|| {
+            crate::layout::table::headers::sole_flex_table(document, cascade, id).is_some()
+        })
     }
 
     #[inline(never)]
@@ -1091,8 +1105,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document);
                 let is_direct_flex_item = parent_box.is_some_and(|parent| {
                     document.nodes[parent].formatting_context == FormattingContext::Flex
-                        && crate::layout::table::headers::sole_flex_table(document, cascade, parent)
-                            .is_none()
+                        && !self.holds_sole_table(parent)
                 });
                 let own_page_name = if !inline_level
                     && !float_subtree
@@ -1123,9 +1136,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A single-line row flex container holding only a table
                 // fragments it as block flow does, so that its header and
                 // footer repeat on each page.
-                let holds_sole_table = is_flex
-                    && crate::layout::table::headers::sole_flex_table(document, cascade, node_id)
-                        .is_some();
+                let holds_sole_table = is_flex && self.holds_sole_table(node_id);
+                // A table in a single-line column flex container stacks as
+                // a block does, so it fragments as block flow does too.
+                let stacks_tables =
+                    crate::layout::table::headers::stacking_column_flex(document, cascade, node_id);
                 let column_flex = is_flex
                     && matches!(
                         computed.flex_direction,
@@ -2081,9 +2096,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     && !holds_sole_table
                                     && !(document.nodes[child_id].display()
                                         == DisplayValue::Table
-                                        && crate::layout::table::headers::stacking_column_flex(
-                                            document, cascade, node_id,
-                                        ))),
+                                        && stacks_tables)),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {
