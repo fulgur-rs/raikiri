@@ -8759,3 +8759,58 @@ fn a_balanced_sized_box_leaves_no_sliver_in_a_full_column() {
     );
     assert_eq!(fragment_places(&doc, children[1]), [(2, 0.0, 20.0)]);
 }
+
+/// A one-column container 300px wide holding a 100x20 left float, then a
+/// block with `block_css`, then `rest` more children. Returns the fragments
+/// (x, y) of each child after the container.
+fn float_then_blocks(block_css: &str, rest: &[&str]) -> Vec<(f32, f32)> {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let article = doc.append_element(
+        Some(body),
+        "article",
+        Some("display:block;columns:1;width:300px"),
+    );
+    doc.append_element(
+        Some(article),
+        "div",
+        Some("display:block;float:left;width:100px;height:20px"),
+    );
+    let mut ids = vec![doc.append_element(
+        Some(article),
+        "div",
+        Some(format!("display:block;{block_css}").as_str()),
+    )];
+    for css in rest {
+        ids.push(doc.append_element(
+            Some(article),
+            "div",
+            Some(format!("display:block;{css}").as_str()),
+        ));
+    }
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+    ids.iter()
+        .map(|&id| {
+            let fragment = doc
+                .fragment_tree
+                .fragments
+                .iter()
+                .find(|fragment| fragment.node_id == id)
+                .expect("a fragment of the child");
+            (fragment.rect.x, fragment.rect.y)
+        })
+        .collect()
+}
+
+#[test]
+fn a_block_after_a_float_in_a_column_starts_at_the_top_of_the_float() {
+    // Floats take no room in the flow, so the block after one starts where
+    // it does, as in Chromium, whether it has a height or not.
+    assert_eq!(float_then_blocks("height:0", &[]), [(0.0, 0.0)]);
+    // A float after the block sits beside the first float, below the block.
+    assert_eq!(
+        float_then_blocks("height:10px", &["float:left;width:100px;height:20px"]),
+        [(0.0, 0.0), (100.0, 10.0)]
+    );
+}

@@ -3004,3 +3004,160 @@ fn a_sized_box_cut_at_a_column_end_slices_its_border() {
         "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:0;top:20px;box-sizing:border-box;width:40px;height:20px;border:2px solid red;border-bottom:0;background:lime'></div><div style='position:absolute;left:60px;top:0;box-sizing:border-box;width:40px;height:10px;border:2px solid red;border-top:0;background:lime'></div><div style='position:absolute;left:60px;top:10px'>B</div>",
     );
 }
+
+#[test]
+fn a_paragraph_after_a_right_float_in_a_column_flows_beside_it() {
+    // The lines of the paragraph start at the top of the float, to its left. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><p>E F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:20px;top:0px'>A</div><div style='position:absolute;left:20px;top:20px'>B</div><div style='position:absolute;left:0px;top:0px'>E</div><div style='position:absolute;left:0px;top:20px'>F</div>",
+    );
+}
+
+#[test]
+fn paragraphs_after_a_float_in_a_column_flow_beside_it_one_after_another() {
+    // The second paragraph starts where the first ends, still beside the float. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B<br>C</p><p>E</p><p>F G</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:0px;top:40px'>C</div><div style='position:absolute;left:20px;top:0px'>E</div><div style='position:absolute;left:20px;top:20px'>F</div><div style='position:absolute;left:20px;top:40px'>G</div>",
+    );
+}
+
+#[test]
+fn a_paragraph_with_a_top_margin_after_a_float_flows_beside_it() {
+    // The margin moves the paragraph down, and its lines stay beside the float. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='margin-top:10px'>E F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:20px;top:10px'>E</div><div style='position:absolute;left:20px;top:30px'>F</div>",
+    );
+}
+
+#[test]
+fn a_paragraph_beside_a_float_at_the_top_of_a_column_continues_in_the_next() {
+    // Lines past the end of the column go to the next one, as they would below no float. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E F G H I</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:20px;top:0px'>E</div><div style='position:absolute;left:20px;top:20px'>F</div><div style='position:absolute;left:0px;top:40px'>G</div><div style='position:absolute;left:0px;top:60px'>H</div><div style='position:absolute;left:60px;top:0px'>I</div>",
+    );
+}
+
+#[test]
+fn a_paragraph_after_a_float_below_a_block_flows_beside_it() {
+    // The float and the paragraph start under the block before them. The positions are Chromium's.
+    compare(
+        "<div class=mc><p>Z</p><p style='float:left'>A<br>B</p><p>E F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>Z</div><div style='position:absolute;left:0px;top:20px'>A</div><div style='position:absolute;left:0px;top:40px'>B</div><div style='position:absolute;left:20px;top:20px'>E</div><div style='position:absolute;left:20px;top:40px'>F</div>",
+    );
+}
+
+#[test]
+fn a_float_after_a_paragraph_beside_floats_joins_them() {
+    // The second float sits beside the first, below the line of the paragraph before it, and the last paragraph moves below both. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E</p><p style='float:left'>C</p><p>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:20px;top:0px'>E</div><div style='position:absolute;left:20px;top:20px'>C</div><div style='position:absolute;left:0px;top:40px'>F</div>",
+    );
+}
+
+#[test]
+fn a_paragraph_after_a_float_in_a_column_flows_beside_it() {
+    // The paragraph starts at the top of the float, and its lines are as
+    // narrow as the room beside it, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='float:left'>C<br>D</p><p style='background:lime'>E</p></div><div class=mc><p style='float:left'>A<br>B</p><p>E F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:60px;background:lime'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:20px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div><div style='position:absolute;left:0;top:80px'>A<br>B</div><div style='position:absolute;left:20px;top:80px'>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_block_that_clears_a_float_in_a_column_starts_below_it() {
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='clear:left'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn a_line_too_tall_for_the_room_beside_a_float_moves_to_the_next_column() {
+    // Beside the float, the 70px line would reach past the end of the
+    // column, so the paragraph starts the next one, as in Chromium.
+    compare(
+        "<div class=mc><p>Z</p><p style='float:left'>A<br>B</p><p><span style='display:inline-block;width:20px;height:70px;background:lime;vertical-align:top'></span></p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0'>Z<br>A<br>B</div><div style='position:absolute;left:60px;top:0;width:20px;height:70px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn blocks_after_a_float_in_balanced_columns_flow_beside_it() {
+    // The balanced height counts the blocks beside the float once, so the
+    // columns are 40px high and the last block starts the second, as in
+    // Chromium.
+    for blocks in ["<p>E F</p><p>G</p>", "<p>E</p><p>F</p><p>G</p>"] {
+        compare(
+            &format!("<div class=mc><p style='float:left'>A<br>B</p>{blocks}</div>"),
+            "",
+            "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:20px;top:0'>E<br>F</div><div style='position:absolute;left:60px;top:0'>G</div>",
+        );
+    }
+}
+
+#[test]
+fn a_float_that_joins_floats_beside_a_paragraph_keeps_the_lowest_of_them() {
+    // The block that clears the floats starts below the first float, the lowest of them, not below the second. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B<br>C</p><p>E</p><p style='float:left'>D</p><p style='clear:left'>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:0px;top:40px'>C</div><div style='position:absolute;left:20px;top:0px'>E</div><div style='position:absolute;left:20px;top:20px'>D</div><div style='position:absolute;left:0px;top:60px'>F</div>",
+    );
+}
+
+#[test]
+fn a_box_out_of_the_flow_leaves_the_paragraphs_beside_a_float() {
+    // The absolutely positioned box takes no room, so the paragraph after it still flows beside the float. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E</p><span style='position:absolute'></span><p>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:20px;top:0px'>E</div><div style='position:absolute;left:20px;top:20px'>F</div>",
+    );
+}
+
+#[test]
+fn a_block_that_clears_only_the_other_side_flows_beside_a_float() {
+    // There is no right float to clear, so the block flows beside the left one. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='clear:right'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:20px;top:0px'>E</div>",
+    );
+}
+
+#[test]
+fn a_centered_block_beside_a_float_resolves_its_margins_in_the_column() {
+    // The auto margins center the block in the 90px column, and the float narrows its lines from the float's edge. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='width:60px;margin:0 auto'>E F</p></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        "<div style='position:absolute;left:0px;top:0px'>A</div><div style='position:absolute;left:0px;top:20px'>B</div><div style='position:absolute;left:20px;top:0px'>E</div><div style='position:absolute;left:20px;top:20px'>F</div>",
+    );
+}
+
+#[test]
+fn a_narrow_block_beside_a_float_in_a_right_to_left_column_sits_at_its_right_edge() {
+    // The 30px block sits at the right edge of the column, under the right
+    // float, which leaves 10px beside it: too little for a glyph, so the
+    // lines go below the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><p style='width:30px'>E F</p></div>",
+        ".mc{height:80px;column-fill:auto;direction:rtl}",
+        "<div style='position:absolute;left:80px;top:0'>A<br>B<br>E<br>F</div>",
+    );
+}
