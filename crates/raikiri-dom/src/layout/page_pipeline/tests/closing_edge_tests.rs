@@ -4159,6 +4159,34 @@ fn an_item_stretched_beside_one_whose_edges_move_stretches_with_its_row() {
 }
 
 #[test]
+fn items_side_by_side_whose_edges_both_move_grow_their_row_once() {
+    // Both items of a flex row end their 80px boxes with 30px of padding that
+    // does not fit the page: each grows by 20px, so the row ends at 130px as
+    // Chromium prints it, whether or not anything follows the container. The
+    // second item, stretched to the row after the first grew, is not grown a
+    // second time by its own edges.
+    for after in [true, false] {
+        let (mut flex, mut items) = (0, Vec::new());
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            flex = block(doc, body, "display:flex");
+            for _ in 0..2 {
+                let item = block(doc, flex, "display:block;width:50px;padding-bottom:30px");
+                block(doc, item, "display:block;height:80px");
+                items.push(item);
+            }
+            if after {
+                block(doc, body, "display:block;height:10px");
+            }
+        });
+        let heights: Vec<f32> = [flex, items[0], items[1]]
+            .iter()
+            .map(|&id| doc.nodes[id].layout.size.height)
+            .collect();
+        assert_eq!(heights, [130.0, 130.0, 130.0], "{after}");
+    }
+}
+
+#[test]
 fn a_final_avoided_row_group_moves_whole_with_closing_edges() {
     let (ys, height) = card_with_edges(30, |doc, card| {
         let table = block(doc, card, "display:table;border-spacing:0");

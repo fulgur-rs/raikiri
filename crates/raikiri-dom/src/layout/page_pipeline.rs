@@ -10980,6 +10980,9 @@ struct BesideGrowth {
     container: usize,
     /// The items that begin below the grown one, on later rows or lines.
     later: HashSet<usize>,
+    /// The items on the grown one's row or line, with whether each stretches
+    /// to the height of the row.
+    row: Vec<(usize, bool)>,
     /// How far the end of the grown item's row or line moved.
     later_shift: f32,
     /// The later item the flow is in, which carries `later_shift`.
@@ -11057,7 +11060,12 @@ impl SubtreeShifts {
     ///
     /// Leaving several bounded subtrees at once returns to the page the
     /// earliest of them started from.
-    fn leave(&mut self, document: &Document, node_id: usize, flow_shift: &mut f32) -> Option<u32> {
+    fn leave(
+        &mut self,
+        document: &mut super::context::LayoutSession<'_>,
+        node_id: usize,
+        flow_shift: &mut f32,
+    ) -> Option<u32> {
         let mut restored_page: Option<u32> = None;
         // Only the boxes around the float's paragraph move with its lines.
         self.floats_ahead.retain(|&(float, _)| {
@@ -11083,6 +11091,7 @@ impl SubtreeShifts {
             false
         });
         let mut beside_page = None;
+        let mut finished = Vec::new();
         self.beside.retain_mut(|beside| {
             let inside = is_descendant_or_self(document, node_id, beside.container);
             let item = inside
@@ -11107,8 +11116,12 @@ impl SubtreeShifts {
             if beside.growth > 0.001 {
                 beside_page = beside_page.max(Some(beside.page));
             }
+            finished.push((beside.container, std::mem::take(&mut beside.row)));
             false
         });
+        for (container, row) in finished {
+            stretch_row_items(document, container, &row);
+        }
         // The flow after a grown item is on the page the item ends on, past
         // the earlier page that a subtree it leaves goes back to.
         if beside_page.is_some() {
@@ -11139,7 +11152,7 @@ fn item_bottom_in(document: &Document, container: usize, item: usize) -> f32 {
 /// container, while the items beside it keep their places (CSS
 /// Fragmentation 3 §4.4: the items that begin below the end of the item's
 /// row or line move down with that end, and the items stretched to the row
-/// stretch with it). The container grows to hold its content, its ancestors
+/// stretch with it once the flow leaves the container). The container grows to hold its content, its ancestors
 /// grow to hold it, and `shifts` records the growth for the flow inside the
 /// container and after it (see [`BesideGrowth`]); `page` is the page the
 /// item now ends on.
@@ -11155,7 +11168,10 @@ fn grow_container_beside_item(
     (flow_page, page): (u32, u32),
 ) {
     let mut later = HashSet::default();
-    let mut row = Vec::new();
+    let mut row = vec![(
+        item,
+        stretches_across_row(document, cascade, container, item),
+    )];
     let mut row_end = before;
     let mut later_end = f32::NEG_INFINITY;
     for child in document.children_through_contents(container) {
@@ -11176,12 +11192,17 @@ fn grow_container_beside_item(
             document.pagination_local_y(child),
         );
         let bottom = item_bottom_in(document, container, child);
-        if top >= before - 0.001 {
+        // A margin above an item on the same row or line can take it below
+        // the end of the grown item; its margin box still starts on the row.
+        if top - node.layout.margin.top >= before - 0.001 {
             later.insert(child);
             later_end = later_end.max(bottom);
         } else {
             row_end = row_end.max(bottom);
-            row.push((child, bottom));
+            row.push((
+                child,
+                stretches_across_row(document, cascade, container, child),
+            ));
         }
     }
     let later_shift = (after - row_end).max(0.0);
@@ -11190,16 +11211,6 @@ fn grow_container_beside_item(
     }
     for &child in &later {
         document.translate_pagination_y(child, later_shift);
-    }
-    for (child, bottom) in row {
-        if bottom >= row_end - 0.001 && stretches_across_row(document, cascade, container, child) {
-            // The item stretches no further than its `max-height`.
-            let height = document.nodes[child].layout.size.height;
-            let (_, max) = border_box_height_bounds(document, child);
-            let stretched = (height + later_shift).min(max).max(height);
-            document.nodes[child].layout.size.height = stretched;
-            document.mark_pagination_extent_dirty(child);
-        }
     }
     let end_before = row_end.max(later_end);
     let end_after = row_end.max(after).max(later_end + later_shift);
@@ -11234,11 +11245,39 @@ fn grow_container_beside_item(
     shifts.beside.push(BesideGrowth {
         container,
         later,
+        row,
         later_shift,
         inside_later: None,
         growth,
         page,
     });
+}
+
+/// Stretches the items of `row` that stretch to the height of their row or
+/// line, in the flex or grid `container`, to the end of the row once the flow
+/// has left the container: the items in it that grew for their closing edges
+/// have all grown by then, so each stretched item grows only once. An item
+/// stretches no further than its `max-height`.
+fn stretch_row_items(
+    document: &mut super::context::LayoutSession<'_>,
+    container: usize,
+    row: &[(usize, bool)],
+) {
+    let end = row
+        .iter()
+        .map(|&(child, _)| item_bottom_in(document, container, child))
+        .fold(f32::NEG_INFINITY, f32::max);
+    for &(child, stretches) in row {
+        let layout = document.nodes[child].layout;
+        let room = end - item_bottom_in(document, container, child);
+        if !stretches || room <= 0.001 {
+            continue;
+        }
+        let (_, max) = border_box_height_bounds(document, child);
+        document.nodes[child].layout.size.height =
+            (layout.size.height + room).min(max).max(layout.size.height);
+        document.mark_pagination_extent_dirty(child);
+    }
 }
 
 /// Whether `item` of the flex or grid `container` stretches to the height of
