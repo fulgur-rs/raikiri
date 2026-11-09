@@ -662,7 +662,7 @@ fn layout_context(
             Some(fill) => {
                 let (height, separates) = fill.height(
                     fill.ratio_height(metrics.preferred.height)
-                        .unwrap_or(content_height),
+                        .map_or(content_height, |ratio| ratio.max(content_height)),
                     if collapse_start {
                         flow.leading
                     } else {

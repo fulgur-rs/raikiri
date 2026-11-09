@@ -588,6 +588,21 @@ fn an_aspect_ratio_taller_than_the_fill_gives_the_body_height() {
             format!("p0: b=(0, 0, 400, 600){child} h=(0, 0, 800, 600)")
         );
     }
+    // Content taller than the ratio height still grows the body.
+    assert_eq!(
+        quirks(
+            "body{margin:0;width:400px;aspect-ratio:1/2}",
+            "><div id=c style='height:1000px'></div>"
+        ),
+        "p0: b=(0, 0, 400, 600) c=(0, 0, 400, 600) h=(0, 0, 800, 600) p1: b=(0, 0, 400, 400) c=(0, 0, 400, 400) h=(0, 0, 800, 400)"
+    );
+    assert_eq!(
+        quirks(
+            "body{margin:0;width:400px;aspect-ratio:1/2}",
+            &format!(">{}", "x<br>".repeat(100))
+        ),
+        "p0: b=(0, 0, 400, 600) h=(0, 0, 800, 600) p1: b=(0, 0, 400, 400) h=(0, 0, 800, 400)"
+    );
     // The last margin stays inside a body its ratio gives the height ...
     let child = "<div id=c style='height:10px;margin:30px 0'></div>";
     assert_eq!(

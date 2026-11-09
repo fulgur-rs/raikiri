@@ -257,7 +257,7 @@ fn fill(
     if !is_root && collapses_with_children(doc, cascade, idx, idx) {
         // A body whose margins collapse with those of its children fills
         // what its margins leave once they have collapsed, as in Chromium;
-        // block layout finds them (see [`BodyFill::height`]).
+        // block layout finds them (see `BodyFill::height`).
         let border_box = |height: f32| {
             if border_box_sizing {
                 height
