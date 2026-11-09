@@ -1626,6 +1626,80 @@ struct FloatLine {
     /// which is the least a float after it can have.
     top: f32,
     floats: Vec<PlacedFloat>,
+    /// Where the first float of the line starts.
+    start: f32,
+    /// Where the in-flow block after the floats starts, as floats take no
+    /// room in the flow: where the line starts, or where the blocks that
+    /// flowed beside earlier floats of it end.
+    next: f32,
+    /// Every float of the line, in order, for the lines of the block after
+    /// them to flow beside.
+    placed: Vec<WrappedFloat>,
+}
+
+/// A float that the lines of the blocks after it flow beside: the size of its
+/// margin box, its side, and the block offset of its top in the column.
+#[derive(Clone, Copy)]
+struct WrappedFloat {
+    size: Size<f32>,
+    right: bool,
+    top: f32,
+}
+
+/// The floats of a column that the in-flow blocks after them flow beside
+/// (CSS 2, 9.5): the column, where the floats start, where the next block
+/// starts, and how low the floats reach.
+struct ColumnFloatRun {
+    column: usize,
+    start: f32,
+    next: f32,
+    bottom: f32,
+    floats: Vec<WrappedFloat>,
+    /// The floats a float after the blocks may still sit beside.
+    line: Vec<PlacedFloat>,
+    /// The top of the last float, which a float after it is not above.
+    top: f32,
+}
+
+impl ColumnFloatRun {
+    fn of(line: &FloatLine) -> Self {
+        Self {
+            column: line.column,
+            start: line.start,
+            next: line.next,
+            bottom: line
+                .placed
+                .iter()
+                .map(|float| float.top + float.size.height)
+                .fold(line.start, f32::max),
+            floats: line.placed.clone(),
+            line: line.floats.clone(),
+            top: line.top,
+        }
+    }
+
+    /// Whether a block with `clear` clears any of the floats.
+    fn clears(&self, clear: Clear) -> bool {
+        self.floats.iter().any(|float| match clear {
+            Clear::None => false,
+            Clear::Left => !float.right,
+            Clear::Right => float.right,
+            Clear::Both => true,
+        })
+    }
+
+    /// The line of floats a float after the blocks joins, at the end of the
+    /// last of them (CSS 2, 9.5.1 rule 6 keeps it no higher than that line).
+    fn into_line(self) -> FloatLine {
+        FloatLine {
+            column: self.column,
+            top: self.top.max(self.next),
+            floats: self.line,
+            start: self.start,
+            next: self.next,
+            placed: self.floats,
+        }
+    }
 }
 
 impl FloatLine {
@@ -1635,6 +1709,9 @@ impl FloatLine {
             column,
             top,
             floats: Vec::new(),
+            start: top,
+            next: top,
+            placed: Vec::new(),
         }
     }
 
@@ -1700,6 +1777,14 @@ impl FloatLine {
             top: spot.top,
             bottom: spot.top + needed,
         });
+        self.placed.push(WrappedFloat {
+            size: Size {
+                width: float.margin_box_width,
+                height: needed,
+            },
+            right: float.right,
+            top: spot.top,
+        });
     }
 }
 
@@ -1728,6 +1813,73 @@ impl ColumnFloat {
     }
 }
 
+/// Whether `child` of the column container `parent` is a block whose lines
+/// may flow beside the floats before it in its column: an in-flow block that
+/// shares the container's float context. One that clears them does not (see
+/// [`ColumnFloatRun::clears`]).
+fn flows_beside_column_floats(tree: &LayoutSession<'_>, parent: usize, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    node.kind() == NodeKind::Element
+        && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        && crate::layout::dispatch::block_flow::child_shares_parent_context(
+            tree,
+            NodeId::from(parent),
+            NodeId::from(child),
+        )
+}
+
+/// Lay out `child`, a block `width` wide with the top margin `margin_top`,
+/// at `run.next` in a column of `column_width`, with the floats of `run`
+/// beside it, so that its lines flow beside them. Its side margins resolve
+/// against the column, and a right-to-left column puts a narrower block at
+/// its right edge, as the columns place it.
+#[allow(clippy::too_many_arguments)]
+fn layout_beside_column_floats(
+    tree: &mut LayoutSession<'_>,
+    child: usize,
+    inputs: LayoutInput,
+    run: &ColumnFloatRun,
+    column_width: f32,
+    rtl: bool,
+    margin_top: f32,
+    width: f32,
+) -> LayoutOutput {
+    use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
+    use crate::layout::protocol::FloatDirection;
+
+    let mut owner = BlockFormattingContext::new();
+    let mut root = owner.root_block_context();
+    root.set_width(column_width);
+    root.set_origin_resolved(true);
+    for float in &run.floats {
+        root.place_floated_box(
+            float.size,
+            float.top - run.start,
+            if float.right {
+                FloatDirection::Right
+            } else {
+                FloatDirection::Left
+            },
+            Clear::None,
+            false,
+        );
+    }
+    let (margin_left, margin_right) =
+        column_horizontal_margins(&style_of(tree, child), column_width, width);
+    let left = if rtl {
+        column_width - margin_right - width
+    } else {
+        margin_left
+    };
+    let mut block = root.sub_context(
+        run.next - run.start + margin_top,
+        [left, (column_width - left - width).max(0.0)],
+    );
+    block.set_origin_resolved(true);
+    tree.cache_clear_subtree(NodeId::from(child));
+    tree.compute_child_layout_with_block_ctx(NodeId::from(child), inputs, Some(&mut block))
+}
+
 /// Whether `child`, `needed` high in its column, leaves the line of floats
 /// before it open: the white space between two floats, or an empty block, has
 /// no block size and clears nothing, so a float after it is no lower than the
@@ -1736,35 +1888,69 @@ fn keeps_float_line(tree: &LayoutSession<'_>, child: usize, needed: f32) -> bool
     needed == 0.0 && style_of(tree, child).clear() == Clear::None
 }
 
-/// The block size `entries`, the measured children of a column container,
-/// take one below the other in a column of `column_width`, where floats that
-/// share a line count once.
-fn stacked_height(
-    tree: &LayoutSession<'_>,
-    entries: &[(usize, LayoutOutput, BoxLayout, f32, f32, f32)],
-    column_width: f32,
-) -> f32 {
-    let mut total = 0.0f32;
-    // The floats of the last children, when they are floats.
-    let mut line: Option<FloatLine> = None;
-    for (child, output, _, _, _, needed) in entries {
-        match ColumnFloat::of(tree, *child, column_width, output.size.width) {
-            Some(float) => {
-                let mut floats = line.take().unwrap_or_else(|| FloatLine::at(0, total));
-                let spot = floats.place(float, *needed, column_width);
-                total = total.max(spot.top + needed);
-                floats.push(float, *needed, spot, column_width);
-                line = Some(floats);
+/// The block size the measured children of a column container take one below
+/// the other in a column, added one at a time: floats that share a line count
+/// once, and the in-flow blocks after floats start beside them (CSS 2, 9.5).
+#[derive(Default)]
+struct ColumnStack {
+    total: f32,
+    /// The floats of the last children, when they are floats.
+    line: Option<FloatLine>,
+    /// The floats the last in-flow blocks flowed beside.
+    run: Option<ColumnFloatRun>,
+}
+
+impl ColumnStack {
+    /// Add `float`, `needed` high, in a column of `column_width`.
+    fn float(&mut self, float: ColumnFloat, needed: f32, column_width: f32) {
+        let mut floats = match (self.line.take(), self.run.take()) {
+            (Some(line), _) => line,
+            (None, Some(run)) => run.into_line(),
+            (None, None) => FloatLine::at(0, self.total),
+        };
+        let spot = floats.place(float, needed, column_width);
+        self.total = self.total.max(spot.top + needed);
+        floats.push(float, needed, spot, column_width);
+        self.line = Some(floats);
+    }
+
+    /// The floats an in-flow block added next starts beside, if it starts
+    /// above the lowest of them.
+    fn beside(&mut self) -> Option<&ColumnFloatRun> {
+        if self.run.is_none() {
+            self.run = self.line.as_ref().map(ColumnFloatRun::of);
+        }
+        self.run
+            .as_ref()
+            .filter(|run| run.next + LINE_EPSILON < run.bottom)
+    }
+
+    /// Add an in-flow block `needed` high, which starts beside the floats of
+    /// [`Self::beside`] when `beside` is set and below them otherwise.
+    /// `keeps_line` says whether a float after it may still join the line of
+    /// the floats before it.
+    fn block(&mut self, needed: f32, beside: bool, keeps_line: bool) {
+        match self.run.take() {
+            Some(mut run) if beside => {
+                run.next += needed;
+                self.total = self.total.max(run.next);
+                self.run = Some(run);
             }
-            None => {
-                total += needed;
-                if !keeps_float_line(tree, *child, *needed) {
-                    line = None;
-                }
+            run => {
+                self.total = run.map_or(self.total, |run| self.total.max(run.bottom)) + needed;
             }
         }
+        if !keeps_line {
+            self.line = None;
+        }
     }
-    total
+
+    /// The block size of all the children added.
+    fn height(&self) -> f32 {
+        self.run
+            .as_ref()
+            .map_or(self.total, |run| self.total.max(run.bottom))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1811,6 +1997,9 @@ fn layout_column_group(
         && tree.context.fragmentation_stack.len() <= 1
         && multicol_has_plain_paragraph_chain(tree, index)
         && !multicol_has_nested_descendant(tree, index);
+    // The measured children laid out with their lines beside the floats
+    // before them.
+    let mut measured_beside: Vec<bool> = Vec::new();
     let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
         && fragment_height.is_none()
         && !multicol_has_nested_descendant(tree, index))
@@ -1818,7 +2007,9 @@ fn layout_column_group(
         || definite_chain
     {
         let mut measurements = Vec::with_capacity(children.len());
-        for &child in children {
+        let mut stack = ColumnStack::default();
+        measured_beside = vec![false; children.len()];
+        for (local_order, &child) in children.iter().enumerate() {
             let child_inputs = column_child_layout_input(
                 tree,
                 child,
@@ -1831,14 +2022,44 @@ fn layout_column_group(
             if matches!(tree.nodes[child].data, NodeData::Text(_)) {
                 tree.nodes[child].cache.clear();
             }
-            let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
+            let mut output = tree.compute_child_layout(NodeId::from(child), child_inputs);
             let layout = column_child_layout(tree, child, context.column_width);
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
-            let needed = margin_top + output.size.height + margin_bottom;
+            let mut needed = margin_top + output.size.height + margin_bottom;
+            if let Some(float) =
+                ColumnFloat::of(tree, child, context.column_width, output.size.width)
+            {
+                stack.float(float, needed, context.column_width);
+            } else if !(matches!(tree.nodes[child].data, NodeData::Text(_)) && needed == 0.0
+                || tree.nodes[child].layout_position() == Position::Absolute)
+            {
+                // A block after floats is measured with its lines beside them.
+                let clear = style_of(tree, child).clear();
+                let beside = flows_beside_column_floats(tree, index, child)
+                    && match stack.beside().filter(|run| !run.clears(clear)) {
+                        Some(run) => {
+                            output = layout_beside_column_floats(
+                                tree,
+                                child,
+                                child_inputs,
+                                run,
+                                context.column_width,
+                                context.rtl,
+                                margin_top,
+                                output.size.width,
+                            );
+                            needed = margin_top + output.size.height + margin_bottom;
+                            measured_beside[local_order] = true;
+                            true
+                        }
+                        None => false,
+                    };
+                stack.block(needed, beside, keeps_float_line(tree, child, needed));
+            }
             measurements.push((child, output, layout, margin_top, margin_bottom, needed));
         }
-        let total = stacked_height(tree, &measurements, context.column_width);
+        let total = stack.height();
         let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
         let target = (total / context.column_count as f32).max(largest);
         Some((measurements, target))
@@ -1848,57 +2069,66 @@ fn layout_column_group(
     // One ordinary paragraph can break inside its lines. Measuring its whole
     // block as an atomic item would keep the container at the unbroken height
     // while the inline post-pass already assigns lines to several columns.
+    // The planners place lines and boxes in whole columns; none of them
+    // narrows lines beside a float.
+    let floats_narrow_lines = measured_beside.contains(&true);
     let group_balance = auto_measurements
         .as_ref()
+        .filter(|_| !floats_narrow_lines)
         .and_then(|(entries, _)| match fragment_height {
             Some(height) => paragraph_group::fill_definite(tree, entries, context, height),
             None => paragraph_group::balance(tree, entries, context),
         });
-    let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
-        if fragment_height.is_some() && !definite_chain {
-            return None;
-        }
-        let mut boxes = entries.iter().filter(|(child, output, _, _, _, _)| {
-            tree.nodes[*child].kind() != NodeKind::Text
-                || output.size.height != 0.0
-                || tree.nodes[*child].ifc.is_some()
+    let paragraph_balance = auto_measurements
+        .as_ref()
+        .filter(|_| !floats_narrow_lines)
+        .and_then(|(entries, _)| {
+            if fragment_height.is_some() && !definite_chain {
+                return None;
+            }
+            let mut boxes = entries.iter().filter(|(child, output, _, _, _, _)| {
+                tree.nodes[*child].kind() != NodeKind::Text
+                    || output.size.height != 0.0
+                    || tree.nodes[*child].ifc.is_some()
+            });
+            let (child, _, _, _, _, _) = boxes.next()?;
+            if boxes.next().is_some() {
+                return None;
+            }
+            // A paragraph below plain wrappers is balanced like one of the
+            // container's own.
+            let leaf = if tree.nodes[*child].ifc.is_some() {
+                *child
+            } else if tree.nodes[*child].paints_background_color {
+                painted_wrapper_leaf(tree, *child)?
+            } else {
+                plain_paragraph_chain_leaf(tree, *child)?
+            };
+            if !can_balance_atomic_paragraph(tree, leaf, BlockEdges::Refused) {
+                return None;
+            }
+            let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
+            let (fragments, height) = root_column_fragments(lines, context);
+            // Lines that need all of a definite height go in turn, as they did.
+            if let Some(definite) = fragment_height {
+                balanced_below(height, definite)?;
+            }
+            let (first, last) = (lines.lines.first()?, lines.lines.last()?);
+            let stacked = last.block_offset() + last.block_size() - first.block_offset();
+            (fragments.len() > 1).then_some(ParagraphBalance {
+                child: *child,
+                leaf,
+                fragments,
+                height,
+                stacked,
+            })
         });
-        let (child, _, _, _, _, _) = boxes.next()?;
-        if boxes.next().is_some() {
-            return None;
-        }
-        // A paragraph below plain wrappers is balanced like one of the
-        // container's own.
-        let leaf = if tree.nodes[*child].ifc.is_some() {
-            *child
-        } else if tree.nodes[*child].paints_background_color {
-            painted_wrapper_leaf(tree, *child)?
-        } else {
-            plain_paragraph_chain_leaf(tree, *child)?
-        };
-        if !can_balance_atomic_paragraph(tree, leaf, BlockEdges::Refused) {
-            return None;
-        }
-        let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
-        let (fragments, height) = root_column_fragments(lines, context);
-        // Lines that need all of a definite height go in turn, as they did.
-        if let Some(definite) = fragment_height {
-            balanced_below(height, definite)?;
-        }
-        let (first, last) = (lines.lines.first()?, lines.lines.last()?);
-        let stacked = last.block_offset() + last.block_size() - first.block_offset();
-        (fragments.len() > 1).then_some(ParagraphBalance {
-            child: *child,
-            leaf,
-            fragments,
-            height,
-            stacked,
-        })
-    });
     let mut avoid_column_break_after_previous = false;
     let mut occupied = std::collections::BTreeSet::new();
     // The line of floats the last child belongs to, if it is a float.
     let mut float_line: Option<FloatLine> = None;
+    // The floats the in-flow blocks after them flow beside.
+    let mut float_run: Option<ColumnFloatRun> = None;
     for (local_order, &child) in children.iter().enumerate() {
         let order = source_order + local_order;
         let measured = auto_measurements
@@ -2021,6 +2251,107 @@ fn layout_column_group(
         if let Some(plan) = &continuation {
             child_output.size.height = plan.first_height;
         }
+        // An in-flow block after floats starts where they do, and its lines
+        // flow beside them (CSS 2, 9.5). One that cannot, or that would not
+        // fit the column so, starts below them.
+        let mut needed = needed;
+        let mut beside_floats = None;
+        // White space and boxes out of the flow take no room in it.
+        let gap = matches!(tree.nodes[child].data, NodeData::Text(_)) && needed == 0.0
+            || tree.nodes[child].layout_position() == Position::Absolute;
+        let mut laid_beside = measured_beside.get(local_order).copied().unwrap_or(false);
+        if !gap {
+            let flows = planned.is_none()
+                && continuation.is_none()
+                && group_balance.is_none()
+                && paragraph_balance.is_none()
+                && flows_beside_column_floats(tree, index, child);
+            if flows
+                && float_run.is_none()
+                && let Some(line) = float_line.as_ref().filter(|line| line.column == column)
+            {
+                float_run = Some(ColumnFloatRun::of(line));
+            }
+            // A float after the blocks goes among the floats they flowed
+            // beside, below the line the last of them ends on.
+            if float_line.is_none()
+                && is_floated(tree, child)
+                && let Some(run) = float_run.take_if(|run| run.column == column)
+            {
+                cursor = cursor.max(run.bottom);
+                float_line = Some(run.into_line());
+            }
+            if let Some(run) = float_run.take() {
+                let mut kept = None;
+                if flows
+                    && run.column == column
+                    && run.next + LINE_EPSILON < run.bottom
+                    && !run.clears(style_of(tree, child).clear())
+                {
+                    let child_inputs = column_child_layout_input(
+                        tree,
+                        child,
+                        context.column_width,
+                        context.available_height,
+                        match fragment_height.filter(|_| measured.is_none()) {
+                            Some(height) => AvailableSpace::Definite((height - run.next).max(0.0)),
+                            None => AvailableSpace::MaxContent,
+                        },
+                    );
+                    let output = layout_beside_column_floats(
+                        tree,
+                        child,
+                        child_inputs,
+                        &run,
+                        context.column_width,
+                        context.rtl,
+                        margin_top,
+                        child_output.size.width,
+                    );
+                    laid_beside = true;
+                    let wrapped = margin_top + output.size.height + margin_bottom;
+                    // A block at the top of a column stays there, and its
+                    // lines past the column's end go to the next ones, as
+                    // they would below no float. Elsewhere it fits as the
+                    // column break below measures it.
+                    if run.next <= 0.0
+                        || break_height.is_none_or(|height| run.next + wrapped <= height)
+                    {
+                        refresh_nested_text_fragments(tree, child, context);
+                        child_output = output;
+                        needed = wrapped;
+                        beside_floats = Some(run.next);
+                        kept = Some(ColumnFloatRun {
+                            next: run.next + wrapped,
+                            ..run
+                        });
+                    }
+                }
+                if kept.is_none() && run.column == column {
+                    cursor = cursor.max(run.bottom);
+                }
+                float_run = kept;
+            }
+        }
+        // A block laid out beside floats that it does not end up beside is
+        // laid out again without them.
+        if beside_floats.is_none() && laid_beside {
+            tree.cache_clear_subtree(NodeId::from(child));
+            let child_inputs = column_child_layout_input(
+                tree,
+                child,
+                context.column_width,
+                context.available_height,
+                fragment_height
+                    .filter(|_| measured.is_none())
+                    .map_or(AvailableSpace::MaxContent, |height| {
+                        AvailableSpace::Definite((height - cursor).max(0.0))
+                    }),
+            );
+            child_output = tree.compute_child_layout(NodeId::from(child), child_inputs);
+            refresh_nested_text_fragments(tree, child, context);
+            needed = margin_top + child_output.size.height + margin_bottom;
+        }
         // A float goes beside the floats before it where it fits, instead of
         // below them like a block (CSS 2, 9.5.1).
         let column_float =
@@ -2033,7 +2364,7 @@ fn layout_column_group(
         });
         // Content past the last column of a container with a definite
         // height continues in overflow columns (CSS Multi-column 1, 8.2).
-        let from = beside.map_or(cursor, |spot| spot.top);
+        let from = beside_floats.unwrap_or_else(|| beside.map_or(cursor, |spot| spot.top));
         if let Some(height) = break_height
             && continuation.is_none()
             && group_balance.is_none()
@@ -2053,7 +2384,7 @@ fn layout_column_group(
             cursor = 0.0;
             beside = None;
         }
-        let top = beside.map_or(cursor, |spot| spot.top);
+        let top = beside_floats.unwrap_or_else(|| beside.map_or(cursor, |spot| spot.top));
 
         let column_context = context.in_column(
             column,
@@ -2337,6 +2668,12 @@ fn layout_column_group(
             avoid_column_break_after_previous =
                 matches!(tree.nodes[child].break_after, BreakBetween::Avoid);
         }
+    }
+    // The floats the last blocks flowed beside reach below them.
+    if let Some(run) = float_run
+        && run.column == column
+    {
+        cursor = cursor.max(run.bottom);
     }
     if retain_group {
         tree.nodes[index]

@@ -60,6 +60,16 @@ fn shares_parent_context(
             == used_writing_mode(tree, usize::from(child))
 }
 
+/// Whether the in-flow block `child` of `parent` shares the float context of
+/// `parent`, so that its lines flow beside the floats before it.
+pub(crate) fn child_shares_parent_context(
+    tree: &LayoutSession<'_>,
+    parent: NodeId,
+    child: NodeId,
+) -> bool {
+    shares_parent_context(tree, parent, child, &child_style(tree, child))
+}
+
 fn child_style(tree: &LayoutSession<'_>, child: NodeId) -> Style {
     style_input::child(tree, usize::from(child))
 }
