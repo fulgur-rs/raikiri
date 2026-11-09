@@ -3324,7 +3324,17 @@ fn a_box_with_its_own_formatting_context_fits_the_room_of_every_float_it_reaches
 #[test]
 fn a_box_with_its_own_formatting_context_beside_a_float_counts_its_padding_in_its_width_limits() {
     // The maximum width holds the content box, so the border box is 15px
-    // wide with its padding, as in Chromium.
+    // wide with its padding, as in Chromium; with `box-sizing: border-box`
+    // it holds the border box.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:15px;padding-left:5px;box-sizing:border-box;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:20px;top:0;width:15px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
     compare(
         "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:10px;padding-left:5px;height:20px;background:lime'></div></div>",
         ".mc{height:80px;column-fill:auto}",
