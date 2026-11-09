@@ -21,33 +21,29 @@ pub(crate) struct Constraints {
     content_room: Option<f32>,
     measure_cross: bool,
     supported: bool,
+    /// Whether some item has a percentage margin along the main axis, which
+    /// refers to the cross size of the container that it measures.
+    cyclic_main_margins: bool,
     /// These child caches have already been saved by the enclosing phase.
     isolated_items: Option<Arc<[usize]>>,
 }
 
+/// Whether the minimum main size of an item resolves before the container's
+/// main size is known. A percentage main margin does not hold the measurement
+/// back: it refers to the cross size being measured, counts as zero in the
+/// item's contribution to that size, and resolves against the size once it is
+/// settled (CSS Sizing 3 section 5.2.1).
 fn outer_constraints_resolve(
     style: &LayoutStyleView<'_>,
     vertical: bool,
     main_basis: Option<f32>,
-    inline_basis: Option<f32>,
 ) -> bool {
     let minimum = if vertical {
         style.min_size().width
     } else {
         style.min_size().height
     };
-    if !minimum.is_auto() && minimum.maybe_resolve(main_basis).is_none() {
-        return false;
-    }
-    let margin = style.margin();
-    let margins = if vertical {
-        [margin.left, margin.right]
-    } else {
-        [margin.top, margin.bottom]
-    };
-    margins
-        .into_iter()
-        .all(|margin| margin.is_auto() || margin.maybe_resolve(inline_basis).is_some())
+    minimum.is_auto() || minimum.maybe_resolve(main_basis).is_some()
 }
 
 fn constraints(
@@ -118,14 +114,29 @@ fn constraints(
         let item = tree.physical_style(usize::from(child));
         item.position() == Position::Absolute
             || item.box_generation_mode() == BoxGenerationMode::None
-            || outer_constraints_resolve(&item, vertical, percentage_basis, inline_basis)
+            || outer_constraints_resolve(&item, vertical, percentage_basis)
     });
+    let cyclic_main_margins = inline_basis.is_none()
+        && tree.child_ids(node).any(|child| {
+            let item = tree.physical_style(usize::from(child));
+            let margin = item.margin();
+            let margins = if vertical {
+                [margin.left, margin.right]
+            } else {
+                [margin.top, margin.bottom]
+            };
+            item.position() != Position::Absolute
+                && margins
+                    .into_iter()
+                    .any(|margin| !margin.is_auto() && margin.maybe_resolve(None::<f32>).is_none())
+        });
     Some(Constraints {
         owner: idx,
         percentage_basis,
         content_room,
         measure_cross,
         supported,
+        cyclic_main_margins,
         isolated_items: None,
     })
 }
@@ -165,7 +176,7 @@ pub(super) fn layout(
     let has_orthogonal_paragraph = tree
         .child_ids(node)
         .any(|child| super::orthogonal_column_paragraph(tree, usize::from(child)).is_some());
-    if !has_orthogonal_paragraph {
+    if !has_orthogonal_paragraph && !original.cyclic_main_margins {
         return with_entry(tree, original, |tree| algorithm(tree, node, inputs));
     }
     // The native pass visits every direct child, including replaced boxes.
@@ -185,18 +196,25 @@ pub(super) fn layout(
         entry.isolated_items = isolated.then(|| Arc::clone(&items));
         with_entry(tree, entry, |tree| algorithm(tree, node, current))
     };
-    if inputs.run_mode != RunMode::PerformLayout || !original.measure_cross {
+    let cross_axis = if vertical {
+        RequestedAxis::Vertical
+    } else {
+        RequestedAxis::Horizontal
+    };
+    // A main size measured on its own takes the percentage main margins of
+    // the items, which refer to the cross size, from the cross size it
+    // settles first, as the final layout does.
+    let measures_main = inputs.run_mode == RunMode::ComputeSize
+        && inputs.axis != cross_axis
+        && original.cyclic_main_margins;
+    if (inputs.run_mode != RunMode::PerformLayout && !measures_main) || !original.measure_cross {
         return isolate(tree, idx, &items, inputs.run_mode, |tree| {
             run(tree, inputs, true)
         });
     }
     let probe = LayoutInput {
         run_mode: RunMode::ComputeSize,
-        axis: if vertical {
-            RequestedAxis::Vertical
-        } else {
-            RequestedAxis::Horizontal
-        },
+        axis: cross_axis,
         ..inputs
     };
     let measured = isolate(tree, idx, &items, RunMode::ComputeSize, |tree| {
@@ -210,7 +228,7 @@ pub(super) fn layout(
         settled.known_dimensions.width = Some(measured.size.width);
         settled.known_dimensions_are_definite.width = false;
     }
-    isolate(tree, idx, &items, RunMode::PerformLayout, |tree| {
+    isolate(tree, idx, &items, inputs.run_mode, |tree| {
         run(tree, settled, true)
     })
 }

@@ -218,10 +218,39 @@ pub(super) fn with_page_room(
 ) -> LayoutInput {
     if is_vertical_box_in_horizontal_flow(tree, idx) {
         inputs.available_space.height = offered_height(tree, idx, &inputs);
+        if inputs.parent_size.height.is_none() && has_percentage_height(tree, idx) {
+            // A percentage of the inline size of an orthogonal flow whose
+            // parent leaves its height indefinite refers to the initial
+            // containing block, as the room of its lines does (CSS Writing
+            // Modes 4 section 7.3.1).
+            inputs.parent_size.height = tree
+                .fixed_page_area
+                .map(|(_, height)| height)
+                .filter(|&height| height > 0.0);
+        }
         inputs
     } else {
         inputs
     }
+}
+
+/// Whether the `height`, `min-height` or `max-height` of `idx` has a
+/// percentage in it.
+fn has_percentage_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    [
+        style.size().height,
+        style.min_size().height.into(),
+        style.max_size().height.into(),
+    ]
+    .into_iter()
+    .any(
+        |size: raikiri_layout_style::values::Dimension| match size.expand() {
+            ExpandedDimension::Percent(_) => true,
+            ExpandedDimension::Calc(calc) => calc.has_percentage(),
+            _ => false,
+        },
+    )
 }
 
 /// `inputs` for the vertical item `idx` of a horizontal grid with the height it

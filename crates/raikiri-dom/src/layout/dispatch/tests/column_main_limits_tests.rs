@@ -65,18 +65,9 @@ fn matrix_rectangles(case: &serde_json::Value) -> serde_json::Value {
 }
 
 #[test]
-fn column_main_limits_match_loaded_ahem_or_preserve_documented_baselines() {
+fn column_main_limits_match_loaded_ahem() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("data/column-main-limits.json")).unwrap();
-    assert_eq!(
-        fixture["cases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|case| case.get("preserved_baseline").is_some())
-            .count(),
-        7
-    );
     let mut differences = Vec::new();
     for case in fixture["cases"].as_array().unwrap() {
         let actual = matrix_rectangles(case);
@@ -84,9 +75,7 @@ fn column_main_limits_match_loaded_ahem_or_preserve_documented_baselines() {
             actual.as_object().unwrap().len(),
             case["rectangles"].as_object().unwrap().len()
         );
-        let expected = case
-            .get("preserved_baseline")
-            .map_or(&case["rectangles"], |baseline| &baseline["rectangles"]);
+        let expected = &case["rectangles"];
         let close = actual.as_object().unwrap().iter().all(|(id, rect)| {
             rect.as_array()
                 .unwrap()
