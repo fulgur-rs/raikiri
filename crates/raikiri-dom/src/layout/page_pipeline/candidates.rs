@@ -1580,10 +1580,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let run_tail_base = frame.run_tail
                     && (in_flow_block || in_flow_container)
                     && frame.closing_edges > 0.0;
-                let needs_ancestor_constraints = (nested_candidate_base
-                    && ((!inline_level && is_block_flow_box && avoids_break)
-                        || is_float
-                        || clears_float))
+                // A nested block after a block of its parent's flow, with a
+                // margin between the two: a page edge in that margin cuts it.
+                let margin_shape = in_flow_block_level
+                    && !direct_body_child
+                    && !node.used_writing_mode.is_vertical()
+                    && frame.previous_box.is_some_and(|previous| {
+                        node.layout.margin.top > 0.0
+                            || document.nodes[previous].layout.margin.bottom > 0.0
+                    });
+                let needs_ancestor_constraints = margin_shape
+                    || (nested_candidate_base
+                        && ((!inline_level && is_block_flow_box && avoids_break)
+                            || is_float
+                            || clears_float))
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -1697,16 +1707,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || (inside_flex
                             && !flex_item_candidate
                             && is_plain_block_box(document, node_id)));
-                // A nested block after a block of its parent's flow, with a
-                // margin between the two: a page edge in that margin cuts it.
-                let margin_candidate = in_flow_block_level
-                    && !direct_body_child
-                    && can_move_nested
-                    && !node.used_writing_mode.is_vertical()
-                    && frame.previous_box.is_some_and(|previous| {
-                        node.layout.margin.top > 0.0
-                            || document.nodes[previous].layout.margin.bottom > 0.0
-                    });
+                let margin_candidate = margin_shape && can_move_nested;
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float

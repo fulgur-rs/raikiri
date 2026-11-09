@@ -200,3 +200,25 @@ fn the_margin_between_blocks_inside_a_block_is_cut() {
         &[("b", 1, 20.0, 40.0), ("c", 1, 40.0, 50.0)],
     );
 }
+
+/// In an item of a grid with two columns, the margin stays as it is, and the
+/// item beside it and the block after the grid keep their places (Chromium
+/// prints `y` and `c` there too): cutting it would move the shared flow.
+#[test]
+fn a_margin_in_a_grid_item_leaves_the_items_beside_it_in_place() {
+    let body = format!(
+        "<div style=\"display:grid;grid-template-columns:50px 50px\"><div>{}{}</div>\
+         <div><div style=\"height:150px\"></div><div id=y style=\"height:10px\"></div></div>\
+         </div>{C}",
+        first(""),
+        b("")
+    );
+    let (pages, boxes) = pages_of(&body);
+    let got: Vec<(&str, usize, f32)> = boxes
+        .iter()
+        .filter(|(id, _)| id == "y" || id == "c")
+        .map(|(id, (page, _, y, _, _))| (id.as_str(), *page, *y))
+        .collect();
+    assert_eq!(pages, 2, "page count, got {got:?}");
+    assert_eq!(got, [("y", 1, 50.0), ("c", 1, 60.0)]);
+}
