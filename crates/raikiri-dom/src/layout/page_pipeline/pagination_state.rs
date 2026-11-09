@@ -53,6 +53,10 @@ pub(super) struct FlowEnv<'a> {
     pub(super) avoided_breaks: &'a AvoidedBreaks,
     pub(super) insets: PageContentInsets,
     pub(super) page_box: PageBox,
+    /// The edge of the nearest clip around the lines of each inline layout
+    /// root that has one, in raw flow coordinates: the lines past it are
+    /// never painted.
+    pub(super) clip_edges: &'a HashMap<usize, f32>,
 }
 
 /// Why placing a candidate ends pagination instead of going on with the next
@@ -2196,6 +2200,7 @@ impl PaginationState {
             page_origins,
             text_lines,
             root_flow_offset,
+            clip_edges,
             ..
         } = *env;
         let node_id = candidate.node_id;
@@ -2206,6 +2211,35 @@ impl PaginationState {
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
+            // A clip hides the lines past its edge: they never move, and a
+            // page that the box ends on, at or above the edge, has no break
+            // inside the box for a line running over it. Chromium keeps no
+            // widows once lines run past the clip.
+            let mut line_metrics = line_metrics;
+            let mut widows = cascade.computed[block_id].widows;
+            if let Some(&edge) = clip_edges.get(&block_id) {
+                let visible = edge - candidate.raw_y;
+                if line_metrics
+                    .last()
+                    .is_some_and(|&(_, bottom)| bottom > visible + 0.001)
+                {
+                    widows = 1;
+                }
+                line_metrics
+                    .truncate(line_metrics.partition_point(|&(top, _)| top < visible - 0.001));
+                if let Some(&(top, bottom)) = line_metrics.last()
+                    && bottom > visible + 0.001
+                {
+                    let page = page_origins.page_index_for_y(text.effective_y + top);
+                    let page_end = page_origins.origin(page) + page_origins.step_at(page);
+                    if text.effective_y + visible <= page_end + 0.001 {
+                        line_metrics.pop();
+                    }
+                }
+            }
+            if line_metrics.is_empty() {
+                return Ok(());
+            }
             let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id);
             // The break that keeps the last lines with the padding and border
             // that close the boxes around the paragraph, on `page`.
@@ -2256,7 +2290,7 @@ impl PaginationState {
                     effective_y,
                     page,
                     cascade.computed[block_id].orphans.max(1) as usize,
-                    cascade.computed[block_id].widows.max(1) as usize,
+                    widows.max(1) as usize,
                     page_origins,
                 )
             };
@@ -2331,7 +2365,7 @@ impl PaginationState {
                     page_start,
                     page_start + page_step,
                     cascade.computed[block_id].orphans,
-                    cascade.computed[block_id].widows,
+                    widows,
                     if edges_follow_moved_lines || lines_fit {
                         own_closing_edges
                     } else {
@@ -2769,7 +2803,6 @@ impl PaginationState {
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
-        clip_edges: &HashMap<usize, f32>,
         owner_heights: &HashMap<usize, f32>,
     ) -> Result<(), Halt> {
         let FlowEnv {
@@ -2777,6 +2810,7 @@ impl PaginationState {
             control,
             page_origins,
             text_lines,
+            clip_edges,
             ..
         } = *env;
         let paragraphs = std::mem::take(&mut self.positioned_paragraphs);
