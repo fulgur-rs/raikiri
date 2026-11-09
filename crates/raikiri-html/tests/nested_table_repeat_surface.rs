@@ -1,9 +1,10 @@
-//! A table nested in a block, or as the only item of a single-line row flex
-//! container, repeats its header and footer groups on every page it spans,
-//! however many pages that is (CSS 2 §17.2, CSS Fragmentation 3 §5.4).
+//! A table nested in a block, in a single-line column flex container, or as
+//! the only item of a single-line row flex container, repeats its header and
+//! footer groups on every page it spans, however many pages that is (CSS 2
+//! §17.2, CSS Fragmentation 3 §5.4).
 //!
-//! The expected boxes are those Chromium prints for the block holder; the
-//! row flex holder lays out as the block one does.
+//! The expected boxes are those Chromium prints for the block and column
+//! flex holders; the row flex holder lays out as the block one does.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -118,27 +119,55 @@ fn a_nested_table_longer_than_a_page_repeats_its_groups_on_each_page() {
 }
 
 #[test]
-fn other_flex_containers_keep_their_items_unrepeated() {
-    // A column flex container, or a row one with another item, fragments its
-    // items on its own path, which places the groups once. Chromium repeats
-    // them there too; these pin the current behavior.
-    for (holder, extra, width) in [
-        ("display:flex;flex-direction:column", "", 336),
-        ("display:flex", "<div id=x>x</div>", 60),
+fn a_table_in_a_column_flex_container_repeats_as_in_block_flow() {
+    // The items before and after the table stack as blocks do, and Chromium
+    // prints both holders alike.
+    let column = |content: &str| laid_out(".holder{display:flex;flex-direction:column}", content);
+    let block = |content: &str| laid_out(".holder{display:block}", content);
+    for (pre, post) in [
+        ("", ""),
+        ("<div id=y class=text>Y</div>", ""),
+        ("", "<div id=x class=text>X</div>"),
     ] {
-        let pages = pages(holder, 7, extra);
-        assert_eq!(pages.len(), 2, "{holder}");
-        assert!(
-            pages[0].contains(&format!("h=(96, {width}, 24)")) && !pages[0].contains(" f="),
-            "{holder}: {}",
-            pages[0]
-        );
-        assert!(
-            pages[1].contains(&format!("f=(96, {width}, 24)")) && !pages[1].contains(" h="),
-            "{holder}: {}",
-            pages[1]
-        );
+        for rows in [7, 14] {
+            // A full-width table is as wide in both holders.
+            let content = format!("{pre}{}{post}", table(rows, true, "width:100%"));
+            assert_eq!(column(&content), block(&content), "{pre}{post} {rows}");
+        }
     }
+    assert_eq!(
+        column(&format!(
+            "{}<div id=x class=text>X</div>",
+            table(7, true, "")
+        )),
+        [
+            "before=(48, 384, 24) f=(216, 336, 24) h=(96, 336, 24) holder=(72, 384, 168) \
+             r1=(120, 336, 24) r2=(144, 336, 24) r3=(168, 336, 24) r4=(192, 336, 24) \
+             t=(96, 336, 144)",
+            "after=(216, 384, 24) f=(144, 336, 24) h=(48, 336, 24) holder=(48, 384, 168) \
+             r5=(72, 336, 24) r6=(96, 336, 24) r7=(120, 336, 24) t=(48, 336, 120) \
+             x=(168, 336, 24)",
+        ]
+    );
+}
+
+#[test]
+fn a_table_beside_another_row_flex_item_keeps_the_flex_path() {
+    // Items side by side fragment in parallel, so a header copy must not
+    // push the other item down as block flow would. These pin the current
+    // behavior, which places the groups once; Chromium repeats them.
+    let pages = pages("display:flex", 7, "<div id=x>x</div>");
+    assert_eq!(pages.len(), 2);
+    assert!(
+        pages[0].contains("h=(96, 60, 24)") && !pages[0].contains(" f="),
+        "{}",
+        pages[0]
+    );
+    assert!(
+        pages[1].contains("f=(96, 60, 24)") && !pages[1].contains(" h="),
+        "{}",
+        pages[1]
+    );
 }
 
 #[test]

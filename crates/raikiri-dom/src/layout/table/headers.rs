@@ -618,7 +618,8 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
 
 /// Table sources whose ancestor boxes follow the shared block flow when a
 /// repeated header adds room, a single-line row flex container that holds
-/// only the table counting as such a box (see [`sole_flex_table`]). Bounded
+/// only the table (see [`sole_flex_table`]) or a single-line column flex
+/// container (see [`stacking_column_flex`]) counting as such a box. Bounded
 /// or independently placed flows stop the search so their internal shifts
 /// cannot escape into their outer siblings.
 fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) -> Vec<usize> {
@@ -654,6 +655,10 @@ fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) 
             pending.push(table);
             continue;
         }
+        if stacking_column_flex(document, cascade, id) {
+            pending.extend(node.children.iter().rev().copied());
+            continue;
+        }
         if !matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
             || !shares_growing_block_flow(document, cascade, id)
         {
@@ -683,6 +688,20 @@ pub(crate) fn sole_flex_table(
     }
     crate::layout::ifc::assign::only_item(document, id)
         .filter(|&item| document.nodes[item].display() == DisplayValue::Table)
+}
+
+/// Whether `id` is a single-line column flex container that grows with its
+/// items like a block box, so that they stack as block flow does.
+pub(crate) fn stacking_column_flex(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
+    let values = &cascade.computed[id];
+    document.nodes[id].display() == DisplayValue::Flex
+        && values.flex_direction == FlexDirectionValue::Column
+        && values.flex_wrap == FlexWrapValue::NoWrap
+        && shares_growing_block_flow(document, cascade, id)
 }
 
 fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {

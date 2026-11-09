@@ -2078,7 +2078,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 && document.nodes[node_id].grid_column_count == 1,
                             inside_flex: inside_flex
                                 || (document.nodes[node_id].display().is_flex_container()
-                                    && !holds_sole_table),
+                                    && !holds_sole_table
+                                    && !(document.nodes[child_id].display()
+                                        == DisplayValue::Table
+                                        && crate::layout::table::headers::stacking_column_flex(
+                                            document, cascade, node_id,
+                                        ))),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {

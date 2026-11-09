@@ -17,7 +17,9 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
     table(&mut doc, first);
     for css in [
         "display:none",
-        "display:flex;flex-direction:column",
+        "display:flex;flex-direction:column-reverse",
+        "display:flex;flex-direction:column;flex-wrap:wrap",
+        "display:flex;flex-direction:column;height:100px",
         "display:flex;flex-wrap:wrap",
         "display:flex;height:100px",
         "display:flex;overflow:hidden",
@@ -62,6 +64,15 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
         table(&mut doc, shared);
         doc.append_element(Some(shared), "div", Some(item));
     }
+    // A single-line column flex container stacks its items as block flow
+    // does, so every table among them shares it.
+    let column = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:flex;flex-direction:column"),
+    );
+    doc.append_element(Some(column), "div", Some("display:block"));
+    let stacked = table(&mut doc, column);
     let texted = doc.append_element(Some(body), "div", Some("display:flex"));
     table(&mut doc, texted);
     doc.append_text(texted, "anonymous item");
@@ -86,6 +97,7 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
             third,
             ignored_containment,
             flexed,
+            stacked,
             beside_hidden,
             fourth,
             direct_bounded
