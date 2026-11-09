@@ -1632,12 +1632,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || (inside_flex
                             && !flex_item_candidate
                             && is_plain_block_box(document, node_id)));
-                // A nested block with a margin above it, after a block of its
-                // parent's flow: a page edge in that margin cuts it.
+                // A nested block after a block of its parent's flow, with a
+                // margin between the two: a page edge in that margin cuts it.
                 let margin_candidate = in_flow_block_level
                     && !direct_body_child
-                    && node.layout.margin.top > 0.0
-                    && frame.previous_box.is_some();
+                    && can_move_nested
+                    && !node.used_writing_mode.is_vertical()
+                    && frame.previous_box.is_some_and(|previous| {
+                        node.layout.margin.top > 0.0
+                            || document.nodes[previous].layout.margin.bottom > 0.0
+                    });
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float

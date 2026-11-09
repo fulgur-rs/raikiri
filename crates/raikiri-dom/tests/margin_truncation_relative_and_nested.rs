@@ -187,6 +187,13 @@ fn the_margin_between_blocks_inside_a_block_is_cut() {
             &[("b", 1, 20.0, 40.0), ("c", 1, 20.0, 30.0)],
         );
     }
+    // The margin may be the block-end margin of the block before `b`.
+    check(
+        "margin below the block before",
+        "<div><div style=\"height:80px;margin-bottom:30px\"></div>\
+         <div id=b style=\"height:20px\"></div></div><div id=c style=\"height:10px\"></div>",
+        &[("b", 1, 0.0, 20.0), ("c", 1, 20.0, 30.0)],
+    );
     check(
         "c in the relative block",
         &wrapped(relative, &b(""), true),

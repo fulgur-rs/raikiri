@@ -28,6 +28,34 @@ impl SiblingAdjacency {
     ) -> bool {
         #[cfg(test)]
         super::tests::record_sibling_adjacency_work([1, 0, 0]);
+        self.walk_back(document, node_id, |id| {
+            preceding_box(document, cascade, id, previous)
+        })
+        .unwrap_or(false)
+    }
+
+    /// The box before `node_id` in the flow of its parent that takes block
+    /// space, past the empty boxes the margins collapse through, or `None`
+    /// when there is none.
+    pub(super) fn preceding_flow_box(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> Option<usize> {
+        self.walk_back(document, node_id, |id| {
+            last_box_with_space(document, cascade, id)
+        })
+    }
+
+    /// Visits the siblings before `node_id` from the nearest one back, and
+    /// those before each contents box around it, until `visit` decides.
+    fn walk_back<T>(
+        &mut self,
+        document: &Document,
+        node_id: usize,
+        mut visit: impl FnMut(usize) -> Option<T>,
+    ) -> Option<T> {
         let mut current = node_id;
         for parent in document.ancestors(node_id) {
             let positions = self.positions.entry(parent).or_insert_with(|| {
@@ -40,44 +68,9 @@ impl SiblingAdjacency {
                     .map(|(i, &id)| (id, i))
                     .collect()
             });
-            let Some(&index) = positions.get(&current) else {
-                return false;
-            };
-            for &id in document.nodes[parent].children[..index].iter().rev() {
-                if let Some(found) = preceding_box(document, cascade, id, previous) {
-                    return found;
-                }
-            }
-            if document.nodes[parent].display() != DisplayValue::Contents {
-                return false;
-            }
-            current = parent;
-        }
-        false
-    }
-
-    /// The box before `node_id` in the flow of its parent that takes block
-    /// space, past the empty boxes the margins collapse through, or `None`
-    /// when there is none.
-    pub(super) fn preceding_flow_box(
-        &mut self,
-        document: &Document,
-        cascade: &CascadeResult,
-        node_id: usize,
-    ) -> Option<usize> {
-        let mut current = node_id;
-        for parent in document.ancestors(node_id) {
-            let positions = self.positions.entry(parent).or_insert_with(|| {
-                let children = &document.nodes[parent].children;
-                children
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &id)| (id, i))
-                    .collect()
-            });
             let index = *positions.get(&current)?;
             for &id in document.nodes[parent].children[..index].iter().rev() {
-                if let Some(found) = last_box_with_space(document, cascade, id) {
+                if let Some(found) = visit(id) {
                     return Some(found);
                 }
             }

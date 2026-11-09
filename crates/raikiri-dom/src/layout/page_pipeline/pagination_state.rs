@@ -16,10 +16,10 @@ use super::{
     collapsed_start_margin_gain, collapsed_start_margin_gain_in_flow, collapses_through,
     collapses_with_previous_block, content_overflow, current_abs_y, first_box_ancestor_at_start,
     first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
-    floats_put_first_line_down, follows_flow_content, forced_line_breaks, forced_line_moves,
-    forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
-    has_fixed_height, has_footnote_ancestor, is_floating_box_for_pagination,
-    is_unfixed_absolute_box, layout_relative_offset_y, lead_below_ancestor, lead_below_edges,
+    floats_put_first_line_down, flow_raw_y, follows_flow_content, forced_line_breaks,
+    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
+    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
+    is_floating_box_for_pagination, is_unfixed_absolute_box, lead_below_ancestor, lead_below_edges,
     leading_edges_move, leading_holder, line_block_parent, lines_between_blocks,
     lines_can_shift_above_blocks, lines_can_shift_between_blocks, lines_can_shift_inside,
     lines_move_grows_box, make_room_for_caption_header, make_room_for_table_header,
@@ -1253,15 +1253,11 @@ impl PaginationState {
                     page_break.collapses_with_previous_block && page_break.margins_collapse_through,
                 );
             }
-            // Siblings are compared where the flow puts them, without the
-            // relative offsets that only paint them elsewhere.
-            let raw_y = candidate.raw_y
-                - layout_relative_offset_y(document, env.cascade, env.body_id, node_id);
             self.sibling_margins.record_bottom(
                 parent_id,
                 node_id,
                 page_break.collapses_with_previous_block,
-                raw_y + candidate.height,
+                flow_raw_y(document, env.cascade, env.body_id, candidate) + candidate.height,
             );
         }
     }
@@ -1428,9 +1424,12 @@ impl PaginationState {
         let keeps_margin_at_break = forced_before
             || pending_break_applies
             || named_page_change
-            || self
-                .sibling_margins
-                .forced_break_reaches(document, cascade, node_id, raw_y)
+            || self.sibling_margins.forced_break_reaches(
+                document,
+                cascade,
+                node_id,
+                flow_raw_y(document, cascade, body_id, candidate),
+            )
             || continuation_offset.is_some();
         let margin_top = if keeps_margin_at_break
             && collapses_with_previous_block
@@ -1975,7 +1974,7 @@ impl PaginationState {
         let at = MarginBreak {
             node_id,
             clearance_free: avoided_breaks.clearance_free.contains(node_id),
-            raw_y: candidate.raw_y - layout_relative_offset_y(document, cascade, body_id, node_id),
+            raw_y: flow_raw_y(document, cascade, body_id, candidate),
             effective_y: flow_y,
             natural_page,
             forced_before,
