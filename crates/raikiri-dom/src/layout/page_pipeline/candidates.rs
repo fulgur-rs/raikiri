@@ -1706,7 +1706,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // it occupies only the part above.
                 let pushed =
                     is_break_candidate && (sets_page_flow || candidate_raw_y < frame.clip_end);
-                if !is_body && !is_float && participates_in_flow && !inside_float {
+                // A contents box has no box of its own: its children stand
+                // among its parent's.
+                if !is_body
+                    && !is_float
+                    && participates_in_flow
+                    && !inside_float
+                    && node.display() != DisplayValue::Contents
+                {
                     let bottom = (!pushed && in_flow_block_level).then(|| {
                         candidate_raw_y + node.layout.size.height
                             - super::layout_relative_offset_y(document, cascade, body_id, node_id)
