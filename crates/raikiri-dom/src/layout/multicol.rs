@@ -2197,46 +2197,85 @@ impl StackedChild {
 /// How `children` fill `count` columns `height` tall: whether they fit, and
 /// how tall the tallest column is. A column ends before a line or a child
 /// that would reach past its end, unless the line or the child starts it.
-fn fill_stacked_columns(children: &[StackedChild], count: usize, height: f32) -> (bool, f32) {
+/// A break between the lines of a paragraph leaves at least `orphans` of
+/// them before it and `widows` after it where the paragraph has that many,
+/// and goes before the whole paragraph when it cannot.
+fn fill_stacked_columns(
+    children: &[StackedChild],
+    count: usize,
+    height: f32,
+    (orphans, widows): (usize, usize),
+) -> (bool, f32) {
     let mut column = 0;
     let mut offset = 0.0f32;
     let mut used = 0.0f32;
-    let mut place = |start: f32, end: f32| {
-        if end - offset > height + LINE_EPSILON && start - offset > LINE_EPSILON {
-            column += 1;
-            offset = start;
-        }
-        used = used.max(end - offset);
+    let overflows = |start: f32, end: f32, offset: f32| {
+        end - offset > height + LINE_EPSILON && start - offset > LINE_EPSILON
     };
     for child in children {
-        if child.lines.is_empty() {
-            place(child.top, child.bottom);
-        } else {
-            for &(start, end) in &child.lines {
-                place(start, end);
+        let lines = &child.lines;
+        if lines.is_empty() {
+            if overflows(child.top, child.bottom, offset) {
+                column += 1;
+                offset = child.top;
             }
+            used = used.max(child.bottom - offset);
+            continue;
         }
+        // The first line of the piece of the paragraph in this column.
+        let mut piece = 0;
+        let mut line = 0;
+        while line < lines.len() {
+            let (start, end) = lines[line];
+            if !overflows(start, end, offset) {
+                used = used.max(end - offset);
+                line += 1;
+                continue;
+            }
+            // Move the break up to where it keeps the orphans and widows.
+            let mut at = line;
+            while at > piece && (at - piece < orphans || lines.len() - at < widows) {
+                at -= 1;
+            }
+            // A break that keeps no line of the piece here goes before it,
+            // unless the piece starts the column.
+            if at == piece && lines[piece].0 - offset <= LINE_EPSILON {
+                at = line;
+            }
+            column += 1;
+            offset = lines[at].0;
+            piece = at;
+            line = at;
+        }
+        // The edges and margin below the last line.
+        used = used.max(child.bottom - offset);
     }
     (column < count, used)
 }
 
 /// The height of `count` balanced columns holding `children`, which take
-/// `total` in one column: the lowest that fits them all.
-fn balanced_stack_height(children: &[StackedChild], count: usize, total: f32) -> f32 {
+/// `total` in one column: the lowest that fits them all, found to within
+/// a thousandth of a pixel.
+fn balanced_stack_height(
+    children: &[StackedChild],
+    count: usize,
+    total: f32,
+    breaks: (usize, usize),
+) -> f32 {
     let (mut low, mut high) = (total / count.max(1) as f32, total);
-    let (fits, used) = fill_stacked_columns(children, count, low);
+    let (fits, used) = fill_stacked_columns(children, count, low, breaks);
     if fits {
         return used;
     }
-    for _ in 0..32 {
+    while high - low > 0.001 {
         let middle = (low + high) / 2.0;
-        if fill_stacked_columns(children, count, middle).0 {
+        if fill_stacked_columns(children, count, middle, breaks).0 {
             high = middle;
         } else {
             low = middle;
         }
     }
-    fill_stacked_columns(children, count, high).1
+    fill_stacked_columns(children, count, high, breaks).1
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2356,7 +2395,7 @@ fn layout_column_group(
                 ) + skipped;
                 // Only the lines that flow beside floats break between
                 // columns where they are; any other block goes whole.
-                stacked.push(if beside && kind == Some(BesideFloats::Flows) {
+                stacked.push(if beside && splits_beside_floats(tree, child, kind) {
                     StackedChild::of(tree, child, top, margin_top, needed)
                 } else {
                     StackedChild::atomic(top, needed)
@@ -2369,7 +2408,12 @@ fn layout_column_group(
         let target = if measured_beside.contains(&true) && fragment_height.is_none() {
             // Lines beside floats break between columns where they are, so
             // the columns are as tall as the lowest height that fits them all.
-            balanced_stack_height(&stacked, context.column_count, total)
+            balanced_stack_height(
+                &stacked,
+                context.column_count,
+                total,
+                (context.orphans.max(1), context.widows.max(1)),
+            )
         } else {
             (total / context.column_count as f32).max(largest)
         };
@@ -2631,14 +2675,11 @@ fn layout_column_group(
                     );
                     laid_beside = true;
                     let wrapped = margin_top + after.output.size.height + margin_bottom;
-                    let content_top = (kind == BesideFloats::Flows)
-                        .then(|| {
-                            let layout = tree.nodes[child].layout;
-                            after.top + margin_top + layout.border.top + layout.padding.top
-                        })
+                    let content_top = splits_beside_floats(tree, child, Some(kind))
+                        .then_some(after.top + margin_top)
                         .filter(|&content_top| {
                             break_height.is_some_and(|height| {
-                                first_line_fits(tree, child, content_top, height)
+                                first_piece_fits(tree, child, content_top, height, context.orphans)
                             })
                         });
                     // A block at the top of a column stays there, and its
@@ -2840,8 +2881,13 @@ fn layout_column_group(
             );
             if let Some((content_top, height)) = split
                 && let Some(root) = tree.nodes[child].ifc.as_mut()
-                && let Some(fragments) =
-                    lines_below_column_top(root, content_top, height, column_context)
+                && let Some(fragments) = lines_below_column_top(
+                    root,
+                    content_top,
+                    height,
+                    column_context,
+                    fragment_height.is_none(),
+                )
             {
                 root.multicol_fragments = Some(fragments);
                 refresh_paragraph_boxes(
@@ -4497,15 +4543,38 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
 /// of passes over the lines.
 const MAX_ORPHAN_STEPS: usize = 256;
 
-/// Whether the first line of the paragraph `child`, whose content starts
-/// `content_top` below the top of its column, ends within the column's
-/// `height`.
-fn first_line_fits(tree: &LayoutSession<'_>, child: usize, content_top: f32, height: f32) -> bool {
+/// Whether `child`, which goes `kind` of beside floats, is a paragraph whose
+/// lines break between columns where they are: one that shares the floats'
+/// context, with no block-edge padding or border, no authored height and
+/// nothing that avoids a break inside it.
+fn splits_beside_floats(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    kind: Option<BesideFloats>,
+) -> bool {
+    kind == Some(BesideFloats::Flows)
+        && tree.nodes[child].ifc.is_some()
+        && can_balance_paragraph_box(tree, child, BlockEdges::Refused)
+}
+
+/// Whether the paragraph `child`, whose content starts `content_top` below
+/// the top of its column, ends `orphans` of its lines, or all of them when it
+/// has fewer, within the column's `height`.
+fn first_piece_fits(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    content_top: f32,
+    height: f32,
+    orphans: usize,
+) -> bool {
     tree.nodes[child]
         .ifc
         .as_ref()
         .and_then(|root| root.lines.as_ref())
-        .and_then(|lines| lines.lines.first())
+        .and_then(|lines| {
+            let lines = &lines.lines;
+            lines.get(orphans.max(1).min(lines.len()).checked_sub(1)?)
+        })
         .is_some_and(|line| {
             content_top + line.block_offset() + line.block_size() <= height + LINE_EPSILON
         })
@@ -4514,12 +4583,14 @@ fn first_line_fits(tree: &LayoutSession<'_>, child: usize, content_top: f32, hei
 /// The pieces of the paragraph `root` in columns `height` tall when its
 /// content starts `content_top` below the top of the column of `context`:
 /// the lines that end within that column stay in it, and each next column
-/// starts with the first line that did not fit the one before.
+/// starts with the first line that did not fit the one before. With
+/// `balanced`, the last column of `context` takes all the lines left.
 fn lines_below_column_top(
     root: &crate::layout::ifc::root::IfcRoot,
     content_top: f32,
     height: f32,
     context: FragmentationContext,
+    balanced: bool,
 ) -> Option<Vec<MulticolTextFragment>> {
     let extents: Vec<(f32, f32)> = root
         .lines
@@ -4528,22 +4599,29 @@ fn lines_below_column_top(
         .iter()
         .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
         .collect();
-    if extents.is_empty() {
+    let last_column = balanced.then(|| context.column_count.saturating_sub(1));
+    // The column of `context` holds the lines that end within the room below
+    // `content_top`, and at least one.
+    let mut start = extents
+        .iter()
+        .skip(1)
+        .position(|extent| content_top + extent.1 > height + f32::EPSILON)
+        .filter(|_| last_column.is_none_or(|last| context.column_index < last))
+        .map_or(extents.len(), |fitting| fitting + 1);
+    if start == 0 {
         return None;
     }
-    let mut ranges = Vec::new();
-    let mut start = 0;
-    let mut origin = -content_top;
+    let mut ranges = vec![(0, start, context.column_index)];
     let mut column = context.column_index;
     while start < extents.len() {
-        let mut end = start + 1;
-        while end < extents.len() && extents[end].1 - origin <= height + LINE_EPSILON {
-            end += 1;
-        }
-        ranges.push((start, end, column));
         column += 1;
+        let end = if last_column.is_some_and(|last| column >= last) {
+            extents.len()
+        } else {
+            column_end(&extents, start, height)
+        };
+        ranges.push((start, end, column));
         start = end;
-        origin = extents.get(start).map_or(origin, |extent| extent.0);
     }
     respect_orphans_and_widows(&mut ranges, context);
     Some(

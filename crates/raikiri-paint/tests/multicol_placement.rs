@@ -3556,3 +3556,73 @@ fn definite_height_columns_split_a_paragraph_beside_a_float_down_the_column() {
         .concat(),
     );
 }
+
+#[test]
+fn a_paragraph_split_beside_a_float_keeps_its_orphans_and_widows() {
+    // With two orphans and two widows, the five lines split three and two,
+    // and a paragraph with room for one line under `Q` and `R` stays whole
+    // there, the columns growing to hold it. The positions are Chromium's.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>E F G H I</p></div><p>N</p>",
+        ".mc{orphans:2;widows:2}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            glyphs_at(20, 0, "E<br>F"),
+            glyphs_at(0, 40, "G"),
+            glyphs_at(60, 0, "H<br>I"),
+            glyphs_at(0, 60, "N"),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p>Q</p><p>R</p><p style='float:left'>A<br>B</p><p>E F G H</p></div><p>N</p>",
+        ".mc{orphans:2;widows:2}",
+        &[
+            glyphs_at(0, 0, "Q<br>R<br>A<br>B"),
+            glyphs_at(20, 40, "E<br>F"),
+            glyphs_at(60, 0, "G<br>H"),
+            glyphs_at(0, 80, "N"),
+        ]
+        .concat(),
+    );
+    // In 60px columns, the float does not fit under `Q` and `R`, so it and
+    // the paragraph beside it start the next column.
+    compare(
+        "<div class=mc><p>Q</p><p>R</p><p style='float:left'>A<br>B</p><p>E F G H</p></div>",
+        ".mc{orphans:2;widows:2;height:60px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "Q<br>R"),
+            glyphs_at(60, 0, "A<br>B"),
+            glyphs_at(80, 0, "E<br>F"),
+            glyphs_at(120, 0, "G<br>H"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_paragraph_that_avoids_breaks_beside_a_float_moves_to_the_next_column() {
+    // `break-inside: avoid` keeps the paragraph whole in the next column,
+    // at full width there, and only splits it where it is taller than the
+    // 60px columns. The positions are Chromium's.
+    compare(
+        "<div class=mc><p>Q</p><p style='float:left'>A<br>B</p><p style='break-inside:avoid'>E F G H</p></div><p>N</p>",
+        "",
+        &[
+            glyphs_at(0, 0, "Q<br>A<br>B"),
+            glyphs_at(60, 0, "E<br>F<br>G<br>H"),
+            glyphs_at(0, 80, "N"),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p>Q</p><p style='float:left'>A<br>B</p><p style='break-inside:avoid'>E F G H</p></div>",
+        ".mc{height:60px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "Q<br>A<br>B"),
+            glyphs_at(60, 0, "E<br>F<br>G"),
+            glyphs_at(120, 0, "H"),
+        ]
+        .concat(),
+    );
+}
