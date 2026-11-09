@@ -149,6 +149,14 @@ fn a_box_overflowing_a_block_it_begins_that_ends_on_the_page_is_cut() {
             ),
         ),
         (
+            "first box of an absolutely positioned block",
+            format!(
+                "<div style=\"height:300px\"></div><div style=\"height:250px;padding-top:240px;\
+                 position:relative\"><div style=\"position:absolute;top:240px;left:0;\
+                 height:300px;width:20px\">{SIZED}</div></div>"
+            ),
+        ),
+        (
             "block after the box",
             format!(
                 "<div style=\"height:300px\"></div><div style=\"height:250px;padding-top:240px\">\

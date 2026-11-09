@@ -2196,11 +2196,6 @@ fn unbreakable_room(
         super::current_abs_y(document, id)
             - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    // Positions inside an inline formatting context or out of the flow are
-    // not those of the flow.
-    if super::has_unusual_coordinates(document, node_id) {
-        return None;
-    }
     let node = &document.nodes[node_id];
     let top = flow_y(node_id);
     let height = node.layout.size.height;
@@ -2220,6 +2215,8 @@ fn unbreakable_room(
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
+        // Positions inside an inline formatting context or out of the flow
+        // are not those of the flow: the walk stops below such a box.
         if super::has_unusual_coordinates(document, ancestor) {
             break;
         }
