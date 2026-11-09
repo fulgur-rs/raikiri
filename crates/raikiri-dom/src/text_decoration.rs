@@ -505,16 +505,22 @@ fn context_for_text(
 /// holds the text. A ruby nested in that annotation passes its decorations
 /// to its own base like any other ruby container. Each element's decoration
 /// sits at that element's baseline, `shifts` below the annotation line's.
-fn annotation_context(
-    document: &Document,
-    cascade: &CascadeResult,
+/// On the first line of the paragraph `first_line`, the elements have the
+/// values the `::first-line` around them gives.
+fn annotation_context<'a>(
+    document: &'a Document,
+    cascade: &'a CascadeResult,
     text_node: usize,
     shifts: &HashMap<usize, f32>,
+    first_line: Option<&'a crate::Node>,
 ) -> DecorationContext {
     let mut chain = Vec::new();
     let mut in_annotation = false;
     for id in document.ancestors(text_node) {
-        let Some(cv) = computed_for_id(cascade, id) else {
+        let Some(cv) = first_line
+            .and_then(|node| node.ifc_first_line_element_style(id))
+            .or_else(|| computed_for_id(cascade, id))
+        else {
             break; // cov:ignore: annotation runs are positioned only for cascaded text.
         };
         if cv.display.is_ruby_container() {
@@ -712,7 +718,8 @@ pub fn positioned_line_decorations(
                     .get(&owner)
                     .map(|line| baseline_shifts(document, line))
                     .unwrap_or_default();
-                return annotation_context(document, cascade, owner, &shifts);
+                let first_line = (line.index == 0).then(|| document.get_node(root)).flatten();
+                return annotation_context(document, cascade, owner, &shifts, first_line);
             }
             let context = context_for_text(
                 document,

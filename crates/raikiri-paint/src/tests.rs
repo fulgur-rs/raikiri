@@ -4008,3 +4008,115 @@ fn empty_inline_block_before_keeps_a_multicol_paragraph_in_columns() {
     });
     assert!(in_second_column);
 }
+
+/// Each glyph run of `scene`, in paint order, with its first glyph's
+/// position.
+fn glyph_runs(scene: &Scene) -> Vec<(&anyrender::recording::GlyphRunCommand, (f64, f64))> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => {
+                let glyph = run.glyphs.first()?;
+                let at = run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y));
+                Some((run, (at.x, at.y)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The text of a ruby's base, here inside an inline element, and of its
+/// annotation takes the values of the `::first-line` on the first line, as
+/// in Chromium, and the annotation's underline its color; on a later line
+/// they keep their own.
+#[test]
+fn first_line_styles_reach_the_base_and_annotation_of_a_ruby() {
+    use anyrender::types::Paint;
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem;color:rgb(255,0,0)} rt{font-size:5px;text-decoration:underline} p::first-line{color:rgb(0,0,255)}</style></head><body><p><ruby><span>X</span><rt>Y</rt></ruby><br><ruby>Q<rt>R</rt></ruby></p></body></html>"#,
+    );
+    let colors: Vec<([u8; 4], bool)> = glyph_runs(&scene)
+        .iter()
+        .filter_map(|(run, (_, y))| match &run.brush {
+            Paint::Solid(color) => Some((color.to_rgba8().to_u8_array(), *y < 30.0)),
+            _ => None,
+        })
+        .collect();
+    let (blue, red) = ([0, 0, 255, 255], [255, 0, 0, 255]);
+    assert_eq!(
+        colors,
+        [(blue, true), (blue, true), (red, false), (red, false)]
+    );
+    let lines = |rgb| {
+        solid_fill_bounds(&scene, rgb)
+            .iter()
+            .map(|rect| rect.y0 < 30.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lines((0, 0, 255)), [true]);
+    assert_eq!(lines((255, 0, 0)), [false]);
+}
+
+/// The font size of a `::first-line` reaches the base of a ruby on the first
+/// line and, through inheritance, its 50% annotation, as in Chromium: there
+/// the base is 20px, 40px wide, and its annotation 10px; on the next line
+/// they are 10px and 5px.
+#[test]
+fn first_line_font_size_reaches_the_base_and_annotation_of_a_ruby() {
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem} p::first-line{font-size:20px}</style></head><body><p><ruby><rb>XX</rb><rt>YY</rt></ruby>Z<br><ruby><rb>QQ</rb><rt>RR</rt></ruby></p></body></html>"#,
+    );
+    let sizes: Vec<(f32, f64)> = glyph_runs(&scene)
+        .iter()
+        .map(|(run, (x, _))| (run.font_size, *x))
+        .collect();
+    assert_eq!(
+        sizes,
+        [
+            (20.0, 0.0),
+            (10.0, 5.0),
+            (20.0, 40.0),
+            (10.0, 0.0),
+            (5.0, 2.5)
+        ]
+    );
+}
+
+/// The colors of the glyph runs of `<p>` laid out with `css` and holding
+/// `body`, in paint order.
+fn ruby_run_colors(css: &str, body: &str) -> Vec<[u8; 4]> {
+    use anyrender::types::Paint;
+    let html = format!(
+        "<html><head><style>body{{margin:0}} p{{margin:0;font:10px/30px Ahem;color:rgb(255,0,0)}} rt{{font-size:5px}} p::first-line{{color:rgb(0,0,255)}} {css}</style></head><body><p>{body}</p></body></html>"
+    );
+    glyph_runs(&painted_html_with_ahem(html.as_bytes()))
+        .iter()
+        .filter_map(|(run, _)| match &run.brush {
+            Paint::Solid(color) => Some(color.to_rgba8().to_u8_array()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// White space between the bases and between the annotations of a ruby on
+/// the first line takes the `::first-line` values as the text around it
+/// does; a ruby after a block `::before` whose line is the first line keeps
+/// its own values. Both as in Chromium.
+#[test]
+fn first_line_styles_reach_ruby_white_space_but_not_past_a_block_before() {
+    let (blue, red) = ([0, 0, 255, 255], [255, 0, 0, 255]);
+    let colors = ruby_run_colors(
+        "",
+        "<ruby><rb>a</rb> <rb>b</rb><rt>x</rt> <rt>y</rt></ruby>",
+    );
+    assert!(
+        !colors.is_empty() && colors.iter().all(|&color| color == blue),
+        "{colors:?}"
+    );
+    let colors = ruby_run_colors(
+        "p::before{content:'A';display:block}",
+        "<ruby>X<rt>Y</rt></ruby>",
+    );
+    assert_eq!(colors, [blue, red, red]);
+}

@@ -4,7 +4,7 @@
 //! the two cannot place a glyph differently. Positions are relative to the
 //! root's content-box origin; each consumer adds its own page origin.
 
-use super::root::IfcLines;
+use super::root::{IfcLines, IfcRoot};
 use crate::Document;
 use crate::generated_content::{computed_for_id, generated_image_origin, generated_origin};
 use objects::{ObjectTextPrefixes, object_text_offsets};
@@ -390,6 +390,13 @@ impl<'a> LineContext<'a> {
         let mut markers = Vec::new();
         let mut content_images = Vec::new();
         let mut object_offsets = None;
+        // The paragraph's first-letter and first-line values, which only its
+        // first line takes.
+        let ifc = self
+            .document
+            .get_node(self.root_id)
+            .filter(|_| index == 0)
+            .and_then(|node| node.ifc.as_deref());
         for (fragment_index, fragment) in line.fragments().enumerate() {
             if let Fragment::Atomic(atomic) = fragment {
                 if let Some((owner, pseudo, index)) = usize::try_from(atomic.node.0)
@@ -453,6 +460,7 @@ impl<'a> LineContext<'a> {
                     annotation,
                     Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
                     annotation.base_text_range().end,
+                    ifc,
                     &converter,
                     &mut own,
                 );
@@ -472,28 +480,13 @@ impl<'a> LineContext<'a> {
             };
             // Text inherits `visibility` from its element; hidden and
             // collapsed text is laid out but not painted (CSS 2.1 §11.2).
-            let ifc = self
-                .document
-                .get_node(self.root_id)
-                .filter(|_| index == 0)
-                .and_then(|node| node.ifc.as_ref());
             let letter = ifc.and_then(|ifc| {
                 run.source()
                     .and_then(|source| ifc.typographic_source(source))
             });
-            // On the first line, text takes the values it has inside the
-            // paragraph's `::first-line`.
-            let first_line = || {
-                let key = if generated_origin(owner).is_some() {
-                    owner
-                } else {
-                    self.document.parent_of(owner)?
-                };
-                ifc?.first_line_text_style(key)
-            };
             let Some(style) = letter
                 .map(|letter| &letter.computed)
-                .or_else(first_line)
+                .or_else(|| self.first_line_text_style(ifc, owner))
                 .or_else(|| computed_for_id(self.cascade, owner))
             else {
                 continue;
@@ -549,6 +542,22 @@ impl<'a> LineContext<'a> {
 }
 
 impl<'a> LineContext<'a> {
+    /// The values the text node or generated box `owner` has inside the
+    /// paragraph's `::first-line`, when `ifc`, that of the paragraph, is
+    /// given: only its first line takes them.
+    fn first_line_text_style(
+        &self,
+        ifc: Option<&'a IfcRoot>,
+        owner: usize,
+    ) -> Option<&'a raikiri_style::ComputedValues> {
+        let key = if generated_origin(owner).is_some() {
+            owner
+        } else {
+            self.document.parent_of(owner)?
+        };
+        ifc?.first_line_text_style(key)
+    }
+
     /// Add the runs of the ruby `annotation`, whose line `placement` maps to
     /// the paragraph, and of the annotations nested in it. They are read at
     /// `text_offset` of the paragraph line's text.
@@ -561,6 +570,7 @@ impl<'a> LineContext<'a> {
         annotation: shodo::RubyAnnotationView<'a>,
         placement: Placement,
         text_offset: usize,
+        ifc: Option<&'a IfcRoot>,
         converter: &PhysicalConverter,
         runs: &mut Vec<PositionedRun<'a>>,
     ) {
@@ -575,6 +585,7 @@ impl<'a> LineContext<'a> {
                         nested,
                         placement.annotation(nested.transform(), line.block_offset()),
                         text_offset,
+                        ifc,
                         converter,
                         &mut own,
                     );
@@ -584,7 +595,10 @@ impl<'a> LineContext<'a> {
                     let Some(owner) = run.node().map(|node| node.0 as usize) else {
                         continue; // cov:ignore: every text of ruby content is pushed with its DOM node.
                     };
-                    let Some(style) = computed_for_id(self.cascade, owner) else {
+                    let Some(style) = self
+                        .first_line_text_style(ifc, owner)
+                        .or_else(|| computed_for_id(self.cascade, owner))
+                    else {
                         continue; // cov:ignore: ruby content is laid out only from cascaded text nodes.
                     };
                     if style.visibility != Visibility::Visible || run.font_data().is_none() {
