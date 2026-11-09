@@ -17,7 +17,10 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
     table(&mut doc, first);
     for css in [
         "display:none",
-        "display:flex",
+        "display:flex;flex-direction:column",
+        "display:flex;flex-wrap:wrap",
+        "display:flex;height:100px",
+        "display:flex;overflow:hidden",
         "display:grid",
         "display:inline-block",
         "display:block;column-count:2",
@@ -50,6 +53,24 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
     }
     let ignored_containment =
         doc.append_element(Some(outer), "table", Some("display:table;contain:size"));
+    // A single-line row flex container holding one table and nothing else
+    // grows with it as a block does.
+    let flex = doc.append_element(Some(body), "div", Some("display:flex"));
+    let flexed = table(&mut doc, flex);
+    for item in ["display:block", "display:table"] {
+        let shared = doc.append_element(Some(body), "div", Some("display:flex"));
+        table(&mut doc, shared);
+        doc.append_element(Some(shared), "div", Some(item));
+    }
+    let texted = doc.append_element(Some(body), "div", Some("display:flex"));
+    table(&mut doc, texted);
+    doc.append_text(texted, "anonymous item");
+    let hidden_sibling = doc.append_element(Some(body), "div", Some("display:flex"));
+    let beside_hidden = table(&mut doc, hidden_sibling);
+    doc.append_element(Some(hidden_sibling), "div", Some("display:none"));
+    doc.append_text(hidden_sibling, " \n ");
+    let flexed_block = doc.append_element(Some(body), "div", Some("display:flex"));
+    doc.append_element(Some(flexed_block), "div", Some("display:block"));
     let fourth = table(&mut doc, body);
     let direct_bounded =
         doc.append_element(Some(body), "table", Some("display:table;height:100px"));
@@ -58,12 +79,14 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     assert!(!doc.nodes[ignored_containment].size_containment.height);
     assert_eq!(
-        block_flow_tables(&doc, &cascade, body, 200.0),
+        block_flow_tables(&doc, &cascade, body),
         [
             first,
             second,
             third,
             ignored_containment,
+            flexed,
+            beside_hidden,
             fourth,
             direct_bounded
         ]
@@ -71,7 +94,7 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
 }
 
 #[test]
-fn nested_repeat_discovery_stops_when_the_table_itself_needs_multiple_pages() {
+fn nested_repeat_discovery_takes_tables_of_any_laid_out_height() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
@@ -88,7 +111,7 @@ fn nested_repeat_discovery_stops_when_the_table_itself_needs_multiple_pages() {
     let cascade = crate::layout::test_support::cascaded(&doc);
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     assert_eq!(
-        block_flow_tables(&doc, &cascade, body, 200.0),
-        [nested[0], nested[1], direct]
+        block_flow_tables(&doc, &cascade, body),
+        [nested[0], nested[1], nested[2], direct]
     );
 }

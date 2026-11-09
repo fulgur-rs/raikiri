@@ -2069,7 +2069,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 == FormattingContext::Grid
                                 && document.nodes[node_id].grid_column_count == 1,
                             inside_flex: inside_flex
-                                || document.nodes[node_id].display().is_flex_container(),
+                                || (document.nodes[node_id].display().is_flex_container()
+                                    && crate::layout::table::headers::sole_flex_table(
+                                        document, cascade, node_id,
+                                    )
+                                    .is_none()),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {

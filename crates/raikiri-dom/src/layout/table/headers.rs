@@ -4,8 +4,12 @@
 use crate::Document;
 use raikiri_style::{
     CascadeResult, ComputedLengthPercentageOrAuto as Length,
-    property::{BreakBetween, BreakInside, DisplayValue, FloatValue, OverflowValue, PositionValue},
+    property::{
+        BreakBetween, BreakInside, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+        OverflowValue, PositionValue,
+    },
 };
+use raikiri_traits::NodeKind;
 use std::collections::{BTreeMap, HashMap};
 
 /// A header or footer group repeated on each page of its table.
@@ -108,7 +112,7 @@ impl HeaderRepeats {
         // fragmentation, so a wide header on a long table cannot turn a
         // layout that succeeds without repetition into a limit failure.
         let mut copy_budget = document.fragment_tree.limit / 2;
-        for table in block_flow_tables(document, cascade, body, page_height) {
+        for table in block_flow_tables(document, cascade, body) {
             let node = document.ifc_layout_node(table).unwrap();
             let cv = &cascade.computed[table];
             if node.is_display_none()
@@ -616,12 +620,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
 /// Table sources whose ancestor boxes follow the shared block flow when a
 /// repeated header adds room. Bounded or independently placed flows stop the
 /// search so their internal shifts cannot escape into their outer siblings.
-fn block_flow_tables(
-    document: &Document,
-    cascade: &CascadeResult,
-    body: usize,
-    page_height: f32,
-) -> Vec<usize> {
+fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) -> Vec<usize> {
     let mut tables = Vec::new();
     let mut pending: Vec<_> = document.nodes[body]
         .children
@@ -635,14 +634,11 @@ fn block_flow_tables(
             continue;
         }
         if node.display() == DisplayValue::Table {
-            // Nested discovery supports tables that fit on a page by
-            // themselves but cross a page because of preceding content or
-            // closing edges. Longer nested tables keep their existing path;
-            // general multi-page repetition also needs flex fragmentation.
-            let height = node.layout.size.height;
+            // A nested table repeats its groups on every page it spans, as
+            // one directly in the body does, once layout has given it a
+            // height.
             if document.parent_of(id) == Some(body)
-                || (height.is_finite()
-                    && height <= page_height
+                || (node.layout.size.height.is_finite()
                     && shares_growing_block_flow(document, cascade, id))
             {
                 tables.push(id);
@@ -653,6 +649,10 @@ fn block_flow_tables(
             pending.extend(node.children.iter().rev().copied());
             continue;
         }
+        if let Some(table) = sole_flex_table(document, cascade, id) {
+            pending.push(table);
+            continue;
+        }
         if !matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
             || !shares_growing_block_flow(document, cascade, id)
         {
@@ -661,6 +661,37 @@ fn block_flow_tables(
         pending.extend(node.children.iter().rev().copied());
     }
     tables
+}
+
+/// The table that is the only item of `id` when `id` is a single-line row
+/// flex container that grows with it like a block box: the table then
+/// fragments as it would in block flow, so its header and footer repeat.
+pub(crate) fn sole_flex_table(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> Option<usize> {
+    let node = &document.nodes[id];
+    let values = &cascade.computed[id];
+    if node.display() != DisplayValue::Flex
+        || values.flex_direction != FlexDirectionValue::Row
+        || values.flex_wrap != FlexWrapValue::NoWrap
+        || !shares_growing_block_flow(document, cascade, id)
+    {
+        return None;
+    }
+    let mut items = node.children.iter().copied().filter(|&child| {
+        let child = &document.nodes[child];
+        match child.text_content() {
+            Some(text) => !text
+                .chars()
+                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
+            None => child.kind() == NodeKind::Element && !child.is_display_none(),
+        }
+    });
+    let item = items.next()?;
+    (items.next().is_none() && document.nodes[item].display() == DisplayValue::Table)
+        .then_some(item)
 }
 
 fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
