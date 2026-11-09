@@ -11405,18 +11405,17 @@ fn shift_paragraph_lines(
 /// that went to the next page by itself does, stays too. Lines that move up
 /// leave the floats to their caller.
 fn floats_on_moved_lines(document: &Document, moved: &LineMove) -> Vec<usize> {
-    if moved.shift <= 0.0 {
-        return Vec::new();
-    }
-    let Some(node) = document.ifc_layout_node(moved.block_id) else {
-        return Vec::new();
-    };
-    let Some((ifc, lines)) = node
-        .ifc
-        .as_ref()
-        .and_then(|ifc| Some((ifc, ifc.lines.as_ref()?)))
-        .filter(|(_, lines)| moved.line < lines.lines.len())
-    else {
+    let node = document
+        .ifc_layout_node(moved.block_id)
+        .filter(|_| moved.shift > 0.0);
+    let Some((node, ifc, lines)) = node.and_then(|node| {
+        let ifc = node.ifc.as_ref()?;
+        let lines = ifc
+            .lines
+            .as_ref()
+            .filter(|lines| moved.line < lines.lines.len())?;
+        Some((node, ifc, lines))
+    }) else {
         return Vec::new();
     };
     let top = node.layout.border.top + node.layout.padding.top + lines.line_top(moved.line);
