@@ -61,6 +61,7 @@ css/css-text/word-break/word-break-keep-all-u002d.html | Mismatches on Linux sin
 css/css-flexbox/content-height-with-scrollbars.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flex-direction.html | Printed on 600px pages, the page edge falls in the 40px margin between the second and third items of the column section; the reference's block items cut that margin at the break and the test's flex items keep theirs, so page 2 differs (Chromium prints the same mismatch); the test matched only while margins between nested blocks were not cut at a page edge | RAIKIRI-1069 | 2026-11-09 | 2027-01-08
 css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-tables/paint/col-change-span-bg-invalidation-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
