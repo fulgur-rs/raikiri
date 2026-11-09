@@ -54,7 +54,7 @@ fn constraints(
 ) -> Option<Constraints> {
     let idx = usize::from(node);
     let style = tree.physical_style(idx);
-    if style.flex_direction_is_row() || style.flex_wraps() {
+    if style.flex_direction_is_row() {
         return None;
     }
     let vertical = super::block_right_to_left(tree, idx).is_some();
@@ -169,8 +169,11 @@ pub(super) fn layout(
     let Some(original) = constraints(tree, node, inputs, main_is_definite) else {
         return algorithm(tree, node, inputs);
     };
-    if !original.supported {
-        // Retain legacy behavior for unresolved minima.
+    let wraps = tree.physical_style(usize::from(node)).flex_wraps();
+    if !original.supported && !wraps {
+        // Retain legacy behavior for unresolved minima. A wrapping container
+        // still settles its cross size first, so its items keep their own
+        // cross sizes in its lines.
         return with_entry(tree, original, |tree| algorithm(tree, node, inputs));
     }
     let idx = usize::from(node);
