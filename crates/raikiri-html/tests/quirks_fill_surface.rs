@@ -204,6 +204,10 @@ fn minimum_and_maximum_heights_clamp_the_fill() {
         "p0: b=(0, 0, 800, 200) c=(0, 0, 800, 100) h=(0, 0, 800, 600)"
     );
     assert_eq!(
+        quirks("body{margin:0;max-height:min(200px, 50%)}", HALF),
+        "p0: b=(0, 0, 800, 200) c=(0, 0, 800, 100) h=(0, 0, 800, 600)"
+    );
+    assert_eq!(
         quirks("body{margin:0;max-height:50%}", HALF),
         "p0: b=(0, 0, 800, 300) c=(0, 0, 800, 150) h=(0, 0, 800, 600)"
     );
