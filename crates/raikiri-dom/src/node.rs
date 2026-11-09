@@ -463,8 +463,9 @@ pub(crate) struct GridItemRow {
     pub(crate) start: u16,
     pub(crate) end: u16,
     pub(crate) block_start: f32,
-    /// Whether a row the item spans takes its size from its content, so it
-    /// grows with the item.
+    /// Whether a row the item spans is sized by its content or by the free
+    /// space of the grid, rather than by lengths alone, so it can grow with
+    /// the item.
     pub(crate) grows: bool,
 }
 

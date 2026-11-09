@@ -841,6 +841,30 @@ const ROWS_10PX_LINES: &[Row] = &[
 const ROWS_BESIDE_OTHERS: &[Row] = &[
     // Only the rows the grown item spans decide whether it grows, and an item spanning more rows does not end the row.
     (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(0,auto) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(auto,120px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:fit-content(115px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(0,1fr) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(10px,120px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20), (1, 30)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(10px,200px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0), (2, 10)],
+    ),
+    (
         r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:auto 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
         &[(0, 0), (1, 30), (1, 40)],
     ),
