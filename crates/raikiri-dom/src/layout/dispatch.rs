@@ -4066,7 +4066,7 @@ fn flex_layout_sized(
         inputs,
         main_size_is_definite,
         |tree, node_id, inputs| {
-            intrinsic_scopes::with_orthogonal_percentage_flex_bases(
+            intrinsic_scopes::with_orthogonal_percentage_main_sizes(
                 tree,
                 node_id,
                 main_size_is_definite,
@@ -5129,8 +5129,8 @@ fn with_orthogonal_cross_measurement(
         inputs.known_dimensions_are_definite.height = false;
     }
     if legacy_contribution {
-        // Preserve the existing measurement for unresolved outer contributions;
-        // their percentage policy remains tracked separately in RAIKIRI-1488.
+        // An item whose minimum main size does not resolve keeps its
+        // max-content measurement along the main axis.
         if vertical {
             inputs.available_space.width = AvailableSpace::MaxContent;
         } else {

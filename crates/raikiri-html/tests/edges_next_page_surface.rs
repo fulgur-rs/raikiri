@@ -1,16 +1,18 @@
 //! The padding and border that close a box and do not fit under its last line
 //! or box on the page that content ends on: they start the next page, even
 //! when they are taller than a page, and split from there. Boxes that nest each
-//! judge their own edges, the innermost first. A block with nothing in it has
-//! its edges pushed the same way, the edges a clip hides stay where they are,
-//! and an image keeps its own. Where each line of text falls is what Chromium
-//! prints for the same documents.
+//! judge their own edges, the innermost first. In an item of a flex or grid
+//! container, the edges move the item but not the items beside it. A block
+//! with nothing in it has its edges pushed the same way, the edges a clip
+//! hides stay where they are, and an image keeps its own. Where each line of
+//! text falls is what Chromium prints for the same documents.
 //!
 //! Each row is a document and the page and top of every line of text in it (a
 //! marker `Z` in a block after the box shows where the box ends), as Chromium
 //! prints it on pages 100px tall and 100px wide. The first table has Ahem
 //! lines of 20px with a line height of 30px, the second of 10px with a line
-//! height of 10px. The third is boxes with nothing in them but edges.
+//! height of 10px, and so are those of the table of items beside others. The
+//! last is boxes with nothing in them but edges.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -75,6 +77,11 @@ fn edges_that_do_not_fit_under_the_content_start_the_next_page_with_30px_lines()
 #[test]
 fn edges_that_do_not_fit_under_the_content_start_the_next_page_with_10px_lines() {
     check(ROWS_10PX_LINES, "10px/10px", 8.0);
+}
+
+#[test]
+fn edges_in_an_item_move_its_row_but_not_the_items_beside_it() {
+    check(ROWS_BESIDE_OTHERS, "10px/10px", 8.0);
 }
 
 #[test]
@@ -823,6 +830,194 @@ const ROWS_10PX_LINES: &[Row] = &[
     (
         r#"<style>body{font:10px/10px Ahem}</style><div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px"><div style="height:10px">T</div><div style="height:10px">U</div></div></div>"#,
         &[(0, 0), (0, 10)],
+    ),
+];
+
+/// Edges in an item of a flex container or of a grid of columns, with Ahem
+/// lines of 10px. The item grows and the container with it, so the flow after
+/// the container follows, but the items beside it keep their places; the items
+/// on later rows or lines, and the boxes after the block in its own item, move
+/// down with it.
+const ROWS_BESIDE_OTHERS: &[Row] = &[
+    // Only the rows the grown item spans decide whether it grows, and an item spanning more rows does not end the row.
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(0,auto) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(auto,120px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:fit-content(115px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(0,1fr) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(10px,120px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20), (1, 30)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:minmax(10px,200px) 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0), (2, 10)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:auto 10px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:10px auto"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 10), (0, 20)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="grid-row:1/4;grid-column:2;height:200px">T</div><div style="height:50px">U</div><div style="height:50px">V</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 80), (2, 30)],
+    ),
+    // A grown item that still fits the row its container sets or stretches leaves the content after it where it is, and a row of a set size does not grow.
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:200px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;min-height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;min-height:200px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;min-height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:120px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20)],
+    ),
+    // Lines are found where the items sit in normal flow.
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end;position:relative;left:-50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    // An item aligned to the end of the line it shares with the grown item
+    // stays where it is: it is on that line, not on a later one.
+    (
+        r#"<div style="display:flex;height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:200px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="height:20px;align-self:end">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;width:100px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end">T</div><div style="width:60px;height:10px">U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 90), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:flex-start"><div style="width:50px;height:20px;align-self:flex-end">T</div><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 90), (1, 30)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px"><div style="height:85px"></div>T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 85), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="width:50px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="height:10px">U</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start;padding-bottom:10px"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 40)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>T</div><div>U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;flex-direction:column"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="padding-bottom:30px;width:50px"><div style="height:80px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;align-items:start;width:100px"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div><div style="width:100px">U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:70px">S</div></div><div style="width:50px;padding-bottom:30px"><div style="height:75px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start;height:100px"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="display:contents"><div style="height:150px;width:50px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 50)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="width:50px"><div style="height:100px"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="height:10px">C</div></div><div style="height:10px">D</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 0), (1, 10), (1, 30)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:auto auto;grid-auto-flow:column;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div>U</div><div>T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start;contain:size"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start"><div style="display:contents"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:start">
+ <div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div>
+ <div style="width:50px">T</div>
+</div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="padding-bottom:30px;width:50px"><div style="height:80px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;margin-top:120px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="padding-bottom:30px;width:50px"><div style="height:50px">T</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 30)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;position:relative;top:120px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20), (1, 30)],
     ),
 ];
 

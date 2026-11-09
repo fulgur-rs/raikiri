@@ -240,23 +240,52 @@ pub(super) fn with_ratio_percentage_heights<R>(
     })
 }
 
-/// Resolve the percentage `flex-basis` of the items of the column flex
-/// container `node_id` that run in the other writing direction, against the
-/// initial containing block, while the main size of the container is open.
+/// The most width that the content box of the vertical container `container`
+/// gives a horizontal box in it, when its `max-width` is a length: that length
+/// raised to its `min-width`, less the padding and border of the container
+/// where the limits are measured to the border box; the counterpart of
+/// `max_height_cap` along the other axis.
+fn max_width_cap(tree: &LayoutSession<'_>, container: usize) -> Option<f32> {
+    let style = tree.physical_style(container);
+    let max = style.max_size().width.maybe_resolve(None::<f32>)?;
+    let min = style
+        .min_size()
+        .width
+        .maybe_resolve(None::<f32>)
+        .unwrap_or(0.0);
+    let edges = if style.box_sizing() == BoxSizing::ContentBox {
+        0.0
+    } else {
+        let padding = style.padding();
+        let border = style.border().resolve_or_zero(None::<f32>);
+        padding.left.maybe_resolve(None::<f32>)?
+            + padding.right.maybe_resolve(None::<f32>)?
+            + border.left
+            + border.right
+    };
+    Some((max.max(min) - edges).max(0.0))
+}
+
+/// Resolve the percentage inline sizes, minimums and maximums of the items of
+/// the flex container `node_id` that run in the other writing direction, and
+/// in a column container their percentage `flex-basis`, against the initial
+/// containing block, while the container's size along that axis is open.
 ///
-/// The main size of such an item is its inline size. Browsers resolve a
-/// percentage of it against the initial containing block along that axis, the
-/// size an orthogonal flow is offered when its container has none (CSS Writing
-/// Modes 4 section 7.3.1), rather than taking the content size. Along the main
-/// axis of a column container that is the page area's height, or its width
-/// where the container itself runs in a vertical writing mode. An item in the
+/// That axis is the container's block axis: the main axis of a column
+/// container, the cross axis of a row one. Browsers resolve a percentage of
+/// the inline size of such an item, and of its limits, against the initial
+/// containing block along that axis, the size an orthogonal flow is offered
+/// when its container has none (CSS Writing Modes 4 section 7.3.1), rather
+/// than taking the content size: the page area's height, or its width where
+/// the container itself runs in a vertical writing mode. An item in the
 /// writing direction of its container keeps the percentage, which is the
 /// content size while the container leaves its main size open (CSS Flexbox 1
 /// section 9.2.3).
 ///
-/// `main_size_is_definite` tells whether the main size of the container is
-/// definite; the percentage refers to it then, and nothing is overridden.
-pub(super) fn with_orthogonal_percentage_flex_bases<R>(
+/// `main_size_is_definite` tells whether the container's size along its block
+/// axis is definite; the percentages refer to it then, and nothing is
+/// overridden.
+pub(super) fn with_orthogonal_percentage_main_sizes<R>(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     main_size_is_definite: bool,
@@ -266,13 +295,28 @@ pub(super) fn with_orthogonal_percentage_flex_bases<R>(
     use super::vertical_oof::used_writing_mode;
     let idx = usize::from(node_id);
     let container_vertical = used_writing_mode(tree, idx).is_vertical();
-    let room = tree.fixed_page_area.and_then(|(width, height)| {
-        let room = if container_vertical { width } else { height };
-        (room > 0.0).then_some(room)
-    });
-    let Some(room) = room
-        .filter(|_| !main_size_is_definite && !tree.physical_style(idx).flex_direction_is_row())
-    else {
+    // The room is that of the initial containing block within the limit the
+    // container sets on its size along that axis.
+    let room = if container_vertical {
+        let page_width = tree
+            .fixed_page_area
+            .map(|(width, _)| width)
+            .filter(|&width| width > 0.0);
+        [page_width, max_width_cap(tree, idx)]
+            .into_iter()
+            .flatten()
+            .reduce(f32::min)
+            .filter(|_| page_width.is_some())
+    } else {
+        crate::layout::ifc::boxes::page_area_height(tree).and_then(|_| {
+            crate::layout::ifc::boxes::open_height_room(
+                tree,
+                crate::layout::ifc::boxes::max_height_cap(tree, idx),
+            )
+        })
+    };
+    let column = !tree.physical_style(idx).flex_direction_is_row();
+    let Some(room) = room.filter(|_| !main_size_is_definite) else {
         return layout(tree);
     };
     let items = tree
@@ -284,29 +328,42 @@ pub(super) fn with_orthogonal_percentage_flex_bases<R>(
             {
                 return None;
             }
-            let basis = tree.physical_style(idx).flex_basis();
-            let percentage = match basis.expand() {
-                ExpandedDimension::Percent(_) => true,
-                ExpandedDimension::Calc(calc) => calc.has_percentage(),
-                _ => false,
+            let style = tree.physical_style(idx);
+            let main = if container_vertical {
+                [
+                    (P::Width, style.size().width),
+                    (P::MinWidth, style.min_size().width.into()),
+                    (P::MaxWidth, style.max_size().width.into()),
+                ]
+            } else {
+                [
+                    (P::Height, style.size().height),
+                    (P::MinHeight, style.min_size().height.into()),
+                    (P::MaxHeight, style.max_size().height.into()),
+                ]
             };
-            percentage
-                .then(|| {
+            let entries = column
+                .then(|| (P::FlexBasis, style.flex_basis()))
+                .into_iter()
+                .chain(main)
+                .filter(|(_, size): &(P, Dimension)| size.uses_percentage())
+                .map(|(property, size)| {
                     O::length(
-                        P::FlexBasis,
-                        L::Px(basis.maybe_resolve(Some(room)).expect("percentage basis")),
+                        property,
+                        L::Px(size.maybe_resolve(Some(room)).expect("percentage size")),
                         true,
                     )
-                    .expect("physical flex basis")
+                    .expect("physical item main size")
                 })
-                .map(|entry| (idx, entry))
+                .collect::<Vec<_>>();
+            (!entries.is_empty()).then_some((idx, entries))
         })
         .collect::<Vec<_>>();
     if items.is_empty() {
         return layout(tree);
     }
     with_saved_probe_caches(tree, items.len(), |tree, saved| {
-        for (idx, entry) in items {
+        for (idx, entries) in items {
             let key = tree.nodes.box_key(idx).expect("orthogonal item box");
             let mut cache = tree.take_layout_cache(idx);
             if run_mode == RunMode::PerformLayout {
@@ -315,7 +372,7 @@ pub(super) fn with_orthogonal_percentage_flex_bases<R>(
                 cache.forget_final_layout();
             }
             saved.push((idx, cache));
-            tree.push_local_overrides(vec![(key, entry)]);
+            tree.push_local_overrides(entries.into_iter().map(|entry| (key, entry)).collect());
         }
         layout(tree)
     })

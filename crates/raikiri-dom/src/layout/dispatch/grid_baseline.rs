@@ -105,6 +105,10 @@ pub(crate) fn recorded_items(
                     start: lines.row_start,
                     end: lines.row_end,
                     block_start,
+                    grows: rows.any_sized_by_content_or_free_space(
+                        usize::from(lines.row_start.saturating_sub(1))
+                            ..usize::from(lines.row_end.saturating_sub(1)),
+                    ),
                 })
             })
             .collect(),

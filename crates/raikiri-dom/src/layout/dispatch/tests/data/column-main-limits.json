@@ -2422,25 +2422,6 @@
           10,
           300
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Unresolved main minimum",
-        "rectangles": {
-          "a": [
-            0.0,
-            0.0,
-            10.0,
-            80.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            10.0,
-            80.0
-          ]
-        }
       }
     },
     {
@@ -2741,25 +2722,6 @@
           400,
           10
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Unresolved main minimum",
-        "rectangles": {
-          "a": [
-            80.0,
-            0.0,
-            80.0,
-            10.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            160.0,
-            10.0
-          ]
-        }
       }
     },
     {
@@ -2835,25 +2797,6 @@
           18.8125,
           80
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Cyclic main percentage margins without independently stated cross size",
-        "rectangles": {
-          "a": [
-            0.29999998211860657,
-            0.29999998211860657,
-            9.399999618530273,
-            80.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            10.0,
-            80.5999984741211
-          ]
-        }
       }
     },
     {
@@ -2879,25 +2822,6 @@
           18.8125,
           80
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Cyclic main percentage margins without independently stated cross size",
-        "rectangles": {
-          "a": [
-            5.300000190734863,
-            5.300000190734863,
-            9.399999618530273,
-            80.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            20.0,
-            90.5999984741211
-          ]
-        }
       }
     },
     {
@@ -2948,25 +2872,6 @@
           80,
           28.21875
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Cyclic main percentage margins without independently stated cross size",
-        "rectangles": {
-          "a": [
-            80.0,
-            0.0,
-            80.0,
-            10.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            160.0,
-            10.0
-          ]
-        }
       }
     },
     {
@@ -2992,25 +2897,6 @@
           80,
           28.21875
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Cyclic main percentage margins without independently stated cross size",
-        "rectangles": {
-          "a": [
-            15.0,
-            5.0,
-            80.0,
-            10.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            100.0,
-            20.0
-          ]
-        }
       }
     },
     {
@@ -3136,25 +3022,6 @@
           80,
           282
         ]
-      },
-      "preserved_baseline": {
-        "revision": "a9418d823",
-        "issue": "RAIKIRI-1488",
-        "reason": "Authored percentage cross cannot resolve against the original parent basis",
-        "rectangles": {
-          "a": [
-            80.0,
-            0.0,
-            80.0,
-            10.0
-          ],
-          "container": [
-            0.0,
-            0.0,
-            160.0,
-            10.0
-          ]
-        }
       }
     }
   ],
@@ -3181,6 +3048,5 @@
       ]
     },
     "ahem_sha256": "b719ecb31c5b21fc573c03f6421c74ac63c271a5a3ff841e34f9705fb94b8448"
-  },
-  "preserved_baselines_note": "Seven explicitly excluded legacy cases retain immutable a9418d823 main rectangles; their loaded-Ahem Chromium rectangles remain separately recorded and are not claimed to match."
+  }
 }

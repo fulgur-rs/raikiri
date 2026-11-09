@@ -8,16 +8,16 @@ use super::{
     FlexDirectionValue, FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind,
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
-    box_forces_break_after, box_is_unbreakable, boxes_are_tied, breaks_only_around,
-    candidate_ancestor_constraints, clears_float_side, closing_edges_of, container_item_tail,
-    content_bottom_edges, first_owned_text_line_top, has_block_leading_content,
-    has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
-    lone_box_with_floats, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
-    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    avoids_page_break_inside, box_forces_break_after, box_is_unbreakable, boxes_are_tied,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
+    container_item_tail, content_bottom_edges, edges_break_container, first_owned_text_line_top,
+    has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
+    is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
+    is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
+    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
+    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
@@ -791,6 +791,10 @@ pub(super) struct EdgesBreak {
     /// How much room the clip leaves below the edges where they are, in the
     /// coordinates of the candidates; infinity without a clip that holds.
     pub(super) clip_room: f32,
+    /// The flex or grid container whose items sit beside the one that holds
+    /// the block, if any: the edges then move that item and the container,
+    /// not the items beside it.
+    pub(super) beside: Option<usize>,
 }
 
 /// Collects the page candidates of a laid-out subtree. Page membership is
@@ -808,6 +812,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     clip_edges: HashMap<usize, f32>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
+    /// Whether each flex container looked at holds a sole table that
+    /// fragments as block flow does, so that its items are not scanned again
+    /// for each of them.
+    sole_table_holders: HashMap<usize, bool>,
     /// The selected inner tail of each plain block on its column-item path.
     inner_tail_paths: HashMap<usize, usize>,
     has_named_pages: bool,
@@ -854,6 +862,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             clip_edges: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
+            sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             has_named_pages,
             finds_nested_runs: !has_named_pages
@@ -924,6 +933,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         if let (Some(parent), Some(bottom)) = (parent, bottom.filter(|_| takes_space)) {
             self.pending_bottoms.insert(parent, (node_id, bottom));
         }
+    }
+
+    /// Whether the flex container `id` holds a sole table that fragments as
+    /// block flow does, computed once per container.
+    fn holds_sole_table(&mut self, id: usize) -> bool {
+        let (document, cascade) = (self.document, self.cascade);
+        *self.sole_table_holders.entry(id).or_insert_with(|| {
+            crate::layout::table::headers::sole_flex_table(document, cascade, id).is_some()
+        })
     }
 
     #[inline(never)]
@@ -1133,6 +1151,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document);
                 let is_direct_flex_item = parent_box.is_some_and(|parent| {
                     document.nodes[parent].formatting_context == FormattingContext::Flex
+                        && !self.holds_sole_table(parent)
                 });
                 let own_page_name = if !inline_level
                     && !float_subtree
@@ -1160,6 +1179,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (false, None)
                 };
                 let is_flex = document.nodes[node_id].formatting_context == FormattingContext::Flex;
+                // A single-line row flex container holding only a table
+                // fragments it as block flow does, so that its header and
+                // footer repeat on each page.
+                let holds_sole_table = is_flex && self.holds_sole_table(node_id);
+                // A table in a single-line column flex container stacks as
+                // a block does, so it fragments as block flow does too.
+                let stacks_tables =
+                    crate::layout::table::headers::stacking_column_flex(document, cascade, node_id);
                 let column_flex = is_flex
                     && matches!(
                         computed.flex_direction,
@@ -1180,7 +1207,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
-                let row_flex = is_flex && !column_flex;
+                let row_flex = is_flex && !column_flex && !holds_sole_table;
                 let flex_names_stay_on_items = column_flex
                     || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after);
@@ -1206,8 +1233,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // break: with no good place to break between its lines, it
                 // moves to the next page whole (see `BoxOverflow`). Left to its
                 // text, the line that crosses the page end stays and the page
-                // cuts through it. A caption inside a table cell goes with its
-                // row.
+                // cuts through it. A caption that holds blocks is one only when
+                // it avoids a break inside it; its blocks break as in block
+                // flow. A caption inside a table cell goes with its row.
                 let table_caption_candidate = inside_table
                     && participates_in_flow
                     && matches!(
@@ -1215,10 +1243,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         DisplayValue::TableCaption
                     )
                     && !inside_float
-                    && !inside_flex
+                    && (!inside_flex
+                        || is_flow_table_caption(document, cascade, node_id, roots.element))
                     && !out_of_flow_subtree
                     && !node.used_writing_mode.is_vertical()
-                    && node.is_ifc_root()
+                    && (node.is_ifc_root() || avoids_page_break_inside(computed.break_inside))
                     && document
                         .layout_parent_of(node_id)
                         .is_some_and(|table| is_plain_table_box(document, table))
@@ -1349,13 +1378,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree;
-                let in_flow_block_level = participates_in_flow
+                // A box in the flow of its container, among blocks or among the
+                // items of a flex container.
+                let in_container_flow = participates_in_flow
                     && !inside_table
-                    && !inside_flex
                     && !out_of_flow_subtree
                     && !inside_float
                     && !inline_level
                     && !is_float;
+                let in_flow_block_level = in_container_flow && !inside_flex;
                 // A block box in the flow that is a candidate to move to the
                 // next page, along with the box it holds or the edges it ends.
                 let in_flow_block = in_flow_block_level && is_plain_block_box(document, node_id);
@@ -2062,6 +2093,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let child_scope_is_lone = (own_closing_edges.is_some_and(|own| own > 0.0)
                     && inherited_edges == 0.0)
                     || frame.lone_in_edges;
+                let flow_caption = inside_table
+                    && is_flow_table_caption(document, cascade, node_id, roots.element);
                 for (index, child_id) in child_order.iter().copied().enumerate() {
                     let at_chain_start = chain_run.filter(|&(first, ..)| index == first);
                     let child_closing_edges = match at_chain_start {
@@ -2131,7 +2164,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 == Some(roots.contents_box),
                             parent_height: node.layout.size.height.max(0.0),
                             inherited_page_name: child_page_name,
-                            inside_table: inside_table
+                            // The children of a caption that stacks in plain block
+                            // flow are placed in that flow, as those of a block.
+                            inside_table: (inside_table && !flow_caption)
                                 || document.anonymous_table_of(child_id).is_some()
                                 || matches!(
                                     document.nodes[node_id].display(),
@@ -2149,7 +2184,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 == FormattingContext::Grid
                                 && document.nodes[node_id].grid_column_count == 1,
                             inside_flex: inside_flex
-                                || document.nodes[node_id].display().is_flex_container(),
+                                || (document.nodes[node_id].display().is_flex_container()
+                                    && !holds_sole_table
+                                    && !(document.nodes[child_id].display()
+                                        == DisplayValue::Table
+                                        && stacks_tables)),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {
@@ -2188,14 +2227,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // breaks before them when they do not fit below it on its
                 // page. A monolithic box, such as an image, keeps its edges.
                 // Like the page fit of the boxes, the end is that of the normal
-                // flow: a relative offset only moves the paint. The flow does
-                // not advance for a block beside others (in a grid of columns or
-                // in columns), as it does not for a box that moves.
-                if in_flow_block_level
+                // flow: a relative offset only moves the paint. In an item of a
+                // flex container or of a grid of columns, the edges move that
+                // item and the container but not the items beside it. They stay
+                // in columns, whose balance the move would change.
+                if in_container_flow
                     && !monolithic
                     && let Some(edges) = content_bottom_edges(document, node_id)
                     && candidate_raw_y + node.layout.size.height <= frame.clip_end
-                    && !candidate_ancestor_constraints(document, cascade, node_id, body_id, None).0
+                    && let Some(beside) = edges_break_container(document, node_id, body_id)
                 {
                     let offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
                     let bottom = candidate_raw_y + node.layout.size.height;
@@ -2213,6 +2253,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         edges,
                         clip_end,
                         clip_room,
+                        beside,
                     });
                 }
             }

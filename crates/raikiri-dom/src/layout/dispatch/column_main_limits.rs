@@ -10,7 +10,7 @@ use raikiri_layout_style::{LayoutStyleView, LengthProperty as P, OwnedPropertyOv
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
 /// Measure bounded hypothetical main sizes without changing the bases or
-/// flexibility used by the ordinary layout. Unresolved outer constraints leave
+/// flexibility used by the ordinary layout. Unresolved item minima leave
 /// the container on its existing path.
 pub(super) fn layout(
     tree: &mut LayoutSession<'_>,

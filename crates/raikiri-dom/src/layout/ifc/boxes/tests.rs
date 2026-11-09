@@ -11,6 +11,7 @@ mod rtl_margin_tests;
 mod source_placement_tests;
 mod start_float_tests;
 mod static_position_tests;
+mod trailing_float_tests;
 mod vertical_atomic_tests;
 mod vertical_bfc_tests;
 thread_local! {
