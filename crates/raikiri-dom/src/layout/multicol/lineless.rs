@@ -1829,7 +1829,7 @@ fn consumed_rows(pieces: &[Piece], stream_pieces: &[Vec<Piece>], items: &[Item])
 /// The rect of a piece of a box that slices its decorations: the whole box,
 /// of block size `whole.1`, moved up by the `whole.0` the earlier pieces took.
 /// The clip of the column then cuts it to the piece. `rect` is the piece's own.
-fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> FragmentRect {
+pub(super) fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> FragmentRect {
     match whole {
         Some((taken, height)) => FragmentRect {
             y: rect.y - taken,
@@ -1840,12 +1840,26 @@ fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> FragmentRect {
     }
 }
 
+/// Whether the column ends may cut `idx`, a sized box with nothing inside it,
+/// with its pieces painted as [`slices_decorations`] says: a box that avoids
+/// breaks, one that is monolithic, one that repeats its decorations at each
+/// break, and one with effects sized from the whole box stay whole.
+pub(super) fn slices_sized_leaf(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let node = layout_node(tree, idx);
+    !matches!(
+        node.break_inside,
+        BreakInside::Avoid | BreakInside::AvoidColumn
+    ) && !node.clones_box_decorations
+        && !node.paints_whole_box_effects
+        && !is_monolithic_scroll_box(tree, idx)
+}
+
 /// Whether a box cut at a column end slices its block-axis borders and
 /// padding (CSS Fragmentation 3, 5.4): its pieces paint the whole box, moved
 /// up by what the earlier pieces took and clipped to the column, so no border
 /// shows where it breaks. Effects sized from the whole box, and decorations
 /// that repeat at each break, are not sliced.
-fn slices_decorations(tree: &LayoutSession<'_>, idx: usize) -> bool {
+pub(super) fn slices_decorations(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let node = layout_node(tree, idx);
     has_block_edge_decorations(&style_of(tree, idx))
         && !node.clones_box_decorations

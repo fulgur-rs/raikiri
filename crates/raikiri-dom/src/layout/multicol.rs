@@ -1504,6 +1504,70 @@ fn record_wrapped_fragments(
     Some(())
 }
 
+/// Record the pieces of `child`, a box with no lines that `placement` slices
+/// between columns of `column_height`: its first piece `first_fragment`,
+/// pushed under the container, and one more for each column after it. Each
+/// piece but the last fills its column to the end; the last holds what is
+/// left of `total`, the box's block size, which the node keeps. A box that
+/// slices its decorations paints whole in each piece, moved up by what the
+/// earlier pieces took, and the column clips it. `None` when the fragments
+/// run out.
+fn push_sliced_box_pieces(
+    tree: &mut LayoutSession<'_>,
+    child: usize,
+    first_fragment: usize,
+    placement: &paragraph_group::Placement,
+    total: f32,
+    column_height: f32,
+) -> Option<()> {
+    let first = tree.fragment_tree.fragments[first_fragment];
+    let mut layout = tree.nodes[child].layout;
+    layout.size.height = total;
+    tree.set_unrounded_layout(NodeId::from(child), &layout);
+    let sliced = lineless::slices_decorations(tree, child);
+    let column_top = first.rect.y - placement.first_y;
+    let count = placement.fragments.len();
+    let mut taken = 0.0f32;
+    for (index, piece) in placement.fragments.iter().enumerate() {
+        let height = if index == 0 {
+            placement.first_height
+        } else if index + 1 == count {
+            total - taken
+        } else {
+            column_height
+        }
+        .max(0.0);
+        let rect = crate::fragment::FragmentRect {
+            x: first.rect.x + piece.x,
+            y: first.rect.y + piece.y,
+            height,
+            ..first.rect
+        };
+        let fragment = crate::fragment::LayoutFragment {
+            fragmentainer: first.fragmentainer
+                + piece.fragmentainer.checked_sub(placement.first_column)?,
+            rect: lineless::sliced_rect(rect, sliced.then_some((taken, total))),
+            fragmentainer_clip: Some(paragraph_group::inline_open_clip(
+                crate::fragment::FragmentRect {
+                    y: column_top,
+                    height: column_height,
+                    ..rect
+                },
+            )),
+            fragment_index: index,
+            fragment_count: count,
+            ..first
+        };
+        if index == 0 {
+            tree.fragment_tree.fragments[first_fragment] = fragment;
+        } else {
+            tree.fragment_tree.try_push(fragment)?;
+        }
+        taken += height;
+    }
+    Some(())
+}
+
 /// The only paragraph of a balanced column container, with the line ranges
 /// that balance it over the columns.
 struct ParagraphBalance {
@@ -2130,6 +2194,24 @@ fn layout_column_group(
             return fallback_height;
         };
         tree.fragment_tree.reparent_roots(child, child_fragment);
+        // A box with no lines that the columns sliced has a piece in each
+        // column it reaches after the first.
+        if let (Some(placement), Some((_, output, ..)), Some(group)) =
+            (planned, measured, group_balance.as_ref())
+            && placement.sliced
+            && placement.fragments.len() > 1
+            && push_sliced_box_pieces(
+                tree,
+                child,
+                child_fragment,
+                placement,
+                output.size.height,
+                group.height,
+            )
+            .is_none()
+        {
+            return fallback_height;
+        }
         // The boxes inside a wrapper whose boxes joined the flow have their
         // pieces in the columns the flow gave them.
         let wrapped = match group_balance.as_ref() {
