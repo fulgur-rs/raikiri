@@ -230,6 +230,25 @@ fn the_root_element_fills_whatever_its_display() {
 }
 
 #[test]
+fn relatively_and_sticky_positioned_boxes_stay_in_flow_and_fill() {
+    for position in ["relative", "sticky"] {
+        assert_eq!(
+            quirks(&format!("body{{margin:0;position:{position}}}"), HALF),
+            "p0: b=(0, 0, 800, 600) c=(0, 0, 800, 300) h=(0, 0, 800, 600)",
+            "{position}"
+        );
+        assert_eq!(
+            quirks(
+                &format!("html{{position:{position}}}body{{margin:10px}}"),
+                "><div id=c style='height:10px'></div>"
+            ),
+            "p0: b=(10, 10, 780, 580) c=(10, 10, 780, 10) h=(0, 0, 800, 600)",
+            "{position}"
+        );
+    }
+}
+
+#[test]
 fn out_of_flow_and_floated_bodies_do_not_fill() {
     assert_eq!(
         quirks("body{margin:0;position:absolute}", HALF),

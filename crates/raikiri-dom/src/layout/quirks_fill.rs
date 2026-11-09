@@ -315,7 +315,10 @@ fn collapses_with_children(
 /// §2.5).
 fn fills(cv: &ComputedValues, is_root: bool) -> bool {
     cv.height == ComputedLengthPercentageOrAuto::Auto
-        && matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+        && matches!(
+            cv.position,
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
         && matches!(cv.float, FloatValue::None)
         && (is_root || !cv.display.is_inline_level())
         && cv.display != DisplayValue::None
