@@ -454,6 +454,9 @@ pub fn layout_running_element(
     }
     let mut document = source.extract_nodes(&nodes);
     document.mark_in_document_flags();
+    // The copy's root element and body hold only the element, so they are
+    // as tall as it is, not the measuring page.
+    document.skips_quirks_fill = true;
     let mut cascade = cascade.extract(&nodes);
     let index = ancestor_count;
 
