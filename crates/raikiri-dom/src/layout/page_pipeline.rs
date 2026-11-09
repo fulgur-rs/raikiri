@@ -11193,7 +11193,11 @@ fn grow_container_beside_item(
     }
     for (child, bottom) in row {
         if bottom >= row_end - 0.001 && stretches_across_row(document, cascade, container, child) {
-            document.nodes[child].layout.size.height += later_shift;
+            // The item stretches no further than its `max-height`.
+            let height = document.nodes[child].layout.size.height;
+            let (_, max) = border_box_height_bounds(document, child);
+            let stretched = (height + later_shift).min(max).max(height);
+            document.nodes[child].layout.size.height = stretched;
             document.mark_pagination_extent_dirty(child);
         }
     }

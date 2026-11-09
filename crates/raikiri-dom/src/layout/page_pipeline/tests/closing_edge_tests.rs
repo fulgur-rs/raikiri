@@ -4132,14 +4132,16 @@ fn an_item_stretched_beside_one_whose_edges_move_stretches_with_its_row() {
     // The padding below the 80px box of the first item begins the next page,
     // so the line of the flex container ends 20px lower, and the item beside
     // it, stretched to the line by the container or by its own `align-self`,
-    // grows with it as Chromium paints it. An item aligned to the start keeps
-    // its height.
+    // grows with it as Chromium paints it, up to its `max-height`. An item
+    // aligned to the start keeps its height.
     for (align, height) in [
         ("align-items:stretch", 130.0),
         ("align-items:flex-start", 20.0),
         ("align-items:flex-start;--self:stretch", 130.0),
+        ("align-items:stretch;--self:auto;max-height:120px", 120.0),
     ] {
         let (items, own) = align.split_once(";--self:").unwrap_or((align, "auto"));
+        let (own, limit) = own.split_once(';').unwrap_or((own, ""));
         let mut second = 0;
         let (doc, _) = paged_body_with_ifc(|doc, body| {
             let flex = block(doc, body, &format!("display:flex;{items}"));
@@ -4148,7 +4150,7 @@ fn an_item_stretched_beside_one_whose_edges_move_stretches_with_its_row() {
             second = block(
                 doc,
                 flex,
-                &format!("display:block;width:50px;min-height:20px;align-self:{own}"),
+                &format!("display:block;width:50px;min-height:20px;align-self:{own};{limit}"),
             );
             block(doc, body, "display:block;height:10px");
         });
