@@ -728,22 +728,23 @@ impl Content<'_, '_> {
     }
 
     /// The style the element `id` has on the first line, when a
-    /// `::first-line` reaches it, recorded for the paint of the line.
+    /// `::first-line` reaches it, recorded for the paint of the line. Values
+    /// recorded before, for another part with the same element, are reused.
     fn first_line_style(&mut self, id: usize) -> Result<Option<InlineStyle>, IfcError> {
-        let Some(values) = self
-            .sink
-            .first_letter
-            .first_line
-            .as_ref()
-            .and_then(|first_line| first_line.element(self.doc, self.cascade, id))
-        else {
+        let Some(first_line) = self.sink.first_letter.first_line.as_mut() else {
             return Ok(None);
         };
-        let style = styled(self.doc, self.cascade, &values, id, self.fonts)?;
-        if let Some(first_line) = self.sink.first_letter.first_line.as_mut() {
-            first_line.note_element(id, values);
-        }
-        Ok(Some(style))
+        let values = match first_line.noted_element(id) {
+            Some(values) => values.clone(),
+            None => {
+                let Some(values) = first_line.element(self.doc, self.cascade, id) else {
+                    return Ok(None);
+                };
+                first_line.note_element(id, values.clone());
+                values
+            }
+        };
+        styled(self.doc, self.cascade, &values, id, self.fonts).map(Some)
     }
 
     /// Open the inline box of the element `id`, with `first`, the style it
@@ -1284,6 +1285,9 @@ impl Content<'_, '_> {
         let mut builder = ParagraphBuilder::new(&paragraph, self.limits);
         for &id in &part.tail {
             self.sink.containers.source(id, rtc_owner);
+            if let Some(first_line) = self.sink.first_letter.first_line.as_mut() {
+                first_line.note_text(self.doc, self.cascade, id);
+            }
             let text = self.doc.nodes[id].text_content().unwrap_or_default();
             builder.push_text(
                 TextSource::Dom {

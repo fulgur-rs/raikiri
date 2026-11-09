@@ -4009,21 +4009,17 @@ fn empty_inline_block_before_keeps_a_multicol_paragraph_in_columns() {
     assert!(in_second_column);
 }
 
-/// The color and the first glyph's position of each glyph run in `scene`, in
-/// paint order.
-fn glyph_run_colors(scene: &Scene) -> Vec<([u8; 4], (f64, f64))> {
-    use anyrender::types::Paint;
+/// Each glyph run of `scene`, in paint order, with its first glyph's
+/// position.
+fn glyph_runs(scene: &Scene) -> Vec<(&anyrender::recording::GlyphRunCommand, (f64, f64))> {
     scene
         .commands
         .iter()
         .filter_map(|command| match command {
             RenderCommand::GlyphRun(run) => {
-                let Paint::Solid(color) = &run.brush else {
-                    return None;
-                };
                 let glyph = run.glyphs.first()?;
                 let at = run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y));
-                Some((color.to_rgba8().to_u8_array(), (at.x, at.y)))
+                Some((run, (at.x, at.y)))
             }
             _ => None,
         })
@@ -4032,43 +4028,34 @@ fn glyph_run_colors(scene: &Scene) -> Vec<([u8; 4], (f64, f64))> {
 
 /// The text of a ruby's base, here inside an inline element, and of its
 /// annotation takes the values of the `::first-line` on the first line, as
-/// in Chromium; on a later line it keeps its own.
+/// in Chromium, and the annotation's underline its color; on a later line
+/// they keep their own.
 #[test]
 fn first_line_styles_reach_the_base_and_annotation_of_a_ruby() {
+    use anyrender::types::Paint;
     let scene = painted_html_with_ahem(
-        br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem;color:rgb(255,0,0)} rt{font-size:5px} p::first-line{color:rgb(0,0,255)}</style></head><body><p><ruby><span>X</span><rt>Y</rt></ruby><br><ruby>Q<rt>R</rt></ruby></p></body></html>"#,
+        br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem;color:rgb(255,0,0)} rt{font-size:5px;text-decoration:underline} p::first-line{color:rgb(0,0,255)}</style></head><body><p><ruby><span>X</span><rt>Y</rt></ruby><br><ruby>Q<rt>R</rt></ruby></p></body></html>"#,
     );
-    let runs = glyph_run_colors(&scene);
-    let (blue, red) = ([0, 0, 255, 255], [255, 0, 0, 255]);
-    let first: Vec<_> = runs
+    let colors: Vec<([u8; 4], bool)> = glyph_runs(&scene)
         .iter()
-        .filter(|(_, (_, y))| *y < 30.0)
-        .map(|(c, _)| *c)
-        .collect();
-    let later: Vec<_> = runs
-        .iter()
-        .filter(|(_, (_, y))| *y >= 30.0)
-        .map(|(c, _)| *c)
-        .collect();
-    assert_eq!(first, [blue, blue], "{runs:?}");
-    assert_eq!(later, [red, red], "{runs:?}");
-}
-
-/// The font size and the first glyph's position of each glyph run in
-/// `scene`, in paint order.
-fn glyph_run_sizes(scene: &Scene) -> Vec<(f32, (f64, f64))> {
-    scene
-        .commands
-        .iter()
-        .filter_map(|command| match command {
-            RenderCommand::GlyphRun(run) => {
-                let glyph = run.glyphs.first()?;
-                let at = run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y));
-                Some((run.font_size, (at.x, at.y)))
-            }
+        .filter_map(|(run, (_, y))| match &run.brush {
+            Paint::Solid(color) => Some((color.to_rgba8().to_u8_array(), *y < 30.0)),
             _ => None,
         })
-        .collect()
+        .collect();
+    let (blue, red) = ([0, 0, 255, 255], [255, 0, 0, 255]);
+    assert_eq!(
+        colors,
+        [(blue, true), (blue, true), (red, false), (red, false)]
+    );
+    let lines = |rgb| {
+        solid_fill_bounds(&scene, rgb)
+            .iter()
+            .map(|rect| rect.y0 < 30.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lines((0, 0, 255)), [true]);
+    assert_eq!(lines((255, 0, 0)), [false]);
 }
 
 /// The font size of a `::first-line` reaches the base of a ruby on the first
@@ -4080,8 +4067,10 @@ fn first_line_font_size_reaches_the_base_and_annotation_of_a_ruby() {
     let scene = painted_html_with_ahem(
         br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem} p::first-line{font-size:20px}</style></head><body><p><ruby><rb>XX</rb><rt>YY</rt></ruby>Z<br><ruby><rb>QQ</rb><rt>RR</rt></ruby></p></body></html>"#,
     );
-    let runs = glyph_run_sizes(&scene);
-    let sizes: Vec<(f32, f64)> = runs.iter().map(|&(size, (x, _))| (size, x)).collect();
+    let sizes: Vec<(f32, f64)> = glyph_runs(&scene)
+        .iter()
+        .map(|(run, (x, _))| (run.font_size, *x))
+        .collect();
     assert_eq!(
         sizes,
         [
@@ -4090,7 +4079,6 @@ fn first_line_font_size_reaches_the_base_and_annotation_of_a_ruby() {
             (20.0, 40.0),
             (10.0, 0.0),
             (5.0, 2.5)
-        ],
-        "{runs:?}"
+        ]
     );
 }

@@ -265,6 +265,11 @@ impl FirstLine {
         self.styles.elements.insert(id, values);
     }
 
+    /// The values recorded for the inline element `id` on the first line.
+    pub(crate) fn noted_element(&self, id: usize) -> Option<&ComputedValues> {
+        self.styles.elements.get(&id)
+    }
+
     /// Record `values`, those of the generated box `id` on the first line,
     /// which holds its text itself.
     pub(crate) fn note_generated(&mut self, id: usize, values: ComputedValues) {
