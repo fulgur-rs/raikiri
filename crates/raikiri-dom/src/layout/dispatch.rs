@@ -2068,16 +2068,13 @@ fn compute_ifc_root(
     let quirks_fill = crate::layout::quirks_fill::BodyFill::of(tree, idx)
         .zip(measured_size)
         .map(|(fill, measured)| {
-            let lines = measured.height + measure.insets.top + measure.insets.bottom;
-            let content = fill
-                .ratio_height(
-                    inputs
-                        .known_dimensions
-                        .height
-                        .or(ratio_height_follows.then_some(output.size.height)),
-                )
-                .map_or(lines, |ratio| ratio.max(lines));
-            let (height, separates) = fill.height(content, leading_margin, escaping_margin);
+            let content = measured.height + measure.insets.top + measure.insets.bottom;
+            let ratio = fill.ratio_height(
+                tree,
+                output.size.width,
+                measure.insets.left + measure.insets.right,
+            );
+            let (height, separates) = fill.height(content, ratio, leading_margin, escaping_margin);
             output.size.height = height;
             separates
         });

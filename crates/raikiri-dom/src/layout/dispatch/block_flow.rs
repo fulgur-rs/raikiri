@@ -601,6 +601,10 @@ fn layout_context(
     let collapse_start = shares_context(style)
         && inputs.vertical_margins_are_collapsible.start
         && metrics.inset.top == 0.0;
+    let body_fill = crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node)).map(|fill| {
+        let ratio = fill.ratio_height(tree, width, metrics.inset.left + metrics.inset.right);
+        (fill, ratio)
+    });
     let adjoining_end = shares_context(style)
         && inputs.vertical_margins_are_collapsible.end
         && metrics.inset.bottom == 0.0;
@@ -610,10 +614,9 @@ fn layout_context(
             ExpandedDimension::Auto | ExpandedDimension::Stretch
         )
         && (metrics.preferred.height.is_none()
-            // A filled body whose aspect ratio gives less than the fill is
+            // A filled body whose aspect ratio gives no more than the fill is
             // as tall as an `auto` one.
-            || crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node))
-                .is_some_and(|fill| fill.ratio_height(metrics.preferred.height).is_none()));
+            || body_fill.is_some_and(|(fill, ratio)| !fill.ratio_exceeds_override(ratio)));
     if ctx.is_bfc_root() {
         ctx.set_width(width);
         ctx.set_origin_resolved(!collapse_start);
@@ -657,27 +660,26 @@ fn layout_context(
     // A filled body in quirks mode fills the root element less its margins
     // as they collapse with those that adjoin its edges. The fill is only a
     // minimum, so a taller height the aspect ratio gives is kept.
-    let (height, minimum_separates) =
-        match crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node)) {
-            Some(fill) => {
-                let (height, separates) = fill.height(
-                    fill.ratio_height(metrics.preferred.height)
-                        .map_or(content_height, |ratio| ratio.max(content_height)),
-                    if collapse_start {
-                        flow.leading
-                    } else {
-                        CollapsibleMarginSet::ZERO
-                    },
-                    if collapse_end {
-                        flow.trailing
-                    } else {
-                        CollapsibleMarginSet::ZERO
-                    },
-                );
-                (height, collapse_end && separates)
-            }
-            None => (height, minimum_separates),
-        };
+    let (height, minimum_separates) = match body_fill {
+        Some((fill, ratio)) => {
+            let (height, separates) = fill.height(
+                content_height,
+                ratio,
+                if collapse_start {
+                    flow.leading
+                } else {
+                    CollapsibleMarginSet::ZERO
+                },
+                if collapse_end {
+                    flow.trailing
+                } else {
+                    CollapsibleMarginSet::ZERO
+                },
+            );
+            (height, collapse_end && separates)
+        }
+        None => (height, minimum_separates),
+    };
     let size = Size { width, height };
     children::align(
         tree,

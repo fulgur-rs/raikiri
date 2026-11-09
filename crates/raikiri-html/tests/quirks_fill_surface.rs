@@ -622,6 +622,48 @@ fn an_aspect_ratio_taller_than_the_fill_gives_the_body_height() {
         ),
         "p0: b=(0, 0, 400, 600) h=(0, 0, 800, 600) p1: b=(0, 0, 400, 400) h=(0, 0, 800, 400)"
     );
+    // A ratio height between the fill once margins collapse and the fill
+    // its own margins leave still gives the height, in the box its
+    // `box-sizing` names, and keeps the last margin inside.
+    for (style, child) in [
+        ("", "<div id=c style='height:10px;margin-top:100px'></div>"),
+        (
+            ";padding:0 10px",
+            "<div id=c style='height:10px;margin-top:100px'></div>",
+        ),
+        (
+            ";padding:0 10px;box-sizing:border-box",
+            "<div id=c style='height:10px;margin-top:100px'></div>",
+        ),
+        (
+            "",
+            "<div id=c style='height:10px;margin-bottom:100px'></div>",
+        ),
+    ] {
+        let layout = quirks(
+            &format!("body{{margin:0;width:400px;aspect-ratio:8/11{style}}}"),
+            &format!(">{child}"),
+        );
+        let (width, inset, top) = match style {
+            ";padding:0 10px" => (420, 10, 100),
+            ";padding:0 10px;box-sizing:border-box" => (400, 10, 100),
+            _ if child.contains("bottom") => (400, 0, 0),
+            _ => (400, 0, 100),
+        };
+        let child_width = if style.contains("border-box") {
+            380
+        } else {
+            400
+        };
+        let expected = if top == 0 {
+            "p0: b=(0, 0, 400, 550) c=(0, 0, 400, 10) h=(0, 0, 800, 600)".to_owned()
+        } else {
+            format!(
+                "p0: b=(0, 100, {width}, 500) c=({inset}, 100, {child_width}, 10) h=(0, 0, 800, 600) p1: b=(0, 0, {width}, 50) h=(0, 0, 800, 50)"
+            )
+        };
+        assert_eq!(layout, expected, "{style} {child}");
+    }
     // The last margin stays inside a body its ratio gives the height ...
     let child = "<div id=c style='height:10px;margin:30px 0'></div>";
     assert_eq!(

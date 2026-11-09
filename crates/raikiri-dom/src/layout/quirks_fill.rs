@@ -172,6 +172,8 @@ pub(crate) struct BodyFill {
     edges: f32,
     /// The border-box height its `min-height` override gives it.
     overridden: f32,
+    /// Whether its sizes, and so its aspect ratio, relate its content box.
+    content_box: bool,
 }
 
 impl BodyFill {
@@ -181,32 +183,55 @@ impl BodyFill {
     }
 
     /// The border-box height of the body when its content makes it
-    /// `content` tall and the margin sets `leading` and `trailing` adjoin its
-    /// top and bottom edges, and whether its last child's bottom margin no
-    /// longer adjoins its bottom edge. The body is at least what fills the
-    /// root element less its margins collapsed with theirs. As in Chromium,
-    /// the last margin stays inside, though the fill still leaves room for
-    /// it, only when the authored minimum gives the height above the content.
+    /// `content` tall, its aspect ratio gives it `ratio` and the margin sets
+    /// `leading` and `trailing` adjoin its top and bottom edges, and whether
+    /// its last child's bottom margin no longer adjoins its bottom edge. The
+    /// body is at least what fills the root element less its margins
+    /// collapsed with theirs. As in Chromium, the last margin stays inside,
+    /// though the fill still leaves room for it, when the authored minimum or
+    /// the ratio gives the height above the content.
     pub(crate) fn height(
         &self,
         content: f32,
+        ratio: Option<f32>,
         leading: CollapsibleMarginSet,
         trailing: CollapsibleMarginSet,
     ) -> (f32, bool) {
         let clamp = |height: f32| height.min(self.maximum).max(self.minimum).max(self.edges);
         let top = leading.collapse_with_margin(self.margin_top).resolve();
         let bottom = trailing.collapse_with_margin(self.margin_bottom).resolve();
-        let height = clamp(content).max(clamp(self.room - top - bottom));
-        let separates = self.minimum > 0.0 && self.minimum > content && self.minimum >= height;
+        let filled = clamp(self.room - top - bottom);
+        let natural = clamp(ratio.map_or(content, |ratio| ratio.max(content)));
+        let height = natural.max(filled);
+        let separates = (self.minimum > 0.0 && self.minimum > content && self.minimum >= height)
+            || ratio.is_some_and(|ratio| ratio > content && natural > filled);
         (height, separates)
     }
 
-    /// `preferred`, a border-box height the body's aspect ratio gives it,
-    /// when the ratio rather than the `min-height` override gives it. That
-    /// override fills what the body's own margins leave, which is more than
-    /// the fill once they collapse with larger ones.
-    pub(crate) fn ratio_height(&self, preferred: Option<f32>) -> Option<f32> {
-        preferred.filter(|&height| height > self.overridden)
+    /// The border-box height the body's aspect ratio gives it when it is
+    /// `width` wide with `inline_edges` of horizontal padding and border.
+    /// Unlike its preferred height, this leaves out the `min-height`
+    /// override, which fills what the body's own margins leave.
+    pub(crate) fn ratio_height(
+        &self,
+        tree: &LayoutSession<'_>,
+        width: f32,
+        inline_edges: f32,
+    ) -> Option<f32> {
+        let node = &tree.nodes[self.node];
+        let ratio = node.preferred_aspect_ratio.filter(|ratio| *ratio > 0.0)?;
+        Some(if self.content_box || node.ratio_in_content_box {
+            (width - inline_edges).max(0.0) / ratio + self.edges
+        } else {
+            width / ratio
+        })
+    }
+
+    /// Whether `ratio`, the height the body's aspect ratio gives it, is
+    /// above its `min-height` override, so no fill can give the height and
+    /// its last child's bottom margin never adjoins its bottom edge.
+    pub(crate) fn ratio_exceeds_override(&self, ratio: Option<f32>) -> bool {
+        ratio.is_some_and(|ratio| ratio > self.overridden)
     }
 }
 
@@ -274,6 +299,7 @@ fn fill(
             maximum: border_box(maximum),
             edges,
             overridden: border_box(used(margin_top + margin_bottom)),
+            content_box: !border_box_sizing,
         });
     }
     // Its children resolve percentages against what its own margins leave.
