@@ -45,12 +45,10 @@ fn new_session_refreshes_contents_recipe_from_current_source_direction() {
         };
         assert_eq!(values.direction, Direction::Ltr);
     }
-    let address = cascade.computed.as_ptr();
     let generation = cascade.generation();
     cascade.computed[child].direction = Direction::Rtl;
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     session.prepare_style_views();
-    assert_eq!(cascade.computed.as_ptr(), address);
     assert_eq!(cascade.generation(), generation);
     assert!(session.box_style_data.is_ready());
     let record = session.box_style_data.get(BoxKey::Source(child)).unwrap();
@@ -672,7 +670,8 @@ fn failed_rebinding_keeps_replaced_prepared_data_until_full_recovery() {
         percent: 25.0,
     });
     // A later missing value interrupts preparation after the first calc rebind.
-    let tail = cascade.computed.split_off(later);
+    let tail: Vec<_> = cascade.computed.iter().skip(later).cloned().collect();
+    cascade.computed.truncate(later);
     {
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
