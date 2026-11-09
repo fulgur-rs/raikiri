@@ -213,12 +213,13 @@ fn fill(
 
 /// The start (or, with `end`, the end) margin of block `idx` once it
 /// collapses with the margins of its first (or last) in-flow descendants
-/// (CSS 2.1 §8.3.1). `basis` is the width percentages resolve against.
+/// (CSS 2.1 §8.3.1). `basis` is the width of the containing block of
+/// `idx`; each descendant's percentages resolve against its own.
 fn collapsed_margin(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
     idx: usize,
-    basis: f32,
+    mut basis: f32,
     end: bool,
 ) -> f32 {
     let mut positive = 0.0_f32;
@@ -262,6 +263,7 @@ fn collapsed_margin(
             }
             break;
         };
+        basis = content_width(cv, basis);
         current = child;
     }
     positive + negative
@@ -373,24 +375,36 @@ fn stated_content_height(cv: &ComputedValues, basis: f32, page_height: f32) -> O
     })
 }
 
-/// The width of the content box of a root element in a page area
-/// `page_width` wide.
-fn content_width(cv: &ComputedValues, page_width: f32) -> f32 {
-    let edges = cv.padding.left.resolve(page_width)
-        + cv.padding.right.resolve(page_width)
+/// The width of the content box of a block-level box with values `cv` in a
+/// containing block `available` wide, with its `min-width` and `max-width`
+/// applied.
+fn content_width(cv: &ComputedValues, available: f32) -> f32 {
+    let edges = cv.padding.left.resolve(available)
+        + cv.padding.right.resolve(available)
         + cv.border.left.width().px()
         + cv.border.right.width().px();
-    let width = match length(&cv.width, page_width) {
-        Some(width) if cv.box_sizing == BoxSizing::BorderBox => width - edges,
-        Some(width) => width,
-        None => {
-            page_width
-                - margin(&cv.margin.left, page_width)
-                - margin(&cv.margin.right, page_width)
-                - edges
+    // A width in `box-sizing` terms, as the content box takes it.
+    let content = |width: f32| {
+        if cv.box_sizing == BoxSizing::BorderBox {
+            width - edges
+        } else {
+            width
         }
     };
-    width.max(0.0)
+    let width = length(&cv.width, available)
+        .map(content)
+        .unwrap_or_else(|| {
+            available
+                - margin(&cv.margin.left, available)
+                - margin(&cv.margin.right, available)
+                - edges
+        });
+    let maximum = length(&cv.max_width, available).map(content);
+    let minimum = length(&cv.min_width, available).map(content);
+    width
+        .min(maximum.unwrap_or(f32::INFINITY))
+        .max(minimum.unwrap_or(0.0))
+        .max(0.0)
 }
 
 /// A `min-height` or `max-height` against `basis`: `Some(None)` for `auto`

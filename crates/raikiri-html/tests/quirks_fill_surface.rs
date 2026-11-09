@@ -398,3 +398,30 @@ fn the_body_fills_what_its_collapsed_margins_leave() {
         "p0: b=(8, 8, 784, 584) c=(8, 8, 784, 40) h=(0, 0, 800, 600)"
     );
 }
+
+#[test]
+fn percentage_margins_resolve_against_each_containing_block() {
+    // The root's maximum width narrows what the body's margins resolve
+    // against.
+    assert_eq!(
+        quirks("html{max-width:400px}body{margin:5% 0}", HALF),
+        "p0: b=(0, 20, 400, 560) c=(0, 20, 400, 280) h=(0, 0, 400, 600)"
+    );
+    // A margin that collapses with the body's resolves against the body's
+    // content width, and a nested one against its parent's.
+    assert_eq!(
+        quirks(
+            "body{width:400px;margin:0}",
+            "><div id=c style='height:10px;margin-top:10%'></div>"
+        ),
+        "p0: b=(0, 40, 400, 560) c=(0, 40, 400, 10) h=(0, 0, 800, 600)"
+    );
+    assert_eq!(
+        quirks(
+            "body{margin:0;padding:0 50px;max-width:300px}",
+            "><div id=c style='width:200px;padding:0 20px'>\
+             <div style='height:10px;margin-top:50%'></div></div>"
+        ),
+        "p0: b=(0, 100, 400, 500) c=(50, 100, 240, 10) h=(0, 0, 800, 600)"
+    );
+}
