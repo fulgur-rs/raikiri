@@ -38,6 +38,7 @@ use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
 use shodo::node::{InlineEdges, NodeId, OutOfFlowKind, TextSource};
+use shodo::style::InlineStyle;
 use shodo::{ParagraphBuilder, RubyContent};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -726,6 +727,45 @@ impl Content<'_, '_> {
         }
     }
 
+    /// The style the element `id` has on the first line, when a
+    /// `::first-line` reaches it, recorded for the paint of the line.
+    fn first_line_style(&mut self, id: usize) -> Result<Option<InlineStyle>, IfcError> {
+        let Some(values) = self
+            .sink
+            .first_letter
+            .first_line
+            .as_ref()
+            .and_then(|first_line| first_line.element(self.doc, self.cascade, id))
+        else {
+            return Ok(None);
+        };
+        let style = styled(self.doc, self.cascade, &values, id, self.fonts)?;
+        if let Some(first_line) = self.sink.first_letter.first_line.as_mut() {
+            first_line.note_element(id, values);
+        }
+        Ok(Some(style))
+    }
+
+    /// Open the inline box of the element `id`, with `first`, the style it
+    /// has on the first line when a `::first-line` reaches it.
+    fn open_inline(
+        &mut self,
+        builder: &mut ParagraphBuilder,
+        id: usize,
+        (inline, first): (&InlineStyle, Option<&InlineStyle>),
+        edges: InlineEdges,
+        percents: shodo::node::InlineEdgePercents,
+    ) {
+        self.note_margins(id, &edges, &percents);
+        match first {
+            Some(first) => {
+                builder.open_inline_with_first_line(NodeId(id as u64), inline, first, edges)
+            }
+            None => builder.open_inline(NodeId(id as u64), inline, edges),
+        }
+        .set_inline_edge_percents(percents);
+    }
+
     /// Record the line data of the element `id`: its relative offset and
     /// whether its content wraps.
     fn record_element(&mut self, id: usize) {
@@ -746,7 +786,7 @@ impl Content<'_, '_> {
 
     /// The style of a paragraph of ruby content whose text starts from the
     /// style of `owner`.
-    fn paragraph(&self, owner: usize) -> Result<shodo::style::ParagraphStyle, IfcError> {
+    fn paragraph(&mut self, owner: usize) -> Result<shodo::style::ParagraphStyle, IfcError> {
         let root = styled(
             self.doc,
             self.cascade,
@@ -754,12 +794,16 @@ impl Content<'_, '_> {
             owner,
             self.fonts,
         )?; // cov:ignore: inline_style rejects only keywords added to its style enums after it was written.
+        // On the first line the text starts from the values `owner` has
+        // there (CSS Pseudo 4 §2.1.2).
+        let first_line = self.first_line_style(owner)?;
         // The content's own `direction` and `unicode-bidi` give its base
         // direction.
         Ok(shodo::style::ParagraphStyle {
             direction: root.direction,
             unicode_bidi_plaintext: root.unicode_bidi == shodo::style::UnicodeBidi::Plaintext,
             root,
+            first_line,
             ..shodo::style::ParagraphStyle::default()
         })
     }
@@ -853,10 +897,8 @@ impl Content<'_, '_> {
             let (edges, edge_percents) = style::inline_edges(cv, id, self.fonts)?;
             let inline = styled(self.doc, self.cascade, cv, id, self.fonts)?;
             self.record_element(id);
-            self.note_margins(id, &edges, &edge_percents);
-            builder
-                .open_inline(NodeId(id as u64), &inline, edges)
-                .set_inline_edge_percents(edge_percents);
+            let first = self.first_line_style(id)?;
+            self.open_inline(builder, id, (&inline, first.as_ref()), edges, edge_percents);
             // A `<wbr>` is a break opportunity, as in the paragraph outside
             // the ruby.
             if node.tag_name() == Some("wbr") {
@@ -961,6 +1003,9 @@ impl Content<'_, '_> {
         range: std::ops::Range<usize>,
         letter: Letter,
     ) -> Result<(), IfcError> {
+        if let Some(first_line) = self.sink.first_letter.first_line.as_mut() {
+            first_line.note_text(self.doc, self.cascade, id);
+        }
         let parent_cv = &self.cascade.computed[self.doc.parent_of(id).unwrap_or(id)];
         let (start, end) = (range.start, range.end);
         let source = TextSource::Dom {
@@ -1013,13 +1058,17 @@ impl Content<'_, '_> {
         );
         let cv = &self.cascade.computed[ruby];
         let container = styled(self.doc, self.cascade, cv, ruby, self.fonts)?;
+        let first_container = self.first_line_style(ruby)?;
         if !root {
             let (edges, edge_percents) = style::inline_edges(cv, ruby, self.fonts)?;
             self.record_element(ruby);
-            self.note_margins(ruby, &edges, &edge_percents);
-            builder
-                .open_inline(NodeId(ruby as u64), &container, edges)
-                .set_inline_edge_percents(edge_percents);
+            self.open_inline(
+                builder,
+                ruby,
+                (&container, first_container.as_ref()),
+                edges,
+                edge_percents,
+            );
         }
         for &container in &plan.base_containers {
             self.record_element(container);
@@ -1097,9 +1146,19 @@ impl Content<'_, '_> {
             // Automatic and whole-segment spans always validate, so only the
             // caller's item budget can reject the segment.
             match shodo::Ruby::with_limits(bases, levels, self.limits) {
-                Ok(value) => {
-                    builder.push_ruby(NodeId(id as u64), &container, value);
-                }
+                Ok(value) => match &first_container {
+                    Some(first) => {
+                        builder.push_ruby_with_first_line(
+                            NodeId(id as u64),
+                            &container,
+                            first,
+                            value,
+                        );
+                    }
+                    None => {
+                        builder.push_ruby(NodeId(id as u64), &container, value);
+                    }
+                },
                 Err(shodo::RubyError::Limit(error)) => return Err(IfcError::Limit(error)),
                 Err(_) => {}
             }

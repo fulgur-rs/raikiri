@@ -4008,3 +4008,89 @@ fn empty_inline_block_before_keeps_a_multicol_paragraph_in_columns() {
     });
     assert!(in_second_column);
 }
+
+/// The color and the first glyph's position of each glyph run in `scene`, in
+/// paint order.
+fn glyph_run_colors(scene: &Scene) -> Vec<([u8; 4], (f64, f64))> {
+    use anyrender::types::Paint;
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => {
+                let Paint::Solid(color) = &run.brush else {
+                    return None;
+                };
+                let glyph = run.glyphs.first()?;
+                let at = run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y));
+                Some((color.to_rgba8().to_u8_array(), (at.x, at.y)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The text of a ruby's base, here inside an inline element, and of its
+/// annotation takes the values of the `::first-line` on the first line, as
+/// in Chromium; on a later line it keeps its own.
+#[test]
+fn first_line_styles_reach_the_base_and_annotation_of_a_ruby() {
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem;color:rgb(255,0,0)} rt{font-size:5px} p::first-line{color:rgb(0,0,255)}</style></head><body><p><ruby><span>X</span><rt>Y</rt></ruby><br><ruby>Q<rt>R</rt></ruby></p></body></html>"#,
+    );
+    let runs = glyph_run_colors(&scene);
+    let (blue, red) = ([0, 0, 255, 255], [255, 0, 0, 255]);
+    let first: Vec<_> = runs
+        .iter()
+        .filter(|(_, (_, y))| *y < 30.0)
+        .map(|(c, _)| *c)
+        .collect();
+    let later: Vec<_> = runs
+        .iter()
+        .filter(|(_, (_, y))| *y >= 30.0)
+        .map(|(c, _)| *c)
+        .collect();
+    assert_eq!(first, [blue, blue], "{runs:?}");
+    assert_eq!(later, [red, red], "{runs:?}");
+}
+
+/// The font size and the first glyph's position of each glyph run in
+/// `scene`, in paint order.
+fn glyph_run_sizes(scene: &Scene) -> Vec<(f32, (f64, f64))> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => {
+                let glyph = run.glyphs.first()?;
+                let at = run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y));
+                Some((run.font_size, (at.x, at.y)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The font size of a `::first-line` reaches the base of a ruby on the first
+/// line and, through inheritance, its 50% annotation, as in Chromium: there
+/// the base is 20px, 40px wide, and its annotation 10px; on the next line
+/// they are 10px and 5px.
+#[test]
+fn first_line_font_size_reaches_the_base_and_annotation_of_a_ruby() {
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>body{margin:0} p{margin:0;font:10px/30px Ahem} p::first-line{font-size:20px}</style></head><body><p><ruby><rb>XX</rb><rt>YY</rt></ruby>Z<br><ruby><rb>QQ</rb><rt>RR</rt></ruby></p></body></html>"#,
+    );
+    let runs = glyph_run_sizes(&scene);
+    let sizes: Vec<(f32, f64)> = runs.iter().map(|&(size, (x, _))| (size, x)).collect();
+    assert_eq!(
+        sizes,
+        [
+            (20.0, 0.0),
+            (10.0, 5.0),
+            (20.0, 40.0),
+            (10.0, 0.0),
+            (5.0, 2.5)
+        ],
+        "{runs:?}"
+    );
+}

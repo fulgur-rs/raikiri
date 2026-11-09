@@ -453,6 +453,7 @@ impl<'a> LineContext<'a> {
                     annotation,
                     Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
                     annotation.base_text_range().end,
+                    index == 0,
                     &converter,
                     &mut own,
                 );
@@ -561,9 +562,17 @@ impl<'a> LineContext<'a> {
         annotation: shodo::RubyAnnotationView<'a>,
         placement: Placement,
         text_offset: usize,
+        first_line: bool,
         converter: &PhysicalConverter,
         runs: &mut Vec<PositionedRun<'a>>,
     ) {
+        // The annotations of the paragraph's first line take the values
+        // their text has inside the `::first-line`, as its base text does.
+        let ifc = self
+            .document
+            .get_node(self.root_id)
+            .filter(|_| first_line)
+            .and_then(|node| node.ifc.as_ref());
         let line = annotation.line();
         let mut own = Vec::new();
         let mut nested_annotations = Vec::new();
@@ -575,6 +584,7 @@ impl<'a> LineContext<'a> {
                         nested,
                         placement.annotation(nested.transform(), line.block_offset()),
                         text_offset,
+                        first_line,
                         converter,
                         &mut own,
                     );
@@ -584,7 +594,11 @@ impl<'a> LineContext<'a> {
                     let Some(owner) = run.node().map(|node| node.0 as usize) else {
                         continue; // cov:ignore: every text of ruby content is pushed with its DOM node.
                     };
-                    let Some(style) = computed_for_id(self.cascade, owner) else {
+                    let Some(style) = ifc
+                        .zip(self.document.parent_of(owner))
+                        .and_then(|(ifc, parent)| ifc.first_line_text_style(parent))
+                        .or_else(|| computed_for_id(self.cascade, owner))
+                    else {
                         continue; // cov:ignore: ruby content is laid out only from cascaded text nodes.
                     };
                     if style.visibility != Visibility::Visible || run.font_data().is_none() {
