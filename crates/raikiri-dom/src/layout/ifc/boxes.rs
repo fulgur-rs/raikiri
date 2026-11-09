@@ -1039,7 +1039,63 @@ fn run_boxes_segment(
                     .iter()
                     .rev()
                     .find(|(node, _)| tentative.iter().any(|f| f.node == node.0 as usize));
-                if let Some(&(node, earlier)) = displaced {
+                // The first float after `through` when nothing but floats
+                // comes before it on the next line: Chromium places such a
+                // float on this line when the line's content leaves room for
+                // it, the spaces before it hanging at the end of the line.
+                // The engine indents the first line, and with `each-line` a
+                // line after a forced break or a block; a hanging indent is on
+                // every other line instead (CSS Text 3 §8.1).
+                let indent = line_indent(&line_options, first_line, after_forced);
+                let content = line.inline_size() + indent;
+                // Only an object (a float, an atomic or an out-of-flow box)
+                // right after the collapsible spaces at the break can be such
+                // a float, which spares the other lines the look ahead.
+                let object_after_break = line.break_reason() != shodo::BreakReason::Forced
+                    && line.text()[line.text_range().end..]
+                        .trim_start_matches([' ', '\t', '\n'])
+                        .starts_with('\u{FFFC}');
+                let (next_options, next_first) =
+                    open_block.as_ref().map_or((line_options, false), |open| {
+                        open.line_options(lines.len() + 1)
+                    });
+                let after_break = |tree: &mut LayoutSession<'_>, through: Option<FloatCursor>| {
+                    if !object_after_break {
+                        return None;
+                    }
+                    let next = with_state(tree, |state| {
+                        root.line_paragraph.next_line(
+                            &mut state.layout_cx,
+                            line.break_token(),
+                            &next_options,
+                            &LineConstraint {
+                                floats_placed_through: through,
+                                ..constraint
+                            },
+                            &atomics.sizes,
+                        )
+                    });
+                    match next {
+                        Some(LineResult::FloatEncountered {
+                            node,
+                            inline_position,
+                            float_cursor,
+                            ..
+                        }) if inline_position
+                            <= line_indent(&next_options, next_first, false) + 0.01 =>
+                        {
+                            Some((node.0 as usize, float_cursor))
+                        }
+                        _ => None,
+                    }
+                };
+                // A displaced float that comes right after the break stays.
+                let stays = displaced.is_some_and(|&(node, earlier)| {
+                    content <= space.inline_size + 0.01
+                        && after_break(tree, earlier.before())
+                            .is_some_and(|(met, _)| met == node.0 as usize)
+                });
+                if let Some(&(node, earlier)) = displaced.filter(|_| !stays) {
                     let node = node.0 as usize;
                     tentative.retain(|f| f.node != node);
                     withdrawn.push(node);
@@ -1075,6 +1131,29 @@ fn run_boxes_segment(
                     retries += 1;
                     continue;
                 }
+                // A float that the line broke before without meeting it
+                // joins the line where it fits beside the line's content.
+                if deferred.is_empty()
+                    && let Some((node, float_cursor)) = after_break(tree, cursor)
+                    && !withdrawn.contains(&node)
+                {
+                    let mut float = measure_float(tree, node, geometry);
+                    // It goes below the floats it clears and the floats placed
+                    // lower already, as the floats it meets do.
+                    let below = ceiling > line_y
+                        || tentative.iter().any(|f| clears(float.clear, f.direction))
+                        || ctx
+                            .cleared_threshold(float.clear)
+                            .is_some_and(|bottom| bottom > top_edge + line_y);
+                    if !below && content + float.margin_box.width <= space.inline_size + 0.01 {
+                        float.late = true;
+                        first_late =
+                            Some(first_late.map_or(float_cursor, |first| first.min(float_cursor)));
+                        cursor = Some(float_cursor);
+                        tentative.push(float);
+                        continue;
+                    }
+                }
                 if !lines.is_empty() // cov:ignore: continuation requires lines to overflow a fragmentainer and is exercised by the ignored flex-float WPT.
                     && fragmentainer_height.is_some_and(|limit| line_y + height > limit + 0.001)
                 {
@@ -1085,10 +1164,6 @@ fn run_boxes_segment(
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
                 // Only its leading floats keep their place at this offset;
                 // floats met after content follow the line when it moves.
-                // The engine indents the first line, and with `each-line` a
-                // line after a forced break or a block; a hanging indent is on
-                // every other line instead (CSS Text 3 §8.1).
-                let indent = line_indent(&line_options, first_line, after_forced);
                 // A float met after content of the line sits beside that
                 // content only while the line holds both. When the floats
                 // that come after content leave too little room for the line,
@@ -1099,7 +1174,6 @@ fn run_boxes_segment(
                 // wrap does. When floats at the start of the line are the
                 // cause, the line moves below them as before and the later
                 // floats stay beside it.
-                let content = line.inline_size() + indent;
                 let late_room: f32 = tentative
                     .iter()
                     .filter(|f| f.late)
