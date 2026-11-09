@@ -337,7 +337,8 @@ pub struct Document {
     pub(crate) fixed_page_area: Option<(f32, f32)>,
     /// The content-box heights that the children of the root element and of
     /// the body resolve percentages against when the quirks mode fill quirks
-    /// apply to them (see `layout::quirks_fill`), keyed by the parent's index.
+    /// apply to them (see [`mod@crate::layout::quirks_fill`]), keyed by the
+    /// parent's index.
     pub(crate) quirks_percentage_height_bases: Vec<(usize, f32)>,
     /// Whether the quirks mode fill quirks are left out, as they are in the
     /// copy that measures a running element: its root element and body are

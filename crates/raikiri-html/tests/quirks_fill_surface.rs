@@ -425,3 +425,39 @@ fn percentage_margins_resolve_against_each_containing_block() {
         "p0: b=(0, 100, 400, 500) c=(50, 100, 240, 10) h=(0, 0, 800, 600)"
     );
 }
+
+#[test]
+fn collapsed_margins_run_through_empty_boxes_and_stop_at_minimums() {
+    // An empty first child lets the next one's margin through.
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div></div><div id=c style='height:10px;margin-top:40px'></div>"
+        ),
+        "p0: b=(0, 40, 800, 560) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // So does an empty last child, whose own margins join.
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div id=c style='height:10px;margin-bottom:40px'></div><div style='margin:0 0 20px'></div>"
+        ),
+        "p0: b=(0, 0, 800, 560) c=(0, 0, 800, 10) h=(0, 0, 800, 600)"
+    );
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div style='margin:15px 0'></div><div id=c>\
+             <div style='height:10px;margin-top:30px'></div></div>"
+        ),
+        "p0: b=(0, 30, 800, 570) c=(0, 30, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // A minimum height keeps the last child's end margin inside.
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div id=c style='min-height:100px'><div style='height:10px;margin-bottom:40px'></div></div>"
+        ),
+        "p0: b=(0, 0, 800, 600) c=(0, 0, 800, 100) h=(0, 0, 800, 600)"
+    );
+}

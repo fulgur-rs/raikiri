@@ -212,61 +212,83 @@ fn fill(
 }
 
 /// The start (or, with `end`, the end) margin of block `idx` once it
-/// collapses with the margins of its first (or last) in-flow descendants
-/// (CSS 2.1 §8.3.1). `basis` is the width of the containing block of
-/// `idx`; each descendant's percentages resolve against its own.
+/// collapses with the adjoining margins of its in-flow descendants (CSS 2.1
+/// §8.3.1). `basis` is the width of the containing block of `idx`.
 fn collapsed_margin(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
     idx: usize,
-    mut basis: f32,
+    basis: f32,
     end: bool,
 ) -> f32 {
-    let mut positive = 0.0_f32;
-    let mut negative = 0.0_f32;
-    let mut current = idx;
-    loop {
-        let cv = &cascade.computed[current];
-        let (value, padding, border) = if end {
-            (
-                &cv.margin.bottom,
-                cv.padding.bottom,
-                cv.border.bottom.width().px(),
-            )
-        } else {
-            (&cv.margin.top, cv.padding.top, cv.border.top.width().px())
-        };
-        let value = margin(value, basis);
-        positive = positive.max(value);
-        negative = negative.min(value);
-        // A box with a stated height keeps its last child's end margin inside.
-        let holds_end = end && current != idx && cv.height != ComputedLengthPercentageOrAuto::Auto;
-        if padding.resolve(basis) != 0.0
-            || border != 0.0
-            || holds_end
-            || !collapses_with_children(doc, cascade, current, idx)
-        {
-            break;
-        }
-        let Some(child) = edge_child(doc, cascade, current, end) else {
-            // The margins of an empty box collapse through it, so its other
-            // margin joins as well (CSS 2.1 §8.3.1).
-            if current != idx && is_empty(doc, cascade, current, basis) {
-                let other = if end {
-                    &cv.margin.top
-                } else {
-                    &cv.margin.bottom
-                };
-                let other = margin(other, basis);
-                positive = positive.max(other);
-                negative = negative.min(other);
-            }
-            break;
-        };
-        basis = content_width(cv, basis);
-        current = child;
+    let mut margins = Adjoining::default();
+    collect_adjoining(doc, cascade, idx, idx, basis, end, &mut margins);
+    margins.positive + margins.negative
+}
+
+/// Margins that collapse into one: the largest positive one and the most
+/// negative one.
+#[derive(Default)]
+struct Adjoining {
+    positive: f32,
+    negative: f32,
+}
+
+impl Adjoining {
+    fn add(&mut self, margin: f32) {
+        self.positive = self.positive.max(margin);
+        self.negative = self.negative.min(margin);
     }
-    positive + negative
+}
+
+/// Add the start (or end) margin of `current`, whose containing block is
+/// `basis` wide, and the margins that adjoin it inside: those of the boxes
+/// they collapse through, and then those of the first (or last) child that
+/// does not.
+fn collect_adjoining(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body: usize,
+    current: usize,
+    basis: f32,
+    end: bool,
+    margins: &mut Adjoining,
+) {
+    let cv = &cascade.computed[current];
+    let (value, padding, border) = if end {
+        (
+            &cv.margin.bottom,
+            cv.padding.bottom,
+            cv.border.bottom.width().px(),
+        )
+    } else {
+        (&cv.margin.top, cv.padding.top, cv.border.top.width().px())
+    };
+    margins.add(margin(value, basis));
+    // A box with a stated height or a minimum keeps its last child's end
+    // margin inside.
+    let holds_end = end
+        && current != body
+        && !(is_zero_or_auto(&cv.height, basis) && is_zero_or_auto(&cv.min_height, basis));
+    if padding.resolve(basis) != 0.0
+        || border != 0.0
+        || holds_end
+        || !collapses_with_children(doc, cascade, current, body)
+    {
+        return;
+    }
+    let inner = content_width(cv, basis);
+    for child in edge_children(doc, cascade, current, end) {
+        if !is_empty(doc, cascade, child, inner) {
+            collect_adjoining(doc, cascade, body, child, inner, end, margins);
+            return;
+        }
+        // The margins of an empty box collapse through it, so both join, and
+        // so do those of the box after it (CSS 2.1 §8.3.1).
+        let child_cv = &cascade.computed[child];
+        margins.add(margin(&child_cv.margin.top, inner));
+        margins.add(margin(&child_cv.margin.bottom, inner));
+    }
 }
 
 /// Whether block `idx` has no content, no block-axis padding or border and
@@ -309,20 +331,21 @@ fn collapses_with_children(
         && (propagated || !scrolls(cascade.computed[idx].overflow))
 }
 
-/// The first (or, with `end`, the last) in-flow child of `idx` when it is
-/// block-level and no text comes before it there.
-fn edge_child(
+/// The in-flow children of `idx` from its start (or, with `end`, from its
+/// end) up to the first one that is not a block or comes after text there.
+fn edge_children(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
     idx: usize,
     end: bool,
-) -> Option<usize> {
+) -> Vec<usize> {
     let children = &doc.nodes[idx].children;
     let ordered: Box<dyn Iterator<Item = &usize>> = if end {
         Box::new(children.iter().rev())
     } else {
         Box::new(children.iter())
     };
+    let mut blocks = Vec::new();
     for &child in ordered {
         let node = &doc.nodes[child];
         if let Some(text) = node.text_content() {
@@ -330,7 +353,7 @@ fn edge_child(
             if text.chars().all(|c| c.is_ascii_whitespace()) {
                 continue;
             }
-            return None;
+            break;
         }
         if !matches!(node.data, NodeData::Element(_)) {
             continue;
@@ -342,10 +365,17 @@ fn edge_child(
         {
             continue;
         }
-        return (!cv.display.is_inline_level() && cv.display != DisplayValue::Contents)
-            .then_some(child);
+        if cv.display.is_inline_level() || cv.display == DisplayValue::Contents {
+            break;
+        }
+        blocks.push(child);
     }
-    None
+    blocks
+}
+
+/// Whether a `height` or `min-height` gives a box no height of its own.
+fn is_zero_or_auto(value: &ComputedLengthPercentageOrAuto, basis: f32) -> bool {
+    matches!(value, ComputedLengthPercentageOrAuto::Auto) || length(value, basis) == Some(0.0)
 }
 
 /// Whether the quirk applies to a root element or body with these values: an
