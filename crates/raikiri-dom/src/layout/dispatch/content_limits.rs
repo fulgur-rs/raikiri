@@ -2365,6 +2365,95 @@ fn px_length(property: LengthProperty, size: f32) -> OwnedPropertyOverride {
     .expect("resolved pixel bound")
 }
 
+/// The length `width` of `idx`, an item of the flex or grid container
+/// `container`, when the item is a table that states one: the container sizes
+/// the item along the table's inline axis by that width, in the sizes it
+/// gathers before it lays the table out, so the table is not asked what width
+/// it comes to.
+///
+/// A fixed table with a collapsed column shares the width it states among all
+/// its columns before the collapsed ones are removed, so the width it comes to
+/// is not one it could be given as its `width`: the stated width stays.
+fn stated_table_item_width(tree: &LayoutSession<'_>, container: usize, idx: usize) -> Option<f32> {
+    if !is_table_content_limits(tree, idx)
+        || is_oof_box(tree, idx)
+        || tree.has_vertical_writing_mode(idx)
+        || tree.has_vertical_writing_mode(container)
+        || (tree.nodes[idx].table_layout == TableLayoutValue::Fixed
+            && crate::layout::table::has_collapsed_column(tree, idx))
+    {
+        return None;
+    }
+    match tree.physical_style(idx).size().width.expand() {
+        ExpandedDimension::Length(stated) => Some(stated),
+        _ => None,
+    }
+}
+
+/// The `width`, and the `max-width` below it, that make the table `child` the
+/// width it lays itself out at in the sizes its container gathers.
+///
+/// A table is never narrower than its columns, whatever `width` it states, and
+/// a `min-width` or `max-width` keyword holds it to the width of its columns
+/// (CSS Tables 3 §3, CSS 2.1 §17.5.2): the width it comes to is its own to
+/// settle. The measure runs on the style the table states, so the overrides
+/// are empty when the table comes to the width the container reads.
+fn table_item_width_overrides(
+    tree: &mut LayoutSession<'_>,
+    child: NodeId,
+    stated: f32,
+    parent_size: Size<Option<f32>>,
+) -> Vec<OwnedPropertyOverride> {
+    let idx = usize::from(child);
+    let maximum = tree
+        .physical_style(idx)
+        .max_size()
+        .width
+        .maybe_resolve(parent_size.width);
+    let adjustment = box_sizing_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
+    let along = item_probe_inputs(
+        parent_size,
+        Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+    );
+    let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+    let own = probe(tree, child, key, along, Vec::new()) - adjustment;
+    if (own - stated).abs() <= TABLE_WIDTH_EPSILON {
+        return Vec::new();
+    }
+    let mut overrides = vec![px_length(LengthProperty::Width, own.max(0.0))];
+    if maximum.is_some_and(|maximum| maximum < own - TABLE_WIDTH_EPSILON) {
+        overrides.push(px_length(LengthProperty::MaxWidth, own.max(0.0)));
+    }
+    overrides
+}
+
+/// The inputs of a measure of an item of a flex or grid container for its own
+/// size, run before the container lays the item out.
+fn item_probe_inputs(
+    parent_size: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
+) -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space,
+        vertical_margins_are_collapsible: Line::FALSE,
+    }
+}
+
+/// Widths this close are the same width.
+const TABLE_WIDTH_EPSILON: f32 = 0.001;
+
 fn with_item_content_limits_for_parent_sizes(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -2372,37 +2461,41 @@ fn with_item_content_limits_for_parent_sizes(
     mut parent_size_for_item: impl FnMut(usize) -> Size<Option<f32>>,
     mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let items = tree
-        .child_ids(node_id)
-        .filter_map(|child| {
-            let idx = usize::from(child);
-            let parent_size = parent_size_for_item(idx);
-            let item = ItemLimits::new(tree, usize::from(node_id), idx, parent_size);
-            applies_to_parent_item(tree, idx, &item.limits).then_some((child, parent_size, item))
-        })
-        .collect::<Vec<_>>();
-    if items.is_empty() {
+    let mut items = Vec::new();
+    let mut tables = Vec::new();
+    for child in tree.child_ids(node_id) {
+        let idx = usize::from(child);
+        let parent_size = parent_size_for_item(idx);
+        let item = ItemLimits::new(tree, usize::from(node_id), idx, parent_size);
+        if applies_to_parent_item(tree, idx, &item.limits) {
+            items.push((child, parent_size, item));
+        }
+        if let Some(stated) = stated_table_item_width(tree, usize::from(node_id), idx) {
+            tables.push((child, stated, parent_size));
+        }
+    }
+    if items.is_empty() && tables.is_empty() {
         return dispatch(tree, node_id, inputs);
     }
 
     scoped(tree, |tree| {
-        let mut saved_caches = Vec::with_capacity(items.len());
+        let mut saved_caches = Vec::with_capacity(items.len() + tables.len());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             tree.with_overrides(Vec::new(), |tree| {
+                for (child, stated, parent_size) in tables {
+                    let overrides = table_item_width_overrides(tree, child, stated, parent_size);
+                    if !overrides.is_empty() {
+                        let idx = usize::from(child);
+                        push_size_overrides(tree, idx, overrides);
+                        saved_caches.push((idx, tree.take_layout_cache(idx)));
+                    }
+                }
                 for (child, parent_size, item) in items {
                     let idx = usize::from(child);
                     let limits = item.limits;
-                    let item_inputs = LayoutInput {
-                        run_mode: RunMode::ComputeSize,
-                        sizing_mode: SizingMode::InherentSize,
-                        axis: RequestedAxis::Both,
-                        known_dimensions: Size::NONE,
-                        known_dimensions_are_definite: Size {
-                            width: false,
-                            height: false,
-                        },
+                    let item_inputs = item_probe_inputs(
                         parent_size,
-                        available_space: Size {
+                        Size {
                             width: parent_size
                                 .width
                                 .map(AvailableSpace::Definite)
@@ -2412,8 +2505,7 @@ fn with_item_content_limits_for_parent_sizes(
                                 .map(AvailableSpace::Definite)
                                 .unwrap_or(inputs.available_space.height),
                         },
-                        vertical_margins_are_collapsible: Line::FALSE,
-                    };
+                    );
 
                     let ratio_is_redundant = if let Some((width, size)) = item
                         .ratio_minimum
