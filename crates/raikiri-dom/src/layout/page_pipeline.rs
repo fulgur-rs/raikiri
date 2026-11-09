@@ -908,14 +908,34 @@ fn grows_with_paginated_content(
         && (block_axis.height().is_auto() || definite_content_height(document, node_id).is_none())
 }
 
-/// How far the content of each flex item that
+/// Whether `node_id` is a wrapping column flex container whose inline axis
+/// is the axis the pages of `root` break along: its height there is its
+/// inline size, which takes its items' intrinsic contributions rather than
+/// the lines they make, so an orthogonal item can be larger than its line
+/// and overflow it (CSS Flexbox 1 §9.9.2).
+fn orthogonal_flex_container(
+    document: &super::context::LayoutSession<'_>,
+    root: usize,
+    node_id: usize,
+) -> bool {
+    let style = document.pagination_style(node_id);
+    document.nodes[node_id].formatting_context == FormattingContext::Flex
+        && !style.flex_direction_is_row()
+        && style.flex_wraps()
+        && document.nodes[node_id].used_writing_mode.is_vertical()
+            != document.nodes[root].used_writing_mode.is_vertical()
+}
+
+/// How far the content of each flex item or flex container that
 /// [`update_paginated_block_heights`] may extend already reaches past the
-/// item's block-end edge before pagination moves anything, by node id.
+/// box's block-end edge before pagination moves anything, by node id.
 ///
 /// A flex item's used height comes from the flex algorithm, which may clamp
 /// or shrink it below its content; that content overflows the item rather
-/// than extending it. Only the growth pagination adds is enclosed. Other
-/// boxes are left out: their auto height is the one the extension measures.
+/// than extending it. So does the content of a flex container whose height
+/// is its inline size (see [`orthogonal_flex_container`]). Only the growth
+/// pagination adds is enclosed. Other boxes are left out: their auto height
+/// is the one the extension measures.
 fn unpaginated_content_overflow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -925,9 +945,11 @@ fn unpaginated_content_overflow(
     document
         .preorder(root)
         .filter(|&node_id| {
-            document.taffy_parent_of(node_id).is_some_and(|parent| {
-                document.nodes[parent].formatting_context == FormattingContext::Flex
-            }) && grows_with_paginated_content(document, node_id)
+            (orthogonal_flex_container(document, root, node_id)
+                || document.taffy_parent_of(node_id).is_some_and(|parent| {
+                    document.nodes[parent].formatting_context == FormattingContext::Flex
+                }))
+                && grows_with_paginated_content(document, node_id)
         })
         .filter_map(|node_id| {
             let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);

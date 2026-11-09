@@ -5043,7 +5043,7 @@ fn with_stated_height_contribution(
     Some(inputs)
 }
 
-/// Find an orthogonal paragraph with an automatic cross size in a nowrap column.
+/// Find an orthogonal paragraph with an automatic cross size in a column.
 fn orthogonal_column_paragraph(tree: &LayoutSession<'_>, idx: usize) -> Option<(usize, bool)> {
     if tree.nodes[idx].formatting_context != FormattingContext::Inline
         || tree.nodes[idx].size_containment.width
@@ -5057,7 +5057,7 @@ fn orthogonal_column_paragraph(tree: &LayoutSession<'_>, idx: usize) -> Option<(
         return None;
     }
     let container = tree.physical_style(parent);
-    if container.flex_direction_is_row() || container.flex_wraps() {
+    if container.flex_direction_is_row() {
         return None;
     }
     let vertical = tree.container_is_vertical(idx);
@@ -5116,7 +5116,11 @@ fn with_orthogonal_cross_measurement(
         });
     let legacy_contribution = !column_cross_measure::supported(tree, parent)
         || (!minimum.is_auto() && minimum.maybe_resolve(parent_basis).is_none());
-    if !legacy_contribution && !column_cross_measure::measures_cross(tree, parent) {
+    // A wrapping container settles its cross size before its final layout
+    // even with unresolved outer constraints; its lines then take the cross
+    // size each item lays out at, which can be larger than the container.
+    let wraps = tree.physical_style(parent).flex_wraps();
+    if (wraps || !legacy_contribution) && !column_cross_measure::measures_cross(tree, parent) {
         return None;
     }
     #[cfg(test)]
