@@ -839,6 +839,28 @@ const ROWS_10PX_LINES: &[Row] = &[
 /// on later rows or lines, and the boxes after the block in its own item, move
 /// down with it.
 const ROWS_BESIDE_OTHERS: &[Row] = &[
+    // An item aligned to the end of the line it shares with the grown item
+    // stays where it is: it is on that line, not on a later one.
+    (
+        r#"<div style="display:flex;height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:200px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="height:20px;align-self:end">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;width:100px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end">T</div><div style="width:60px;height:10px">U</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 90), (1, 30), (1, 40)],
+    ),
+    (
+        r#"<div style="display:flex;align-items:flex-start"><div style="width:50px;height:20px;align-self:flex-end">T</div><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (0, 90), (1, 30)],
+    ),
     (
         r#"<div style="display:grid;grid-template-columns:50px 50px;align-items:start"><div style="padding-bottom:30px"><div style="height:80px">S</div></div><div style="width:50px">T</div></div><div style="height:10px">Z</div>"#,
         &[(0, 0), (1, 30)],

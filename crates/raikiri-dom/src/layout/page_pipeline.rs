@@ -11200,15 +11200,12 @@ fn grow_container_beside_item(
         pagination_child_parent_y(document, container, item, document.pagination_local_y(item))
             - document.nodes[item].layout.margin.top
             - item_offset;
+    let mut placed = Vec::new();
     for child in document.children_through_contents(container) {
         let node = &document.nodes[child];
         let blank_text =
             matches!(&node.data, NodeData::Text(text) if text.text_content.trim().is_empty());
-        if child == item
-            || blank_text
-            || node.is_display_none()
-            || node.layout_position() == Position::Absolute
-        {
+        if blank_text || node.is_display_none() || node.layout_position() == Position::Absolute {
             continue;
         }
         let child_offset = offset(document, child);
@@ -11217,19 +11214,34 @@ fn grow_container_beside_item(
             container,
             child,
             document.pagination_local_y(child),
-        ) - child_offset;
+        ) - child_offset
+            - node.layout.margin.top;
         let bottom = item_bottom_in(document, container, child) - child_offset;
+        placed.push(PlacedItem {
+            id: child,
+            offset: child_offset,
+            top,
+            bottom,
+        });
+    }
+    let same_line = items_on_line_of(document, cascade, container, item, &placed);
+    for child in placed {
+        if child.id == item {
+            continue;
+        }
         // A margin above an item on the same row or line can take it below
         // the end of the grown item; its margin box still starts on the row.
-        if top - node.layout.margin.top >= before - 0.001 {
-            later.insert(child);
-            later_end = later_end.max(bottom);
-        } else if bottom > item_top + 0.001 {
-            row_end = row_end.max(bottom);
+        // An item on the line that ends above the grown item neither ends
+        // the row nor stretches across it.
+        if !same_line.contains(&child.id) && child.top >= before - 0.001 {
+            later.insert(child.id);
+            later_end = later_end.max(child.bottom);
+        } else if child.bottom > item_top + 0.001 {
+            row_end = row_end.max(child.bottom);
             row.push((
-                child,
-                stretches_across_row(document, cascade, container, child),
-                child_offset,
+                child.id,
+                stretches_across_row(document, cascade, container, child.id),
+                child.offset,
             ));
         }
     }
@@ -11279,6 +11291,79 @@ fn grow_container_beside_item(
         growth,
         page,
     });
+}
+
+/// An in-flow item of a flex or grid container, measured in normal flow
+/// from the top of its margin box to the end of its margin box.
+struct PlacedItem {
+    id: usize,
+    offset: f32,
+    top: f32,
+    bottom: f32,
+}
+
+/// Which of the `placed` items of `container` are known to share the flex
+/// line or grid row of `item`, whatever their place in the block axis: an
+/// item aligned to the end of a tall line starts below the end of an item
+/// aligned to its start. A single-line row flex container has one line, the
+/// items of a multi-line one fill a line in order until one starts over at
+/// the inline start of an item already on it, and grid items share the row
+/// they start in. The items the result does not claim are placed by where
+/// their margin boxes are.
+fn items_on_line_of(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    container: usize,
+    item: usize,
+    placed: &[PlacedItem],
+) -> HashSet<usize> {
+    let node = &document.nodes[container];
+    let mut same: HashSet<usize> = HashSet::default();
+    if row_flex_container(document, cascade, item) == Some(container) {
+        if cascade.computed[container].flex_wrap == FlexWrapValue::NoWrap {
+            same.extend(placed.iter().map(|child| child.id));
+        } else {
+            let mut ordered: Vec<usize> = placed.iter().map(|child| child.id).collect();
+            ordered.sort_by_key(|&id| cascade.computed[id].order);
+            let span = |id: usize| {
+                let layout = &document.nodes[id].layout;
+                let start = layout.location.x - layout.margin.left;
+                (
+                    start,
+                    layout.location.x + layout.size.width + layout.margin.right,
+                )
+            };
+            let mut line: Vec<usize> = Vec::new();
+            let mut lines = Vec::new();
+            for id in ordered {
+                let (start, end) = span(id);
+                let starts_over = line.iter().any(|&other| {
+                    let (other_start, other_end) = span(other);
+                    start < other_end - 0.001 && end > other_start + 0.001
+                });
+                if starts_over {
+                    lines.push(std::mem::take(&mut line));
+                }
+                line.push(id);
+            }
+            lines.push(line);
+            if let Some(line) = lines.into_iter().find(|line| line.contains(&item)) {
+                same.extend(line);
+            }
+        }
+    } else if let Some(&(_, item_row)) = node
+        .grid_item_row_starts
+        .iter()
+        .find(|&&(id, _)| id == item)
+    {
+        same.extend(
+            node.grid_item_row_starts
+                .iter()
+                .filter(|&&(_, row)| row == item_row)
+                .map(|&(id, _)| id),
+        );
+    }
+    same
 }
 
 /// Stretches the items of `row` that stretch to the height of their row or
