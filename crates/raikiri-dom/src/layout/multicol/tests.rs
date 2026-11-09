@@ -74,6 +74,27 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
 }
 
 #[test]
+fn balanced_stack_height_ends_where_the_heights_have_no_float_between_them() {
+    // A float 40px tall and a paragraph of 2001 lines 20px tall beside it:
+    // around 20000px, adjacent `f32` values are farther apart than the
+    // search tolerance, so the search ends on the precision of the heights.
+    let lines: Vec<(f32, f32)> = (0..2001)
+        .map(|line| (line as f32 * 20.0, line as f32 * 20.0 + 20.0))
+        .collect();
+    let total = 2001.0 * 20.0;
+    let children = [
+        StackedChild::atomic(0.0, 40.0),
+        StackedChild {
+            top: 0.0,
+            bottom: total,
+            lines,
+        },
+    ];
+    let height = balanced_stack_height(&children, 2, total, (1, 1));
+    assert_eq!(height, 20020.0);
+}
+
+#[test]
 fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
     let context = FragmentationContext {
         rtl: false,

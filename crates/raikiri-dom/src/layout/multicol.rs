@@ -2255,7 +2255,7 @@ fn fill_stacked_columns(
 
 /// The height of `count` balanced columns holding `children`, which take
 /// `total` in one column: the lowest that fits them all, found to within
-/// a thousandth of a pixel.
+/// a thousandth of a pixel or the precision of the heights.
 fn balanced_stack_height(
     children: &[StackedChild],
     count: usize,
@@ -2267,8 +2267,12 @@ fn balanced_stack_height(
     if fits {
         return used;
     }
-    while high - low > 0.001 {
+    loop {
         let middle = (low + high) / 2.0;
+        // Tall columns can have no float between the bounds to try.
+        if high - low <= 0.001 || middle <= low || middle >= high {
+            break;
+        }
         if fill_stacked_columns(children, count, middle, breaks).0 {
             high = middle;
         } else {
