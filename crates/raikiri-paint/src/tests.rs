@@ -4082,3 +4082,41 @@ fn first_line_font_size_reaches_the_base_and_annotation_of_a_ruby() {
         ]
     );
 }
+
+/// The colors of the glyph runs of `<p>` laid out with `css` and holding
+/// `body`, in paint order.
+fn ruby_run_colors(css: &str, body: &str) -> Vec<[u8; 4]> {
+    use anyrender::types::Paint;
+    let html = format!(
+        "<html><head><style>body{{margin:0}} p{{margin:0;font:10px/30px Ahem;color:rgb(255,0,0)}} rt{{font-size:5px}} p::first-line{{color:rgb(0,0,255)}} {css}</style></head><body><p>{body}</p></body></html>"
+    );
+    glyph_runs(&painted_html_with_ahem(html.as_bytes()))
+        .iter()
+        .filter_map(|(run, _)| match &run.brush {
+            Paint::Solid(color) => Some(color.to_rgba8().to_u8_array()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// White space between the bases and between the annotations of a ruby on
+/// the first line takes the `::first-line` values as the text around it
+/// does; a ruby after a block `::before` whose line is the first line keeps
+/// its own values. Both as in Chromium.
+#[test]
+fn first_line_styles_reach_ruby_white_space_but_not_past_a_block_before() {
+    let (blue, red) = ([0, 0, 255, 255], [255, 0, 0, 255]);
+    let colors = ruby_run_colors(
+        "",
+        "<ruby><rb>a</rb> <rb>b</rb><rt>x</rt> <rt>y</rt></ruby>",
+    );
+    assert!(
+        !colors.is_empty() && colors.iter().all(|&color| color == blue),
+        "{colors:?}"
+    );
+    let colors = ruby_run_colors(
+        "p::before{content:'A';display:block}",
+        "<ruby>X<rt>Y</rt></ruby>",
+    );
+    assert_eq!(colors, [blue, red, red]);
+}
