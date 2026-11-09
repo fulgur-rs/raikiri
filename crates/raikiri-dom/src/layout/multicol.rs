@@ -4602,15 +4602,14 @@ fn lines_below_column_top(
     let last_column = balanced.then(|| context.column_count.saturating_sub(1));
     // The column of `context` holds the lines that end within the room below
     // `content_top`, and at least one.
+    // A paragraph without lines has no pieces.
+    extents.first()?;
     let mut start = extents
         .iter()
         .skip(1)
         .position(|extent| content_top + extent.1 > height + f32::EPSILON)
         .filter(|_| last_column.is_none_or(|last| context.column_index < last))
         .map_or(extents.len(), |fitting| fitting + 1);
-    if start == 0 {
-        return None;
-    }
     let mut ranges = vec![(0, start, context.column_index)];
     let mut column = context.column_index;
     while start < extents.len() {
