@@ -12360,14 +12360,16 @@ fn grow_ancestors_below(
 
 /// Move `node_id` by `delta` after its block-start margin was truncated at a
 /// page break, together with its inline content and the auto-height boxes
-/// containing it.
+/// containing it. Returns the ancestors whose height kept them from
+/// shrinking with it, each with the part of `delta` the flow after it does
+/// not follow.
 fn move_box_by_truncated_margin(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     delta: f32,
     flow_root: usize,
-) {
+) -> Vec<(usize, f32)> {
     document.translate_pagination_y(node_id, delta);
     let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, delta);
     shrink_ancestors_after_margin_truncation(
@@ -12377,12 +12379,14 @@ fn move_box_by_truncated_margin(
         delta,
         flow_root,
         &followed_ifc_boxes,
-    );
+    )
 }
 
 /// A truncated margin shortens the auto-height boxes containing the flow.
 /// Reuse the same used-child extents and size bounds as ordinary pagination
 /// growth, retaining unrelated float extents and authored height limits.
+/// Returns the ancestors that held the flow after them where it was (see
+/// [`shrink_ancestors_after_content_change`]).
 fn shrink_ancestors_after_margin_truncation(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -12390,14 +12394,17 @@ fn shrink_ancestors_after_margin_truncation(
     delta: f32,
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
-) {
+) -> Vec<(usize, f32)> {
     shrink_ancestors_after_content_change(
         document, cascade, node, delta, delta, flow_root, ifc_boxes, None,
-    );
+    )
 }
 
 /// Propagates a shortened content extent separately from its owned floats.
 /// Bounds can absorb either change before the containing flow is reached.
+/// Returns each ancestor whose height kept the flow after it from following
+/// the content inside it, with the part of the content's move, negative,
+/// that the flow after that ancestor does not take.
 #[allow(clippy::too_many_arguments)]
 fn shrink_ancestors_after_content_change(
     document: &mut super::context::LayoutSession<'_>,
@@ -12408,9 +12415,10 @@ fn shrink_ancestors_after_content_change(
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
     mut changes: Option<&mut Vec<(usize, f32)>>,
-) {
+) -> Vec<(usize, f32)> {
+    let mut held = Vec::new();
     if (delta >= 0.0 && float_delta >= 0.0) || !delta.is_finite() {
-        return;
+        return held;
     }
     let mut child = node;
     let mut flow_delta = delta;
@@ -12418,9 +12426,13 @@ fn shrink_ancestors_after_content_change(
     let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
     while let Some(parent) = walk.current() {
         walk.advance(document);
-        if document.nodes[parent].kind() != NodeKind::Element
-            || document.nodes[parent].size_containment.height
-        {
+        if document.nodes[parent].kind() != NodeKind::Element {
+            break;
+        }
+        if document.nodes[parent].size_containment.height {
+            if flow_delta < -0.001 {
+                held.push((parent, flow_delta));
+            }
             break;
         }
         if document.nodes[parent].display() == DisplayValue::Contents {
@@ -12478,12 +12490,18 @@ fn shrink_ancestors_after_content_change(
             flow_root,
             ifc_boxes,
         ) else {
+            if flow_delta < -0.001 {
+                held.push((parent, flow_delta));
+            }
             break;
         };
         document.nodes[parent].layout.size.height = adjusted.height;
         document.mark_pagination_extent_dirty(parent);
         let (old_flow, new_flow) = adjusted.flow_heights;
         let passed = new_flow - old_flow;
+        if flow_delta < 0.0 && passed > flow_delta + 0.001 {
+            held.push((parent, flow_delta - passed.min(0.0)));
+        }
         if let Some(records) = changes.as_mut()
             && (passed - flow_delta).abs() > 0.001
         {
@@ -12506,6 +12524,7 @@ fn shrink_ancestors_after_content_change(
             break;
         }
     }
+    held
 }
 
 /// Whether `block` is a block-level box laid out in plain block flow up to

@@ -2033,7 +2033,7 @@ impl PaginationState {
                 .truncation_at_break(document, cascade, page_origins, &at);
         if let Some(MarginTruncation { delta, underflow }) = truncation {
             self.sibling_margins.moved_boxes |= delta != 0.0;
-            move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
+            let held = move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
             self.flow_shift += delta;
             position.effective_y += delta;
             if let Some(underflow) = underflow {
@@ -2045,6 +2045,13 @@ impl PaginationState {
                 // which is the page the flow reaches.
                 natural_page = page_origins.page_index_for_y(flow_y + delta - pulled);
             }
+            // An ancestor whose height does not shrink with its content keeps
+            // the flow after it where it was: the part of the move it held
+            // ends with its subtree.
+            self.subtree_shifts.bounded.extend(
+                held.into_iter()
+                    .map(|(ancestor, held)| (ancestor, held, natural_page)),
+            );
         }
         reach_page(control, natural_page)?;
         self.current_page = self.current_page.max(natural_page);

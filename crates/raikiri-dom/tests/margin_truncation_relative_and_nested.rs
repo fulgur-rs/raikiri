@@ -222,3 +222,51 @@ fn a_margin_in_a_grid_item_leaves_the_items_beside_it_in_place() {
     assert_eq!(pages, 2, "page count, got {got:?}");
     assert_eq!(got, [("y", 1, 50.0), ("c", 1, 60.0)]);
 }
+
+/// An empty block that forces a break between the block before `b` and `b`
+/// starts the second page, and the margin above `b` that adjoins that break
+/// is kept, as when the block before is itself a place to break.
+#[test]
+fn a_forced_break_between_the_blocks_keeps_the_margin() {
+    for (label, before) in [
+        ("plain block before", first("")),
+        ("unbreakable block before", first("break-inside:avoid")),
+    ] {
+        check(
+            label,
+            &format!(
+                "<div>{before}<div style=\"break-before:page\"></div>{}</div>{C}",
+                b("")
+            ),
+            &[("b", 1, 30.0, 50.0), ("c", 1, 50.0, 60.0)],
+        );
+    }
+}
+
+/// A block around `b` whose height does not shrink with its content keeps
+/// its height when the margin is cut, and `c` after it stays below it; one
+/// whose `min-height` is reached shrinks down to it.
+#[test]
+fn a_block_with_a_set_height_keeps_the_block_after_it_in_place() {
+    for (label, wrapper, c_top) in [
+        ("height", "height:150px", 50.0),
+        ("min-height", "min-height:150px", 50.0),
+        ("min-height reached", "min-height:125px", 25.0),
+    ] {
+        check(
+            label,
+            &format!("<div style=\"{wrapper}\">{}{}</div>{C}", first(""), b("")),
+            &[("b", 1, 0.0, 20.0), ("c", 1, c_top, c_top + 10.0)],
+        );
+    }
+    // Inside the block, `c` follows `b`.
+    check(
+        "c inside",
+        &format!(
+            "<div style=\"height:150px\">{}{}{C}</div>",
+            first(""),
+            b("")
+        ),
+        &[("b", 1, 0.0, 20.0), ("c", 1, 20.0, 30.0)],
+    );
+}

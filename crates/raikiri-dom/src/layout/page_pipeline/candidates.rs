@@ -915,13 +915,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// Notes the in-flow box `node_id` among the children of its parent: a
     /// candidate takes the block that is not a candidate before it, any box
     /// that takes space ends the margin after that block, and a block that
-    /// is not a candidate starts one (`bottom`).
+    /// is not a candidate starts one (`bottom`). A candidate ends it too,
+    /// also an empty one: pagination records each candidate as the block
+    /// before the next, and an empty one may carry a forced break on.
     fn follow_sibling(&mut self, node_id: usize, candidate: bool, bottom: Option<f32>) {
         // Every box this is asked about is below the root, so it has a parent.
         let parent = candidate_parent(self.document, node_id);
         let takes_space = !super::takes_no_block_space(self.document, node_id);
         let pending = parent.and_then(|parent| {
-            if takes_space {
+            if takes_space || candidate {
                 self.pending_bottoms.remove(&parent)
             } else {
                 self.pending_bottoms.get(&parent).copied()
