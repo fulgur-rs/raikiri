@@ -3039,6 +3039,13 @@ impl Document {
         self.nodes.len()
     }
 
+    /// Release the room the node arena keeps for nodes not yet added. A
+    /// parser grows the arena one node at a time, which can leave room for
+    /// as many nodes again; call this once the tree is complete.
+    pub fn shrink_node_storage(&mut self) {
+        self.nodes.shrink_to_fit();
+    }
+
     /// Arena index of the Document root (always 0).
     ///
     /// Inherent counterpart of the `Dom::root_id()` trait method; callable
