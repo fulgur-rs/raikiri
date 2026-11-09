@@ -28,6 +28,23 @@ pub(super) struct Flow {
     pub baselines: Baselines,
     pub placed: Vec<NodeId>,
     pub oof_candidates: OofCandidates,
+    /// The rendered legend of a fieldset, which stays over the border when
+    /// `align-content` moves the other children; [`Flow::add_legend`] adds
+    /// its overflow and candidates after that.
+    pub legend: Option<super::legend::PlacedLegend>,
+}
+
+impl Flow {
+    /// Add the overflow and the absolutely positioned descendants of the
+    /// rendered legend, which come first in document order.
+    pub(super) fn add_legend(&mut self) {
+        if let Some(mut legend) = self.legend.take() {
+            self.overflow = self.overflow.union(legend.overflow);
+            let mut rest = self.oof_candidates.take();
+            self.oof_candidates = legend.oof_candidates.take();
+            self.oof_candidates.append(&mut rest);
+        }
+    }
 }
 
 fn measure_in_flow_child(
@@ -330,6 +347,7 @@ pub(super) fn layout(
         baselines: Baselines::NONE,
         placed: Vec::new(),
         oof_candidates: OofCandidates::new(),
+        legend: None,
     };
     let children: Vec<_> = tree.child_ids(node).collect();
     // The rendered legend of a fieldset sits over its block-start border, out
@@ -340,17 +358,16 @@ pub(super) fn layout(
             .iter()
             .position(|&child| child == legend)
             .unwrap_or(0);
-        let mut placed = super::legend::place(
+        let placed = super::legend::place(
             tree, node, legend, order, inputs, container, metrics, width, parent,
         );
         flow.end += placed.content_offset;
-        flow.overflow = flow.overflow.union(placed.overflow);
-        flow.oof_candidates.append(&mut placed.oof_candidates);
         // The part of the legend below the border takes room off the height
         // the percentages of the other children resolve against.
         parent.height = parent
             .height
             .map(|height| (height - placed.content_offset).max(0.0));
+        flow.legend = Some(placed);
     }
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut pending_has_clearance = false;

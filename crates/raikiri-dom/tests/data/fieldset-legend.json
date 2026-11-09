@@ -982,5 +982,41 @@
     10
    ]
   }
+ },
+ {
+  "name": "legend abspos aligned content",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style='position:relative;height:100px;align-content:center'><legend id=l>ll<span id=a style='position:absolute;width:10px;height:10px'></span></legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "a": [
+    33.5,
+    0,
+    10,
+    10
+   ],
+   "t": [
+    11.5,
+    54.5,
+    177,
+    10
+   ]
+  }
  }
 ]

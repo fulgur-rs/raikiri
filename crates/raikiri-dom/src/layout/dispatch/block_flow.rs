@@ -667,6 +667,7 @@ fn layout_context(
         &mut flow,
         height - metrics.inset.bottom - natural_end,
     );
+    flow.add_legend();
     let mut overflow = flow.overflow.union(flow.float_overflow);
     if style.direction == Direction::Rtl {
         let origin = width - metrics.border.right;
