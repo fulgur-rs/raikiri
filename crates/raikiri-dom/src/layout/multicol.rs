@@ -2057,26 +2057,31 @@ fn layout_after_column_floats(
 }
 
 /// The least and the most border-box width `style` lets a box have in a
-/// column of `column_width`.
+/// column of `column_width`: its minimum and maximum width, and never less
+/// than its padding and borders.
 fn column_width_limits(
     tree: &LayoutSession<'_>,
     style: &LayoutStyleView<'_>,
     column_width: f32,
 ) -> (f32, f32) {
-    let insets = if style.box_sizing() == BoxSizing::BorderBox {
+    let (padding, border) = (style.padding(), style.border());
+    let insets: f32 = [padding.left, padding.right, border.left, border.right]
+        .into_iter()
+        .map(|inset| multicol_resolve_inset(tree, inset, column_width))
+        .sum();
+    // A content-box limit holds the content; the border box is never
+    // narrower than its padding and borders either way.
+    let content_insets = if style.box_sizing() == BoxSizing::BorderBox {
         0.0
     } else {
-        let (padding, border) = (style.padding(), style.border());
-        [padding.left, padding.right, border.left, border.right]
-            .into_iter()
-            .map(|inset| multicol_resolve_inset(tree, inset, column_width))
-            .sum()
+        insets
     };
     let resolve = |value: Dimension| {
-        multicol_definite_dimension(tree, value, Some(column_width)).map(|width| width + insets)
+        multicol_definite_dimension(tree, value, Some(column_width))
+            .map(|width| (width + content_insets).max(insets))
     };
     (
-        resolve(style.min_size().width.into()).unwrap_or(0.0),
+        resolve(style.min_size().width.into()).unwrap_or(insets),
         resolve(style.max_size().width.into()).unwrap_or(f32::INFINITY),
     )
 }

@@ -3362,3 +3362,28 @@ fn a_box_with_its_own_formatting_context_and_an_auto_right_margin_starts_the_roo
         .concat(),
     );
 }
+
+#[test]
+fn a_box_with_its_own_formatting_context_is_never_narrower_than_its_padding_beside_a_float() {
+    // The 30px padding of a border-box box does not fit the 20px the right
+    // float leaves, so the box goes below the float; a maximum width below
+    // its 15px padding leaves it 15px wide beside the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;box-sizing:border-box;padding-left:30px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:40px;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;box-sizing:border-box;max-width:10px;padding-left:15px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:0;width:15px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
