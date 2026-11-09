@@ -214,20 +214,32 @@ fn record_item_lines(
     size: Size<f32>,
     content: Option<AlignContent>,
 ) {
+    if let Some(lines) = item_lines(tree, node, inputs, calls, size, content) {
+        tree.context
+            .flex_item_lines
+            .insert(usize::from(node), lines);
+    }
+}
+
+/// The lines [`record_item_lines`] records, or `None` when a replay does not
+/// reproduce the container's `size`.
+fn item_lines(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    inputs: LayoutInput,
+    calls: &[FlexReplayCall],
+    size: Size<f32>,
+    content: Option<AlignContent>,
+) -> Option<crate::layout::context::FlexItemLines> {
     let idx = usize::from(node);
-    let Some(members) = tree.context.flex_line_requests.get(&idx).cloned() else {
-        return;
-    };
+    let members = tree.context.flex_line_requests.get(&idx).cloned()?;
     let style = tree.query_style(idx, ReadRole::FlexContainer);
     let row = style.flex_direction_is_row();
     let right_to_left = !row && style.direction() == Direction::Rtl;
     let reversed = style.flex_lines_are_reversed();
     let shares_room = content.is_none() && super::content_limits::shares_free_room(&style);
-    let Some(aligned) =
-        baseline_lines::cross_rooms(tree, node, inputs, calls, size, &members, content, row)
-    else {
-        return;
-    };
+    let aligned =
+        baseline_lines::cross_rooms(tree, node, inputs, calls, size, &members, content, row)?;
     let mut lines = crate::layout::context::FlexItemLines {
         aligned,
         packed: HashMap::new(),
@@ -240,7 +252,7 @@ fn record_item_lines(
                 safety: AlignmentSafety::Unsafe,
             })
         };
-        let Some(packed) = baseline_lines::cross_rooms(
+        let packed = baseline_lines::cross_rooms(
             tree,
             node,
             inputs,
@@ -249,14 +261,12 @@ fn record_item_lines(
             &members,
             content(AlignContentKeyword::FlexStart),
             row,
-        ) else {
-            return;
-        };
+        )?;
         // Lines packed at the end of the container rather than at its start
         // move by the room they leave free. The near edge of an item at the
         // start of its line is the first edge of its packed room, or the
         // second in a right-to-left column container.
-        let Some((output, at_end)) = wrap_reverse::replay_with(
+        let at_end = wrap_reverse::replay_with(
             tree,
             node,
             inputs,
@@ -265,15 +275,10 @@ fn record_item_lines(
                 content: content(AlignContentKeyword::FlexEnd),
                 items: Some((&members, AlignSelf::START)),
             },
-        ) else {
-            return;
-        };
-        let Some((child, room)) = packed.iter().min_by_key(|&(&child, _)| child) else {
-            return;
-        };
-        let Some(layout) = at_end.get(child).filter(|_| output.size == size) else {
-            return;
-        };
+        );
+        let (output, at_end) = at_end?;
+        let (child, room) = packed.iter().min_by_key(|&(&child, _)| child)?;
+        let layout = at_end.get(child).filter(|_| output.size == size)?;
         let moved = if row {
             layout.location.y - layout.margin.top - room.edges.0
         } else if right_to_left {
@@ -290,7 +295,7 @@ fn record_item_lines(
         };
         lines.packed = packed;
     }
-    tree.context.flex_item_lines.insert(idx, lines);
+    Some(lines)
 }
 
 fn is_stretch(alignment: raikiri_layout_style::values::AlignSelf) -> bool {

@@ -1905,10 +1905,7 @@ pub(super) fn with_flex_line_item_limits(
     }));
     tree.context.flex_line_requests.remove(&parent);
     let lines = tree.context.flex_item_lines.remove(&parent);
-    let output = match first {
-        Ok(value) => value,
-        Err(payload) => std::panic::resume_unwind(payload),
-    };
+    let output = first.unwrap_or_else(|payload| std::panic::resume_unwind(payload));
     let Some(lines) = lines else {
         return output;
     };
@@ -1936,10 +1933,7 @@ pub(super) fn with_flex_line_item_limits(
     for idx in rooms.keys() {
         tree.context.flex_line_stretch_rooms.remove(idx);
     }
-    match result {
-        Ok(value) => value,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
+    result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
 }
 
 /// Whether the flex container with `style` shares the room its lines leave
@@ -1977,12 +1971,12 @@ fn fills_its_line(
             margin.left.is_auto() || margin.right.is_auto(),
         )
     };
-    size.is_auto()
-        && !auto_margin
-        && matches!(
-            style.align_self().unwrap_or(container_align).keyword,
-            AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
-        )
+    let keyword = style.align_self().unwrap_or(container_align).keyword;
+    let stretched = matches!(
+        keyword,
+        AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+    );
+    size.is_auto() && !auto_margin && stretched
 }
 
 /// The `min-*` and `max-*` limits of an item along the cross axis of a flex
@@ -2050,17 +2044,13 @@ fn every_line_holds_its_share(
         .iter()
         .filter_map(|(idx, room)| Some(room.size() - lines.packed.get(idx)?.size()))
         .fold(0.0_f32, f32::max);
-    if share <= SAME_EDGE {
-        return false;
-    }
-    let line_count = (lines.free_room / share).round();
     let held = lines
         .aligned
         .iter()
         .filter(|&(&idx, _)| is_stretch(cross_limits(&tree.nodes[idx].content_limits, row).0))
         .map(|(_, room)| room.line)
         .collect::<HashSet<_>>();
-    held.len() as f32 == line_count
+    share > SAME_EDGE && held.len() as f32 == (lines.free_room / share).round()
 }
 
 /// The sizes of a flex or grid item `idx` that its container resolves before
