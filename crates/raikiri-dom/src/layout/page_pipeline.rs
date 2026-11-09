@@ -4331,7 +4331,7 @@ fn paginate_flow(
         control,
     );
     collector.collect_flow(root_flow_offset)?;
-    let (clip_edges, edges_breaks, flow_bottoms) = collector.into_outputs();
+    let (clip_edges, edges_breaks, preceding_bottoms) = collector.into_outputs();
     let mut footer_tail_ends = HashMap::<usize, f32>::new();
     for candidate in &candidates {
         let edges = candidate.context.item_tail_edges();
@@ -4399,7 +4399,7 @@ fn paginate_flow(
         ColumnContexts::new(document.nodes.len()),
     );
     state.track_outer_owners(&positioned_owner_heights);
-    state.sibling_margins.flow_bottoms = flow_bottoms;
+    state.sibling_margins.preceding_bottoms = preceding_bottoms;
     let env = FlowEnv {
         cascade,
         body_id,
@@ -10664,9 +10664,10 @@ struct SiblingMargins {
     /// seen for each parent, while no other content followed it. The gap to
     /// the next such sibling is their collapsed margin.
     previous_bottoms: HashMap<usize, (usize, f32)>,
-    /// The unpaginated border-box bottoms of the in-flow blocks that are not
-    /// candidates, so never recorded in `previous_bottoms`.
-    flow_bottoms: HashMap<usize, f32>,
+    /// For a candidate right after an in-flow block that is not a candidate,
+    /// so never recorded in `previous_bottoms`, that block and its
+    /// unpaginated border-box bottom.
+    preceding_bottoms: HashMap<usize, (usize, f32)>,
     /// The empty box whose block-end margin still adjoins the latest forced
     /// break: the forced-break box itself, or an empty box right after it.
     /// A margin collapsed through it follows the break and is kept.
@@ -10751,7 +10752,7 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (previous, gap) = self.gap_after_previous(document, cascade, node_id, at.raw_y)?;
+        let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
         let float_break_page = self
             .break_taken_by_float
             .filter(|&(source, _)| is_descendant_or_self(document, source, previous))
@@ -10842,7 +10843,7 @@ impl SiblingMargins {
     /// the run cuts it from there. A forced break before the empty box, or one
     /// that reaches its margin, keeps the margin as it is.
     fn pulled_run_end(
-        &mut self,
+        &self,
         document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         at: &MarginBreak,
@@ -10860,7 +10861,7 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (previous, _) = self.gap_after_previous(document, cascade, at.node_id, at.raw_y)?;
+        let (previous, _) = self.gap_after_previous(document, at.node_id, at.raw_y)?;
         let taken_by_float = self
             .break_taken_by_float
             .is_some_and(|(source, _)| is_descendant_or_self(document, source, previous));
@@ -10873,13 +10874,13 @@ impl SiblingMargins {
     /// block before it still adjoins the latest forced break, or the break was
     /// taken to the new page by a float inside that sibling.
     fn forced_break_reaches(
-        &mut self,
+        &self,
         document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         node_id: usize,
         raw_y: f32,
     ) -> bool {
-        self.gap_after_previous(document, cascade, node_id, raw_y)
+        self.gap_after_previous(document, node_id, raw_y)
             .is_some_and(|(previous, _)| {
                 self.follows_forced_break(document, cascade, previous, node_id)
                     || self.break_taken_by_float.is_some_and(|(source, _)| {
@@ -10905,29 +10906,25 @@ impl SiblingMargins {
     /// between its unpaginated bottom and `raw_y`, the unpaginated top of
     /// `node_id`, if both are known and the gap is finite. Both are measured
     /// where the flow puts the boxes (see `flow_raw_y`). The previous block is
-    /// the one recorded for the parent, or, when the box right before
-    /// `node_id` in the flow of its parent is a block that is not a
-    /// candidate, that block: the page edge cuts the margin between the two
-    /// also inside a block that no break goes before.
+    /// the one recorded for the parent, or, when the box before `node_id` in
+    /// the flow of its parent is a block that is not a candidate, that block:
+    /// the page edge cuts the margin between the two also inside a block that
+    /// no break goes before.
     fn gap_after_previous(
-        &mut self,
-        document: &super::context::LayoutSession<'_>,
-        cascade: &CascadeResult,
+        &self,
+        document: &Document,
         node_id: usize,
         raw_y: f32,
     ) -> Option<(usize, f32)> {
-        let parent = BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)?;
-        let recorded = self.previous_bottoms.get(&parent).copied();
-        let unrecorded = stacks_children_in_block_flow(document, parent)
-            .then(|| {
-                self.adjacency
-                    .preceding_flow_box(document, cascade, node_id)
-            })
-            .flatten()
-            .filter(|&preceding| recorded.is_none_or(|(previous, _)| previous != preceding))
-            .and_then(|preceding| Some((preceding, *self.flow_bottoms.get(&preceding)?)));
-        unrecorded
-            .or(recorded)
+        let recorded = || {
+            BoxTree::for_layout(document)
+                .parent(node_id, BoxParentScope::Document)
+                .and_then(|parent| self.previous_bottoms.get(&parent).copied())
+        };
+        self.preceding_bottoms
+            .get(&node_id)
+            .copied()
+            .or_else(recorded)
             .map(|(previous, bottom)| (previous, raw_y - bottom))
             .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
     }

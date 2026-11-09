@@ -820,11 +820,18 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     forces_break_after: bool,
     /// Where the edges of the blocks collected begin below their content.
     edges_breaks: Vec<EdgesBreak>,
-    /// The unpaginated border-box bottom of each in-flow block that is not
-    /// a candidate, without its own relative offset: the end of the margin
-    /// above the in-flow sibling after it.
-    flow_bottoms: HashMap<usize, f32>,
+    /// For each parent, the last in-flow block among the children seen so
+    /// far that is not a candidate, with its unpaginated border-box bottom
+    /// without its own relative offset, until a box that takes space follows.
+    pending_bottoms: HashMap<usize, (usize, f32)>,
+    /// For each candidate right after such a block, past empty boxes, that
+    /// block and its bottom: the margin above the candidate starts there.
+    preceding_bottoms: PrecedingBottoms,
 }
+
+/// For each candidate right after an in-flow block that is not a candidate,
+/// that block and its unpaginated border-box bottom.
+pub(super) type PrecedingBottoms = HashMap<usize, (usize, f32)>;
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     pub(super) fn new(
@@ -869,7 +876,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 )
             }),
             edges_breaks: Vec::new(),
-            flow_bottoms: HashMap::new(),
+            pending_bottoms: HashMap::new(),
+            preceding_bottoms: HashMap::new(),
         }
     }
 
@@ -889,11 +897,32 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     /// The edges of the clips that cut the text of the paragraphs collected,
     /// by paragraph root, in the coordinates of the candidates, where the
     /// bottom edges of the blocks begin below their content, and the bottoms
-    /// of the in-flow blocks that are not candidates (see `flow_bottoms`).
-    pub(super) fn into_outputs(
-        self,
-    ) -> (HashMap<usize, f32>, Vec<EdgesBreak>, HashMap<usize, f32>) {
-        (self.clip_edges, self.edges_breaks, self.flow_bottoms)
+    /// of the in-flow blocks that are not candidates before the candidates
+    /// after them (see `preceding_bottoms`).
+    pub(super) fn into_outputs(self) -> (HashMap<usize, f32>, Vec<EdgesBreak>, PrecedingBottoms) {
+        (self.clip_edges, self.edges_breaks, self.preceding_bottoms)
+    }
+
+    /// Notes the in-flow box `node_id` among the children of its parent: a
+    /// candidate takes the block that is not a candidate before it, any box
+    /// that takes space ends the margin after that block, and a block that
+    /// is not a candidate starts one (`bottom`).
+    fn follow_sibling(&mut self, node_id: usize, candidate: bool, bottom: Option<f32>) {
+        let Some(parent) = candidate_parent(self.document, node_id) else {
+            return;
+        };
+        let takes_space = !super::takes_no_block_space(self.document, node_id);
+        let pending = if takes_space {
+            self.pending_bottoms.remove(&parent)
+        } else {
+            self.pending_bottoms.get(&parent).copied()
+        };
+        if candidate && let Some(pending) = pending {
+            self.preceding_bottoms.insert(node_id, pending);
+        }
+        if let Some(bottom) = bottom.filter(|_| takes_space) {
+            self.pending_bottoms.insert(parent, (node_id, bottom));
+        }
     }
 
     #[inline(never)]
@@ -1013,6 +1042,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     // and gives the flow no page; a text running over the edge
                     // occupies only the part above it.
                     if raw_y < frame.clip_end {
+                        // Text ends the margin after the block before it.
+                        if let Some(parent) = candidate_parent(document, node_id) {
+                            self.pending_bottoms.remove(&parent);
+                        }
                         self.out.push(PageCandidate {
                             node_id,
                             raw_y,
@@ -1673,12 +1706,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // it occupies only the part above.
                 let pushed =
                     is_break_candidate && (sets_page_flow || candidate_raw_y < frame.clip_end);
-                if !pushed && in_flow_block_level && !is_body {
-                    self.flow_bottoms.insert(
-                        node_id,
+                if !is_body && !is_float && participates_in_flow && !inside_float {
+                    let bottom = (!pushed && in_flow_block_level).then(|| {
                         candidate_raw_y + node.layout.size.height
-                            - super::layout_relative_offset_y(document, cascade, body_id, node_id),
-                    );
+                            - super::layout_relative_offset_y(document, cascade, body_id, node_id)
+                    });
+                    self.follow_sibling(node_id, pushed, bottom);
                 }
                 if pushed {
                     self.out.push(PageCandidate {
