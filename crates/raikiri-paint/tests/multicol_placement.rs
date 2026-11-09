@@ -3251,3 +3251,55 @@ fn a_box_with_its_own_formatting_context_follows_a_paragraph_beside_a_float() {
         &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "E")].concat(),
     );
 }
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_shares_its_auto_margins_in_the_room() {
+    // The 40px box sits in the 70px the float leaves in the 90px column, its
+    // auto margins sharing the rest of the room, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px;margin:0 auto'>E</p></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(35, 0, "E")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px;margin:0 0 0 auto'>E</p></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(50, 0, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_width_limits() {
+    // A minimum wider than the room beside the float moves the box below it,
+    // and a maximum narrower than the room keeps it narrow there, as in
+    // Chromium. The boxes are lime, so their widths show.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;min-width:30px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:40px;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:10px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:20px;top:0;width:10px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_float_after_an_empty_box_below_a_float_goes_below_the_box() {
+    // The empty 40px box goes below the float it does not fit beside, and the
+    // float after it is no higher than it, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;width:40px'></div><p style='float:left'>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &glyphs_at(0, 0, "A<br>B<br>F"),
+    );
+}

@@ -1891,6 +1891,32 @@ fn layout_beside_column_floats(
     tree.compute_child_layout_with_block_ctx(NodeId::from(child), inputs, Some(&mut block))
 }
 
+/// How an in-flow child of a column container goes after the floats before it
+/// in its column.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BesideFloats {
+    /// A block that shares their context: its lines flow beside them
+    /// ([`flows_beside_column_floats`]).
+    Flows,
+    /// A box with a context of its own: its border box sits beside them
+    /// where it fits ([`sits_beside_column_floats`]).
+    Sits,
+}
+
+impl BesideFloats {
+    /// How `child` of the column container `parent` goes after floats, if
+    /// it goes beside them at all.
+    fn of(tree: &LayoutSession<'_>, parent: usize, child: usize) -> Option<Self> {
+        if flows_beside_column_floats(tree, parent, child) {
+            Some(Self::Flows)
+        } else if sits_beside_column_floats(tree, parent, child) {
+            Some(Self::Sits)
+        } else {
+            None
+        }
+    }
+}
+
 /// Whether `child` of the column container `parent` is an in-flow block-level
 /// box that establishes a formatting context of its own, such as one with
 /// `overflow: hidden` or `display: flow-root`. Its border box goes beside the
@@ -1927,16 +1953,15 @@ struct AfterColumnFloats {
     x: Option<f32>,
 }
 
-/// Lay out `child`, which [`flows_beside_column_floats`] or
-/// [`sits_beside_column_floats`], after the floats of `run`: a block that
-/// shares their context at `run.next` with its lines beside them, and a box
-/// with a context of its own in the first room beside or below them that its
-/// border box fits, as block flow places it. `width` is the border-box width
-/// the child has in the whole column.
+/// Lay out `child`, which goes `kind` of beside floats, after the floats of
+/// `run`: a block that shares their context at `run.next` with its lines
+/// beside them, and a box with a context of its own in the first room beside
+/// or below them that its border box fits, as block flow places it. `width`
+/// is the border-box width the child has in the whole column.
 #[allow(clippy::too_many_arguments)]
 fn layout_after_column_floats(
     tree: &mut LayoutSession<'_>,
-    parent: usize,
+    kind: BesideFloats,
     child: usize,
     inputs: LayoutInput,
     run: &ColumnFloatRun,
@@ -1947,7 +1972,7 @@ fn layout_after_column_floats(
 ) -> AfterColumnFloats {
     use crate::layout::dispatch::block_flow::context::{BlockFormattingContext, BoxProbe};
 
-    if flows_beside_column_floats(tree, parent, child) {
+    if kind == BesideFloats::Flows {
         return AfterColumnFloats {
             output: layout_beside_column_floats(
                 tree,
@@ -1971,8 +1996,10 @@ fn layout_after_column_floats(
     let margins = [margin_left.unwrap_or(0.0), margin_right.unwrap_or(0.0)];
     let direction = if rtl { Direction::Rtl } else { Direction::Ltr };
     let clear = style.clear();
-    // An `auto` width fills the room the floats leave, as it fills the
-    // column; any other width is the one the box has in the column.
+    let (least, most) = column_width_limits(tree, &style, column_width);
+    // An `auto` width fills the room the floats leave, within the box's
+    // minimum and maximum width, as it fills the column; any other width is
+    // the one the box has in the column.
     let stretches = inputs.known_dimensions.width.is_some();
     let at_width = |width: f32| {
         let mut input = inputs;
@@ -1988,7 +2015,7 @@ fn layout_after_column_floats(
         |probe| match probe {
             BoxProbe::Width { stretch } => {
                 if stretches {
-                    stretch.max(0.0)
+                    stretch.min(most).max(least).max(0.0)
                 } else {
                     width
                 }
@@ -2003,20 +2030,55 @@ fn layout_after_column_floats(
         },
     );
     let slot = placed.slot;
-    // A right-to-left column puts a box narrower than its room at the right
-    // edge of the room.
-    let x = if rtl {
-        slot.x + slot.border_width - placed.width
-    } else {
-        slot.x
-    };
-    tree.cache_clear_subtree(NodeId::from(child));
-    let output = tree.compute_child_layout(NodeId::from(child), at_width(placed.width));
+    // Auto margins share the room the box leaves, and otherwise a
+    // right-to-left column puts a narrower box at the right edge of the room.
+    let free = (slot.border_width - placed.width).max(0.0);
+    let x = slot.x
+        + match (margin_left, margin_right) {
+            (None, None) => free / 2.0,
+            (None, Some(_)) => free,
+            (Some(_), None) => 0.0,
+            (Some(_), Some(_)) if rtl => free,
+            (Some(_), Some(_)) => 0.0,
+        };
+    let top = run.start + slot.y - margin_top;
+    // Below some of the floats, less of the column is left.
+    let mut input = at_width(placed.width);
+    if let AvailableSpace::Definite(height) = input.available_space.height {
+        input.available_space.height =
+            AvailableSpace::Definite((height - (top - run.next)).max(0.0));
+    }
+    let output = tree.compute_child_layout(NodeId::from(child), input);
     AfterColumnFloats {
         output,
-        top: run.start + slot.y - margin_top,
+        top,
         x: Some(x),
     }
+}
+
+/// The least and the most border-box width `style` lets a box have in a
+/// column of `column_width`.
+fn column_width_limits(
+    tree: &LayoutSession<'_>,
+    style: &LayoutStyleView<'_>,
+    column_width: f32,
+) -> (f32, f32) {
+    let insets = if style.box_sizing() == BoxSizing::BorderBox {
+        0.0
+    } else {
+        let (padding, border) = (style.padding(), style.border());
+        [padding.left, padding.right, border.left, border.right]
+            .into_iter()
+            .map(|inset| multicol_resolve_inset(tree, inset, column_width))
+            .sum()
+    };
+    let resolve = |value: Dimension| {
+        multicol_definite_dimension(tree, value, Some(column_width)).map(|width| width + insets)
+    };
+    (
+        resolve(style.min_size().width.into()).unwrap_or(0.0),
+        resolve(style.max_size().width.into()).unwrap_or(f32::INFINITY),
+    )
 }
 
 /// Whether `child`, `needed` high in its column, leaves the line of floats
@@ -2177,33 +2239,34 @@ fn layout_column_group(
                 let clear = style_of(tree, child).clear();
                 // The room above a box that moved below some of the floats.
                 let mut skipped = 0.0;
-                let beside = (flows_beside_column_floats(tree, index, child)
-                    || sits_beside_column_floats(tree, index, child))
-                    && match stack.beside().filter(|run| !run.clears(clear)) {
-                        Some(run) => {
-                            let after = layout_after_column_floats(
-                                tree,
-                                index,
-                                child,
-                                child_inputs,
-                                run,
-                                context.column_width,
-                                context.rtl,
-                                margin_top,
-                                output.size.width,
-                            );
-                            skipped = after.top - run.next;
-                            output = after.output;
-                            needed = margin_top + output.size.height + margin_bottom;
-                            measured_beside[local_order] = true;
-                            true
-                        }
-                        None => false,
-                    };
+                let beside = match (
+                    BesideFloats::of(tree, index, child),
+                    stack.beside().filter(|run| !run.clears(clear)),
+                ) {
+                    (Some(kind), Some(run)) => {
+                        let after = layout_after_column_floats(
+                            tree,
+                            kind,
+                            child,
+                            child_inputs,
+                            run,
+                            context.column_width,
+                            context.rtl,
+                            margin_top,
+                            output.size.width,
+                        );
+                        skipped = after.top - run.next;
+                        output = after.output;
+                        needed = margin_top + output.size.height + margin_bottom;
+                        measured_beside[local_order] = true;
+                        true
+                    }
+                    _ => false,
+                };
                 stack.block(
                     skipped + needed,
                     beside,
-                    keeps_float_line(tree, child, needed),
+                    keeps_float_line(tree, child, skipped + needed),
                 );
             }
             measurements.push((child, output, layout, margin_top, margin_bottom, needed));
@@ -2408,18 +2471,20 @@ fn layout_column_group(
         // Where the border box of a box with a formatting context of its own
         // starts in the room beside the floats.
         let mut slot_x = None;
+        // The room above it that a box placed below some of the floats skips.
+        let mut skipped = 0.0;
         // White space and boxes out of the flow take no room in it.
         let gap = matches!(tree.nodes[child].data, NodeData::Text(_)) && needed == 0.0
             || tree.nodes[child].layout_position() == Position::Absolute;
         let mut laid_beside = measured_beside.get(local_order).copied().unwrap_or(false);
         if !gap {
-            let flows = planned.is_none()
+            let flows = (planned.is_none()
                 && continuation.is_none()
                 && group_balance.is_none()
-                && paragraph_balance.is_none()
-                && (flows_beside_column_floats(tree, index, child)
-                    || sits_beside_column_floats(tree, index, child));
-            if flows
+                && paragraph_balance.is_none())
+            .then(|| BesideFloats::of(tree, index, child))
+            .flatten();
+            if flows.is_some()
                 && float_run.is_none()
                 && let Some(line) = float_line.as_ref().filter(|line| line.column == column)
             {
@@ -2436,7 +2501,7 @@ fn layout_column_group(
             }
             if let Some(run) = float_run.take() {
                 let mut kept = None;
-                if flows
+                if let Some(kind) = flows
                     && run.column == column
                     && run.next + LINE_EPSILON < run.bottom
                     && !run.clears(style_of(tree, child).clear())
@@ -2453,7 +2518,7 @@ fn layout_column_group(
                     );
                     let after = layout_after_column_floats(
                         tree,
-                        index,
+                        kind,
                         child,
                         child_inputs,
                         &run,
@@ -2475,6 +2540,7 @@ fn layout_column_group(
                         child_output = after.output;
                         needed = wrapped;
                         beside_floats = Some(after.top);
+                        skipped = after.top - run.next;
                         slot_x = after.x;
                         kept = Some(ColumnFloatRun {
                             next: after.top + wrapped,
@@ -2600,7 +2666,7 @@ fn layout_column_group(
         let y = content_origin.y + top + margin_top;
         // An empty block does not end the line, but a float with no height
         // still holds the top of the floats after it (CSS 2, 9.5.1 rule 5).
-        if column_float.is_some() || !keeps_float_line(tree, child, needed) {
+        if column_float.is_some() || !keeps_float_line(tree, child, skipped + needed) {
             float_line = column_float.map(|float| {
                 let mut line = match (beside, float_line.take()) {
                     (Some(_), Some(line)) => line,
