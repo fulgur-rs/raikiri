@@ -167,6 +167,7 @@ pub(crate) fn assemble_document(
             });
         }
     }
+    uncascaded.dom.shrink_node_storage();
     if let Some(fonts) = fonts {
         uncascaded.dom.set_font_collection(fonts);
     }
