@@ -15,8 +15,9 @@
 //! `none`.
 
 use raikiri_layout_style::values::{
-    AlignItems, BoxSizing, Dimension, Display, ExpandedDimension, ExpandedLengthPercentageAuto,
-    LengthIdentity, LengthPercentage, LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
+    AlignContentKeyword, AlignItems, BoxSizing, Dimension, Display, ExpandedDimension,
+    ExpandedLengthPercentageAuto, LengthIdentity, LengthPercentage, LengthPercentageAuto,
+    MaybeResolve, Position, ResolveOrZero,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -27,6 +28,7 @@ use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustm
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
+use crate::layout::taffy_adapter::algorithms::baseline_lines::SAME_EDGE;
 use crate::layout::taffy_adapter::{LayoutCache, columns_have_no_content_minimum};
 use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
@@ -1838,6 +1840,229 @@ fn with_resolved_grid_item_limits(
     output
 }
 
+/// Resolve `stretch` cross-axis limits on the items of flex container
+/// `node_id` against the cross size of the flex line each item sits on, then
+/// lay out the container with those limits installed.
+///
+/// CSS Flexbox 1 §9.4 sizes an item along the cross axis in two steps: its
+/// hypothetical cross size decides the size of its line, and the item is then
+/// laid out in that line. A `stretch` limit therefore first resolves against
+/// the inner cross size of the container ([`with_item_content_limits`]), and
+/// again against the line that layout produced. Lines differ from the
+/// container only in a multi-line container, or in a single-line one whose
+/// cross size is not definite. A container on the axes of a vertical writing
+/// mode keeps the limits resolved against the container.
+///
+/// The second layout lays the items out again with the new limits, which the
+/// flex algorithm also reads to break and size the lines. An item whose new
+/// size changes where the lines break (text that wraps differently in a wider
+/// column, say) is not sized against its line again.
+pub(super) fn with_flex_line_item_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    parent_size: Size<Option<f32>>,
+    mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let parent = usize::from(node_id);
+    let style = tree.physical_style(parent);
+    let row = style.flex_direction_is_row();
+    let shares_room = shares_free_room(&style);
+    let container_cross = if row {
+        parent_size.height
+    } else {
+        parent_size.width
+    };
+    if inputs.run_mode != RunMode::PerformLayout
+        || (!style.flex_wraps() && container_cross.is_some())
+        || super::block_right_to_left(tree, parent).is_some()
+    {
+        return with_item_content_limits(tree, node_id, inputs, parent_size, dispatch);
+    }
+    let container_align = style.align_items();
+    let stretched_items = tree
+        .child_ids(node_id)
+        .map(usize::from)
+        .filter(|&idx| {
+            let limits = tree.nodes[idx].content_limits;
+            let (min, max) = cross_limits(&limits, row);
+            tree.nodes[idx].layout_display() != Display::None
+                && !is_oof_box(tree, idx)
+                && applies_to_parent_item(tree, idx, &limits)
+                && (is_stretch(min) || is_stretch(max))
+                && !fills_its_line(tree, idx, row, container_align)
+        })
+        .collect::<HashSet<_>>();
+    if stretched_items.is_empty() {
+        return with_item_content_limits(tree, node_id, inputs, parent_size, dispatch);
+    }
+
+    tree.context
+        .flex_line_requests
+        .insert(parent, stretched_items);
+    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_item_content_limits(tree, node_id, inputs, parent_size, &mut dispatch)
+    }));
+    tree.context.flex_line_requests.remove(&parent);
+    let lines = tree.context.flex_item_lines.remove(&parent);
+    let output = match first {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
+    let Some(lines) = lines else {
+        return output;
+    };
+    if shares_room && lines.free_room > SAME_EDGE && !every_line_holds_its_share(tree, &lines, row)
+    {
+        return output;
+    }
+    // Every item resolves its limits against its line in the next layout,
+    // also one already at its line size: its minimum is what keeps the line
+    // at that size there.
+    let rooms = lines
+        .aligned
+        .iter()
+        .map(|(&idx, room)| (idx, (!row, room.size())))
+        .collect::<HashMap<_, _>>();
+    if !rooms.iter().any(|(&idx, &(_, line))| {
+        line_changes_item(tree, idx, row, line, container_cross, parent_size.width)
+    }) {
+        return output;
+    }
+    tree.context.flex_line_stretch_rooms.extend(rooms.iter());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_item_content_limits(tree, node_id, inputs, parent_size, dispatch)
+    }));
+    for idx in rooms.keys() {
+        tree.context.flex_line_stretch_rooms.remove(idx);
+    }
+    match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+/// Whether the flex container with `style` shares the room its lines leave
+/// free between them: a multi-line container with `align-content: normal` or
+/// `stretch`.
+pub(super) fn shares_free_room(style: &LayoutStyleView<'_>) -> bool {
+    style.flex_wraps()
+        && matches!(
+            style.align_content().keyword,
+            AlignContentKeyword::Normal | AlignContentKeyword::Stretch
+        )
+}
+
+/// Whether the flex item `idx` is stretched to the cross size of its line:
+/// an `auto` cross size, no `auto` cross margin and `stretch` alignment. Its
+/// size is its line already, and the lines are found by placing the items at
+/// either end of their line, which an item that fills it cannot show.
+fn fills_its_line(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    row: bool,
+    container_align: AlignItems,
+) -> bool {
+    use raikiri_layout_style::values::AlignItemsKeyword;
+    let style = tree.physical_style(idx);
+    let margin = style.margin();
+    let (size, auto_margin) = if row {
+        (
+            style.size().height,
+            margin.top.is_auto() || margin.bottom.is_auto(),
+        )
+    } else {
+        (
+            style.size().width,
+            margin.left.is_auto() || margin.right.is_auto(),
+        )
+    };
+    size.is_auto()
+        && !auto_margin
+        && matches!(
+            style.align_self().unwrap_or(container_align).keyword,
+            AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+        )
+}
+
+/// The `min-*` and `max-*` limits of an item along the cross axis of a flex
+/// container whose main axis runs along its rows when `row`.
+fn cross_limits(limits: &ContentLimits, row: bool) -> (Dimension, Dimension) {
+    if row {
+        (limits.min.height, limits.max.height)
+    } else {
+        (limits.min.width, limits.max.width)
+    }
+}
+
+/// Whether resolving the `stretch` cross limits of the flex item `idx`
+/// against its `line` rather than the `container` cross size would change the
+/// cross size the item was just laid out at: a minimum that would raise it, a
+/// maximum that would cut it, or a maximum that held it and would now let it
+/// grow. Margins resolve against the container's `width`, an `auto` margin
+/// counting for nothing.
+fn line_changes_item(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    row: bool,
+    line: f32,
+    container: Option<f32>,
+    width: Option<f32>,
+) -> bool {
+    if container.is_some_and(|cross| (line - cross).abs() <= SAME_EDGE) {
+        return false;
+    }
+    let limits = tree.nodes[idx].content_limits;
+    let (min, max) = cross_limits(&limits, row);
+    let layout = tree.nodes[idx].layout;
+    let size = if row {
+        layout.size.height
+    } else {
+        layout.size.width
+    };
+    let stretched = stretch_in_flex_line(tree, idx, width, line, !row);
+    let held = container
+        .map(|cross| stretch_in_flex_line(tree, idx, width, cross, !row))
+        .is_some_and(|cap| (size - cap).abs() <= SAME_EDGE && stretched > cap + SAME_EDGE);
+    (is_stretch(min) && size < stretched - SAME_EDGE)
+        || (is_stretch(max) && (size > stretched + SAME_EDGE || held))
+}
+
+/// Whether each line of a container larger than its lines can keep the
+/// share of the free room it was given when the container is laid out again
+/// with limits resolved against its lines.
+///
+/// `align-content: normal` or `stretch` shares the free room equally between
+/// the lines. The flex algorithm sizes a line from the limits its items have,
+/// so a line keeps its share only through a `stretch` minimum of an item now
+/// resolved against the shared size. A line without one would hand its share
+/// to the others, and the lines after it would move; the items then keep the
+/// limits resolved against the container.
+fn every_line_holds_its_share(
+    tree: &LayoutSession<'_>,
+    lines: &crate::layout::context::FlexItemLines,
+    row: bool,
+) -> bool {
+    // Every line takes the same share; the largest difference is the share
+    // with the least rounding in it.
+    let share = lines
+        .aligned
+        .iter()
+        .filter_map(|(idx, room)| Some(room.size() - lines.packed.get(idx)?.size()))
+        .fold(0.0_f32, f32::max);
+    if share <= SAME_EDGE {
+        return false;
+    }
+    let line_count = (lines.free_room / share).round();
+    let held = lines
+        .aligned
+        .iter()
+        .filter(|&(&idx, _)| is_stretch(cross_limits(&tree.nodes[idx].content_limits, row).0))
+        .map(|(_, room)| room.line)
+        .collect::<HashSet<_>>();
+    held.len() as f32 == line_count
+}
+
 /// The sizes of a flex or grid item `idx` that its container resolves before
 /// reading the item's style.
 struct ItemLimits {
@@ -2670,7 +2895,7 @@ fn replaced_keyword_bounds(
                 width.max = stretch;
             }
         }
-        let stretch = stretch_fit_height(tree, idx, inputs);
+        let stretch = stretch_limit_height(tree, idx, inputs);
         if is_stretch(limits.min.height) {
             height.min = stretch;
         }
@@ -2880,7 +3105,7 @@ fn height_bounds(
     width: Bounds,
 ) -> Bounds {
     let idx = usize::from(node_id);
-    let stretch = stretch_fit_height(tree, idx, inputs);
+    let stretch = stretch_limit_height(tree, idx, inputs);
     let is_measured = |size: Dimension| !size.is_auto() && !is_stretch(size);
     let measured = (is_measured(limits.min.height) || is_measured(limits.max.height))
         .then(|| automatic_height(tree, node_id, inputs, width));
@@ -2985,6 +3210,15 @@ fn content_percentage_height_basis(
 /// offer it, which an intrinsic sizing pass leaves open (see
 /// [`stretch_fit_width`]).
 fn stretch_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+    if let Some(line) = flex_line_room(tree, idx, true) {
+        return Some(stretch_in_flex_line(
+            tree,
+            idx,
+            inputs.parent_size.width,
+            line,
+            true,
+        ));
+    }
     match inputs.available_space.width {
         AvailableSpace::Definite(room) => Some(stretch_fit_width(tree, idx, inputs, room)),
         AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
@@ -3004,11 +3238,28 @@ pub(in crate::layout) fn stretch_fit_width(
     let Some(basis) = inputs.parent_size.width else {
         return room.max(0.0);
     };
-    let margin = tree.physical_style(idx).margin();
-    let side = |side: LengthPercentageAuto| side.resolve(Some(basis)).unwrap_or(0.0);
-    (basis - side(margin.left) - side(margin.right))
+    (basis - stretch_margins(tree, idx, Some(basis), true))
         .min(room)
         .max(0.0)
+}
+
+/// The margins of the box `idx` that a `stretch` size along the physical
+/// `width` (or height) leaves out of its room: a percentage margin resolves
+/// against the containing block `width`, and an `auto` margin counts for
+/// nothing.
+fn stretch_margins(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    containing_width: Option<f32>,
+    width: bool,
+) -> f32 {
+    let margin = tree.physical_style(idx).margin();
+    let side = |side: LengthPercentageAuto| side.resolve(containing_width).unwrap_or(0.0);
+    if width {
+        side(margin.left) + side(margin.right)
+    } else {
+        side(margin.top) + side(margin.bottom)
+    }
 }
 
 /// The border-box height the box `idx` would stretch to in the room `inputs`
@@ -3044,6 +3295,48 @@ pub(in crate::layout) fn stretch_fit_height(
     let taken = if held.start { side(margin.top) } else { 0.0 }
         + if held.end { side(margin.bottom) } else { 0.0 };
     Some((room - taken).max(0.0))
+}
+
+/// The border-box height a `stretch` limit of the box `idx` stands for:
+/// against the flex line it is laid out in when its container resolves it
+/// there (see [`with_flex_line_item_limits`]), and as
+/// [`stretch_fit_height`] has it otherwise.
+fn stretch_limit_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+    match flex_line_room(tree, idx, false) {
+        Some(line) => Some(stretch_in_flex_line(
+            tree,
+            idx,
+            inputs.parent_size.width,
+            line,
+            false,
+        )),
+        None => stretch_fit_height(tree, idx, inputs),
+    }
+}
+
+/// The cross size of the flex line the item `idx` is laid out in, when its
+/// container resolves the `stretch` limits of the item along the physical
+/// `width` (or height) against that line (see [`with_flex_line_item_limits`]).
+fn flex_line_room(tree: &LayoutSession<'_>, idx: usize, width: bool) -> Option<f32> {
+    tree.context
+        .flex_line_stretch_rooms
+        .get(&idx)
+        .filter(|(along_width, _)| *along_width == width)
+        .map(|&(_, line)| line)
+}
+
+/// The border-box size a flex item `idx` stretches to along the physical
+/// `width` (or height) in a flex `line` of that size: the line less the
+/// margins of the item, a percentage margin resolving against the
+/// `container_width` and an `auto` margin counting for nothing.
+fn stretch_in_flex_line(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    container_width: Option<f32>,
+    line: f32,
+    width: bool,
+) -> f32 {
+    (line - stretch_margins(tree, idx, container_width, width)).max(0.0)
 }
 
 /// The vertical margins of a block child that its parent holds in, which a

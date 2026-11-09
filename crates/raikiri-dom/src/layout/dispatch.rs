@@ -4085,7 +4085,7 @@ fn flex_layout_items(
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     tree.context.flex_item_percent_bases.push((idx, basis));
-    let mut output = content_limits::with_item_content_limits(
+    let mut output = content_limits::with_flex_line_item_limits(
         tree,
         node_id,
         inputs,

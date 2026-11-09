@@ -1,5 +1,5 @@
 use std::cell::RefMut;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 
 use crate::document::Document;
@@ -126,6 +126,16 @@ pub(crate) struct LayoutContext {
     /// for each column flex container that wraps its items and was laid out
     /// last (see `inline_baseline::align_flex` in [`crate::layout::dispatch`]).
     pub(crate) flex_baseline_lines: HashMap<usize, HashMap<usize, LineRoom>>,
+    /// The flex containers whose next layout records in
+    /// [`Self::flex_item_lines`] the line of each of the items named here.
+    pub(crate) flex_line_requests: HashMap<usize, HashSet<usize>>,
+    /// The lines of the items each flex container in
+    /// [`Self::flex_line_requests`] recorded when it was laid out last.
+    pub(crate) flex_item_lines: HashMap<usize, FlexItemLines>,
+    /// The cross size of the flex line a `stretch` cross-axis limit of an
+    /// item resolves against while its container lays it out in that line,
+    /// by item, with the physical axis of that size (`true` for the width).
+    pub(crate) flex_line_stretch_rooms: HashMap<usize, (bool, f32)>,
     pub(super) table_item_captures: Vec<super::dispatch::table_items::Capture>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     /// The root whose out-of-flow candidates are being recorded, and the
@@ -429,3 +439,19 @@ impl DerefMut for LayoutSession<'_> {
 
 #[cfg(test)]
 mod tests;
+
+/// The flex lines of the items a flex container was asked to record (see
+/// `table_items::layout` in [`crate::layout::dispatch`]).
+#[derive(Debug, Default)]
+pub(crate) struct FlexItemLines {
+    /// The room the line of each item gives it, by item.
+    pub(crate) aligned: HashMap<usize, LineRoom>,
+    /// The same with the lines packed at the start of the container: the
+    /// size each line takes from its items, before `align-content` shares
+    /// out the free room. Empty when the container shares no room.
+    pub(crate) packed: HashMap<usize, LineRoom>,
+    /// The room the lines leave free across a container that shares it out
+    /// between them with `align-content`; negative when the lines overflow
+    /// the container, and zero when it shares no room.
+    pub(crate) free_room: f32,
+}
