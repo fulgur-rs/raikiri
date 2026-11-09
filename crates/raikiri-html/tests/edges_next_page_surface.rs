@@ -839,6 +839,32 @@ const ROWS_10PX_LINES: &[Row] = &[
 /// on later rows or lines, and the boxes after the block in its own item, move
 /// down with it.
 const ROWS_BESIDE_OTHERS: &[Row] = &[
+    // A grown item that still fits the row its container sets or stretches leaves the content after it where it is, and a row of a set size does not grow.
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:200px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;min-height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;min-height:200px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;min-height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (2, 0)],
+    ),
+    (
+        r#"<div style="display:grid;grid-template-columns:50px 50px;grid-template-rows:120px;align-items:start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 20)],
+    ),
+    // Lines are found where the items sit in normal flow.
+    (
+        r#"<div style="display:flex;flex-wrap:wrap;height:200px;align-items:flex-start"><div style="padding-bottom:30px;width:50px"><div style="height:80px">S</div></div><div style="width:50px;height:20px;align-self:flex-end;position:relative;left:-50px">T</div></div><div style="height:10px">Z</div>"#,
+        &[(0, 0), (1, 80), (2, 0)],
+    ),
     // An item aligned to the end of the line it shares with the grown item
     // stays where it is: it is on that line, not on a later one.
     (

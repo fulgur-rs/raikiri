@@ -516,6 +516,18 @@ fn layout_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
+    layout_relative_offset(document, cascade, body_id, node_id).1
+}
+
+/// The inline and block offsets that layout applied to a relatively
+/// positioned or sticky box, as [`layout_relative_offset_y`] takes the
+/// block one.
+fn layout_relative_offset(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> (f32, f32) {
     // A `display: contents` element generates no box to offset.
     if !matches!(
         document.nodes[node_id].position(),
@@ -528,19 +540,19 @@ fn layout_relative_offset_y(
         || (matches!(document.nodes[node_id].position(), PositionValue::Sticky)
             && is_floating_box_for_pagination(document, cascade, node_id))
     {
-        return 0.0;
+        return (0.0, 0.0);
     }
     // Percentages resolve against the containing block's height when it
     // is definite, and otherwise act as `auto` (CSS 2.1 §9.3.2). Layout
-    // takes `top` over `-bottom` in every writing mode.
-    super::relative::layout_relative_insets(
+    // takes `left` over `-right` and `top` over `-bottom` in every writing
+    // mode.
+    let insets = super::relative::layout_relative_insets(
         document,
         cascade,
         node_id,
         super::relative::Precedence::LeftTop,
-    )
-    .1
-    .unwrap_or(0.0)
+    );
+    (insets.0.unwrap_or(0.0), insets.1.unwrap_or(0.0))
 }
 
 /// The relative offsets that layout applied to `node_id` and to its
@@ -11193,6 +11205,14 @@ fn grow_container_beside_item(
         item_offset,
     )];
     let mut row_end = before;
+    if let Some(area_end) = grid_area_end(document, container, item) {
+        // A row of a set size does not grow, and an item that still fits the
+        // rows it spans, stretched or not, leaves the row as it is.
+        if !grid_rows_size_to_content(document, container) {
+            return;
+        }
+        row_end = row_end.max(area_end);
+    }
     let mut later_end = f32::NEG_INFINITY;
     // Where the margin box of the grown item starts: the items that end
     // above it are on earlier rows or lines, which the growth leaves alone.
@@ -11224,7 +11244,7 @@ fn grow_container_beside_item(
             bottom,
         });
     }
-    let same_line = items_on_line_of(document, cascade, container, item, &placed);
+    let same_line = items_on_line_of(document, cascade, body_id, container, item, &placed);
     for child in placed {
         if child.id == item {
             continue;
@@ -11293,6 +11313,23 @@ fn grow_container_beside_item(
     });
 }
 
+/// Where the grid area of `item` in the grid `container` ends, from the top
+/// of the border box of the container.
+fn grid_area_end(
+    document: &super::context::LayoutSession<'_>,
+    container: usize,
+    item: usize,
+) -> Option<f32> {
+    let node = &document.nodes[container];
+    let start = node
+        .grid_item_rows
+        .iter()
+        .find(|row| row.item == item)?
+        .block_start;
+    let (_, area) = node.grid_item_areas.iter().find(|&&(id, _)| id == item)?;
+    Some(start + area.height)
+}
+
 /// An in-flow item of a flex or grid container, measured in normal flow
 /// from the top of its margin box to the end of its margin box.
 struct PlacedItem {
@@ -11313,6 +11350,7 @@ struct PlacedItem {
 fn items_on_line_of(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     container: usize,
     item: usize,
     placed: &[PlacedItem],
@@ -11325,9 +11363,13 @@ fn items_on_line_of(
         } else {
             let mut ordered: Vec<usize> = placed.iter().map(|child| child.id).collect();
             ordered.sort_by_key(|&id| cascade.computed[id].order);
+            // Lines are found in normal flow: a relative offset only moves
+            // the paint of an item.
             let span = |id: usize| {
                 let layout = &document.nodes[id].layout;
-                let start = layout.location.x - layout.margin.left;
+                let start = layout.location.x
+                    - layout_relative_offset(document, cascade, body_id, id).0
+                    - layout.margin.left;
                 (
                     start,
                     layout.location.x + layout.size.width + layout.margin.right,
