@@ -618,8 +618,9 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
 
 /// Table sources whose ancestor boxes follow the shared block flow when a
 /// repeated header adds room, a single-line row flex container that holds
-/// only the table (see [`sole_flex_table`]) or a single-line column flex
-/// container (see [`stacking_column_flex`]) counting as such a box. Bounded
+/// only the table (see [`sole_flex_table`]) counting as such a box, as does
+/// a single-line column flex container (see [`stacking_column_flex`]) for
+/// its table items. Bounded
 /// or independently placed flows stop the search so their internal shifts
 /// cannot escape into their outer siblings.
 fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) -> Vec<usize> {
@@ -656,7 +657,15 @@ fn block_flow_tables(document: &Document, cascade: &CascadeResult, body: usize) 
             continue;
         }
         if stacking_column_flex(document, cascade, id) {
-            pending.extend(node.children.iter().rev().copied());
+            // Only its table items stack as block flow does: any other item
+            // fragments as a flex item, with the tables inside it.
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(|&child| document.nodes[child].display() == DisplayValue::Table),
+            );
             continue;
         }
         if !matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)

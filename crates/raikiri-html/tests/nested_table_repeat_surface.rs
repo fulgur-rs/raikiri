@@ -152,6 +152,29 @@ fn a_table_in_a_column_flex_container_repeats_as_in_block_flow() {
 }
 
 #[test]
+fn a_table_inside_another_column_flex_item_keeps_the_flex_path() {
+    // The table fragments with the item that holds it, so its groups are
+    // placed once and are not lost.
+    for wrapper in ["div", "div style=display:contents"] {
+        let pages = laid_out(
+            ".holder{display:flex;flex-direction:column}",
+            &format!("<{wrapper}>{}</div>", table(7, true, "")),
+        );
+        assert_eq!(pages.len(), 2, "{wrapper}");
+        assert!(
+            pages[0].contains("h=(96, ") && !pages[0].contains(" f="),
+            "{wrapper}: {}",
+            pages[0]
+        );
+        assert!(
+            pages[1].contains(" f=") && !pages[1].contains(" h="),
+            "{wrapper}: {}",
+            pages[1]
+        );
+    }
+}
+
+#[test]
 fn a_table_beside_another_row_flex_item_keeps_the_flex_path() {
     // Items side by side fragment in parallel, so a header copy must not
     // push the other item down as block flow would. These pin the current

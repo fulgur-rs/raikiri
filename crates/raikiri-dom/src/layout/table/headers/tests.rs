@@ -65,13 +65,17 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
         doc.append_element(Some(shared), "div", Some(item));
     }
     // A single-line column flex container stacks its items as block flow
-    // does, so every table among them shares it.
+    // does, so every table item shares it. A table inside another item
+    // fragments with that item.
     let column = doc.append_element(
         Some(body),
         "div",
         Some("display:flex;flex-direction:column"),
     );
-    doc.append_element(Some(column), "div", Some("display:block"));
+    let wrapper = doc.append_element(Some(column), "div", Some("display:block"));
+    table(&mut doc, wrapper);
+    let contents = doc.append_element(Some(column), "div", Some("display:contents"));
+    table(&mut doc, contents);
     let stacked = table(&mut doc, column);
     let texted = doc.append_element(Some(body), "div", Some("display:flex"));
     table(&mut doc, texted);
