@@ -70,6 +70,26 @@ pub(crate) fn child_shares_parent_context(
     shares_parent_context(tree, parent, child, &child_style(tree, child))
 }
 
+/// The border-box width block flow gives the block-level `child` laid out
+/// with `inputs` where its `auto` width would be `width`: held to its minimum
+/// and maximum width, to those its aspect ratio carries across from its
+/// height, and to its padding and borders.
+pub(crate) fn clamp_child_width(
+    tree: &LayoutSession<'_>,
+    child: NodeId,
+    inputs: LayoutInput,
+    width: f32,
+) -> f32 {
+    let node = &tree.nodes[usize::from(child)];
+    sizing::Metrics::resolve(
+        &child_style(tree, child),
+        node.svg_width_follows_available,
+        node.ratio_in_content_box,
+        inputs,
+    )
+    .clamp_width(width)
+}
+
 fn child_style(tree: &LayoutSession<'_>, child: NodeId) -> Style {
     style_input::child(tree, usize::from(child))
 }

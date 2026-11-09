@@ -3161,3 +3161,280 @@ fn a_narrow_block_beside_a_float_in_a_right_to_left_column_sits_at_its_right_edg
         "<div style='position:absolute;left:80px;top:0'>A<br>B<br>E<br>F</div>",
     );
 }
+
+/// An absolutely placed `text` at `left`, `top`.
+fn glyphs_at(left: u32, top: u32, text: &str) -> String {
+    format!("<div style='position:absolute;left:{left}px;top:{top}px'>{text}</div>")
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_sits_beside_a_float_in_a_column() {
+    // A box that establishes a formatting context goes in the room the float
+    // leaves, as narrow as that room, and the block after it starts below
+    // it. The positions are Chromium's.
+    for css in [
+        "overflow:hidden",
+        "display:flow-root",
+        "display:flex;flex-direction:column",
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><p style='float:left'>A<br>B</p><div style='{css}'><p>E</p><p>F</p><p>G</p></div><p>N</p></div>"
+            ),
+            ".mc{height:80px;column-fill:auto}",
+            &[
+                glyphs_at(0, 0, "A<br>B"),
+                glyphs_at(20, 0, "E<br>F<br>G"),
+                glyphs_at(0, 60, "N"),
+            ]
+            .concat(),
+        );
+    }
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_too_wide_for_the_room_goes_below_the_float() {
+    // The 40px box does not fit the 20px beside the float, so it goes below
+    // it, in either direction; one that clears the float goes there too.
+    let below = [glyphs_at(0, 0, "A<br>B"), glyphs_at(0, 40, "E")].concat();
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &below,
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;clear:left'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &below,
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px'>E</p></div>",
+        ".mc{height:80px;column-fill:auto;direction:rtl}",
+        &[glyphs_at(60, 0, "A<br>B"), glyphs_at(80, 40, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_margins() {
+    // The box sits beside a right float, and beside a left float its left
+    // margin lies under the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><p style='overflow:hidden'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(20, 0, "A<br>B"), glyphs_at(0, 0, "E")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;margin-left:10px;margin-top:10px'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 10, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_follows_a_paragraph_beside_a_float() {
+    // The box starts below the paragraph beside the float, and a float after
+    // it goes beside the first float, below the box. The positions are
+    // Chromium's, in a container with a height and in a balanced one.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p>C</p><p style='overflow:hidden'>E</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "C<br>E")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden'>E</p><p style='float:left'>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "E<br>F")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden'>E</p></div>",
+        "",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(20, 0, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_shares_its_auto_margins_in_the_room() {
+    // The 40px box sits in the 70px the float leaves in the 90px column, its
+    // auto margins sharing the rest of the room, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px;margin:0 auto'>E</p></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(35, 0, "E")].concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><p style='overflow:hidden;width:40px;margin:0 0 0 auto'>E</p></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        &[glyphs_at(0, 0, "A<br>B"), glyphs_at(50, 0, "E")].concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_width_limits() {
+    // A minimum wider than the room beside the float moves the box below it,
+    // and a maximum narrower than the room keeps it narrow there, as in
+    // Chromium. The boxes are lime, so their widths show.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;min-width:30px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:40px;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:10px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:20px;top:0;width:10px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_float_after_an_empty_box_below_a_float_goes_below_the_box() {
+    // The empty 40px box goes below the float it does not fit beside, and the
+    // float after it is no higher than it, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;width:40px'></div><p style='float:left'>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &glyphs_at(0, 0, "A<br>B<br>F"),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_fits_the_room_of_every_float_it_reaches() {
+    // The two lines of the box reach past the first float to a narrower one,
+    // and the room both leave is as wide as the box, so it stays beside them
+    // at the top, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A</p><div style='float:left;clear:left;width:10px;height:20px;background:lime'></div><p style='overflow:hidden'>E<br>F</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A"),
+            "<div style='position:absolute;left:0;top:20px;width:10px;height:20px;background:lime'></div>".to_string(),
+            glyphs_at(20, 0, "E<br>F"),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_counts_its_padding_in_its_width_limits() {
+    // The maximum width holds the content box, so the border box is 15px
+    // wide with its padding, as in Chromium; with `box-sizing: border-box`
+    // it holds the border box.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:15px;padding-left:5px;box-sizing:border-box;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:20px;top:0;width:15px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;max-width:10px;padding-left:5px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:20px;top:0;width:15px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_and_an_auto_right_margin_starts_the_room_in_a_right_to_left_column()
+ {
+    // The auto right margin takes the rest of the 70px room the right float
+    // leaves, so the box starts the room even in a right-to-left column, as
+    // in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;width:40px;height:20px;margin:0 auto 0 0;background:lime'></div></div>",
+        ".mc{width:200px;height:80px;column-fill:auto;direction:rtl}",
+        &[
+            glyphs_at(180, 0, "A<br>B"),
+            "<div style='position:absolute;left:110px;top:0;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_is_never_narrower_than_its_padding_beside_a_float() {
+    // The 30px padding of a border-box box does not fit the 20px the right
+    // float leaves, so the box goes below the float; a maximum width below
+    // its 15px padding leaves it 15px wide beside the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;box-sizing:border-box;padding-left:30px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:40px;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;box-sizing:border-box;max-width:10px;padding-left:15px;height:20px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:0;width:15px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_the_limits_its_aspect_ratio_carries()
+{
+    // A minimum height carried across the square ratio makes the box 30px
+    // wide, too wide for the 20px beside the right float, so it goes below
+    // it, 40px square; a maximum height carried across keeps it 10px square
+    // beside the float, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;aspect-ratio:1;min-height:30px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:40px;width:40px;height:40px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;aspect-ratio:1;max-height:10px;background:lime'></div></div>",
+        ".mc{height:80px;column-fill:auto}",
+        &[
+            glyphs_at(20, 0, "A<br>B"),
+            "<div style='position:absolute;left:0;top:0;width:10px;height:10px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
+
+#[test]
+fn a_box_with_its_own_formatting_context_beside_a_float_keeps_its_trailing_margin() {
+    // The 10px right margin stays when the auto left margin takes the rest
+    // of the room beside the float, and in a right-to-left column the box
+    // ends at the float with its 10px left margin left over, as in Chromium.
+    compare(
+        "<div class=mc><p style='float:left'>A<br>B</p><div style='overflow:hidden;width:40px;height:20px;margin:0 10px 0 auto;background:lime'></div></div>",
+        ".mc{width:200px;height:80px;column-fill:auto}",
+        &[
+            glyphs_at(0, 0, "A<br>B"),
+            "<div style='position:absolute;left:40px;top:0;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+    compare(
+        "<div class=mc><p style='float:right'>A<br>B</p><div style='overflow:hidden;width:40px;height:20px;margin-left:10px;background:lime'></div></div>",
+        ".mc{width:200px;height:80px;column-fill:auto;direction:rtl}",
+        &[
+            "<div style='position:absolute;left:140px;top:0;width:40px;height:20px;background:lime'></div>".to_string(),
+        ]
+        .concat(),
+    );
+}
