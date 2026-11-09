@@ -11174,6 +11174,11 @@ fn grow_container_beside_item(
     )];
     let mut row_end = before;
     let mut later_end = f32::NEG_INFINITY;
+    // Where the margin box of the grown item starts: the items that end
+    // above it are on earlier rows or lines, which the growth leaves alone.
+    let item_top =
+        pagination_child_parent_y(document, container, item, document.pagination_local_y(item))
+            - document.nodes[item].layout.margin.top;
     for child in document.children_through_contents(container) {
         let node = &document.nodes[child];
         let blank_text =
@@ -11197,7 +11202,7 @@ fn grow_container_beside_item(
         if top - node.layout.margin.top >= before - 0.001 {
             later.insert(child);
             later_end = later_end.max(bottom);
-        } else {
+        } else if bottom > item_top + 0.001 {
             row_end = row_end.max(bottom);
             row.push((
                 child,
