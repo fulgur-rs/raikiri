@@ -359,36 +359,32 @@ impl<'a> SourceWalk<'a> {
         placed: &PlacedBox<'_>,
         parent: Option<usize>,
     ) -> Option<usize> {
-        let clips = self.fragments.repeated.contains(&placed.id)
-            && crate::paint_rules::clips_element_overflow(self.document, self.cascade, placed.id);
-        clips.then(|| {
-            let border_box = fragment_area(placed.node, placed.area);
-            let layout = placed.node.layout;
-            let (border, padding) = (layout.border, layout.padding);
-            let index = self.placement_overflow_clips.len();
-            self.placement_overflow_clips
-                .push(PlacementOverflowClipSource {
-                    node: NodeId::new(placed.id as u64),
-                    parent,
-                    source: OverflowClipSource {
-                        border_box,
-                        geometry: crate::paint_rules::OverflowClipGeometry::new(
-                            &self.cascade.computed[placed.id],
-                            border_box,
-                            PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                            PaintInsets::new(
-                                padding.top,
-                                padding.right,
-                                padding.bottom,
-                                padding.left,
-                            ),
-                            crate::paint_rules::is_replaced_element(self.document, placed.id),
-                        ),
-                        is_repeat: placed.is_repeat,
-                    },
-                });
-            index
-        })
+        if !self.fragments.repeated.contains(&placed.id) {
+            return None;
+        }
+        let border_box = fragment_area(placed.node, placed.area);
+        let layout = placed.node.layout;
+        let (border, padding) = (layout.border, layout.padding);
+        let geometry = crate::paint_rules::overflow_clip_geometry(
+            self.document,
+            self.cascade,
+            placed.id,
+            border_box,
+            PaintInsets::new(border.top, border.right, border.bottom, border.left),
+            PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
+        )?;
+        let index = self.placement_overflow_clips.len();
+        self.placement_overflow_clips
+            .push(PlacementOverflowClipSource {
+                node: NodeId::new(placed.id as u64),
+                parent,
+                source: OverflowClipSource {
+                    border_box,
+                    geometry,
+                    is_repeat: placed.is_repeat,
+                },
+            });
+        Some(index)
     }
 
     /// The text root of the marker of a list item whose marker is not laid

@@ -444,31 +444,29 @@ pub(super) fn overflow_clip_sources(
 ) -> BTreeMap<NodeId, OverflowClipSource> {
     sources
         .iter()
-        .filter(|source| {
-            let id = source.node_id.0 as usize;
-            !repeated_placement_nodes.contains(&id)
-                && crate::paint_rules::clips_element_overflow(document, cascade, id)
-        })
-        .map(|source| {
+        .filter(|source| !repeated_placement_nodes.contains(&(source.node_id.0 as usize)))
+        .filter_map(|source| {
             let id = source.node_id.0 as usize;
             let border = document.nodes[id].layout.border;
             let padding = document.nodes[id].layout.padding;
             let border_box =
                 PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
-            (
+            let geometry = crate::paint_rules::overflow_clip_geometry(
+                document,
+                cascade,
+                id,
+                border_box,
+                PaintInsets::new(border.top, border.right, border.bottom, border.left),
+                PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
+            )?;
+            Some((
                 source.node_id,
                 OverflowClipSource {
                     border_box,
-                    geometry: crate::paint_rules::OverflowClipGeometry::new(
-                        &cascade.computed[id],
-                        border_box,
-                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
-                        crate::paint_rules::is_replaced_element(document, id),
-                    ),
+                    geometry,
                     is_repeat: source.is_repeat,
                 },
-            )
+            ))
         })
         .collect()
 }
