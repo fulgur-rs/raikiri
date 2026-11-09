@@ -340,6 +340,9 @@ pub struct Document {
     /// apply to them (see [`mod@crate::layout::quirks_fill`]), keyed by the
     /// parent's index.
     pub(crate) quirks_percentage_height_bases: Vec<(usize, f32)>,
+    /// The fill of a body whose margins collapse with its children's, which
+    /// block layout applies once it knows them.
+    pub(crate) quirks_body_fill: Option<crate::layout::quirks_fill::BodyFill>,
     /// Whether the quirks mode fill quirks are left out, as they are in the
     /// copy that measures a running element: its root element and body are
     /// as tall as the element, not the measuring page.
@@ -593,6 +596,7 @@ impl Document {
             layout_cascade_generation: None,
             fixed_page_area: None,
             quirks_percentage_height_bases: Vec::new(),
+            quirks_body_fill: None,
             skips_quirks_fill: false,
             oof_coordinates: Default::default(),
             continuation_break: None,
@@ -2084,6 +2088,7 @@ impl Document {
             layout_cascade_generation: _,
             fixed_page_area: _,
             quirks_percentage_height_bases: _,
+            quirks_body_fill: _,
             skips_quirks_fill: _,
             oof_coordinates: _,
             continuation_break: _,

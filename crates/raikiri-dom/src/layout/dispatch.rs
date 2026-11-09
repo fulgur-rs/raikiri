@@ -2062,6 +2062,21 @@ fn compute_ifc_root(
         output.overflow_origin = crate::layout::protocol::OverflowOrigin::Physical;
     }
     output.top_margin = leading_margin;
+    // A filled body in quirks mode fills the root element less its margins
+    // as they collapse with those that adjoin its edges.
+    let quirks_fill = crate::layout::quirks_fill::BodyFill::of(tree, idx)
+        .zip(measured_size)
+        .map(|(fill, measured)| {
+            let content = measured.height + measure.insets.top + measure.insets.bottom;
+            let separates = fill.minimum_separates(content);
+            let trailing = if separates {
+                CollapsibleMarginSet::ZERO
+            } else {
+                escaping_margin
+            };
+            output.size.height = fill.height(content, leading_margin, trailing);
+            separates
+        });
     // The baseline of a horizontal root lies below the top edge of its border
     // box; that of a vertical root, along the block axis from the edge its
     // block starts at.
@@ -2139,7 +2154,7 @@ fn compute_ifc_root(
             };
         min > 0.0 && min_border_box >= block_size
     });
-    output.bottom_margin = if constrained_by_min_block_size {
+    output.bottom_margin = if quirks_fill.unwrap_or(constrained_by_min_block_size) {
         CollapsibleMarginSet::ZERO
     } else {
         escaping_margin

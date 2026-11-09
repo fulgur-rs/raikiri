@@ -498,3 +498,40 @@ fn preserved_white_space_and_clearance_keep_margins_out() {
         "p0: b=(0, 40, 800, 560) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
     );
 }
+
+#[test]
+fn collapsed_margins_follow_block_layout() {
+    // An empty box that roots a formatting context keeps the next margin
+    // from the body's edge.
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div style='display:flow-root'></div><div id=c style='height:10px;margin-top:40px'></div>"
+        ),
+        "p0: b=(0, 0, 800, 600) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // Nested empty boxes let it through.
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div><div></div></div><div id=c style='height:10px;margin-top:40px'></div>"
+        ),
+        "p0: b=(0, 40, 800, 560) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // A minimum the content exceeds does not hold the last margin inside.
+    assert_eq!(
+        quirks(
+            "body{margin:0}",
+            "><div id=c style='min-height:1px'><div style='height:10px;margin-bottom:40px'></div></div>"
+        ),
+        "p0: b=(0, 0, 800, 560) c=(0, 0, 800, 10) h=(0, 0, 800, 600)"
+    );
+    // The body's maximum height still caps the fill.
+    assert_eq!(
+        quirks(
+            "body{margin:0;max-height:300px}",
+            "><div id=c style='height:10px;margin:40px 0'></div>"
+        ),
+        "p0: b=(0, 40, 800, 300) c=(0, 40, 800, 10) h=(0, 0, 800, 600)"
+    );
+}

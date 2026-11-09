@@ -644,11 +644,34 @@ fn layout_context(
     // child's bottom margin no longer adjoins the bottom edge. As in
     // browsers, it then neither escapes nor adds to the height that
     // `min-height` fixed.
+    let content_height = natural_end + metrics.inset.bottom;
+    let quirks_fill = crate::layout::quirks_fill::BodyFill::of(tree, usize::from(node));
     let minimum_separates = collapse_end
-        && metrics
-            .min
-            .height
-            .is_some_and(|min| min > 0.0 && min > natural_end + metrics.inset.bottom);
+        && match quirks_fill {
+            Some(fill) => fill.minimum_separates(content_height),
+            None => metrics
+                .min
+                .height
+                .is_some_and(|min| min > 0.0 && min > content_height),
+        };
+    // A filled body in quirks mode fills the root element less its margins
+    // as they collapse with those that adjoin its edges.
+    let height = match quirks_fill {
+        Some(fill) => fill.height(
+            content_height,
+            if collapse_start {
+                flow.leading
+            } else {
+                CollapsibleMarginSet::ZERO
+            },
+            if collapse_end && !minimum_separates {
+                flow.trailing
+            } else {
+                CollapsibleMarginSet::ZERO
+            },
+        ),
+        None => height,
+    };
     let size = Size { width, height };
     children::align(
         tree,

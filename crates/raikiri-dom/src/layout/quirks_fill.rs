@@ -13,15 +13,15 @@
 //! A box with a vertical writing mode, or with a sizing keyword for its
 //! `min-height` or `max-height`, keeps its usual height here.
 
+use crate::NodeFlags;
 use crate::layout::context::LayoutSession;
-use crate::layout::ifc::assign::text_makes_a_line;
 use crate::layout::protocol::{LayoutInput, SizingMode};
-use crate::{NodeData, NodeFlags};
+use crate::layout::taffy_adapter::CollapsibleMarginSet;
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_style::values::{ExpandedDimension, MaybeResolve, ResolveOrZero};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::{
-    BoxSizing, ClearValue, DisplayValue, FloatValue, OverflowValue, OverflowXY, PositionValue,
+    BoxSizing, DisplayValue, FloatValue, OverflowValue, OverflowXY, PositionValue,
 };
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::QuirksMode;
@@ -40,6 +40,7 @@ pub(super) fn prepare(
     page_height: f32,
 ) {
     doc.quirks_percentage_height_bases.clear();
+    doc.quirks_body_fill = None;
     if doc.quirks_mode() == QuirksMode::Quirks && !doc.skips_quirks_fill {
         fill_root_and_body(doc, cascade, body, page_width, page_height);
     }
@@ -151,6 +152,56 @@ pub(super) fn with_filled_parent(
     inputs
 }
 
+/// The fill of a body whose margins collapse with those of its children.
+/// Its `min-height` override fills what its own margins leave, which other
+/// layouts use; block layout uses this instead, once it knows the margins
+/// that adjoin the body's edges.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BodyFill {
+    /// The body.
+    node: usize,
+    /// The content-box height of the root element.
+    room: f32,
+    /// The body's own top and bottom margins.
+    margin_top: f32,
+    margin_bottom: f32,
+    /// The body's authored minimum and maximum border-box heights.
+    minimum: f32,
+    maximum: f32,
+    /// The body's top and bottom padding and border.
+    edges: f32,
+}
+
+impl BodyFill {
+    /// The fill of `node` when it is the filled body.
+    pub(crate) fn of(tree: &LayoutSession<'_>, node: usize) -> Option<Self> {
+        tree.quirks_body_fill.filter(|fill| fill.node == node)
+    }
+
+    /// Whether the authored minimum raises the body above `content`, its
+    /// border-box height from the content, so that the last child's bottom
+    /// margin no longer adjoins its bottom edge.
+    pub(crate) fn minimum_separates(&self, content: f32) -> bool {
+        self.minimum > 0.0 && self.minimum > content
+    }
+
+    /// The border-box height of the body when its content makes it
+    /// `content` tall and the margin sets `leading` and `trailing` adjoin its
+    /// top and bottom edges: at least what fills the root element less its
+    /// margins collapsed with theirs.
+    pub(crate) fn height(
+        &self,
+        content: f32,
+        leading: CollapsibleMarginSet,
+        trailing: CollapsibleMarginSet,
+    ) -> f32 {
+        let clamp = |height: f32| height.min(self.maximum).max(self.minimum).max(self.edges);
+        let top = leading.collapse_with_margin(self.margin_top).resolve();
+        let bottom = trailing.collapse_with_margin(self.margin_bottom).resolve();
+        clamp(content).max(clamp(self.room - top - bottom))
+    }
+}
+
 /// Give `idx` the `min-height` that fills `room`, the content-box height of
 /// the box around it, when the quirk applies to it, and return the
 /// content-box height its children resolve percentages against. `basis` is the width its
@@ -184,124 +235,46 @@ fn fill(
         };
         filled.min(maximum).max(minimum)
     };
-    let own_margins = margin(&cv.margin.top, basis) + margin(&cv.margin.bottom, basis);
-    // The box fills what its margins leave once they collapse with those of
-    // its children, as in Chromium; its children still resolve percentages
-    // against what its own margins leave.
-    let collapsed_margins = if is_root {
-        own_margins
-    } else {
-        collapsed_margin(doc, cascade, idx, basis, false)
-            + collapsed_margin(doc, cascade, idx, basis, true)
-    };
+    let margin_top = margin(&cv.margin.top, basis);
+    let margin_bottom = margin(&cv.margin.bottom, basis);
     doc.record_pass_override(
         idx,
         OwnedPropertyOverride::length(
             LengthProperty::MinHeight,
-            ComputedLengthPercentageOrAuto::Px(used(collapsed_margins)),
+            ComputedLengthPercentageOrAuto::Px(used(margin_top + margin_bottom)),
             true,
         )
         .expect("resolved quirks fill minimum"),
     );
-    let used = used(own_margins);
+    if !is_root && collapses_with_children(doc, cascade, idx, idx) {
+        // A body whose margins collapse with those of its children fills
+        // what its margins leave once they have collapsed, as in Chromium;
+        // block layout finds them (see [`BodyFill::height`]).
+        let border_box = |height: f32| {
+            if border_box_sizing {
+                height
+            } else {
+                height + edges
+            }
+        };
+        doc.quirks_body_fill = Some(BodyFill {
+            node: idx,
+            room,
+            margin_top,
+            margin_bottom,
+            minimum: border_box(minimum),
+            maximum: border_box(maximum),
+            edges,
+        });
+    }
+    // Its children resolve percentages against what its own margins leave.
+    let used = used(margin_top + margin_bottom);
     let content_height = if border_box_sizing {
         (used - edges).max(0.0)
     } else {
         used
     };
     Some(content_height)
-}
-
-/// The start (or, with `end`, the end) margin of block `idx` once it
-/// collapses with the adjoining margins of its in-flow descendants (CSS 2.1
-/// §8.3.1). `basis` is the width of the containing block of `idx`.
-fn collapsed_margin(
-    doc: &LayoutSession<'_>,
-    cascade: &CascadeResult,
-    idx: usize,
-    basis: f32,
-    end: bool,
-) -> f32 {
-    let mut margins = Adjoining::default();
-    collect_adjoining(doc, cascade, idx, idx, basis, end, &mut margins);
-    margins.positive + margins.negative
-}
-
-/// Margins that collapse into one: the largest positive one and the most
-/// negative one.
-#[derive(Default)]
-struct Adjoining {
-    positive: f32,
-    negative: f32,
-}
-
-impl Adjoining {
-    fn add(&mut self, margin: f32) {
-        self.positive = self.positive.max(margin);
-        self.negative = self.negative.min(margin);
-    }
-}
-
-/// Add the start (or end) margin of `current`, whose containing block is
-/// `basis` wide, and the margins that adjoin it inside: those of the boxes
-/// they collapse through, and then those of the first (or last) child that
-/// does not.
-fn collect_adjoining(
-    doc: &LayoutSession<'_>,
-    cascade: &CascadeResult,
-    body: usize,
-    current: usize,
-    basis: f32,
-    end: bool,
-    margins: &mut Adjoining,
-) {
-    let cv = &cascade.computed[current];
-    let (value, padding, border) = if end {
-        (
-            &cv.margin.bottom,
-            cv.padding.bottom,
-            cv.border.bottom.width().px(),
-        )
-    } else {
-        (&cv.margin.top, cv.padding.top, cv.border.top.width().px())
-    };
-    margins.add(margin(value, basis));
-    // A box with a stated height or a minimum keeps its last child's end
-    // margin inside.
-    let holds_end = end
-        && current != body
-        && !(is_zero_or_auto(&cv.height, basis) && is_zero_or_auto(&cv.min_height, basis));
-    if padding.resolve(basis) != 0.0
-        || border != 0.0
-        || holds_end
-        || !collapses_with_children(doc, cascade, current, body)
-    {
-        return;
-    }
-    let inner = content_width(cv, basis);
-    for child in edge_children(doc, cascade, current, end) {
-        if !is_empty(doc, cascade, child, inner) {
-            collect_adjoining(doc, cascade, body, child, inner, end, margins);
-            return;
-        }
-        // The margins of an empty box collapse through it, so both join, and
-        // so do those of the box after it (CSS 2.1 §8.3.1).
-        let child_cv = &cascade.computed[child];
-        margins.add(margin(&child_cv.margin.top, inner));
-        margins.add(margin(&child_cv.margin.bottom, inner));
-    }
-}
-
-/// Whether block `idx` has no content, no block-axis padding or border and
-/// no height, so that its margins collapse through it.
-fn is_empty(doc: &LayoutSession<'_>, cascade: &CascadeResult, idx: usize, basis: f32) -> bool {
-    let cv = &cascade.computed[idx];
-    is_zero_or_auto(&cv.height, basis)
-        && is_zero_or_auto(&cv.min_height, basis)
-        && block_edges(cv, basis) == 0.0
-        && doc.nodes[idx].children.iter().all(|&child| {
-            doc.nodes[child].text_content().is_some() && !text_makes_a_line(doc, cascade, child)
-        })
 }
 
 /// Whether block `idx` lays out block flow whose margins can collapse with
@@ -325,60 +298,6 @@ fn collapses_with_children(
     node.display() == DisplayValue::Block
         && !node.roots_block_context()
         && (propagated || !scrolls(cascade.computed[idx].overflow))
-}
-
-/// The in-flow children of `idx` from its start (or, with `end`, from its
-/// end) up to the first one that is not a block or comes after text there.
-fn edge_children(
-    doc: &LayoutSession<'_>,
-    cascade: &CascadeResult,
-    idx: usize,
-    end: bool,
-) -> Vec<usize> {
-    let children = &doc.nodes[idx].children;
-    let ordered: Box<dyn Iterator<Item = &usize>> = if end {
-        Box::new(children.iter().rev())
-    } else {
-        Box::new(children.iter())
-    };
-    let mut blocks = Vec::new();
-    let mut after_float = false;
-    for &child in ordered {
-        let node = &doc.nodes[child];
-        if node.text_content().is_some() {
-            // Collapsible white space alone makes no line box.
-            if text_makes_a_line(doc, cascade, child) {
-                break;
-            }
-            continue;
-        }
-        if !matches!(node.data, NodeData::Element(_)) {
-            continue;
-        }
-        let cv = &cascade.computed[child];
-        if cv.display == DisplayValue::None
-            || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-        {
-            continue;
-        }
-        if cv.float != FloatValue::None {
-            after_float = true;
-            continue;
-        }
-        // Clearance past an earlier float keeps the start margin from
-        // adjoining the parent's (CSS 2.1 §8.3.1).
-        let cleared = !end && after_float && cv.clear != ClearValue::None;
-        if cleared || cv.display.is_inline_level() || cv.display == DisplayValue::Contents {
-            break;
-        }
-        blocks.push(child);
-    }
-    blocks
-}
-
-/// Whether a `height` or `min-height` gives a box no height of its own.
-fn is_zero_or_auto(value: &ComputedLengthPercentageOrAuto, basis: f32) -> bool {
-    matches!(value, ComputedLengthPercentageOrAuto::Auto) || length(value, basis) == Some(0.0)
 }
 
 /// Whether the quirk applies to a root element or body with these values: an
