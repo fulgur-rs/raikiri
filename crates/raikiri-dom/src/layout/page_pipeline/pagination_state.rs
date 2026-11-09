@@ -19,17 +19,18 @@ use super::{
     floats_put_first_line_down, follows_flow_content, forced_line_breaks, forced_line_moves,
     forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
     has_fixed_height, has_footnote_ancestor, is_floating_box_for_pagination,
-    is_unfixed_absolute_box, lead_below_ancestor, lead_below_edges, leading_edges_move,
-    leading_holder, line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
-    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
-    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
-    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
-    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    is_unfixed_absolute_box, layout_relative_offset_y, lead_below_ancestor, lead_below_edges,
+    leading_edges_move, leading_holder, line_block_parent, lines_between_blocks,
+    lines_can_shift_above_blocks, lines_can_shift_between_blocks, lines_can_shift_inside,
+    lines_move_grows_box, make_room_for_caption_header, make_room_for_table_header,
+    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
+    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
+    positioned_text_start_y, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, row_flex_container, run_ends_paragraph, run_tail_move,
+    shift_paragraph_lines, shift_text_candidate, starts_on_page_and_runs_past_it, straddling_line,
+    text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -1252,11 +1253,15 @@ impl PaginationState {
                     page_break.collapses_with_previous_block && page_break.margins_collapse_through,
                 );
             }
+            // Siblings are compared where the flow puts them, without the
+            // relative offsets that only paint them elsewhere.
+            let raw_y = candidate.raw_y
+                - layout_relative_offset_y(document, env.cascade, env.body_id, node_id);
             self.sibling_margins.record_bottom(
                 parent_id,
                 node_id,
                 page_break.collapses_with_previous_block,
-                candidate.raw_y + candidate.height,
+                raw_y + candidate.height,
             );
         }
     }
@@ -1970,7 +1975,7 @@ impl PaginationState {
         let at = MarginBreak {
             node_id,
             clearance_free: avoided_breaks.clearance_free.contains(node_id),
-            raw_y: candidate.raw_y,
+            raw_y: candidate.raw_y - layout_relative_offset_y(document, cascade, body_id, node_id),
             effective_y: flow_y,
             natural_page,
             forced_before,

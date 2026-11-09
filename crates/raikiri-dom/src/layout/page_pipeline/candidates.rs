@@ -820,6 +820,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     forces_break_after: bool,
     /// Where the edges of the blocks collected begin below their content.
     edges_breaks: Vec<EdgesBreak>,
+    /// The unpaginated border-box bottom of each in-flow block that is not
+    /// a candidate, without its own relative offset: the end of the margin
+    /// above the in-flow sibling after it.
+    flow_bottoms: HashMap<usize, f32>,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -865,6 +869,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 )
             }),
             edges_breaks: Vec::new(),
+            flow_bottoms: HashMap::new(),
         }
     }
 
@@ -882,10 +887,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     }
 
     /// The edges of the clips that cut the text of the paragraphs collected,
-    /// by paragraph root, in the coordinates of the candidates, and where the
-    /// bottom edges of the blocks begin below their content.
-    pub(super) fn into_outputs(self) -> (HashMap<usize, f32>, Vec<EdgesBreak>) {
-        (self.clip_edges, self.edges_breaks)
+    /// by paragraph root, in the coordinates of the candidates, where the
+    /// bottom edges of the blocks begin below their content, and the bottoms
+    /// of the in-flow blocks that are not candidates (see `flow_bottoms`).
+    pub(super) fn into_outputs(
+        self,
+    ) -> (HashMap<usize, f32>, Vec<EdgesBreak>, HashMap<usize, f32>) {
+        (self.clip_edges, self.edges_breaks, self.flow_bottoms)
     }
 
     #[inline(never)]
@@ -1624,12 +1632,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || (inside_flex
                             && !flex_item_candidate
                             && is_plain_block_box(document, node_id)));
+                // A nested block with a margin above it, after a block of its
+                // parent's flow: a page edge in that margin cuts it.
+                let margin_candidate = in_flow_block_level
+                    && !direct_body_child
+                    && node.layout.margin.top > 0.0
+                    && frame.previous_box.is_some();
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
-                    && ((participates_in_flow
-                        && direct_body_child
-                        && (explicit_page_name.is_none() || inline_level))
+                    && (margin_candidate
+                        || (participates_in_flow
+                            && direct_body_child
+                            && (explicit_page_name.is_none() || inline_level))
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate
@@ -1652,7 +1667,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A box is measured against a clipping ancestor's edge like
                 // text: one past it is not a candidate, and one running over
                 // it occupies only the part above.
-                if is_break_candidate && (sets_page_flow || candidate_raw_y < frame.clip_end) {
+                let pushed =
+                    is_break_candidate && (sets_page_flow || candidate_raw_y < frame.clip_end);
+                if !pushed && in_flow_block_level && !is_body {
+                    self.flow_bottoms.insert(
+                        node_id,
+                        candidate_raw_y + node.layout.size.height
+                            - super::layout_relative_offset_y(document, cascade, body_id, node_id),
+                    );
+                }
+                if pushed {
                     self.out.push(PageCandidate {
                         node_id,
                         raw_y: candidate_raw_y,

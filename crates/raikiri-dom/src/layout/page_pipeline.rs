@@ -4318,7 +4318,7 @@ fn paginate_flow(
         control,
     );
     collector.collect_flow(root_flow_offset)?;
-    let (clip_edges, edges_breaks) = collector.into_outputs();
+    let (clip_edges, edges_breaks, flow_bottoms) = collector.into_outputs();
     let mut footer_tail_ends = HashMap::<usize, f32>::new();
     for candidate in &candidates {
         let edges = candidate.context.item_tail_edges();
@@ -4362,7 +4362,7 @@ fn paginate_flow(
         cascade,
         &candidates,
         &table_headers,
-        roots.contents_box,
+        (body_id, roots.contents_box),
         content_width,
         root_flow_offset,
     );
@@ -4386,6 +4386,7 @@ fn paginate_flow(
         ColumnContexts::new(document.nodes.len()),
     );
     state.track_outer_owners(&positioned_owner_heights);
+    state.sibling_margins.flow_bottoms = flow_bottoms;
     let env = FlowEnv {
         cascade,
         body_id,
@@ -5417,6 +5418,7 @@ struct AvoidedBreaks {
 fn margin_run_ends(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     candidates: &[PageCandidate],
     clearance_free: &margin_clearance::ClearanceFree,
 ) -> HashMap<usize, MarginRunEnd> {
@@ -5468,7 +5470,7 @@ fn margin_run_ends(
         }
         let end = ends.get(&next.node_id).copied().unwrap_or(MarginRunEnd {
             node_id: next.node_id,
-            raw_y: next.raw_y,
+            raw_y: next.raw_y - layout_relative_offset_y(document, cascade, body_id, next.node_id),
             height: next.height,
         });
         ends.insert(node_id, end);
@@ -5589,7 +5591,7 @@ impl AvoidedBreaks {
         cascade: &CascadeResult,
         candidates: &[PageCandidate],
         table_headers: &HeaderRepeats,
-        contents_box: usize,
+        (body_id, contents_box): (usize, usize),
         content_width: f32,
         root_flow_offset: f32,
     ) -> Self {
@@ -5607,7 +5609,8 @@ impl AvoidedBreaks {
         );
         let clearance_free =
             margin_clearance::ClearanceFree::collect(document, cascade, candidates);
-        let margin_run_ends = margin_run_ends(document, cascade, candidates, &clearance_free);
+        let margin_run_ends =
+            margin_run_ends(document, cascade, body_id, candidates, &clearance_free);
         Self {
             clearance_free,
             run_ends,
@@ -10642,6 +10645,9 @@ struct SiblingMargins {
     /// seen for each parent, while no other content followed it. The gap to
     /// the next such sibling is their collapsed margin.
     previous_bottoms: HashMap<usize, (usize, f32)>,
+    /// The unpaginated border-box bottoms of the in-flow blocks that are not
+    /// candidates, so never recorded in `previous_bottoms`.
+    flow_bottoms: HashMap<usize, f32>,
     /// The empty box whose block-end margin still adjoins the latest forced
     /// break: the forced-break box itself, or an empty box right after it.
     /// A margin collapsed through it follows the break and is kept.
@@ -10726,7 +10732,7 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
+        let (previous, gap) = self.gap_after_preceding(document, cascade, node_id, at.raw_y)?;
         let float_break_page = self
             .break_taken_by_float
             .filter(|&(source, _)| is_descendant_or_self(document, source, previous))
@@ -10890,6 +10896,39 @@ impl SiblingMargins {
             .and_then(|parent_id| self.previous_bottoms.get(&parent_id).copied())
             .map(|(previous, bottom)| (previous, raw_y - bottom))
             .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
+    }
+
+    /// Like [`Self::gap_after_previous`], but when the box right before
+    /// `node_id` in the flow of its parent is a block that is not a
+    /// candidate, the gap is measured from that block instead: the page edge
+    /// cuts the margin between the two, also inside a block that no break
+    /// goes before.
+    fn gap_after_preceding(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        node_id: usize,
+        raw_y: f32,
+    ) -> Option<(usize, f32)> {
+        let recorded = self.gap_after_previous(document, node_id, raw_y);
+        if self.flow_bottoms.is_empty() {
+            return recorded;
+        }
+        let tree = BoxTree::for_layout(document);
+        let preceding = tree
+            .parent(node_id, BoxParentScope::Document)
+            .filter(|&parent| stacks_children_in_block_flow(document, parent))
+            .and_then(|_| {
+                self.adjacency
+                    .preceding_flow_box(document, cascade, node_id)
+            });
+        let Some((preceding, bottom)) = preceding
+            .filter(|&preceding| recorded.is_none_or(|(previous, _)| previous != preceding))
+            .and_then(|preceding| Some((preceding, *self.flow_bottoms.get(&preceding)?)))
+        else {
+            return recorded;
+        };
+        Some((preceding, raw_y - bottom)).filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
     }
 
     /// Ends the run of adjoining siblings at the in-flow text `node_id`:
@@ -13182,11 +13221,10 @@ fn participates_in_margin_adjacency(
 }
 
 /// Whether the block-start margin of `candidate` can collapse with the
-/// block-end margin of the block before it: it is a statically positioned
-/// block-level box in the normal flow, and not text, a table row, or a flex
-/// or grid item. A relative offset is not part of the flow gap between
-/// siblings, so a positioned box cannot tell its margin apart from its
-/// offset.
+/// block-end margin of the block before it: it is a block-level box in the
+/// normal flow, static, relatively positioned or sticky, and not text, a
+/// table row, or a flex or grid item. A relative offset only paints the box
+/// elsewhere, so the margin is measured without it.
 fn collapses_with_previous_block(
     document: &Document,
     candidate: &PageCandidate,
@@ -13194,7 +13232,10 @@ fn collapses_with_previous_block(
 ) -> bool {
     let node = &document.nodes[candidate.node_id];
     is_block_level_flow_box(node.display())
-        && matches!(node.position(), PositionValue::Static)
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
         && !candidate.context.is_text()
         && !candidate.context.is_table_row()
         && !candidate.context.is_flex_item()

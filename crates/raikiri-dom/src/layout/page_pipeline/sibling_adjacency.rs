@@ -55,6 +55,57 @@ impl SiblingAdjacency {
         }
         false
     }
+
+    /// The box before `node_id` in the flow of its parent that takes block
+    /// space, past the empty boxes the margins collapse through, or `None`
+    /// when there is none.
+    pub(super) fn preceding_flow_box(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> Option<usize> {
+        let mut current = node_id;
+        for parent in document.ancestors(node_id) {
+            let positions = self.positions.entry(parent).or_insert_with(|| {
+                let children = &document.nodes[parent].children;
+                children
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &id)| (id, i))
+                    .collect()
+            });
+            let index = *positions.get(&current)?;
+            for &id in document.nodes[parent].children[..index].iter().rev() {
+                if let Some(found) = last_box_with_space(document, cascade, id) {
+                    return Some(found);
+                }
+            }
+            if document.nodes[parent].display() != DisplayValue::Contents {
+                return None;
+            }
+            current = parent;
+        }
+        None
+    }
+}
+
+/// The last box in `node_id`, itself or the children of a contents box, that
+/// takes block space.
+fn last_box_with_space(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    match flow_box(document, cascade, node_id) {
+        FlowBox::Skip => None,
+        FlowBox::Contents => document.nodes[node_id]
+            .children
+            .iter()
+            .rev()
+            .find_map(|&id| last_box_with_space(document, cascade, id)),
+        FlowBox::Box => (!takes_no_block_space(document, node_id)).then_some(node_id),
+    }
 }
 
 /// Return a decision at the first preceding matching or nonempty box,
