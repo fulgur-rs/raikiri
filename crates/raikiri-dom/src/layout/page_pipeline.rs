@@ -11290,13 +11290,11 @@ fn item_bottom_in(document: &Document, container: usize, item: usize) -> f32 {
 
 /// Grows the flex or grid `container` around its `item`, whose margin box
 /// ended at `before` and now ends at `after` in the coordinates of the
-/// container, while the items beside it keep their places (CSS
-/// Fragmentation 3 §4.4: the items that begin below the end of the item's
-/// row or line move down with that end, and the items stretched to the row
-/// stretch with it once the flow leaves the container). The container grows to hold its content, its ancestors
-/// grow to hold it, and `shifts` records the growth for the flow inside the
-/// container and after it (see [`BesideGrowth`]); `page` is the page the
-/// item now ends on.
+/// container, while the items beside it keep their places (see
+/// [`place_beside_growth`]). The items stretched to the row stretch with it
+/// once the flow leaves the container. Its ancestors grow to hold it, and
+/// `shifts` records the growth for the flow inside the container and after
+/// it (see [`BesideGrowth`]); `page` is the page the item now ends on.
 #[allow(clippy::too_many_arguments)]
 fn grow_container_beside_item(
     document: &mut super::context::LayoutSession<'_>,
@@ -11304,10 +11302,83 @@ fn grow_container_beside_item(
     body_id: usize,
     container: usize,
     item: usize,
-    (before, after): (f32, f32),
+    ends: (f32, f32),
     shifts: &mut SubtreeShifts,
     (flow_page, page): (u32, u32),
 ) {
+    // Grid areas are where layout put the items, before the growths that
+    // moved them down.
+    let moved = |id| -> f32 {
+        shifts
+            .beside
+            .iter()
+            .filter(|growth| growth.container == container && growth.later.contains(&id))
+            .map(|growth| growth.later_shift)
+            .sum()
+    };
+    let Some(placed) = place_beside_growth(
+        document, cascade, body_id, container, item, ends, 0.0, moved,
+    ) else {
+        return;
+    };
+    if placed.growth > 0.001 {
+        grow_ancestors_for_shift(
+            document,
+            cascade,
+            container,
+            placed.growth,
+            body_id,
+            shifts,
+            flow_page,
+            &IfcBoxShifts::default(),
+        );
+    }
+    shifts.beside.push(BesideGrowth {
+        container,
+        later: placed.later,
+        row: placed.row,
+        later_shift: placed.later_shift,
+        inside_later: None,
+        growth: placed.growth,
+        page,
+    });
+}
+
+/// How [`place_beside_growth`] moved the items of a flex or grid container
+/// after one of them grew.
+struct BesidePlacement {
+    /// The items that begin below the grown one, on later rows or lines.
+    later: HashSet<usize>,
+    /// The items on the grown one's row or line, with whether each stretches
+    /// to the height of the row and the relative offset that layout applied
+    /// to it.
+    row: Vec<(usize, bool, f32)>,
+    /// How far the end of the grown item's row or line moved.
+    later_shift: f32,
+    /// How much the container grew.
+    growth: f32,
+}
+
+/// Moves the items of the flex or grid `container` around its `item`, whose
+/// margin box ended at `before` and now ends at `after` in the coordinates of
+/// the container, while the items beside it keep their places (CSS
+/// Fragmentation 3 §4.4: the items that begin below the end of the item's
+/// row or line move down with that end), and grows the container to hold
+/// its content. `moved` tells how far earlier growths moved an item from the
+/// grid area layout gave it, and `item_moved` how far the item itself moved
+/// down whole with its growth. `None` when the item's rows have a set size
+/// or the end of its row or line stays.
+#[allow(clippy::too_many_arguments)]
+fn place_beside_growth(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    container: usize,
+    item: usize,
+    (before, after): (f32, f32),
+    item_moved: f32,
+    moved: impl Fn(usize) -> f32,
+) -> Option<BesidePlacement> {
     let mut later = HashSet::default();
     // Rows are found and measured in normal flow: a relative offset only moves
     // the paint of an item.
@@ -11322,23 +11393,13 @@ fn grow_container_beside_item(
         item_offset,
     )];
     let mut row_end = before;
-    // Grid areas are where layout put the items, before the growths that
-    // moved them down.
-    let moved = |shifts: &SubtreeShifts, id| -> f32 {
-        shifts
-            .beside
-            .iter()
-            .filter(|growth| growth.container == container && growth.later.contains(&id))
-            .map(|growth| growth.later_shift)
-            .sum()
-    };
     let grid_area = grid_item_area(document, container, item);
     if let Some((area, area_end)) = grid_area {
-        let area_end = area_end + moved(shifts, item);
+        let area_end = area_end + moved(item);
         // Rows of a set size do not grow, and an item that still fits the
         // rows it spans, stretched or not, leaves them as they are.
         if !area.grows {
-            return;
+            return None;
         }
         row_end = row_end.max(area_end);
     }
@@ -11348,7 +11409,8 @@ fn grow_container_beside_item(
     let item_top =
         pagination_child_parent_y(document, container, item, document.pagination_local_y(item))
             - document.nodes[item].layout.margin.top
-            - item_offset;
+            - item_offset
+            - item_moved;
     let mut placed = Vec::new();
     for child in document.children_through_contents(container) {
         let node = &document.nodes[child];
@@ -11386,7 +11448,7 @@ fn grow_container_beside_item(
             later.insert(child.id);
             // A stretched row ends below the item in it.
             let area_end = grid_item_area(document, container, child.id)
-                .map_or(f32::NEG_INFINITY, |(_, end)| end + moved(shifts, child.id));
+                .map_or(f32::NEG_INFINITY, |(_, end)| end + moved(child.id));
             later_end = later_end.max(child.bottom).max(area_end);
         } else if child.bottom > item_top + 0.001
             && (grid_area.is_none() || same_line.contains(&child.id))
@@ -11403,7 +11465,7 @@ fn grow_container_beside_item(
     }
     let later_shift = (after - row_end).max(0.0);
     if later_shift <= 0.001 {
-        return;
+        return None;
     }
     for &child in &later {
         document.translate_pagination_y(child, later_shift);
@@ -11427,26 +11489,13 @@ fn grow_container_beside_item(
     if growth > 0.001 {
         document.nodes[container].layout.size.height += growth;
         document.mark_pagination_extent_dirty(container);
-        grow_ancestors_for_shift(
-            document,
-            cascade,
-            container,
-            growth,
-            body_id,
-            shifts,
-            flow_page,
-            &IfcBoxShifts::default(),
-        );
     }
-    shifts.beside.push(BesideGrowth {
-        container,
+    Some(BesidePlacement {
         later,
         row,
         later_shift,
-        inside_later: None,
         growth,
-        page,
-    });
+    })
 }
 
 /// The rows that `item` spans in the grid `container`, and where its grid
@@ -12807,24 +12856,6 @@ fn stacks_item_alone_in_its_rows(
                 } else {
                     other_start >= end
                 }
-            })
-    })
-}
-
-/// Whether every in-flow item of `grid` is alone in its rows as
-/// [`stacks_item_alone_in_its_rows`] tells: each starts in a row at or below
-/// the end of the rows of the item before it.
-fn grid_items_stack(document: &super::context::LayoutSession<'_>, grid: usize) -> bool {
-    let Some(rows) = stacking_grid_rows(document, grid) else {
-        return false;
-    };
-    let mut floor = 0;
-    document.nodes[grid].children.iter().all(|&child| {
-        !is_in_flow_grid_item_for_pagination(document, child)
-            || rows.get(&child).is_some_and(|&(start, end)| {
-                let below = start >= floor;
-                floor = end;
-                below
             })
     })
 }
