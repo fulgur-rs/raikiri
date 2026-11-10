@@ -408,7 +408,7 @@ pub(super) fn keep(
                     // except a horizontal flex or grid container, whose items
                     // grow it and move the items after them.
                     pending.extend(
-                        growing_items(document, env.cascade, node)
+                        growing_items(document, env.cascade, env.body_id, node)
                             .into_iter()
                             .rev()
                             .map(Event::Box),
@@ -545,6 +545,7 @@ fn follows_block(document: &Document, root: usize, line: usize) -> bool {
 fn growing_items(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     node: usize,
 ) -> Vec<usize> {
     let display = document.nodes[node].display();
@@ -571,11 +572,14 @@ fn growing_items(
         })
         .collect();
     // Items placed on rows or lines out of source order, by grid placement
-    // or reversed wrapping, are kept in the order of their tops, so that the
-    // rows and lines above an item settle before it.
+    // or reversed wrapping, are kept in the order of their tops in normal
+    // flow, so that the rows and lines above an item settle before it: a
+    // relative offset only moves the paint of an item.
     items.sort_by(|&a, &b| {
         let top = |item: usize| {
-            document.pagination_local_y(item) - document.nodes[item].layout.margin.top
+            document.pagination_local_y(item)
+                - document.nodes[item].layout.margin.top
+                - layout_relative_offset_y(document, cascade, body_id, item)
         };
         top(a).total_cmp(&top(b))
     });

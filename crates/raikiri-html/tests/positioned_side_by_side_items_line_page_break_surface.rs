@@ -219,6 +219,19 @@ fn positioned_later_rows_and_lines_follow_the_row_end() {
                 (3, 'Z', 5),
             ],
         ),
+        // A relative offset moves only the paint of an item, not its row.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:grid;grid-template-columns:20px 20px'><p style='margin:0;orphans:1;widows:1;position:relative;top:100px'>X X X</p><div>Y</div><p style='margin:0;orphans:1;widows:1'>Z Z Z</p></div>",
+            &[
+                (1, 'Y', 55),
+                (2, 'X', 55),
+                (2, 'Z', 65),
+                (3, 'X', 5),
+                (3, 'X', 35),
+                (3, 'Z', 5),
+                (3, 'Z', 35),
+            ],
+        ),
     ]);
 }
 
