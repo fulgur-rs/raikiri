@@ -108,6 +108,38 @@ impl ChildPositions {
         node_id: usize,
         page_start: f32,
     ) -> bool {
+        self.begins_page_below(document, cascade, body_id, node_id, page_start, false)
+    }
+
+    /// Whether the page that starts at `page_start` holds nothing above
+    /// `node_id` but the leading edges of the plain blocks around it, as
+    /// [`Self::begins_page_below_leading_edges`] tells, where empty boxes at
+    /// the very start of the page count as nothing either, and a flex or grid
+    /// container starts with its only item when nothing of the container
+    /// lies above it. Moving such a box to the next page gains it no room: an
+    /// unforced break there would leave nothing on this page but those empty
+    /// boxes and the edges, so the page breaks between the box's lines
+    /// instead.
+    pub(super) fn gains_nothing_from_next_page(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+        page_start: f32,
+    ) -> bool {
+        self.begins_page_below(document, cascade, body_id, node_id, page_start, true)
+    }
+
+    fn begins_page_below(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+        page_start: f32,
+        past_empty_starts: bool,
+    ) -> bool {
         let positions = &mut self.positions;
         #[cfg(test)]
         let indexed_children = &mut self.indexed_children;
@@ -117,6 +149,7 @@ impl ChildPositions {
             body_id,
             node_id,
             page_start,
+            past_empty_starts,
             |parent, child| {
                 positions
                     .entry(parent)
@@ -154,13 +187,16 @@ enum Before {
 /// What the children of `parent` render before `child` on the page that starts
 /// at `page_start`. White space, boxes that generate nothing, out-of-flow
 /// boxes, and floats that start the page or lie on an earlier one are not
-/// content. The nearest of the others decides.
+/// content. With `past_empty_starts`, neither are block boxes of no height at
+/// the page start and elements without a box that hold nothing, when the
+/// child itself starts at the page start. The nearest of the others decides.
 fn before_child(
     document: &Document,
     cascade: &CascadeResult,
     parent: usize,
     page_start: f32,
     child_index: Option<usize>,
+    past_empty_starts: bool,
 ) -> Before {
     let siblings = document.nodes[parent].layout_children();
     // A child that its parent does not list is held by a box the parent does
@@ -168,6 +204,11 @@ fn before_child(
     let Some(index) = child_index else {
         return Before::Other;
     };
+    // Empty boxes count as nothing only while the child starts right at the
+    // page start: a margin they leave above it is room a break there would
+    // truncate.
+    let skip_empty = past_empty_starts
+        && (current_abs_y(document, siblings[index]) - page_start).abs() <= EDGE_TOLERANCE;
     for &sibling in siblings[..index].iter().rev() {
         // Only boxes have a position to read.
         let span = || {
@@ -185,6 +226,14 @@ fn before_child(
                     }
                 }
             }
+            // An element without a box that holds nothing that renders is
+            // as empty as a box of no height.
+            FlowBox::Contents
+                if skip_empty
+                    && document.nodes[sibling]
+                        .children
+                        .iter()
+                        .all(|&child| !super::sibling_renders(document, child)) => {}
             FlowBox::Contents => return Before::Other,
             FlowBox::Box => {
                 let block_box = document.nodes[sibling].kind() == NodeKind::Element
@@ -192,6 +241,12 @@ fn before_child(
                     && !has_unusual_coordinates(document, sibling);
                 return if block_box {
                     let (top, bottom) = span();
+                    if skip_empty
+                        && (top - page_start).abs() <= EDGE_TOLERANCE
+                        && (bottom - page_start).abs() <= EDGE_TOLERANCE
+                    {
+                        continue;
+                    }
                     Before::Ends { top, bottom }
                 } else {
                     Before::Other
@@ -214,12 +269,43 @@ fn holds_first_child(document: &Document, cascade: &CascadeResult, parent: usize
             && !has_unusual_coordinates(document, parent))
 }
 
+/// Whether `child` is the only in-flow item of the flex or grid container
+/// `parent`, a box of the normal flow with no padding or border above the
+/// item, and starts at the top of the container. A page that starts with the container then starts with
+/// the item, and gains it no room by breaking before it. Padding or border
+/// above the item is content the page can break after, unlike that of a
+/// plain block, which goes with its first child.
+fn starts_as_sole_item(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    child: usize,
+) -> bool {
+    let node = &document.nodes[parent];
+    let display = node.display();
+    display.is_flex_or_grid_container()
+        && !is_floating_box_for_pagination(document, cascade, parent)
+        && !has_unusual_coordinates(document, parent)
+        && node.layout.border.top + node.layout.padding.top <= EDGE_TOLERANCE
+        && node.layout_children().iter().all(|&sibling| {
+            sibling == child
+                || !super::sibling_renders(document, sibling)
+                || matches!(
+                    document.nodes[sibling].position(),
+                    super::PositionValue::Absolute | super::PositionValue::Fixed
+                )
+        })
+        && (current_abs_y(document, child) - current_abs_y(document, parent)).abs()
+            <= EDGE_TOLERANCE
+}
+
 fn begins_page_with_positions(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
     page_start: f32,
+    past_empty_starts: bool,
     mut child_position: impl FnMut(usize, usize) -> Option<usize>,
 ) -> bool {
     let mut child = node_id;
@@ -233,6 +319,7 @@ fn begins_page_with_positions(
                     parent,
                     page_start,
                     child_position(parent, child),
+                    past_empty_starts,
                 ) {
                     // The box lies on an earlier page. An empty one at the
                     // page start is on this page, so the break comes after it.
@@ -244,11 +331,18 @@ fn begins_page_with_positions(
                             && bottom <= page_start + EDGE_TOLERANCE,
                     ),
                     Before::Other => Some(false),
-                    // Nothing precedes the outermost block in the document. A
-                    // box that is that block itself is the first of the flow,
-                    // which no break opens a page for.
+                    // Nothing precedes the outermost block in the document,
+                    // or with `past_empty_starts` only empty boxes at the page
+                    // start do. A box that is that block itself is the first
+                    // of the flow, which no break opens a page for.
                     Before::Nothing if parent == body_id => Some(child != node_id),
-                    Before::Nothing if !holds_first_child(document, cascade, parent) => Some(false),
+                    Before::Nothing
+                        if !(holds_first_child(document, cascade, parent)
+                            || past_empty_starts
+                                && starts_as_sole_item(document, cascade, parent, child)) =>
+                    {
+                        Some(false)
+                    }
                     Before::Nothing => None,
                 };
                 child = parent;
