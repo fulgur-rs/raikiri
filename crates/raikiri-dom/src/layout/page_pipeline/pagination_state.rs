@@ -615,6 +615,7 @@ impl PaginationState {
                 })
             });
         text.effective_y -= relative_offset;
+        self.reach_paragraph_page(document, env, candidate, entry, &blocks, &text)?;
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
@@ -2113,6 +2114,72 @@ impl PaginationState {
                 || lines_can_shift_above_blocks(document, cascade, block_id))
     }
 
+    /// Takes the flow to the page the boxes of the paragraph that holds
+    /// `candidate` start on. A paragraph before it in the same block whose
+    /// last line started the next page exactly leaves the flow on the page
+    /// before, where nothing of this paragraph is: neither its lines nor the
+    /// top edges of the boxes it begins. Its lines are judged from the page
+    /// after, as a box that starts there is.
+    fn reach_paragraph_page(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        blocks: &LineBlocks,
+        text: &TextPosition,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            root_flow_offset,
+            ..
+        } = *env;
+        let page_end =
+            page_origins.origin(self.current_page) + page_origins.step_at(self.current_page);
+        let Some((block_id, nested)) = blocks
+            .block
+            .or(blocks.flex_line.map(|(root, _)| (root, true)))
+            .or(blocks.column_paragraph.map(|root| (root, true)))
+            .filter(|_| {
+                text.effective_y >= page_end - 0.001
+                    && !entry.uses_positioned_coordinates
+                    && !candidate.context.is_float_descendant()
+                    && !candidate.context.is_out_of_flow_descendant()
+            })
+        else {
+            return Ok(());
+        };
+        let block_top = block_effective_y(
+            document,
+            block_id,
+            candidate.raw_y,
+            text.effective_y,
+            root_flow_offset,
+            self.flow_shift,
+        );
+        let lead = if nested {
+            let holder = first_box_ancestor_at_start(
+                document,
+                cascade,
+                block_id,
+                body_id,
+                page_origins.origin(self.current_page),
+            );
+            lead_below_ancestor(document, cascade, body_id, block_id, holder)
+        } else {
+            0.0
+        };
+        let page = page_origins.page_index_for_y(block_top - lead + 0.001);
+        if page > self.current_page {
+            reach_page(control, page)?;
+            self.current_page = page;
+        }
+        Ok(())
+    }
+
     /// Pushes the fixed-height block whose first line would straddle the end
     /// of the page `text` is on to the next page as a unit. This matches
     /// normal block fragmentation for monolithic content while leaving
@@ -2272,33 +2339,6 @@ impl PaginationState {
                 return Ok(());
             }
             let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id);
-            // The page the lines are judged from. A paragraph before them in
-            // the same block whose last line started the next page exactly
-            // leaves the flow on the page before, where nothing of this
-            // paragraph is: neither its lines nor the top edges of the boxes
-            // it begins. They are judged from the page those boxes start on.
-            let mut page = {
-                let page_start = page_origins.origin(self.current_page);
-                let block_top = block_effective_y(
-                    document,
-                    block_id,
-                    candidate.raw_y,
-                    text.effective_y - text.first_line_shift,
-                    root_flow_offset,
-                    self.flow_shift,
-                );
-                let holder_top = block_top
-                    - if nested {
-                        let holder = first_box_ancestor_at_start(
-                            document, cascade, block_id, body_id, page_start,
-                        );
-                        lead_below_ancestor(document, cascade, body_id, block_id, holder)
-                    } else {
-                        0.0
-                    };
-                self.current_page
-                    .max(page_origins.page_index_for_y(holder_top + 0.001))
-            };
             // The break that keeps the last lines with the padding and border
             // that close the boxes around the paragraph, on `page`.
             let closing_edges = candidate.context.lines_closing_edges();
@@ -2329,14 +2369,14 @@ impl PaginationState {
                         root_flow_offset,
                         self.flow_shift,
                     );
-                    let page_start = page_origins.origin(page);
+                    let page_start = page_origins.origin(self.current_page);
                     let lead = lead_below_edges(document, cascade, body_id, block_id)
                         .map(|(_, lead)| lead)
                         .filter(|lead| block_top - lead >= page_start - 0.001)
                         .unwrap_or(0.0);
                     (content - lines).abs() > 0.5
                         || lead + layout.border.top + layout.padding.top + lines + closing_edges
-                            <= page_origins.step_at(page) + 0.001
+                            <= page_origins.step_at(self.current_page) + 0.001
                 };
             let closing_edges_break =
                 |line_metrics: &[(f32, f32)], widows: i32, page: u32, effective_y: f32| {
@@ -2370,7 +2410,7 @@ impl PaginationState {
                 // The padding and border that close the blocks around the
                 // paragraph stay with its last lines.
                 if let Some(moved) =
-                    closing_edges_break(&line_metrics, widows, page, text.effective_y)
+                    closing_edges_break(&line_metrics, widows, self.current_page, text.effective_y)
                 {
                     return self.move_lines(
                         document,
@@ -2410,6 +2450,7 @@ impl PaginationState {
             let edges_follow_moved_lines = !lines_can_move
                 || own_closing_edges <= 0.0
                 || lines_move_grows_box(document, block_id);
+            let mut page = self.current_page;
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;

@@ -114,6 +114,29 @@ fn a_line_crossing_the_page_end_starts_the_next_page() {
 #[test]
 fn orphans_and_widows_move_lines_on_that_page() {
     assert_rows(&[
+        // The orphans of a paragraph that a padded box begins move the box.
+        (
+            "<div style='padding-top:30px'><p style='margin:0;orphans:2;widows:1'>X X X</p></div>",
+            &[
+                (0, 'X', 75),
+                (1, 'X', 5),
+                (2, 'X', 35),
+                (2, 'X', 65),
+                (3, 'X', 5),
+                (3, 'Z', 35),
+            ],
+        ),
+        // A paragraph that avoids a break inside it and fits a page moves whole.
+        (
+            "<p style='margin:0;orphans:1;widows:1;break-inside:avoid;padding-bottom:20px'>X X</p>",
+            &[
+                (0, 'X', 75),
+                (1, 'X', 5),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (3, 'Z', 5),
+            ],
+        ),
         (
             "<p style='margin:0;orphans:3;widows:1'>X X X X</p>",
             &[
