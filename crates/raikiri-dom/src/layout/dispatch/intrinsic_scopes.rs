@@ -1,8 +1,8 @@
 use super::*;
 use crate::layout::cache_context::SavedLayoutCache;
 use raikiri_layout_style::values::{
-    AlignItems, AlignItemsKeyword, BoxSizing, Dimension, ExpandedDimension, LengthPercentageAuto,
-    ResolveOrZero,
+    AlignItems, AlignItemsKeyword, BoxSizing, Dimension, ExpandedDimension,
+    ExpandedLengthPercentage, LengthPercentageAuto, ResolveOrZero,
 };
 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
@@ -457,6 +457,22 @@ pub(super) fn with_hypothetical_column_main_size(
         }
         return layout(tree, inputs);
     }
+    // The main size of a wrapping column depends on its content here, so a
+    // percentage of it in the gap between the items resolves against zero in
+    // every pass.
+    if wraps && let Some(gap) = cyclic_main_gap(tree, idx) {
+        return with_saved_probe_caches(tree, 0, |tree, _| {
+            tree.push_local_overrides(vec![gap]);
+            with_hypothetical_column_main_size(
+                tree,
+                node_id,
+                inputs,
+                main_size_is_definite,
+                vertical,
+                layout,
+            )
+        });
+    }
     let items = tree
         .child_ids(node_id)
         .map(usize::from)
@@ -583,6 +599,28 @@ pub(super) fn with_hypothetical_column_main_size(
     *main_mut(&mut inputs.known_dimensions, vertical) = Some(main);
     *main_mut(&mut inputs.known_dimensions_are_definite, vertical) = false;
     layout(tree, inputs)
+}
+
+/// The gap between the items of the column flex container `idx` along its
+/// main axis, resolved against a main size of zero, when it is a percentage
+/// of that size.
+fn cyclic_main_gap(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+) -> Option<(crate::node::arena::BoxKey, O)> {
+    let gap = tree.physical_style(idx).gap().height;
+    let cyclic = match gap.expand() {
+        ExpandedLengthPercentage::Percent(_) => true,
+        ExpandedLengthPercentage::Calc(value) => value.has_percentage(),
+        _ => false,
+    };
+    cyclic.then(|| {
+        (
+            tree.nodes.box_key(idx).expect("flex container box key"),
+            O::length(P::RowGap, L::Px(gap.resolve_or_zero(Some(0.0))), true)
+                .expect("resolved row gap"),
+        )
+    })
 }
 
 /// The width of `size` where `horizontal` is set, and its height otherwise.
