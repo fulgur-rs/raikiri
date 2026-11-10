@@ -229,9 +229,9 @@ fn positioned_rows_not_sized_by_their_content_hold_the_moved_lines() {
 }
 
 #[test]
-fn positioned_column_flex_items_in_one_column_stack() {
-    // The items after the grown one in its column follow it; the items of
-    // another column stay.
+fn positioned_column_flex_items_break_between_their_lines() {
+    // The items after the grown one in its column follow it, and an item in
+    // another column stays.
     assert_rows(&[
         (
             "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-direction:column'><p style='margin:0;orphans:1;widows:1'>X X X</p><p style='margin:0'>Z</p></div>",

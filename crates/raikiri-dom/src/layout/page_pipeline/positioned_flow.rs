@@ -88,6 +88,10 @@ pub(super) fn changed_owners(
         .collect()
 }
 
+/// A flex or grid container and the items on a row or line of it that grew,
+/// with whether each stretches to the row and its relative offset.
+type GrownRow = (usize, Vec<(usize, bool, f32)>);
+
 pub(super) struct HeightFollowers {
     owners: HashMap<usize, Vec<usize>>,
     static_owners: HashMap<usize, Vec<usize>>,
@@ -99,7 +103,7 @@ pub(super) struct HeightFollowers {
     beside_moves: std::cell::RefCell<HashMap<usize, f32>>,
     /// The rows of flex or grid containers whose items grew, to stretch once
     /// the box is kept (see [`stretch_row_items`]).
-    grown_rows: std::cell::RefCell<Vec<(usize, Vec<(usize, bool, f32)>)>>,
+    grown_rows: std::cell::RefCell<Vec<GrownRow>>,
 }
 
 impl HeightFollowers {
@@ -521,9 +525,9 @@ fn follows_block(document: &Document, root: usize, line: usize) -> bool {
 /// The in-flow items of the horizontal flex or grid container `node`, in
 /// the order of their rows or lines, whose growth the container follows: an
 /// item alone in it, or in its rows, grows it as a block's child grows the
-/// block, and an item beside others in a row flex or a grid moves the rows or
-/// lines after it (see [`grow_inside`]). None for other containers, or when a
-/// `display: contents` child holds items.
+/// block, and an item beside others moves the items that begin below it (see
+/// [`grow_inside`]). None for other containers, or when a `display:
+/// contents` child holds items.
 fn growing_items(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -541,7 +545,7 @@ fn growing_items(
     {
         return Vec::new();
     }
-    let items: Vec<usize> = pagination_child_order_borrowed(document, cascade, node)
+    pagination_child_order_borrowed(document, cascade, node)
         .iter()
         .copied()
         .filter(|&child| {
@@ -551,28 +555,7 @@ fn growing_items(
                 is_in_flow_grid_item_for_pagination(document, child)
             }
         })
-        .collect();
-    // The items of a column flex container that all sit in one column stack
-    // there; columns set side by side are not ordered by the block axis.
-    let span = |item: usize| {
-        let layout = &document.nodes[item].layout;
-        (layout.location.x, layout.location.x + layout.size.width)
-    };
-    let one_column = items.first().is_none_or(|&first| {
-        let (start, end) = span(first);
-        items.iter().all(|&item| {
-            let (item_start, item_end) = span(item);
-            item_start < end + 0.001 && item_end > start - 0.001
-        })
-    });
-    if display.is_grid_container()
-        || document.physical_style(node).flex_direction_is_row()
-        || one_column
-    {
-        items
-    } else {
-        Vec::new()
-    }
+        .collect()
 }
 
 fn keep_run(
