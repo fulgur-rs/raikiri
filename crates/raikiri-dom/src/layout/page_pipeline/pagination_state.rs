@@ -2139,10 +2139,11 @@ impl PaginationState {
         } = *env;
         let page_end =
             page_origins.origin(self.current_page) + page_origins.step_at(self.current_page);
-        let Some((block_id, nested)) = blocks
+        let Some(block_id) = blocks
             .block
-            .or(blocks.flex_line.map(|(root, _)| (root, true)))
-            .or(blocks.column_paragraph.map(|root| (root, true)))
+            .map(|(block, _)| block)
+            .or(blocks.flex_line.map(|(root, _)| root))
+            .or(blocks.column_paragraph)
             .filter(|_| {
                 text.effective_y >= page_end - 0.001
                     && !entry.uses_positioned_coordinates
@@ -2160,18 +2161,16 @@ impl PaginationState {
             root_flow_offset,
             self.flow_shift,
         );
-        let lead = nested
-            .then(|| {
-                let holder = first_box_ancestor_at_start(
-                    document,
-                    cascade,
-                    block_id,
-                    body_id,
-                    page_origins.origin(self.current_page),
-                );
-                lead_below_ancestor(document, cascade, body_id, block_id, holder)
-            })
-            .unwrap_or(0.0);
+        // The boxes that start with the paragraph and their top edges come
+        // before its lines; a paragraph in the body starts nothing but itself.
+        let holder = first_box_ancestor_at_start(
+            document,
+            cascade,
+            block_id,
+            body_id,
+            page_origins.origin(self.current_page),
+        );
+        let lead = lead_below_ancestor(document, cascade, body_id, block_id, holder);
         let page = page_origins.page_index_for_y(block_top - lead + 0.001);
         if page > self.current_page {
             reach_page(control, page)?;
