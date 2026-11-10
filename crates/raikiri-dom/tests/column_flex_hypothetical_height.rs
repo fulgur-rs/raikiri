@@ -2028,6 +2028,63 @@ fn a_wrapping_column_with_a_negative_margin_and_items_sized_by_its_cross_size_ke
 }
 
 #[test]
+fn a_negative_margin_that_ends_a_column_above_an_earlier_item_keeps_its_height_on_the_page() {
+    // The height of the column is the sum of the outer sizes of its items, so
+    // a negative margin on the last item can end it above the bottom of an
+    // earlier one. That item overflows the column on the page as well.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;",
+            &[
+                ("flex:0 0 40px", "xx"),
+                ("flex:0 0 30px", "xx"),
+                ("flex:0 0 20px;margin-bottom:-40px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 20.0, 50.0]),
+                ("i0", [0.0, 100.0, 20.0, 40.0]),
+                ("i1", [0.0, 140.0, 20.0, 30.0]),
+                ("i2", [0.0, 170.0, 20.0, 20.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;max-height:100px;",
+            &[
+                ("width:0;min-width:0;flex:0 0 40px", "xx"),
+                ("width:0;min-width:0;flex:0 0 30px", "xx"),
+                (
+                    "width:0;min-width:0;flex:0 0 20px;margin-bottom:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 0.0, 50.0]),
+                ("i0", [0.0, 100.0, 0.0, 40.0]),
+                ("i1", [0.0, 140.0, 0.0, 30.0]),
+                ("i2", [0.0, 170.0, 0.0, 20.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:flex;flex-direction:column;",
+            &[
+                ("flex:0 0 40px", "xx"),
+                ("flex:0 0 30px", "xx"),
+                ("flex:0 0 20px;margin-bottom:-21px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 800.0, 69.0]),
+                ("i0", [0.0, 100.0, 800.0, 40.0]),
+                ("i1", [0.0, 140.0, 800.0, 30.0]),
+                ("i2", [0.0, 170.0, 800.0, 20.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
 fn a_raised_wrapping_column_of_one_line_leaves_item_percentages_of_children_unresolved() {
     // A minimum makes the column taller than its one line, but its height
     // still depends on the content, so the flexed height of an item is not
