@@ -2160,18 +2160,18 @@ impl PaginationState {
             root_flow_offset,
             self.flow_shift,
         );
-        let lead = if nested {
-            let holder = first_box_ancestor_at_start(
-                document,
-                cascade,
-                block_id,
-                body_id,
-                page_origins.origin(self.current_page),
-            );
-            lead_below_ancestor(document, cascade, body_id, block_id, holder)
-        } else {
-            0.0
-        };
+        let lead = nested
+            .then(|| {
+                let holder = first_box_ancestor_at_start(
+                    document,
+                    cascade,
+                    block_id,
+                    body_id,
+                    page_origins.origin(self.current_page),
+                );
+                lead_below_ancestor(document, cascade, body_id, block_id, holder)
+            })
+            .unwrap_or(0.0);
         let page = page_origins.page_index_for_y(block_top - lead + 0.001);
         if page > self.current_page {
             reach_page(control, page)?;
