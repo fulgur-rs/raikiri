@@ -768,3 +768,406 @@ fn a_percentage_bound_has_no_effect_in_a_block_of_open_height() {
         ],
     );
 }
+
+/// One case: the style of a block around the container, the container style,
+/// each item as `(style, content)`, and the border boxes Chromium gives the
+/// container `c` and its items `i0`, `i1`, ...
+type Case<'a> = (
+    &'a str,
+    &'a str,
+    &'a [(&'a str, &'a str)],
+    &'a [(&'a str, [f32; 4])],
+);
+
+#[track_caller]
+fn assert_cases(cases: &[Case<'_>]) {
+    for (parent, container, items, expected) in cases {
+        let items: String = items
+            .iter()
+            .enumerate()
+            .map(|(i, (style, text))| item(&format!("i{i}"), style, text))
+            .collect();
+        let body =
+            format!("<div style=\"{parent}\"><div id=c style=\"{container}\">{items}</div></div>");
+        assert_boxes(&body, expected);
+    }
+}
+
+#[test]
+fn a_wrapping_column_is_as_tall_as_its_longest_line_of_flex_bases() {
+    // The items grow, but the height of the container is the sum of their
+    // flex base sizes on its longest line, with its lines broken at its
+    // `max-height`. A growing item then fills that height in its line.
+    assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 120.0]),
+                ("i0", [0.0, 0.0, 30.0, 40.0]),
+                ("i1", [0.0, 40.0, 30.0, 50.0]),
+                ("i2", [0.0, 90.0, 30.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;max-height:70px;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 60.0, 50.0]),
+                ("i0", [0.0, 0.0, 30.0, 50.0]),
+                ("i1", [30.0, 0.0, 20.0, 50.0]),
+                ("i2", [50.0, 0.0, 10.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap-reverse;max-height:70px;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 60.0, 50.0]),
+                ("i0", [30.0, 0.0, 30.0, 50.0]),
+                ("i1", [10.0, 0.0, 20.0, 50.0]),
+                ("i2", [0.0, 0.0, 10.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;min-height:100px;max-height:110px;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 30.0, 100.0]),
+                ("i0", [0.0, 0.0, 30.0, 45.0]),
+                ("i1", [0.0, 45.0, 30.0, 55.0]),
+                ("i2", [30.0, 0.0, 10.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;min-height:60px;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xxxx"),
+                ("writing-mode:vertical-rl;flex:2 0 30px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 70.0]),
+                ("i0", [0.0, 0.0, 20.0, 40.0]),
+                ("i1", [0.0, 40.0, 20.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 auto", "xx"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 100.0]),
+                ("i0", [0.0, 0.0, 20.0, 20.0]),
+                ("i1", [0.0, 20.0, 20.0, 50.0]),
+                ("i2", [0.0, 70.0, 20.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:flex;width:max-content;flex-direction:column;flex-wrap:wrap;max-height:45px;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xxxx"),
+                ("writing-mode:vertical-rl;flex:2 0 30px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 30.0, 40.0]),
+                ("i0", [0.0, 0.0, 10.0, 40.0]),
+                ("i1", [10.0, 0.0, 20.0, 40.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_vertical_column_is_as_wide_as_its_flex_bases() {
+    // The main axis of a vertical column is horizontal: its width is the sum
+    // of the flex base sizes of its items, on its longest line where it wraps
+    // at its `max-width`.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:nowrap;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:horizontal-tb;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 120.0, 10.0]),
+                ("i0", [80.0, 100.0, 40.0, 10.0]),
+                ("i1", [30.0, 100.0, 50.0, 10.0]),
+                ("i2", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:nowrap;min-width:60px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx"),
+                ("writing-mode:horizontal-tb;flex:2 0 30px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 70.0, 10.0]),
+                ("i0", [30.0, 100.0, 40.0, 10.0]),
+                ("i1", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:flex;height:max-content;flex-direction:column;writing-mode:vertical-lr;flex-wrap:nowrap;min-width:100px;max-width:110px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 auto", "xx"),
+                ("writing-mode:horizontal-tb;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 100.0, 10.0]),
+                ("i0", [0.0, 100.0, 20.0, 10.0]),
+                ("i1", [20.0, 100.0, 50.0, 10.0]),
+                ("i2", [70.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;max-width:70px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:horizontal-tb;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 60.0]),
+                ("i0", [0.0, 100.0, 50.0, 30.0]),
+                ("i1", [0.0, 130.0, 50.0, 20.0]),
+                ("i2", [20.0, 150.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap-reverse;min-width:100px;max-width:110px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:horizontal-tb;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 100.0, 30.0]),
+                ("i0", [55.0, 100.0, 45.0, 30.0]),
+                ("i1", [0.0, 100.0, 55.0, 30.0]),
+                ("i2", [70.0, 90.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;writing-mode:vertical-lr;flex-wrap:wrap;max-width:45px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx"),
+                ("writing-mode:horizontal-tb;flex:2 0 30px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 40.0, 30.0]),
+                ("i0", [0.0, 100.0, 40.0, 10.0]),
+                ("i1", [0.0, 110.0, 40.0, 20.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:flex;height:max-content;flex-direction:column;writing-mode:vertical-lr;flex-wrap:wrap-reverse;max-width:70px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx xxxx xxxx"),
+                ("writing-mode:horizontal-tb;flex:1 0 50px", "xx xx xx xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 60.0]),
+                ("i0", [0.0, 130.0, 50.0, 30.0]),
+                ("i1", [0.0, 110.0, 50.0, 20.0]),
+                ("i2", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_wrapping_column_takes_bounded_bases_negative_margins_and_its_padding() {
+    // A `max-height` below the flex basis bounds the item's share of its
+    // line, a negative margin lowers it, and the padding and border of the
+    // container leave less room for its lines than its `max-height`.
+    assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;max-height:200px;",
+            &[
+                (
+                    "writing-mode:vertical-rl;flex:1 0 120px;max-height:80px",
+                    "xx xx",
+                ),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 110.0]),
+                ("i0", [0.0, 0.0, 10.0, 80.0]),
+                ("i1", [0.0, 80.0, 10.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;max-height:100px;",
+            &[
+                (
+                    "writing-mode:vertical-rl;flex:1 0 120px;max-height:30px",
+                    "xx",
+                ),
+                ("writing-mode:vertical-rl;flex:0 0 10px", "x"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 90.0]),
+                ("i0", [0.0, 0.0, 10.0, 30.0]),
+                ("i1", [0.0, 30.0, 10.0, 10.0]),
+                ("i2", [0.0, 40.0, 10.0, 50.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:vertical-rl;max-width:200px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:1 0 120px;max-width:80px",
+                    "xx xx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 110.0, 10.0]),
+                ("i0", [30.0, 100.0, 80.0, 10.0]),
+                ("i1", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap-reverse;writing-mode:vertical-rl;min-width:60px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:1 0 120px;max-width:30px",
+                    "xx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 10px", "x"),
+                ("writing-mode:horizontal-tb;flex:1 0 50px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 90.0, 10.0]),
+                ("i0", [60.0, 100.0, 30.0, 10.0]),
+                ("i1", [50.0, 100.0, 10.0, 10.0]),
+                ("i2", [0.0, 100.0, 50.0, 10.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;min-height:60px;",
+            &[
+                ("flex:1 0 120px;max-height:80px;overflow:hidden", "xx"),
+                ("flex:0 0 30px;overflow:hidden", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 110.0]),
+                ("i0", [0.0, 0.0, 20.0, 80.0]),
+                ("i1", [0.0, 80.0, 20.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;",
+            &[
+                ("flex:1 0 40px;margin-top:-50px;overflow:hidden", "xx"),
+                ("flex:0 0 30px;overflow:hidden", "xx"),
+            ],
+            &[
+                ("c", [0.0, 50.0, 20.0, 20.0]),
+                ("i0", [0.0, 0.0, 20.0, 40.0]),
+                ("i1", [0.0, 40.0, 20.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;min-height:60px;",
+            &[
+                ("flex:1 0 40px;margin-top:-50px;overflow:hidden", "xx"),
+                ("flex:0 0 30px;overflow:hidden", "xx"),
+            ],
+            &[
+                ("c", [0.0, 50.0, 20.0, 60.0]),
+                ("i0", [0.0, 0.0, 20.0, 80.0]),
+                ("i1", [0.0, 80.0, 20.0, 30.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:nowrap;writing-mode:vertical-rl;",
+            &[
+                ("flex:1 0 40px;margin-right:-50px;overflow:hidden", "xx"),
+                ("flex:0 0 30px;overflow:hidden", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 20.0, 20.0]),
+                ("i0", [30.0, 100.0, 40.0, 20.0]),
+                ("i1", [0.0, 100.0, 30.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;box-sizing:border-box;padding:10px 7px;border:3px solid;max-height:100px;",
+            &[
+                ("writing-mode:vertical-rl;flex:1 0 40px", "xx"),
+                ("writing-mode:vertical-rl;flex:1 0 50px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 800.0, 76.0]),
+                ("i0", [10.0, 13.0, 260.0, 50.0]),
+                ("i1", [270.0, 13.0, 260.0, 50.0]),
+                ("i2", [530.0, 13.0, 260.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:flex;flex-direction:column;flex-wrap:wrap;writing-mode:horizontal-tb;box-sizing:content-box;padding:10px 7px;border:3px solid;max-height:100px;",
+            &[
+                ("writing-mode:vertical-rl;flex:0 0 40px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 50px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 800.0, 116.0]),
+                ("i0", [10.0, 13.0, 390.0, 40.0]),
+                ("i1", [10.0, 53.0, 390.0, 50.0]),
+                ("i2", [400.0, 13.0, 390.0, 30.0]),
+            ],
+        ),
+    ]);
+}

@@ -389,7 +389,7 @@ fn nested_orthogonal_columns_do_not_remeasure_descendants_exponentially() {
 }
 
 #[test]
-fn an_unresolved_minimum_keeps_every_siblings_original_flex_basis() {
+fn an_unresolved_minimum_leaves_every_sibling_to_the_hypothetical_size_fallback() {
     use crate::layout::context::LayoutSession;
     use crate::layout::protocol::{LayoutInput, LayoutOutput, RequestedAxis, RunMode};
     use crate::layout::test_support::{cascaded, with_ahem};
@@ -399,10 +399,10 @@ fn an_unresolved_minimum_keeps_every_siblings_original_flex_basis() {
         "display:block;flex:0 0 120px;max-width:80px",
         "x",
     );
-    doc.append_element(
+    let second = doc.append_element(
         Some(container),
         "div",
-        Some("display:block;flex:0 0 40px;min-width:50%"),
+        Some("display:block;flex:0 0 40px;max-width:30px;min-width:50%"),
     );
     doc.mark_in_document_flags();
     with_ahem(&mut doc);
@@ -422,11 +422,16 @@ fn an_unresolved_minimum_keeps_every_siblings_original_flex_basis() {
         |tree, _, received| {
             calls.set(calls.get() + 1);
             assert_eq!(received, inputs);
+            // The fallback makes each item rigid at its basis bounded by its
+            // maximum, whatever minimum the item states.
             assert_eq!(
                 tree.physical_style(first).flex_basis(),
-                Dimension::length(120.0)
+                Dimension::length(80.0)
             );
-            assert_eq!(tree.override_checkpoint(), 0);
+            assert_eq!(
+                tree.physical_style(second).flex_basis(),
+                Dimension::length(30.0)
+            );
             LayoutOutput::HIDDEN
         },
     );
