@@ -1504,5 +1504,22 @@ fn a_minimum_that_raises_a_wrapping_column_leaves_item_percentages_unresolved() 
                 ("i2", [7.0, 107.0, 40.0, 10.0]),
             ],
         ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;box-sizing:border-box;padding:5px;border:2px solid;min-height:100px;position:relative;",
+            &[
+                ("flex:0 0 50%", "x"),
+                ("flex:0 0 50%", "x"),
+                ("position:absolute;top:0;left:0;height:50%", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 24.0, 100.0]),
+                ("i0", [7.0, 7.0, 10.0, 10.0]),
+                ("i1", [7.0, 17.0, 10.0, 10.0]),
+                // An absolutely positioned child resolves its percentage
+                // against the padding box the container ends up with.
+                ("i2", [2.0, 2.0, 10.0, 48.0]),
+            ],
+        ),
     ]);
 }
