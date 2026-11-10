@@ -904,18 +904,20 @@ fn wrapping_column_layout(
             // pass the limit inside a line whose total fits, so the line
             // breaks there although the whole line is no longer than the
             // limit. More lines make a container of content-sized cross
-            // size larger across.
+            // size larger across, by at least the gap between them, which
+            // these probes set to a pixel so that lines of items with no
+            // cross size still count. That gap does not move a line break.
             let (size, min_size, max_size) = if vertical {
                 (P::Height, P::MinHeight, P::MaxHeight)
             } else {
                 (P::Width, P::MinWidth, P::MaxWidth)
             };
-            let free_cross = [size, min_size, max_size].map(|property| {
-                (
-                    key,
-                    O::length(property, L::Auto, false).expect("content cross size"),
-                )
-            });
+            let free_cross = [size, min_size, max_size]
+                .map(|property| O::length(property, L::Auto, false).expect("content cross size"))
+                .into_iter()
+                .chain([O::length(P::ColumnGap, L::Px(1.0), true).expect("line gap")])
+                .map(|entry| (key, entry))
+                .collect::<Vec<_>>();
             let mut free_inputs = LayoutInput {
                 axis: RequestedAxis::Both,
                 ..probe_inputs
