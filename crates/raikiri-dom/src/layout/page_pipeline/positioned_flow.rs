@@ -854,14 +854,15 @@ fn static_position_at_block_start(
     use raikiri_layout_style::values::{AlignContentKeyword, AlignItemsKeyword};
     let container = document.physical_style(parent);
     if document.nodes[parent].display().is_flex_container() && !container.flex_direction_is_row() {
-        return container.flex_direction() == taffy::FlexDirection::Column
-            && matches!(
-                container.justify_content().keyword,
-                AlignContentKeyword::Normal
-                    | AlignContentKeyword::Start
-                    | AlignContentKeyword::FlexStart
-                    | AlignContentKeyword::Stretch
-            );
+        let distributed_from_start = matches!(
+            container.justify_content().keyword,
+            AlignContentKeyword::Normal
+                | AlignContentKeyword::Start
+                | AlignContentKeyword::FlexStart
+                | AlignContentKeyword::Stretch
+        );
+        return distributed_from_start
+            && container.flex_direction() == taffy::FlexDirection::Column;
     }
     let alignment = document
         .physical_style(node)
