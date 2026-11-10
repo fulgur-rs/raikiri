@@ -106,7 +106,7 @@ mod accounting {
 
     fn check(result: &CascadeResult, depth: usize) {
         assert_eq!(result.computed.len(), depth + 2);
-        for value in &result.computed[2..] {
+        for value in result.computed.iter().skip(2) {
             assert_eq!(value.width, ComputedLengthPercentageOrAuto::Px(7.0));
         }
     }

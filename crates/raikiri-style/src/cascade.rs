@@ -135,7 +135,7 @@ pub struct CascadeResult {
     /// so that layout and paint read one set of values for the root. Its
     /// descendants and the `@page` cascade inherit from the root's own
     /// values, and [`Self::cssom_computed`] reports them.
-    pub computed: Vec<ComputedValues>,
+    pub computed: ComputedStyles,
     /// Per-node flags indicating whether the cascade had an explicit
     /// `opacity` declaration for that node. Inline SVG painting uses this to
     /// decide whether source-root opacity belongs in the host paint group.
@@ -447,7 +447,7 @@ impl CascadeResult {
     pub fn cssom_computed(&self, index: usize) -> std::borrow::Cow<'_, ComputedValues> {
         match &self.root_own_flow {
             Some(own) if index == self.root_element_index => {
-                let mut values = self.computed[index].clone();
+                let mut values = ComputedValues::clone(&self.computed[index]);
                 own.restore(&mut values);
                 std::borrow::Cow::Owned(values)
             }
@@ -481,7 +481,7 @@ impl CascadeResult {
 
     /// The computed values of every node as CSSOM reports them, in place of
     /// [`Self::computed`]; see [`Self::cssom_computed`].
-    pub fn into_cssom_computed(mut self) -> Vec<ComputedValues> {
+    pub fn into_cssom_computed(mut self) -> ComputedStyles {
         if let Some(own) = self.root_own_flow.take() {
             own.restore(&mut self.computed[self.root_element_index]);
         }
@@ -579,7 +579,7 @@ impl CascadeResult {
             root_own_flow: root_own_flow.clone().filter(|_| root_kept),
             custom_highlight_styles: custom_highlight_styles.clone(),
             custom_highlight_sources: custom_highlight_sources.clone(),
-            computed: renumber(computed, old_of_new),
+            computed: computed.renumber(old_of_new),
             opacity_specified: renumber(opacity_specified, old_of_new),
             background_color_specified: renumber(background_color_specified, old_of_new),
             authored_writing_modes: renumber(authored_writing_modes, old_of_new),
@@ -598,7 +598,7 @@ impl CascadeResult {
 /// `display` is not `none`, else the root (CSS Writing Modes 4 §8, principal
 /// writing mode). Containment on the root or on that `body` stops the
 /// propagation (CSS Containment 2 §2).
-fn find_principal_element<D: StyleDom>(dom: &D, computed: &[ComputedValues], root: usize) -> usize {
+fn find_principal_element<D: StyleDom>(dom: &D, computed: &ComputedStyles, root: usize) -> usize {
     const XHTML: &str = "http://www.w3.org/1999/xhtml";
     let is_html = |id: StyleNodeId, name: &str| {
         dom.node(id)
@@ -894,6 +894,8 @@ pub(crate) mod all_spread;
 mod candidate;
 use candidate::OwnedCandidates;
 mod collect;
+mod computed_styles;
+pub use computed_styles::ComputedStyles;
 pub(crate) mod rollback;
 pub(crate) use collect::*;
 mod directionality;

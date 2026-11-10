@@ -11809,7 +11809,7 @@ fn ch_inside_calc_stays_rejected_for_properties_without_ch_provenance() {
 /// unshared walks.
 #[derive(Debug, PartialEq)]
 struct ComparedWalkOutputs {
-    computed: Vec<ComputedValues>,
+    computed: crate::cascade::ComputedStyles,
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
     pseudo: Vec<((u64, PseudoElem), crate::PseudoValueArc<ComputedValues>)>,

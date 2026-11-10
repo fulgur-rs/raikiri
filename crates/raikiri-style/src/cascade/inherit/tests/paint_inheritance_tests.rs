@@ -55,6 +55,7 @@ fn cached_donors_match_the_legacy_scan_including_export_order_and_missing_expres
     let mut computed = vec![ComputedValues::initial(); 8];
     computed[7].font_size = ComputedLength(20.0);
     computed[2].font_size = ComputedLength(30.0);
+    let styles = crate::cascade::ComputedStyles::from(computed.clone());
     let exported = HashMap::from([
         (
             ids[0],
@@ -114,7 +115,7 @@ fn cached_donors_match_the_legacy_scan_including_export_order_and_missing_expres
                     donors,
                     ancestors,
                     &exported,
-                    &computed,
+                    &styles,
                     font_size,
                 );
                 assert_eq!(
