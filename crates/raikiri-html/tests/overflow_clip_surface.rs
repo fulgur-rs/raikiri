@@ -540,6 +540,34 @@ fn lines_inside_a_clipping_parent_of_content_height_all_move() {
 }
 
 #[test]
+fn a_moved_clipping_box_keeps_the_clip_of_the_box_around_it() {
+    // The inner box moves to the second page with its paragraph and then
+    // ends past the outer box. The line that crosses the third page end
+    // stays across it when the outer clip shows its top on that page, and
+    // moves on to the fourth page when the clip ends past the page end; in
+    // Chromium's print the clip shows the same parts of that line.
+    let crossing_line_tops = |outer: u32| {
+        let result = laid_out(
+            &format!(
+                "<div style='width:20px;height:{outer}px;overflow:hidden'><div style='height:60px'></div><div style='height:220px;overflow:hidden'><p style='margin:0;orphans:2;widows:1'>X X X X X X X X X X X X</p></div></div><div style='height:30px'>Z</div>"
+            ),
+            "body{font:20px/30px Ahem}",
+        );
+        let page = result.page(3).unwrap();
+        let mut tops: Vec<i32> = page
+            .text_runs()
+            .into_iter()
+            .filter(|run| run.text.trim() == "X")
+            .map(|run| (run.origin.1 - run.ascent).round() as i32)
+            .collect();
+        tops.sort_unstable();
+        tops.first().copied()
+    };
+    assert_eq!(crossing_line_tops(298), Some(-5));
+    assert_eq!(crossing_line_tops(306), Some(5));
+}
+
+#[test]
 fn lines_in_a_clip_margin_past_the_box_stay_in_place() {
     // The clip margin keeps the lines past the box visible, but they are
     // overflow of the box and do not move: in Chromium the fourth line stays

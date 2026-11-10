@@ -2222,7 +2222,7 @@ impl PaginationState {
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(all_line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
-            let clip = clip_edges.get(&block_id).copied();
+            let clip = clip_edges.get(&block_id);
             let clipped = |document: &LayoutSession<'_>, effective_y: f32| {
                 clipped_line_metrics(
                     document,
@@ -3252,20 +3252,23 @@ fn clipped_line_metrics(
     document: &LayoutSession<'_>,
     page_origins: &PageOrigins,
     root_flow_offset: f32,
-    clip: Option<super::candidates::LineClip>,
+    clip: Option<&super::candidates::LineClip>,
     effective_y: f32,
     all_line_metrics: &[(f32, f32)],
     widows: i32,
 ) -> (Vec<(f32, f32)>, i32) {
     let mut line_metrics = all_line_metrics.to_vec();
-    // Only a box in the flow holds the lines that pagination moves here.
-    let Some((edge, owner, owner_raw_y)) =
-        clip.and_then(|clip| clip.owner.map(|(owner, raw_y)| (clip.edge, owner, raw_y)))
-    else {
+    // Only boxes in the flow hold the lines that pagination moves here; each
+    // one's end moves with it, so the nearest end now is the one that counts.
+    let Some(end) = clip.and_then(|clip| {
+        clip.owners
+            .iter()
+            .map(|&owner| current_abs_y(document, owner) + document.nodes[owner].layout.size.height)
+            .reduce(f32::min)
+    }) else {
         return (line_metrics, widows);
     };
-    let visible =
-        edge + root_flow_offset + current_abs_y(document, owner) - owner_raw_y - effective_y;
+    let visible = end + root_flow_offset - effective_y;
     let widows = if line_metrics
         .last()
         .is_some_and(|&(_, bottom)| bottom > visible + 0.001)
