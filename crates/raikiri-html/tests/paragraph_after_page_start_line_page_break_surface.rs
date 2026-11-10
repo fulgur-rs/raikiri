@@ -140,3 +140,32 @@ fn orphans_and_widows_move_lines_on_that_page() {
         ),
     ]);
 }
+
+#[test]
+fn closing_edges_stay_with_the_last_lines_on_that_page() {
+    assert_rows(&[(
+        "<p style='margin:0;orphans:1;widows:1;padding-bottom:20px'>X X</p>",
+        &[
+            (0, 'X', 75),
+            (1, 'X', 5),
+            (1, 'X', 35),
+            (2, 'X', 5),
+            (2, 'Z', 55),
+        ],
+    )]);
+    // The padding of the block around the paragraphs.
+    let body = format!(
+        "<div style='height:70px'></div><div style='width:20px;padding-bottom:20px'>{FIRST}<p style='margin:0;orphans:1;widows:1'>X X</p></div><div style='height:30px'>Z</div>"
+    );
+    assert_eq!(
+        glyph_tops(&body),
+        [
+            (0, 'X', 75),
+            (1, 'X', 5),
+            (1, 'X', 35),
+            (2, 'X', 5),
+            (2, 'Z', 55),
+        ],
+        "{body}"
+    );
+}
