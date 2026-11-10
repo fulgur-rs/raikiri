@@ -2853,13 +2853,23 @@ fn probe(
 /// Whether the box `idx` is a flex container that wraps its items onto lines
 /// of a vertical main axis, on the axes of a horizontal writing mode.
 pub(super) fn is_wrapping_column_flex(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    if tree.nodes[idx].formatting_context != FormattingContext::Flex
-        || tree.has_vertical_writing_mode(idx)
-    {
-        return false;
-    }
+    wraps_into_columns(tree, idx) && !tree.has_vertical_writing_mode(idx)
+}
+
+/// Whether the box `idx` is a flex container that wraps its items onto lines
+/// along its block axis in a vertical writing mode: lines whose main axis is
+/// horizontal, so that its width is its main size.
+pub(super) fn is_vertical_wrapping_column_flex(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    wraps_into_columns(tree, idx) && tree.has_vertical_writing_mode(idx)
+}
+
+/// Whether the box `idx` is a flex container whose items wrap onto lines along
+/// its block axis.
+fn wraps_into_columns(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let style = tree.physical_style(idx);
-    !style.flex_direction_is_row() && style.flex_wraps()
+    tree.nodes[idx].formatting_context == FormattingContext::Flex
+        && !style.flex_direction_is_row()
+        && style.flex_wraps()
 }
 
 /// The border-box min-content width of the flex container `node_id` when it

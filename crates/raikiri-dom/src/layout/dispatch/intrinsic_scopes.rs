@@ -44,6 +44,10 @@ pub(super) fn with_saved_probe_caches<R>(
 /// ([`with_flex_item_basis_bounds`]), as they are when the container is asked
 /// for its min-content or max-content width without this probe.
 ///
+/// The width of a vertical wrapping column container is its main size
+/// instead, which its lines fill up to its `max-width`: the probe keeps it,
+/// as it measures the width those lines take.
+///
 /// A container with no `max-width` has nothing to drop, and the probe leaves
 /// its style alone. A container with one drops it in a scope that keeps the
 /// cache generation ([`LayoutSession::push_local_overrides`]), so the sizes
@@ -64,7 +68,9 @@ pub(super) fn with_flex_intrinsic_probe<R>(
         .nodes
         .box_key(idx)
         .expect("intrinsic container has a box key");
-    let entries = if tree.physical_style(idx).max_size().width.is_auto() {
+    let entries = if tree.physical_style(idx).max_size().width.is_auto()
+        || super::content_limits::is_vertical_wrapping_column_flex(tree, idx)
+    {
         Vec::new()
     } else {
         vec![(
