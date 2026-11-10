@@ -16311,16 +16311,17 @@ fn moved_float_edge_keeps_the_block_start_margin_only_after_a_forced_break() {
 
 #[test]
 fn a_transition_target_keeps_only_the_offsets_its_break_allows() {
-    // A forced break keeps a positive margin and the table's lead, but not
-    // the relative offset.
+    // A forced break keeps a positive margin, the table's lead and the
+    // relative offset.
     assert_eq!(
         transition_target_y(100.0, 8.0, 3.0, 5.0, true, Some(7.0), true),
-        113.0
+        116.0
     );
-    // A negative margin after a forced break underflows into the page above.
+    // A negative margin after a forced break underflows into the page above,
+    // and the offset paints the box from there.
     assert_eq!(
         transition_target_y(100.0, -6.0, 3.0, 5.0, true, None, false),
-        94.0
+        97.0
     );
     // An unforced move truncates the margin and keeps the relative offset.
     assert_eq!(
@@ -18022,29 +18023,30 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
         flex_item: false,
         grid_item: false,
     };
-    // A forced break keeps a positive block-start margin and the table's
-    // lead, so the box lands below the page top and the flow follows the
-    // page boundary.
+    // A forced break keeps a positive block-start margin, the table's lead
+    // and the relative offset, so the box lands below the page top and the
+    // flow, which the offset does not move, follows the page boundary.
     let kept = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, true, &overflow(5.0));
     assert_eq!(kept.page_top, 100.0);
-    assert_eq!(kept.target_y, 113.0);
-    assert_eq!(kept.node_delta, 23.0);
-    assert_eq!(kept.shift_delta, 10.0);
+    assert_eq!(kept.target_y, 116.0);
+    assert_eq!(kept.node_delta, 26.0);
+    assert_eq!(kept.shift_delta, 13.0);
     assert!(kept.is_finite());
     assert_eq!(kept.underflow_correction(), None);
 
     // A negative margin after a forced break pulls the box above the page
     // top, and the flow after it keeps the distance the box did not move.
     let underflow = TransitionLanding::new(100.0, 90.0, -6.0, 3.0, true, &overflow(0.0));
-    assert_eq!(underflow.target_y, 94.0);
-    assert_eq!(underflow.node_delta, 4.0);
-    assert_eq!(underflow.shift_delta, 10.0);
+    assert_eq!(underflow.target_y, 97.0);
+    assert_eq!(underflow.node_delta, 7.0);
+    assert_eq!(underflow.shift_delta, 13.0);
     assert_eq!(underflow.underflow_correction(), Some(6.0));
 
     // An unforced move truncates the margin and keeps the relative offset.
     let unforced = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, false, &overflow(5.0));
     assert_eq!(unforced.target_y, 103.0);
     assert_eq!(unforced.node_delta, 13.0);
+    assert_eq!(unforced.shift_delta, 13.0);
     assert_eq!(unforced.underflow_correction(), None);
 
     // A position that is not a number never moves the box.

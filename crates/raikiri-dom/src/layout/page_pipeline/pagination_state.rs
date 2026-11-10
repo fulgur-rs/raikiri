@@ -602,9 +602,22 @@ impl PaginationState {
             &mut self.checked_paragraphs,
             &mut self.trailing_flex_children,
         );
+        // A relative offset of the paragraph or of a block around it only
+        // paints the lines elsewhere: the page breaks between them where the
+        // flow puts them (CSS Fragmentation 3 §5.5). An offset of an inline
+        // box inside the paragraph moves its text within the lines, which
+        // the lines' own checks do not measure.
+        let relative_offset =
+            flow_relative_offset_y(document, env, candidate, entry).map_or(0.0, |text_offset| {
+                text_ifc_root.map_or(text_offset, |root| {
+                    accumulated_relative_offset_y(document, cascade, env.body_id, root)
+                })
+            });
+        text.effective_y -= relative_offset;
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
+        text.effective_y += relative_offset;
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
         let ifc_root =
@@ -683,7 +696,10 @@ impl PaginationState {
         else {
             return Ok(());
         };
-        let top = current_abs_y(document, holder);
+        // The holder's place in the flow, without the offsets that only paint
+        // it elsewhere.
+        let top = current_abs_y(document, holder)
+            - accumulated_relative_offset_y(document, env.cascade, env.body_id, holder);
         let page = env.page_origins.page_index_in_flow(top).unwrap_or(0);
         let start = env.page_origins.origin(page);
         let step = env.page_origins.step_at(page);
@@ -1787,11 +1803,12 @@ impl PaginationState {
         });
         // Content kept on its page as monolithic (see `monolithic_paper_fit`)
         // has not opened a later page.
+        // The page the box falls on is the one its place in the flow is on.
         let natural_page = page_origins.transition_natural_page(
             if forced_holder.is_some() {
                 landing_y
             } else {
-                position.effective_y
+                position.effective_y - relative_offset
             },
             margin_top,
             self.current_page,
@@ -1845,15 +1862,22 @@ impl PaginationState {
         // following siblings (and for page count), but materialize
         // this box at the underflowed coordinate.  This is the
         // `underflow-from-next-page` case from CSS Break.
+        // A carried holder lands from its flow position, and a float that a
+        // forced break moves resumes below the boundary its offset keeps (see
+        // `float_resumption`): neither lands with the offset.
+        let landing_relative = if forced_holder.is_some()
+            || (lands_after_forced_break
+                && is_floating_box_for_pagination(document, cascade, node_id))
+        {
+            0.0
+        } else {
+            relative_offset
+        };
         let landing = TransitionLanding::new(
             page_origins.origin(target_page),
             landing_y,
             margin_top,
-            if forced_holder.is_some() {
-                0.0
-            } else {
-                relative_offset
-            },
+            landing_relative,
             lands_after_forced_break,
             overflow,
         );
@@ -1937,7 +1961,11 @@ impl PaginationState {
                         } else {
                             0.0
                         },
-                    relative_offset,
+                    relative_offset: if forced_holder.is_some() {
+                        relative_offset
+                    } else {
+                        landing_relative
+                    },
                     flow_page: entry.page_before_candidate,
                     height: candidate.height,
                     margin_top,
@@ -2436,14 +2464,7 @@ impl PaginationState {
                     .get(&block_id)
                     .is_some_and(|&(opening_page, margin)| {
                         opening_page == page
-                            && (block_effective_y
-                                - accumulated_relative_offset_y(
-                                    document, cascade, body_id, block_id,
-                                )
-                                - margin
-                                - page_start)
-                                .abs()
-                                <= 0.001
+                            && (block_effective_y - margin - page_start).abs() <= 0.001
                     });
                 // A kept margin already consumes the opening break. Preserve
                 // a line that fits instead of breaking before that margin again.
@@ -2483,8 +2504,8 @@ impl PaginationState {
                         // content starts below a gap (CSS Fragmentation 3
                         // §4.1): the block stays and its lines move down,
                         // rather than the block carrying that space along.
-                        // A relative offset moves the line along with the
-                        // block, which the flow leaves where it is.
+                        // The line is measured where the flow puts it, so the
+                        // shift leaves its relative offset as it is.
                         let below_floats = (lines_can_move
                             && floats_put_first_line_down(
                                 document,
@@ -2492,13 +2513,7 @@ impl PaginationState {
                                 text_lines.get(node_id),
                                 first_line_top - (block_effective_y + block_edges),
                             ))
-                        .then(|| {
-                            page_origins.origin(page)
-                                + accumulated_relative_offset_y(
-                                    document, cascade, body_id, block_id,
-                                )
-                                - first_line_top
-                        })
+                        .then(|| page_origins.origin(page) - first_line_top)
                         .filter(|shift| *shift > 0.0);
                         if let Some(shift) = below_floats {
                             self.move_lines(
@@ -3035,8 +3050,10 @@ impl PaginationState {
                 // `effective_y`, so this is the additional movement for this
                 // boundary.
                 // The same amount advances `flow_shift`, which also moves
-                // later candidates whose ancestor is not moved here.
-                let delta = target_y - text.effective_y;
+                // later candidates whose ancestor is not moved here. The text
+                // starts the page where the flow puts it, and its relative
+                // offset paints it that far from there.
+                let delta = target_y - (text.effective_y - relative_offset);
                 if delta.is_finite() {
                     shift_text_candidate(
                         document,

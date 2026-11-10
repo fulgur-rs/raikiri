@@ -7899,8 +7899,9 @@ fn forced_target_page(current_page: u32, natural_page: u32) -> u32 {
 /// above the page top (the `underflow-from-next-page` case from CSS Break).
 /// A table's first row keeps the table's top edge, `table_row_lead`, above it.
 /// An unforced move truncates the margin; a moved row group or table row keeps
-/// its lead from the table's top edge. Except after a forced break, the box's
-/// `relative_offset` moves with it to the page it starts on.
+/// its lead from the table's top edge. The box's `relative_offset` moves with
+/// it to the page it starts on, after a forced break too: the offset only
+/// paints the box away from its place in the flow.
 ///
 /// `row_group_lead` is the lead of a row group that moves as a whole, if any.
 fn transition_target_y(
@@ -7914,9 +7915,9 @@ fn transition_target_y(
 ) -> f32 {
     let underflow_y = target_y + margin_top;
     if forced_transition && margin_top < 0.0 && underflow_y < target_y {
-        underflow_y
+        underflow_y + relative_offset
     } else if forced_transition {
-        target_y + margin_top.max(0.0) + table_row_lead
+        target_y + margin_top.max(0.0) + table_row_lead + relative_offset
     } else if let Some(lead) = row_group_lead {
         target_y + lead + relative_offset
     } else if table_row_overflow {
@@ -7938,14 +7939,19 @@ struct TransitionLanding {
     node_delta: f32,
     /// How far the flow after the box moves down.
     shift_delta: f32,
+    /// The relative offset that paints the box away from its place in the
+    /// flow, included in `target_y`.
+    relative_offset: f32,
 }
 
 impl TransitionLanding {
-    /// The landing of a box that was materialized at `effective_y` and moves
-    /// to the page that starts at `page_top`.
+    /// The landing of a box that was materialized at `effective_y`, which
+    /// includes its `relative_offset`, and moves to the page that starts at
+    /// `page_top`.
     ///
     /// Both distances are the additional movement for this boundary, since the
-    /// box already sits at `effective_y`. The flow shift stays at the page
+    /// box already sits at `effective_y`. The flow shift is measured from the
+    /// box's place in the flow, without the offset, and stays at the page
     /// boundary even when the box itself underflows into the preceding page.
     fn new(
         page_top: f32,
@@ -7968,7 +7974,8 @@ impl TransitionLanding {
             page_top,
             target_y,
             node_delta: target_y - effective_y,
-            shift_delta: page_top - effective_y,
+            shift_delta: page_top - (effective_y - relative_offset),
+            relative_offset,
         }
     }
 
@@ -7981,8 +7988,11 @@ impl TransitionLanding {
     /// into the page above the one it moves to: its descendants follow the
     /// box, while the flow after it begins at the page boundary. It is only
     /// meaningful when [`is_finite`](Self::is_finite) holds.
+    /// The box underflows where the flow puts it, without its relative
+    /// offset.
     fn underflow_correction(&self) -> Option<f32> {
-        (self.target_y < self.page_top).then_some(self.shift_delta - self.node_delta)
+        (self.target_y - self.relative_offset < self.page_top)
+            .then_some(self.shift_delta - self.node_delta)
     }
 }
 
@@ -12041,9 +12051,10 @@ fn lead_below_ancestor(
     (flow_y(block) - flow_y(moved)).max(0.0)
 }
 
-/// Moves `block_id`, which sits at `from_y`, so that the box it moves with
-/// starts at `target_y`, and returns how far it moved. Its relative offsets
-/// move along with it. A `nested` block that begins its ancestors takes the
+/// Moves `block_id`, which the flow puts at `from_y`, so that the box it
+/// moves with starts at `target_y` in the flow, and returns how far it moved.
+/// Both are measured without the relative offsets of the block and its
+/// ancestors, which move along with it. A `nested` block that begins its ancestors takes the
 /// ancestors along rather than leaving them empty on this page, or leaving
 /// their padding and border alone there when they start below `page_start`
 /// (see [`first_box_ancestor_at_start`]); the ancestors above them grow to hold
@@ -12063,16 +12074,14 @@ fn move_line_block(
     flow_page: u32,
     gaps: &mut external_float_gap::Index,
 ) -> (f32, Vec<external_float_gap::Removal>) {
-    let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
     let moved = if nested {
         first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start)
     } else {
         block_id
     };
     let lead = lead_below_ancestor(document, cascade, body_id, block_id, moved);
-    // A negative or undefined move, which a relative offset can produce,
-    // leaves the block where it is.
-    let delta = Some(target_y + relative - (from_y - lead))
+    // A negative or undefined move leaves the block where it is.
+    let delta = Some(target_y - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
     let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
