@@ -332,8 +332,8 @@ fn begins_page_with_positions(
                     // of the flow, which no break opens a page for.
                     Before::Nothing if parent == body_id => Some(child != node_id),
                     Before::Nothing
-                        if !holds_first_child(document, cascade, parent)
-                            && !(past_empty_starts
+                        if !(holds_first_child(document, cascade, parent)
+                            || past_empty_starts
                                 && starts_as_sole_item(document, cascade, parent, child)) =>
                     {
                         Some(false)
