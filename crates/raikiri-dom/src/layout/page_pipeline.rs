@@ -2675,19 +2675,29 @@ fn shift_ifc_lines_from(
 /// `shift` on move down by `shift`. A box whose height follows its content
 /// grows by the whole shift. A box with a definite height keeps it, and the
 /// moved lines overflow it. A `min-height` or `max-height` box grows only
-/// as far as its content end passes the bounds (CSS 2.1 §10.7).
+/// as far as its content end passes the bounds (CSS 2.1 §10.7). A flex or
+/// grid item stretched to its line or row has room below its content, which
+/// lines moving down take first.
 fn lines_shift_growth(
     document: &super::context::LayoutSession<'_>,
     root: usize,
     shift: f32,
 ) -> f32 {
-    if height_follows_content(document, root) {
-        return shift;
-    }
-    if !lines_move_grows_box(document, root) {
+    let growth = if height_follows_content(document, root) {
+        shift
+    } else if lines_move_grows_box(document, root) {
+        content_growth(document, root, shift).unwrap_or(0.0)
+    } else {
         return 0.0;
+    };
+    let in_flex_or_grid = document
+        .taffy_parent_of(root)
+        .is_some_and(|parent| document.nodes[parent].display().is_flex_or_grid_container());
+    if shift > 0.0 && in_flex_or_grid {
+        stretched_content_growth(document, root, shift).map_or(growth, |room| growth.min(room))
+    } else {
+        growth
     }
-    content_growth(document, root, shift).unwrap_or(0.0)
 }
 
 /// How far the border box of the paragraph `root`, whose height can grow with
@@ -2698,6 +2708,35 @@ fn content_growth(
     root: usize,
     shift: f32,
 ) -> Option<f32> {
+    let bottom = content_bottom(document, root)?;
+    let layout = &document.nodes[root].layout;
+    let (height, _) = grown_height(
+        layout.size.height,
+        border_box_height_bounds(document, root),
+        layout.padding.bottom + layout.border.bottom,
+        (bottom, bottom + shift),
+    );
+    Some(height - layout.size.height)
+}
+
+/// How far the paragraph `root`, a flex or grid item, has to grow to hold its
+/// content when the content from its lines on moves down by `shift`: the
+/// room a stretch left below its content takes the move first.
+fn stretched_content_growth(
+    document: &super::context::LayoutSession<'_>,
+    root: usize,
+    shift: f32,
+) -> Option<f32> {
+    let bottom = content_bottom(document, root)?;
+    let layout = &document.nodes[root].layout;
+    let end = bottom + shift + layout.padding.bottom + layout.border.bottom;
+    Some((end - layout.size.height).max(0.0))
+}
+
+/// Where the content of the paragraph `root` ends from the top of its border
+/// box: its last line, or a block child after it. `None` for a paragraph
+/// without lines.
+fn content_bottom(document: &super::context::LayoutSession<'_>, root: usize) -> Option<f32> {
     let node = document.ifc_layout_node(root)?;
     let ifc = node.ifc.as_ref()?;
     let lines = ifc.lines.as_ref()?;
@@ -2715,18 +2754,13 @@ fn content_growth(
                 + child.size.height
         })
         .fold(f32::NEG_INFINITY, f32::max);
-    let bottom = (layout.padding.top
-        + layout.border.top
-        + lines.line_top(last)
-        + lines.lines[last].block_size())
-    .max(blocks_end);
-    let (height, _) = grown_height(
-        layout.size.height,
-        border_box_height_bounds(document, root),
-        layout.padding.bottom + layout.border.bottom,
-        (bottom, bottom + shift),
-    );
-    Some(height - layout.size.height)
+    Some(
+        (layout.padding.top
+            + layout.border.top
+            + lines.line_top(last)
+            + lines.lines[last].block_size())
+        .max(blocks_end),
+    )
 }
 
 /// Block edges of a text node's lines after the paragraph's column ranges
@@ -11288,8 +11322,19 @@ fn grow_container_beside_item(
         item_offset,
     )];
     let mut row_end = before;
+    // Grid areas are where layout put the items, before the growths that
+    // moved them down.
+    let moved = |shifts: &SubtreeShifts, id| -> f32 {
+        shifts
+            .beside
+            .iter()
+            .filter(|growth| growth.container == container && growth.later.contains(&id))
+            .map(|growth| growth.later_shift)
+            .sum()
+    };
     let grid_area = grid_item_area(document, container, item);
     if let Some((area, area_end)) = grid_area {
+        let area_end = area_end + moved(shifts, item);
         // Rows of a set size do not grow, and an item that still fits the
         // rows it spans, stretched or not, leaves them as they are.
         if !area.grows {
@@ -11339,7 +11384,10 @@ fn grow_container_beside_item(
         // the row nor stretches across it.
         if !same_line.contains(&child.id) && child.top >= before - 0.001 {
             later.insert(child.id);
-            later_end = later_end.max(child.bottom);
+            // A stretched row ends below the item in it.
+            let area_end = grid_item_area(document, container, child.id)
+                .map_or(f32::NEG_INFINITY, |(_, end)| end + moved(shifts, child.id));
+            later_end = later_end.max(child.bottom).max(area_end);
         } else if child.bottom > item_top + 0.001
             && (grid_area.is_none() || same_line.contains(&child.id))
         {
@@ -11849,6 +11897,8 @@ struct LineMove {
     line: usize,
     /// How far the lines move down.
     shift: f32,
+    /// The page the moved lines start on.
+    page: u32,
 }
 
 /// How far each out-of-flow box of the paragraph `moved.block_id` moves down
@@ -12027,7 +12077,41 @@ fn move_paragraph_lines(
     }
     // A box that keeps its height holds the moved lines as overflow: nothing
     // around it moves.
-    if growth > 0.0 {
+    let beside = edges_break_container(document, moved.block_id, body_id).flatten();
+    if growth > 0.0
+        && let Some(container) = beside
+    {
+        let item = item_of(document, container, moved.block_id).unwrap_or(moved.block_id);
+        // The paragraph already grew with its lines; an item around it grows
+        // below.
+        let grown_already = if item == moved.block_id { growth } else { 0.0 };
+        let before = item_bottom_in(document, container, item) - grown_already;
+        let (_, passed) = grow_ancestors_below(
+            document,
+            cascade,
+            moved.block_id,
+            growth,
+            body_id,
+            shifts,
+            flow_page,
+            &IfcBoxShifts::default(),
+            Some(container),
+        );
+        if passed > 0.001 {
+            shifts.bounded.push((item, passed, flow_page));
+        }
+        let after = item_bottom_in(document, container, item);
+        grow_container_beside_item(
+            document,
+            cascade,
+            body_id,
+            container,
+            item,
+            (before, after),
+            shifts,
+            (flow_page, moved.page),
+        );
+    } else if growth > 0.0 {
         grow_ancestors_for_shift(
             document,
             cascade,
@@ -12576,7 +12660,10 @@ fn shrink_ancestors_after_content_change(
 /// the body: every box from it to the body stacks its children in block
 /// order, and none is floated or absolutely positioned (see
 /// [`placed_in_block_flow`]). A flex container or a grid whose only item holds
-/// the paragraph stacks it the same way. The heights of the paragraph and of its
+/// the paragraph stacks it the same way, and so does one that sets its items
+/// beside one another with no other such container around it: the item
+/// grows and moves the rows or lines after it (see [`grows_beside_items`]).
+/// The heights of the paragraph and of its
 /// ancestors may be constrained: moving the lines grows their boxes only as
 /// far as those constraints allow, and an ancestor that clips at a set height
 /// hides the lines moved past its clip. Size containment remains outside this
@@ -12617,7 +12704,9 @@ fn placed_in_block_flow(
 /// [`placed_in_block_flow`], which with `through_sole_items` also passes a
 /// flex container or a grid whose only item is the box the walk comes from:
 /// nothing sits beside that item or after it, so a box growing inside it grows
-/// the container and moves nothing else. With `through_clips` it also passes
+/// the container and moves nothing else. It passes a grid whose item stacks
+/// alone in its rows, and a container whose items sit beside one another as
+/// [`grows_beside_items`] tells, too. With `through_clips` it also passes
 /// a box that clips at a set height (see [`holds_moved_lines`]).
 fn placed_in_flow_to_body(
     document: &super::context::LayoutSession<'_>,
@@ -12665,13 +12754,29 @@ fn placed_in_flow_to_body(
                     && through_sole_items
                     && holds_moved_lines(document, cascade, parent, through_clips)
                     && (has_no_other_item(document, parent, child)
-                        || stacks_item_alone_in_its_rows(document, parent, child)) =>
+                        || stacks_item_alone_in_its_rows(document, parent, child)
+                        || grows_beside_items(document, parent, body_id)) =>
             {
                 child = parent;
             }
             _ => return false,
         }
     }
+}
+
+/// Whether `container` is a horizontal flex or grid container that sets its
+/// items beside one another, the only one around it up to the body: an item
+/// that grows there moves the items on the rows or lines after it and leaves
+/// those beside it be (see [`grow_container_beside_item`]).
+fn grows_beside_items(
+    document: &super::context::LayoutSession<'_>,
+    container: usize,
+    body_id: usize,
+) -> bool {
+    let node = &document.nodes[container];
+    node.display().is_flex_or_grid_container()
+        && !node.used_writing_mode.is_vertical()
+        && edges_break_container(document, container, body_id) == Some(None)
 }
 
 /// Whether `grid` is a grid with rows that size to their content and a height
