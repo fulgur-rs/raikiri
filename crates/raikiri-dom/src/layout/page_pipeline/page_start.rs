@@ -108,7 +108,7 @@ impl ChildPositions {
         node_id: usize,
         page_start: f32,
     ) -> bool {
-        self.begins_page_below(document, cascade, body_id, node_id, page_start, false)
+        self.begins_page_below(document, cascade, body_id, node_id, page_start, None)
     }
 
     /// Whether the page that starts at `page_start` holds nothing above
@@ -116,19 +116,29 @@ impl ChildPositions {
     /// [`Self::begins_page_below_leading_edges`] tells, where empty boxes at
     /// the very start of the page count as nothing either, and a flex or grid
     /// container starts with its only item when nothing of the container
-    /// lies above it. Moving such a box to the next page gains it no room: an
+    /// lies above it, as does a grid whose items stack in rows that size to
+    /// their content with its first item. Moving such a box to the next page
+    /// gains it no room: an
     /// unforced break there would leave nothing on this page but those empty
     /// boxes and the edges, so the page breaks between the box's lines
     /// instead.
     pub(super) fn gains_nothing_from_next_page(
         &mut self,
-        document: &Document,
+        document: &super::super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         body_id: usize,
         node_id: usize,
         page_start: f32,
     ) -> bool {
-        self.begins_page_below(document, cascade, body_id, node_id, page_start, true)
+        let stacked = |grid, item| super::stacks_item_alone_in_its_rows(document, grid, item);
+        self.begins_page_below(
+            document,
+            cascade,
+            body_id,
+            node_id,
+            page_start,
+            Some(&stacked),
+        )
     }
 
     fn begins_page_below(
@@ -138,7 +148,7 @@ impl ChildPositions {
         body_id: usize,
         node_id: usize,
         page_start: f32,
-        past_empty_starts: bool,
+        past_empty_starts: Option<&dyn Fn(usize, usize) -> bool>,
     ) -> bool {
         let positions = &mut self.positions;
         #[cfg(test)]
@@ -270,9 +280,10 @@ fn holds_first_child(document: &Document, cascade: &CascadeResult, parent: usize
 }
 
 /// Whether `child` is the only in-flow item of the flex or grid container
-/// `parent`, a box of the normal flow with no padding or border above the
-/// item, and starts at the top of the container. A page that starts with the container then starts with
-/// the item, and gains it no room by breaking before it. Padding or border
+/// `parent`, or an item that `stacked` tells is alone in its grid rows, of a
+/// box of the normal flow with no padding or border above the item, and
+/// starts at the top of the container. A page that starts with the container
+/// then starts with the item, and gains it no room by breaking before it. Padding or border
 /// above the item is content the page can break after, unlike that of a
 /// plain block, which goes with its first child.
 fn starts_as_sole_item(
@@ -280,6 +291,7 @@ fn starts_as_sole_item(
     cascade: &CascadeResult,
     parent: usize,
     child: usize,
+    stacked: &dyn Fn(usize, usize) -> bool,
 ) -> bool {
     let node = &document.nodes[parent];
     let display = node.display();
@@ -287,14 +299,14 @@ fn starts_as_sole_item(
         && !is_floating_box_for_pagination(document, cascade, parent)
         && !has_unusual_coordinates(document, parent)
         && node.layout.border.top + node.layout.padding.top <= EDGE_TOLERANCE
-        && node.layout_children().iter().all(|&sibling| {
+        && (node.layout_children().iter().all(|&sibling| {
             sibling == child
                 || !super::sibling_renders(document, sibling)
                 || matches!(
                     document.nodes[sibling].position(),
                     super::PositionValue::Absolute | super::PositionValue::Fixed
                 )
-        })
+        }) || stacked(parent, child))
         && (current_abs_y(document, child) - current_abs_y(document, parent)).abs()
             <= EDGE_TOLERANCE
 }
@@ -305,7 +317,7 @@ fn begins_page_with_positions(
     body_id: usize,
     node_id: usize,
     page_start: f32,
-    past_empty_starts: bool,
+    past_empty_starts: Option<&dyn Fn(usize, usize) -> bool>,
     mut child_position: impl FnMut(usize, usize) -> Option<usize>,
 ) -> bool {
     let mut child = node_id;
@@ -319,7 +331,7 @@ fn begins_page_with_positions(
                     parent,
                     page_start,
                     child_position(parent, child),
-                    past_empty_starts,
+                    past_empty_starts.is_some(),
                 ) {
                     // The box lies on an earlier page. An empty one at the
                     // page start is on this page, so the break comes after it.
@@ -338,8 +350,9 @@ fn begins_page_with_positions(
                     Before::Nothing if parent == body_id => Some(child != node_id),
                     Before::Nothing
                         if !(holds_first_child(document, cascade, parent)
-                            || past_empty_starts
-                                && starts_as_sole_item(document, cascade, parent, child)) =>
+                            || past_empty_starts.is_some_and(|stacked| {
+                                starts_as_sole_item(document, cascade, parent, child, stacked)
+                            })) =>
                     {
                         Some(false)
                     }
