@@ -510,7 +510,8 @@ pub(super) fn with_hypothetical_column_main_size(
             .is_some_and(|min| min > 0.0);
     let bounded = negative_margin || limited;
     let rigid = items
-        .into_iter()
+        .iter()
+        .copied()
         .filter_map(|item| {
             let style = tree.physical_style(item);
             let basis = crate::layout::resolve_dimension(style.flex_basis(), None)
@@ -592,12 +593,15 @@ pub(super) fn with_hypothetical_column_main_size(
         } else {
             inputs.parent_size.width
         };
+        let lines_keep_without_cross = !negative_margin
+            || lines_keep_without_cross(tree, idx, &inputs, vertical, &items, &rigid);
         return wrapping_column_layout(
             tree,
             idx,
             inputs,
             vertical,
             negative_margin,
+            lines_keep_without_cross,
             basis,
             containing_main,
             |tree, inputs| run(tree, rigid.clone(), inputs),
@@ -743,6 +747,61 @@ fn with_line_minimum_in_content_box(
     })
 }
 
+/// Whether the items of the wrapping column flex container `idx` keep their
+/// hypothetical main sizes when the container's own cross size, minimum and
+/// maximum are taken off, so that probes without them break the same lines.
+///
+/// That holds where nothing constrains the cross size of the container, and
+/// otherwise for an item whose main size does not follow its cross size: one
+/// whose inline axis is the main axis, and that is neither replaced nor given
+/// an aspect ratio, or one of a length flex base size and a length minimum.
+fn lines_keep_without_cross(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+    vertical: bool,
+    items: &[usize],
+    rigid: &[(usize, Vec<(crate::node::arena::BoxKey, O)>)],
+) -> bool {
+    let style = tree.physical_style(idx);
+    let cross = |size: Size<Dimension>| if vertical { size.height } else { size.width };
+    let containing_cross = if vertical {
+        inputs.parent_size.height
+    } else {
+        inputs.parent_size.width
+    };
+    let known_cross = if vertical {
+        inputs.known_dimensions.height
+    } else {
+        inputs.known_dimensions.width
+    };
+    let constrained = known_cross.is_some()
+        || cross(style.size().map(Into::into))
+            .maybe_resolve(containing_cross)
+            .is_some()
+        || cross(style.max_size().map(Into::into))
+            .maybe_resolve(containing_cross)
+            .is_some()
+        || cross(style.min_size().map(Into::into))
+            .maybe_resolve(containing_cross)
+            .is_some_and(|min| min > 0.0);
+    !constrained
+        || items.iter().all(|&item| {
+            let item_style = tree.physical_style(item);
+            let inline_is_main = tree.has_vertical_writing_mode(item) != vertical;
+            let fixed_main = rigid.iter().any(|(rigid, _)| *rigid == item) && {
+                let min: Size<Dimension> = item_style.min_size().map(Into::into);
+                if vertical { min.width } else { min.height }
+            }
+            .maybe_resolve(None::<f32>)
+            .is_some();
+            fixed_main
+                || (inline_is_main
+                    && item_style.aspect_ratio().is_none()
+                    && !crate::paint_rules::is_replaced_element(tree.document, item))
+        })
+}
+
 /// Lay out the wrapping column flex container `idx`, whose main size is open
 /// and bounded by a minimum or a maximum, at the main size of its longest
 /// line of hypothetical main sizes.
@@ -773,6 +832,7 @@ fn wrapping_column_layout(
     inputs: LayoutInput,
     vertical: bool,
     negative_margin: bool,
+    lines_keep_without_cross: bool,
     basis: Option<f32>,
     containing_main: Option<f32>,
     probe: impl Fn(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
@@ -859,6 +919,13 @@ fn wrapping_column_layout(
             key,
             O::length(max_property, L::Px(max), true).expect("content maximum"),
         ));
+    }
+    // A negative margin can break a line whose total fits, which the probes
+    // below find from the cross size of the container with its own cross
+    // constraint taken off. Where that would change how long an item is, the
+    // lines are left to the plain layout.
+    if negative_margin && max.is_some() && !lines_keep_without_cross {
+        return layout(tree, inputs);
     }
     let mut probe_inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,

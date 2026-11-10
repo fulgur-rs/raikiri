@@ -1953,6 +1953,44 @@ fn a_wrapping_column_with_a_negative_margin_finds_its_lines_with_its_own_cross_s
 }
 
 #[test]
+fn a_wrapping_column_with_a_negative_margin_and_items_sized_by_its_cross_size_keeps_its_lines() {
+    // The length of an item of wrapping text follows the cross size of the
+    // container, so the lines are found at that cross size.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;width:50px;max-height:45px;",
+            &[
+                ("flex:0 0 auto", "xx xx xx"),
+                ("flex:0 0 auto", "xx xx"),
+                ("flex:0 0 auto;margin-bottom:-10px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 30.0]),
+                ("i0", [0.0, 100.0, 50.0, 20.0]),
+                ("i1", [0.0, 120.0, 50.0, 10.0]),
+                ("i2", [0.0, 130.0, 50.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;height:50px;max-width:60px;",
+            &[
+                ("flex:0 0 auto", "xx xx xx"),
+                ("flex:0 0 auto", "xx xx"),
+                ("flex:0 0 auto;margin-left:-10px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 30.0, 50.0]),
+                ("i0", [10.0, 100.0, 20.0, 50.0]),
+                ("i1", [0.0, 100.0, 10.0, 50.0]),
+                ("i2", [-10.0, 100.0, 10.0, 50.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
 fn a_raised_wrapping_column_of_one_line_leaves_item_percentages_of_children_unresolved() {
     // A minimum makes the column taller than its one line, but its height
     // still depends on the content, so the flexed height of an item is not
