@@ -16,15 +16,15 @@ use super::{
     collapsed_start_margin_gain, collapsed_start_margin_gain_in_flow, collapses_through,
     collapses_with_previous_block, content_overflow, current_abs_y, first_box_ancestor_at_start,
     first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
-    floats_put_first_line_down, follows_flow_content, forced_line_breaks, forced_line_moves,
-    forced_target_page, grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
-    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
-    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
-    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
-    lines_can_shift_inside, lines_move_grows_box, make_room_for_caption_header,
-    make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    floats_put_first_line_down, flow_raw_y, follows_flow_content, forced_line_breaks,
+    forced_line_moves, forced_target_page, grow_ancestors_below, grow_ancestors_for_shift,
+    grow_container_beside_item, has_explicit_positioned_block_ancestor, has_fixed_height,
+    has_footnote_ancestor, is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in,
+    item_of, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
+    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
+    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
+    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
+    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
@@ -1295,7 +1295,7 @@ impl PaginationState {
                 parent_id,
                 node_id,
                 page_break.collapses_with_previous_block,
-                candidate.raw_y + candidate.height,
+                flow_raw_y(document, env.cascade, env.body_id, candidate) + candidate.height,
             );
         }
     }
@@ -1462,9 +1462,12 @@ impl PaginationState {
         let keeps_margin_at_break = forced_before
             || pending_break_applies
             || named_page_change
-            || self
-                .sibling_margins
-                .forced_break_reaches(document, cascade, node_id, raw_y)
+            || self.sibling_margins.forced_break_reaches(
+                document,
+                cascade,
+                node_id,
+                flow_raw_y(document, cascade, body_id, candidate),
+            )
             || continuation_offset.is_some();
         let margin_top = if keeps_margin_at_break
             && collapses_with_previous_block
@@ -2009,7 +2012,7 @@ impl PaginationState {
         let at = MarginBreak {
             node_id,
             clearance_free: avoided_breaks.clearance_free.contains(node_id),
-            raw_y: candidate.raw_y,
+            raw_y: flow_raw_y(document, cascade, body_id, candidate),
             effective_y: flow_y,
             natural_page,
             forced_before,
@@ -2030,7 +2033,7 @@ impl PaginationState {
                 .truncation_at_break(document, cascade, page_origins, &at);
         if let Some(MarginTruncation { delta, underflow }) = truncation {
             self.sibling_margins.moved_boxes |= delta != 0.0;
-            move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
+            let held = move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
             self.flow_shift += delta;
             position.effective_y += delta;
             if let Some(underflow) = underflow {
@@ -2042,6 +2045,13 @@ impl PaginationState {
                 // which is the page the flow reaches.
                 natural_page = page_origins.page_index_for_y(flow_y + delta - pulled);
             }
+            // An ancestor whose height does not shrink with its content keeps
+            // the flow after it where it was: the part of the move it held
+            // ends with its subtree.
+            self.subtree_shifts.bounded.extend(
+                held.into_iter()
+                    .map(|(ancestor, held)| (ancestor, held, natural_page)),
+            );
         }
         reach_page(control, natural_page)?;
         self.current_page = self.current_page.max(natural_page);

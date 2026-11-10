@@ -901,7 +901,6 @@ css/css-flexbox/flex-direction-column-reverse.html
 css/css-flexbox/flex-direction-column.html
 css/css-flexbox/flex-direction-modify.html
 css/css-flexbox/flex-direction-row-vertical.html
-css/css-flexbox/flex-direction.html
 css/css-flexbox/flex-item-vertical-align.html
 css/css-flexbox/flex-vertical-align-effect.html
 css/css-flexbox/flexbox-align-self-horiz-005.xhtml

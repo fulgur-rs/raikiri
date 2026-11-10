@@ -577,6 +577,19 @@ fn accumulated_relative_offset_y(
         .sum()
 }
 
+/// The unpaginated top of `candidate` where the flow puts it, without the
+/// relative offset of its own box. Sibling margins are measured between
+/// such tops and bottoms, as an offset only paints a box elsewhere; the
+/// offsets of the ancestors move the siblings alike.
+fn flow_raw_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+) -> f32 {
+    candidate.raw_y - layout_relative_offset_y(document, cascade, body_id, candidate.node_id)
+}
+
 /// The block offset of a relatively positioned box that layout leaves to
 /// the painter: that of the body, of floats and of table parts, and of boxes
 /// placed by manual column placement. The painter takes `top` over
@@ -4352,7 +4365,7 @@ fn paginate_flow(
         control,
     );
     collector.collect_flow(root_flow_offset)?;
-    let (clip_edges, edges_breaks) = collector.into_outputs();
+    let (clip_edges, edges_breaks, preceding_bottoms) = collector.into_outputs();
     let mut footer_tail_ends = HashMap::<usize, f32>::new();
     for candidate in &candidates {
         let edges = candidate.context.item_tail_edges();
@@ -4396,7 +4409,7 @@ fn paginate_flow(
         cascade,
         &candidates,
         &table_headers,
-        roots.contents_box,
+        roots,
         content_width,
         root_flow_offset,
     );
@@ -4420,6 +4433,7 @@ fn paginate_flow(
         ColumnContexts::new(document.nodes.len()),
     );
     state.track_outer_owners(&positioned_owner_heights);
+    state.sibling_margins.preceding_bottoms = preceding_bottoms;
     let env = FlowEnv {
         cascade,
         body_id,
@@ -5460,6 +5474,7 @@ struct AvoidedBreaks {
 fn margin_run_ends(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     candidates: &[PageCandidate],
     clearance_free: &margin_clearance::ClearanceFree,
 ) -> HashMap<usize, MarginRunEnd> {
@@ -5511,7 +5526,7 @@ fn margin_run_ends(
         }
         let end = ends.get(&next.node_id).copied().unwrap_or(MarginRunEnd {
             node_id: next.node_id,
-            raw_y: next.raw_y,
+            raw_y: flow_raw_y(document, cascade, body_id, next),
             height: next.height,
         });
         ends.insert(node_id, end);
@@ -5626,13 +5641,14 @@ impl BoxOverflow {
 
 impl AvoidedBreaks {
     /// Finds the avoided breaks of `candidates`, whose flow starts at
-    /// `root_flow_offset` and whose class-A boxes sit in `contents_box`.
+    /// `root_flow_offset` and whose class-A boxes sit in the contents box of
+    /// `roots`.
     fn collect(
         document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         candidates: &[PageCandidate],
         table_headers: &HeaderRepeats,
-        contents_box: usize,
+        roots: candidates::FlowRoots,
         content_width: f32,
         root_flow_offset: f32,
     ) -> Self {
@@ -5645,12 +5661,18 @@ impl AvoidedBreaks {
             candidates,
             table_headers,
             &row_groups,
-            contents_box,
+            roots.contents_box,
             content_width,
         );
         let clearance_free =
             margin_clearance::ClearanceFree::collect(document, cascade, candidates);
-        let margin_run_ends = margin_run_ends(document, cascade, candidates, &clearance_free);
+        let margin_run_ends = margin_run_ends(
+            document,
+            cascade,
+            roots.element,
+            candidates,
+            &clearance_free,
+        );
         Self {
             clearance_free,
             run_ends,
@@ -10685,6 +10707,10 @@ struct SiblingMargins {
     /// seen for each parent, while no other content followed it. The gap to
     /// the next such sibling is their collapsed margin.
     previous_bottoms: HashMap<usize, (usize, f32)>,
+    /// For a candidate right after an in-flow block that is not a candidate,
+    /// so never recorded in `previous_bottoms`, that block and its
+    /// unpaginated border-box bottom.
+    preceding_bottoms: HashMap<usize, (usize, f32)>,
     /// The empty box whose block-end margin still adjoins the latest forced
     /// break: the forced-break box itself, or an empty box right after it.
     /// A margin collapsed through it follows the break and is kept.
@@ -10921,16 +10947,27 @@ impl SiblingMargins {
 
     /// The previous in-flow sibling block of `node_id` and the positive gap
     /// between its unpaginated bottom and `raw_y`, the unpaginated top of
-    /// `node_id`, if both are known and the gap is finite.
+    /// `node_id`, if both are known and the gap is finite. Both are measured
+    /// where the flow puts the boxes (see `flow_raw_y`). The previous block is
+    /// the one recorded for the parent, or, when the box before `node_id` in
+    /// the flow of its parent is a block that is not a candidate, that block:
+    /// the page edge cuts the margin between the two also inside a block that
+    /// no break goes before.
     fn gap_after_previous(
         &self,
         document: &Document,
         node_id: usize,
         raw_y: f32,
     ) -> Option<(usize, f32)> {
-        BoxTree::for_layout(document)
-            .parent(node_id, BoxParentScope::Document)
-            .and_then(|parent_id| self.previous_bottoms.get(&parent_id).copied())
+        let recorded = || {
+            BoxTree::for_layout(document)
+                .parent(node_id, BoxParentScope::Document)
+                .and_then(|parent| self.previous_bottoms.get(&parent).copied())
+        };
+        self.preceding_bottoms
+            .get(&node_id)
+            .copied()
+            .or_else(recorded)
             .map(|(previous, bottom)| (previous, raw_y - bottom))
             .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
     }
@@ -12345,14 +12382,16 @@ fn grow_ancestors_below(
 
 /// Move `node_id` by `delta` after its block-start margin was truncated at a
 /// page break, together with its inline content and the auto-height boxes
-/// containing it.
+/// containing it. Returns the ancestors whose height kept them from
+/// shrinking with it, each with the part of `delta` the flow after it does
+/// not follow.
 fn move_box_by_truncated_margin(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     delta: f32,
     flow_root: usize,
-) {
+) -> Vec<(usize, f32)> {
     document.translate_pagination_y(node_id, delta);
     let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, delta);
     shrink_ancestors_after_margin_truncation(
@@ -12362,12 +12401,14 @@ fn move_box_by_truncated_margin(
         delta,
         flow_root,
         &followed_ifc_boxes,
-    );
+    )
 }
 
 /// A truncated margin shortens the auto-height boxes containing the flow.
 /// Reuse the same used-child extents and size bounds as ordinary pagination
 /// growth, retaining unrelated float extents and authored height limits.
+/// Returns the ancestors that held the flow after them where it was (see
+/// [`shrink_ancestors_after_content_change`]).
 fn shrink_ancestors_after_margin_truncation(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -12375,14 +12416,17 @@ fn shrink_ancestors_after_margin_truncation(
     delta: f32,
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
-) {
+) -> Vec<(usize, f32)> {
     shrink_ancestors_after_content_change(
         document, cascade, node, delta, delta, flow_root, ifc_boxes, None,
-    );
+    )
 }
 
 /// Propagates a shortened content extent separately from its owned floats.
 /// Bounds can absorb either change before the containing flow is reached.
+/// Returns each ancestor whose height kept the flow after it from following
+/// the content inside it, with the part of the content's move, negative,
+/// that the flow after that ancestor does not take.
 #[allow(clippy::too_many_arguments)]
 fn shrink_ancestors_after_content_change(
     document: &mut super::context::LayoutSession<'_>,
@@ -12393,9 +12437,10 @@ fn shrink_ancestors_after_content_change(
     flow_root: usize,
     ifc_boxes: &IfcBoxShifts,
     mut changes: Option<&mut Vec<(usize, f32)>>,
-) {
+) -> Vec<(usize, f32)> {
+    let mut held = Vec::new();
     if (delta >= 0.0 && float_delta >= 0.0) || !delta.is_finite() {
-        return;
+        return held;
     }
     let mut child = node;
     let mut flow_delta = delta;
@@ -12403,9 +12448,13 @@ fn shrink_ancestors_after_content_change(
     let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
     while let Some(parent) = walk.current() {
         walk.advance(document);
-        if document.nodes[parent].kind() != NodeKind::Element
-            || document.nodes[parent].size_containment.height
-        {
+        if document.nodes[parent].kind() != NodeKind::Element {
+            break;
+        }
+        if document.nodes[parent].size_containment.height {
+            if flow_delta < -0.001 {
+                held.push((parent, flow_delta));
+            }
             break;
         }
         if document.nodes[parent].display() == DisplayValue::Contents {
@@ -12463,12 +12512,18 @@ fn shrink_ancestors_after_content_change(
             flow_root,
             ifc_boxes,
         ) else {
+            if flow_delta < -0.001 {
+                held.push((parent, flow_delta));
+            }
             break;
         };
         document.nodes[parent].layout.size.height = adjusted.height;
         document.mark_pagination_extent_dirty(parent);
         let (old_flow, new_flow) = adjusted.flow_heights;
         let passed = new_flow - old_flow;
+        if flow_delta < 0.0 && passed > flow_delta + 0.001 {
+            held.push((parent, flow_delta - passed.min(0.0)));
+        }
         if let Some(records) = changes.as_mut()
             && (passed - flow_delta).abs() > 0.001
         {
@@ -12491,6 +12546,7 @@ fn shrink_ancestors_after_content_change(
             break;
         }
     }
+    held
 }
 
 /// Whether `block` is a block-level box laid out in plain block flow up to
@@ -13679,11 +13735,10 @@ fn participates_in_margin_adjacency(
 }
 
 /// Whether the block-start margin of `candidate` can collapse with the
-/// block-end margin of the block before it: it is a statically positioned
-/// block-level box in the normal flow, and not text, a table row, or a flex
-/// or grid item. A relative offset is not part of the flow gap between
-/// siblings, so a positioned box cannot tell its margin apart from its
-/// offset.
+/// block-end margin of the block before it: it is a block-level box in the
+/// normal flow, static, relatively positioned or sticky, and not text, a
+/// table row, or a flex or grid item. A relative offset only paints the box
+/// elsewhere, so the margin is measured without it.
 fn collapses_with_previous_block(
     document: &Document,
     candidate: &PageCandidate,
@@ -13691,7 +13746,10 @@ fn collapses_with_previous_block(
 ) -> bool {
     let node = &document.nodes[candidate.node_id];
     is_block_level_flow_box(node.display())
-        && matches!(node.position(), PositionValue::Static)
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
         && !candidate.context.is_text()
         && !candidate.context.is_table_row()
         && !candidate.context.is_flex_item()
