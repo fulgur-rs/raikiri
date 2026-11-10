@@ -12664,13 +12664,81 @@ fn placed_in_flow_to_body(
                 if !placed_apart
                     && through_sole_items
                     && holds_moved_lines(document, cascade, parent, through_clips)
-                    && has_no_other_item(document, parent, child) =>
+                    && (has_no_other_item(document, parent, child)
+                        || stacks_item_alone_in_its_rows(document, parent, child)) =>
             {
                 child = parent;
             }
             _ => return false,
         }
     }
+}
+
+/// Whether `grid` is a grid with rows that size to their content and a height
+/// that follows them, and `item` is alone in the rows it spans, with the items
+/// before it in rows above and the items after it in rows below: a row that
+/// grows with the item pushes the items after it down, as a block pushes its
+/// later siblings. A grid with a set or minimum height may stretch its rows,
+/// which then absorb some of the growth instead.
+fn stacks_item_alone_in_its_rows(
+    document: &super::context::LayoutSession<'_>,
+    grid: usize,
+    item: usize,
+) -> bool {
+    let Some(rows) = stacking_grid_rows(document, grid) else {
+        return false;
+    };
+    let Some(&(start, end)) = rows.get(&item) else {
+        return false;
+    };
+    let mut before = true;
+    document.nodes[grid].children.iter().all(|&child| {
+        before &= child != item;
+        child == item
+            || !is_in_flow_grid_item_for_pagination(document, child)
+            || rows.get(&child).is_some_and(|&(other_start, other_end)| {
+                if before {
+                    other_end <= start
+                } else {
+                    other_start >= end
+                }
+            })
+    })
+}
+
+/// Whether every in-flow item of `grid` is alone in its rows as
+/// [`stacks_item_alone_in_its_rows`] tells: each starts in a row at or below
+/// the end of the rows of the item before it.
+fn grid_items_stack(document: &super::context::LayoutSession<'_>, grid: usize) -> bool {
+    let Some(rows) = stacking_grid_rows(document, grid) else {
+        return false;
+    };
+    let mut floor = 0;
+    document.nodes[grid].children.iter().all(|&child| {
+        !is_in_flow_grid_item_for_pagination(document, child)
+            || rows.get(&child).is_some_and(|&(start, end)| {
+                let below = start >= floor;
+                floor = end;
+                below
+            })
+    })
+}
+
+/// The rows each item of `grid` spans, when its rows size to their content
+/// and its height follows them.
+fn stacking_grid_rows(
+    document: &super::context::LayoutSession<'_>,
+    grid: usize,
+) -> Option<HashMap<usize, (u16, u16)>> {
+    (grid_rows_size_to_content(document, grid) && height_follows_content(document, grid)).then(
+        || {
+            document.nodes[grid]
+                .grid_item_rows
+                .iter()
+                .map(|row| (row.item, (row.start, row.end)))
+                .collect()
+        },
+    )
 }
 
 /// Whether `container` is a flex container or a grid with rows that size to
