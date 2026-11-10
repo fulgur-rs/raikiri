@@ -498,23 +498,15 @@ pub(super) fn with_hypothetical_column_main_size(
                 .any(|width| side.resolve(Some(width)).is_some_and(|value| value < 0.0))
         })
     });
-    // A wrapping container breaks its lines where the running sum of the
-    // outer sizes passes its limit. A negative margin can make that sum fall
-    // inside a line, so the longest line can be shorter than a part of it, and
-    // a limit of that length would break the line again. Such a container
-    // keeps the lines and the size of the plain layout.
-    if wraps && negative_margin {
-        return layout(tree, inputs);
-    }
     // A percentage minimum or maximum main size of the container refers to
     // the size of its containing block, and has no effect where that is open.
-    let bounded = negative_margin
-        || main_of(container.max_size().map(Into::into))
-            .maybe_resolve(containing_main)
-            .is_some()
+    let limited = main_of(container.max_size().map(Into::into))
+        .maybe_resolve(containing_main)
+        .is_some()
         || main_of(container.min_size().map(Into::into))
             .maybe_resolve(containing_main)
             .is_some_and(|min| min > 0.0);
+    let bounded = negative_margin || limited;
     let rigid = items
         .into_iter()
         .filter_map(|item| {
@@ -556,6 +548,34 @@ pub(super) fn with_hypothetical_column_main_size(
             layout(tree, inputs)
         })
     };
+    if wraps && !limited {
+        // With no limit, the items stay on one line, which is as long as the
+        // sum of their outer hypothetical main sizes. Those take the automatic
+        // minimum and negative margins, which a definite room skips, so the
+        // line is measured without one.
+        if measures_cross {
+            return layout(tree, inputs);
+        }
+        let mut probe = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            axis: main_axis,
+            ..inputs
+        };
+        *main_mut(&mut probe.available_space, vertical) = AvailableSpace::MaxContent;
+        let measured = run(tree, rigid, probe);
+        if inputs.run_mode == RunMode::ComputeSize && inputs.axis == main_axis {
+            return measured;
+        }
+        let main = if vertical {
+            measured.size.width
+        } else {
+            measured.size.height
+        };
+        let mut inputs = inputs;
+        *main_mut(&mut inputs.known_dimensions, vertical) = Some(main);
+        *main_mut(&mut inputs.known_dimensions_are_definite, vertical) = false;
+        return layout(tree, inputs);
+    }
     if !bounded {
         if measures_cross {
             return layout(tree, inputs);
@@ -575,9 +595,10 @@ pub(super) fn with_hypothetical_column_main_size(
             idx,
             inputs,
             vertical,
+            negative_margin,
             basis,
             containing_main,
-            |tree, inputs| run(tree, rigid, inputs),
+            |tree, inputs| run(tree, rigid.clone(), inputs),
             &layout,
         );
     }
@@ -621,6 +642,12 @@ fn cyclic_main_gap(
                 .expect("resolved row gap"),
         )
     })
+}
+
+/// The width of the room `size` where `horizontal` is set, and its height
+/// otherwise.
+fn main_of_space(size: Size<AvailableSpace>, horizontal: bool) -> AvailableSpace {
+    if horizontal { size.width } else { size.height }
 }
 
 /// The width of `size` where `horizontal` is set, and its height otherwise.
@@ -726,15 +753,16 @@ fn with_line_minimum_in_content_box(
 /// box minimum and maximum, so `probe` finds the size with the container's
 /// main-axis padding and border taken out and its limits on its content box.
 /// `probe` runs the layout with the items rigid at their hypothetical main
-/// sizes.
+/// sizes, under a max-content room: with a definite room, Taffy sums the
+/// flex bases alone and skips the automatic minimum and negative margins.
 ///
-/// The container is then laid out with that size as its room and its
-/// maximum, and with a minimum that leaves the room of its content box as
-/// the limit its lines break at. Every line the rigid items made fits in that
-/// room and the item after each line did not, so the lines break the same
-/// way. Where the container's own minimum raised the size above its longest
-/// line, Taffy would size it to the longest line again, so the size is given
-/// to it as definite instead.
+/// Where every item fits on one line, the container keeps that line at the
+/// measured size, which is known but not definite. Otherwise its lines fill
+/// the room it is given, up to its maximum, and it is laid out with that size
+/// as definite, as its room and as its maximum, and with a minimum that
+/// leaves the room of its content box as the limit its lines break at. Every
+/// line the rigid items made fits in that room and the item after each line
+/// did not, so the lines break the same way.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#algo-line-break>
 #[allow(clippy::too_many_arguments)]
@@ -743,9 +771,10 @@ fn wrapping_column_layout(
     idx: usize,
     inputs: LayoutInput,
     vertical: bool,
+    negative_margin: bool,
     basis: Option<f32>,
     containing_main: Option<f32>,
-    probe: impl FnOnce(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
+    probe: impl Fn(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
     layout: &impl Fn(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
     let style = tree.physical_style(idx);
@@ -832,7 +861,13 @@ fn wrapping_column_layout(
     }
     let mut probe_inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,
-        axis: main_axis,
+        // The cross size tells the lines apart where a negative margin can
+        // break a line whose total fits (see below).
+        axis: if negative_margin {
+            RequestedAxis::Both
+        } else {
+            main_axis
+        },
         ..inputs
     };
     {
@@ -841,29 +876,91 @@ fn wrapping_column_layout(
         } else {
             &mut probe_inputs.available_space.height
         };
-        if let AvailableSpace::Definite(space) = *room {
-            *room = AvailableSpace::Definite((space - insets).max(0.0));
-        }
+        // A definite room would size the lines from the flex bases alone,
+        // without the automatic minimum or a negative margin.
+        *room = AvailableSpace::MaxContent;
     }
+    if negative_margin {
+        // A cross size given to the container would hide its lines.
+        *main_mut(&mut probe_inputs.known_dimensions, !vertical) = None;
+    }
+    let unbroken_entries = entries
+        .iter()
+        .map(|(key, entry)| {
+            if entry.overrides_length(max_property) {
+                // No maximum, so no line breaks.
+                (
+                    *key,
+                    O::length(max_property, L::Auto, false).expect("no content maximum"),
+                )
+            } else {
+                (*key, entry.clone())
+            }
+        })
+        .collect::<Vec<_>>();
     let mut measured = with_saved_probe_caches(tree, 0, |tree, _| {
         tree.push_local_overrides(entries);
         probe(tree, probe_inputs)
     });
-    let content = if vertical {
+    let line_content = if vertical {
         measured.size.width
     } else {
         measured.size.height
     };
+    // Where every item fits on one line, the probe has the size of the whole
+    // line, and the container keeps that line at the measured size.
+    let one_line = max.is_none() || {
+        let unbroken = with_saved_probe_caches(tree, 0, |tree, _| {
+            tree.push_local_overrides(unbroken_entries);
+            probe(tree, probe_inputs)
+        });
+        if negative_margin {
+            // A negative margin can make a running sum of the outer sizes
+            // pass the limit inside a line whose total fits, so the line
+            // breaks there although the whole line is no longer than the
+            // limit. More lines make the container larger across.
+            let cross = |size: Size<f32>| if vertical { size.height } else { size.width };
+            cross(measured.size) <= cross(unbroken.size) + 0.01
+        } else {
+            let unbroken = if vertical {
+                unbroken.size.width
+            } else {
+                unbroken.size.height
+            };
+            unbroken <= line_content + 0.01
+        }
+    };
+    // Lines that break fill the room the container is given, up to its
+    // maximum.
+    let given_room = main_of_space(inputs.available_space, vertical);
+    let content = match (one_line, given_room, max) {
+        (false, AvailableSpace::Definite(space), Some(max)) => {
+            line_content.max((space - insets).max(0.0).min(max))
+        }
+        _ => line_content,
+    };
     let main = content + insets;
-    // The minimum raised the size above the longest line where the content
-    // box is no larger than the minimum of it.
-    let raised = min.is_some_and(|min| content <= min && min > 0.0);
+    if negative_margin && !one_line {
+        // Lines break where the running sum of the outer sizes passes the
+        // limit. A negative margin can make that sum fall inside a line, so
+        // the longest line can be shorter than a part of it, and a limit of
+        // that length would break the line again. Such a container keeps the
+        // lines and the size of the plain layout.
+        return layout(tree, inputs);
+    }
     if inputs.run_mode == RunMode::ComputeSize && inputs.axis == main_axis {
         // A run that measures the main axis alone returns its size only.
         *main_mut(&mut measured.size, vertical) = main;
         return measured;
     }
     let mut inputs = inputs;
+    if one_line {
+        // A main size known but not definite keeps the items on one line and
+        // leaves their percentages unresolved, and the items flex into it.
+        *main_mut(&mut inputs.known_dimensions, vertical) = Some(main);
+        *main_mut(&mut inputs.known_dimensions_are_definite, vertical) = false;
+        return layout(tree, inputs);
+    }
     let (known, known_is_definite, room) = if vertical {
         (
             &mut inputs.known_dimensions.width,
@@ -878,7 +975,13 @@ fn wrapping_column_layout(
         )
     };
     *room = AvailableSpace::Definite(main);
-    if raised {
+    // Taffy sizes several lines in a definite room as the content box of
+    // that room, and a container whose own minimum raised it above its
+    // longest line as that line again, so the size is given as definite
+    // there.
+    let larger = matches!(given_room, AvailableSpace::Definite(_))
+        || min.is_some_and(|min| content <= min && min > 0.0);
+    if larger {
         *known = Some(main);
         *known_is_definite = true;
     }
@@ -893,9 +996,9 @@ fn wrapping_column_layout(
                 .expect("container main minimum"),
         ));
     }
-    // The size the minimum gives is definite for line breaking only: the
-    // percentages of the items stay unresolved as they were in the probe.
-    let items = if raised {
+    // The size is definite for line breaking only: the percentages of the
+    // items stay unresolved as they were in the probe.
+    let items = if larger {
         unresolved_item_percentages(tree, idx, vertical)
     } else {
         Vec::new()
