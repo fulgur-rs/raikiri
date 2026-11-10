@@ -384,7 +384,12 @@ pub(super) fn keep(
                             | FormattingContext::Multicol
                     )
                 {
-                    // These contexts place their children in their own flows.
+                    // These contexts place their children in their own flows,
+                    // except a flex or grid container whose only item grows it
+                    // as a block grows with its child.
+                    if let Some(item) = sole_item(document, node) {
+                        pending.push(Event::Box(item));
+                    }
                     continue;
                 }
                 let ifc = document
@@ -422,6 +427,93 @@ pub(super) fn keep(
         }
     }
     Ok(())
+}
+
+/// Whether nothing in the flow of the absolute box `owner` comes before its
+/// descendant `root`: each box from `root` up to `owner` is the first in-flow
+/// box of its parent that takes up room, has a margin or holds text, and no
+/// flex or grid container on the way has padding or border above its items.
+fn begins_owner_content(document: &Document, owner: usize, root: usize) -> bool {
+    let mut child = root;
+    document
+        .inclusive_ancestors(root)
+        .skip(1)
+        .find_map(|parent| {
+            let node = &document.nodes[parent];
+            // A flex or grid container can break between its own padding and
+            // border and its items, unlike a block, whose edges go with its
+            // first child.
+            let content_before = (node.display().is_flex_or_grid_container()
+                && node.layout.border.top + node.layout.padding.top > 0.0)
+                || node
+                    .children
+                    .iter()
+                    .take_while(|&&sibling| sibling != child)
+                    .any(|&sibling| takes_room(document, sibling));
+            child = parent;
+            (content_before || parent == owner).then_some(!content_before)
+        })
+        .unwrap_or(false)
+}
+
+/// Whether `node`, a sibling before the paragraph, puts anything in the flow
+/// above it: text, or a box with height or margins. An element that
+/// generates no box takes the room its children take.
+fn takes_room(document: &Document, node: usize) -> bool {
+    let box_node = &document.nodes[node];
+    sibling_renders(document, node)
+        && !matches!(
+            box_node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        && (box_node.kind() != NodeKind::Element
+            || if box_node.generates_no_box() {
+                box_node
+                    .children
+                    .iter()
+                    .any(|&child| takes_room(document, child))
+            } else {
+                let layout = box_node.layout;
+                layout.size.height > 0.0 || layout.margin.top != 0.0 || layout.margin.bottom != 0.0
+            })
+}
+
+/// Whether a block inside the inline content of `root` comes before its line
+/// `line`: the lines after it begin an anonymous block that follows it.
+fn follows_block(document: &Document, root: usize, line: usize) -> bool {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .any(|&(_, after)| after <= line)
+        })
+}
+
+/// The only in-flow item of the flex or grid container `node`, when nothing
+/// sits beside or after it (see [`has_no_other_item`]).
+fn sole_item(document: &super::super::context::LayoutSession<'_>, node: usize) -> Option<usize> {
+    let display = document.nodes[node].display();
+    let horizontal_container = display.is_flex_or_grid_container()
+        && !document.nodes[node].used_writing_mode.is_vertical();
+    document.nodes[node]
+        .children
+        .iter()
+        .copied()
+        .filter(|_| horizontal_container)
+        .find(|&child| {
+            // A `display: contents` child may hold several items.
+            document.nodes[child].display() != DisplayValue::Contents
+                && if display.is_flex_container() {
+                    is_in_flow_flex_child_for_pagination(document, node, child)
+                } else {
+                    is_in_flow_grid_item_for_pagination(document, child)
+                }
+        })
+        .filter(|&item| has_no_other_item(document, node, item))
 }
 
 fn keep_run(
@@ -498,10 +590,16 @@ fn keep_run(
             box_avoids_page_break_inside(document, root, env.cascade.computed[root].break_inside);
         let whole_fits = metrics.last().expect("a visible run is nonempty").1 - metrics[0].0
             <= env.page_origins.step_at(next) + 0.001;
+        // A break before a paragraph that begins the content of the box would
+        // fall before the box itself, where its fragment starts: a first line
+        // that fits stays, and the box breaks between its lines.
         let prefix = if first_top > env.page_origins.origin(page) + 0.001
             && (fit.leaves_too_few_orphans()
                 || avoids && whole_fits && fit.lines_before_break < metrics.len())
             && metrics[0].1 - metrics[0].0 <= env.page_origins.step_at(next) + 0.001
+            && (fit.lines_before_break == 0
+                || follows_block(document, root, run.start)
+                || !begins_owner_content(document, owner, root))
         {
             // The ordinary paragraph splitter assumes its first line fits.
             page = next;
