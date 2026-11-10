@@ -453,7 +453,21 @@ pub(super) fn keep(
     // inside the box grows any more, as they do when the flow leaves the
     // container in the normal flow.
     for (container, row) in followers.grown_rows.take() {
+        let heights: Vec<f32> = row
+            .iter()
+            .map(|&(item, _, _)| document.nodes[item].layout.size.height)
+            .collect();
         stretch_row_items(document, container, &row);
+        // The boxes placed against a stretched item follow its new height.
+        for (&(item, _, _), height) in row.iter().zip(heights) {
+            let layout = document.nodes[item].layout;
+            followers.resize(
+                document,
+                item,
+                height - layout.border.top - layout.border.bottom,
+                layout.size.height - height,
+            );
+        }
     }
     Ok(())
 }
@@ -545,7 +559,7 @@ fn growing_items(
     {
         return Vec::new();
     }
-    pagination_child_order_borrowed(document, cascade, node)
+    let mut items: Vec<usize> = pagination_child_order_borrowed(document, cascade, node)
         .iter()
         .copied()
         .filter(|&child| {
@@ -555,7 +569,18 @@ fn growing_items(
                 is_in_flow_grid_item_for_pagination(document, child)
             }
         })
-        .collect()
+        .collect();
+    // Grid items placed on rows out of source order are kept in the order of
+    // their first rows, so that the rows above an item settle before it.
+    if display.is_grid_container() {
+        let rows = &document.nodes[node].grid_item_rows;
+        items.sort_by_key(|&item| {
+            rows.iter()
+                .find(|row| row.item == item)
+                .map_or(u16::MAX, |row| row.start)
+        });
+    }
+    items
 }
 
 fn keep_run(

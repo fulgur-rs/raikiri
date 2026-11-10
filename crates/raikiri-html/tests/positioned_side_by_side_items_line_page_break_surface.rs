@@ -182,6 +182,19 @@ fn positioned_later_rows_and_lines_follow_the_row_end() {
                 (2, 'Z', 65),
             ],
         ),
+        // A paragraph on a later row breaks where its row ends up.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:grid;grid-template-columns:20px 20px'><p style='margin:0;orphans:1;widows:1;grid-row:2;grid-column:1'>Z Z Z</p><p style='margin:0;orphans:1;widows:1;grid-row:1'>X X X</p><div>Y</div></div>",
+            &[
+                (1, 'X', 55),
+                (1, 'Y', 55),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Z', 65),
+                (3, 'Z', 5),
+                (3, 'Z', 35),
+            ],
+        ),
     ]);
 }
 
@@ -223,6 +236,28 @@ fn positioned_rows_not_sized_by_their_content_hold_the_moved_lines() {
                 (2, 'Y', 5),
                 (2, 'Y', 35),
                 (2, 'Z', 65),
+            ],
+        ),
+        // Boxes placed against a stretched item follow its height.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:120px;width:40px;display:grid;grid-template-columns:20px 20px'><p style='margin:0;orphans:1;widows:1;position:relative'>X X X<span style='position:absolute;bottom:0;left:20px'>W</span></p><p style='margin:0;position:relative'>Y<span style='position:absolute;bottom:0;left:-20px'>V</span></p></div>",
+            &[
+                (1, 'X', 25),
+                (1, 'X', 55),
+                (1, 'Y', 25),
+                (2, 'V', 5),
+                (2, 'W', 5),
+                (2, 'X', 5),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:120px;width:40px;display:grid;grid-template-columns:20px 20px'><p style='margin:0;orphans:1;widows:1'>X X X</p><p style='margin:0;position:relative'>Y<span style='position:absolute;top:50%;left:0'>V</span></p></div>",
+            &[
+                (1, 'X', 25),
+                (1, 'X', 55),
+                (1, 'Y', 25),
+                (2, 'V', 5),
+                (2, 'X', 5),
             ],
         ),
     ]);
