@@ -754,7 +754,8 @@ fn with_line_minimum_in_content_box(
 /// That holds where nothing constrains the cross size of the container, and
 /// otherwise for an item whose main size does not follow its cross size: one
 /// whose inline axis is the main axis, and that is neither replaced nor given
-/// an aspect ratio, or one of a length flex base size and a length minimum.
+/// an aspect ratio, or one of a length flex base size and a length minimum,
+/// in either case with no percentage margin or padding along the main axis.
 fn lines_keep_without_cross(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -795,10 +796,25 @@ fn lines_keep_without_cross(
             }
             .maybe_resolve(None::<f32>)
             .is_some();
-            fixed_main
-                || (inline_is_main
-                    && item_style.aspect_ratio().is_none()
-                    && !crate::paint_rules::is_replaced_element(tree.document, item))
+            // A percentage edge refers to the inline size of the container,
+            // which is its cross size.
+            let (margin, padding) = (item_style.margin(), item_style.padding());
+            let (margins, paddings) = if vertical {
+                ([margin.left, margin.right], [padding.left, padding.right])
+            } else {
+                ([margin.top, margin.bottom], [padding.top, padding.bottom])
+            };
+            let fixed_edges = margins
+                .into_iter()
+                .all(|side| side.resolve(Some(0.0)) == side.resolve(Some(1.0e9)))
+                && paddings.into_iter().all(|side| {
+                    side.resolve_or_zero(Some(0.0)) == side.resolve_or_zero(Some(1.0e9))
+                });
+            fixed_edges
+                && (fixed_main
+                    || (inline_is_main
+                        && item_style.aspect_ratio().is_none()
+                        && !crate::paint_rules::is_replaced_element(tree.document, item)))
         })
 }
 

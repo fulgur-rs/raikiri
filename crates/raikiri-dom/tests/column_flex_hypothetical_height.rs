@@ -1954,8 +1954,9 @@ fn a_wrapping_column_with_a_negative_margin_finds_its_lines_with_its_own_cross_s
 
 #[test]
 fn a_wrapping_column_with_a_negative_margin_and_items_sized_by_its_cross_size_keeps_its_lines() {
-    // The length of an item of wrapping text follows the cross size of the
-    // container, so the lines are found at that cross size.
+    // The length of an item of wrapping text, and a percentage edge along the
+    // main axis, follow the cross size of the container, so the lines are
+    // found at that cross size.
     assert_cases(&[
         (
             "margin-top:100px",
@@ -1985,6 +1986,42 @@ fn a_wrapping_column_with_a_negative_margin_and_items_sized_by_its_cross_size_ke
                 ("i0", [10.0, 100.0, 20.0, 50.0]),
                 ("i1", [0.0, 100.0, 10.0, 50.0]),
                 ("i2", [-10.0, 100.0, 10.0, 50.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;width:100px;max-height:60px;",
+            &[
+                ("flex:0 0 20px;min-height:0;padding-top:50%", "x"),
+                ("flex:0 0 20px;min-height:0", "x"),
+                ("flex:0 0 20px;min-height:0;margin-bottom:-20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 100.0, 50.0]),
+                ("i0", [0.0, 100.0, 50.0, 50.0]),
+                ("i1", [50.0, 100.0, 50.0, 20.0]),
+                ("i2", [50.0, 120.0, 50.0, 20.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;height:100px;max-width:60px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;min-width:0;padding-left:50%",
+                    "x",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 20px;min-width:0", "x"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;min-width:0;margin-left:-20px",
+                    "x",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 100.0]),
+                ("i0", [0.0, 100.0, 50.0, 50.0]),
+                ("i1", [30.0, 150.0, 20.0, 50.0]),
+                ("i2", [10.0, 150.0, 20.0, 50.0]),
             ],
         ),
     ]);
