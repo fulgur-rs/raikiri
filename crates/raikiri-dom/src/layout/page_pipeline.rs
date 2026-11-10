@@ -4834,7 +4834,7 @@ pub(super) fn is_flow_table_caption(
     body_id: usize,
 ) -> bool {
     caption_table(document, caption)
-        .is_some_and(|table| placed_in_flow_to_body(document, cascade, table, body_id, true))
+        .is_some_and(|table| placed_in_flow_to_body(document, cascade, table, body_id, true, false))
 }
 
 /// The block table of `caption` when `caption` is a horizontal table caption
@@ -12552,7 +12552,9 @@ fn shrink_ancestors_after_content_change(
 /// [`placed_in_block_flow`]). A flex container or a grid whose only item holds
 /// the paragraph stacks it the same way. The heights of the paragraph and of its
 /// ancestors may be constrained: moving the lines grows their boxes only as
-/// far as those constraints allow. Size containment remains outside this path.
+/// far as those constraints allow, and an ancestor that clips at a set height
+/// hides the lines moved past its clip. Size containment remains outside this
+/// path.
 fn is_block_flow_paragraph(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -12566,7 +12568,7 @@ fn is_block_flow_paragraph(
         return false;
     }
     !document.nodes[block].size_containment.height
-        && placed_in_flow_to_body(document, cascade, block, body_id, true)
+        && placed_in_flow_to_body(document, cascade, block, body_id, true, true)
 }
 
 /// Whether every box from `block` up to the body stacks its children in
@@ -12574,28 +12576,30 @@ fn is_block_flow_paragraph(
 /// growing below `block` pushes the boxes after it down. An ancestor's height
 /// may be constrained: it grows only as far as `height`, `min-height` and
 /// `max-height` allow, and the flow after it stays where that height puts it
-/// (see [`grow_ancestors_for_shift`]); one that clips its block-axis overflow
-/// hides what passes its clip. One whose size containment ignores its
-/// content stays outside this path (see [`holds_moved_lines`]).
+/// (see [`grow_ancestors_for_shift`]). One that clips its block-axis overflow
+/// at a set height, or whose size containment ignores its content, stays
+/// outside this path (see [`holds_moved_lines`]).
 fn placed_in_block_flow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
 ) -> bool {
-    placed_in_flow_to_body(document, cascade, block, body_id, false)
+    placed_in_flow_to_body(document, cascade, block, body_id, false, false)
 }
 
 /// [`placed_in_block_flow`], which with `through_sole_items` also passes a
 /// flex container or a grid whose only item is the box the walk comes from:
 /// nothing sits beside that item or after it, so a box growing inside it grows
-/// the container and moves nothing else.
+/// the container and moves nothing else. With `through_clips` it also passes
+/// a box that clips at a set height (see [`holds_moved_lines`]).
 fn placed_in_flow_to_body(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
     through_sole_items: bool,
+    through_clips: bool,
 ) -> bool {
     let mut child = block;
     let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
@@ -12610,7 +12614,8 @@ fn placed_in_flow_to_body(
         // the rows after it follow its growth: the walk goes on from the table.
         if let Some(table) = walk.current().filter(|_| !placed_apart).and_then(|parent| {
             caption_table(document, parent).filter(|_| {
-                moves_later_siblings(document, parent) && holds_moved_lines(document, parent)
+                moves_later_siblings(document, parent)
+                    && holds_moved_lines(document, cascade, parent, through_clips)
             })
         }) {
             child = table;
@@ -12625,14 +12630,14 @@ fn placed_in_flow_to_body(
                 if !placed_apart
                     && (document.nodes[parent].display() == DisplayValue::Contents
                         || moves_later_siblings(document, parent)
-                            && holds_moved_lines(document, parent)) =>
+                            && holds_moved_lines(document, cascade, parent, through_clips)) =>
             {
                 child = parent;
             }
             Some(parent)
                 if !placed_apart
                     && through_sole_items
-                    && holds_moved_lines(document, parent)
+                    && holds_moved_lines(document, cascade, parent, through_clips)
                     && has_no_other_item(document, parent, child) =>
             {
                 child = parent;
@@ -12775,11 +12780,19 @@ fn shift_later_flex_lines(document: &mut Document, container: usize, item: usize
 }
 
 /// Whether the box `ancestor` can hold lines that move down inside it with
-/// their paragraph: it grows with them as far as its height constraints
-/// allow. A box that clips at a set height hides what the moved lines push
-/// past its clip, as in Chromium; size containment makes the box ignore them.
-fn holds_moved_lines(document: &super::context::LayoutSession<'_>, ancestor: usize) -> bool {
+/// their paragraph: its height follows them, or it grows no further than its
+/// constraints and keeps what passes its end visible. A box that clips at a
+/// set height holds them too with `through_clips`, which the lines of a
+/// paragraph take: the clip hides what the move pushes past it, as in
+/// Chromium. Size containment makes the box ignore them.
+fn holds_moved_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    ancestor: usize,
+    through_clips: bool,
+) -> bool {
     !document.nodes[ancestor].size_containment.height
+        && (through_clips || box_leaves_lines_to_pagination(document, cascade, ancestor))
 }
 
 /// Whether the height of `block` is that of its content: no `height`,

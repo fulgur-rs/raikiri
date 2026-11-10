@@ -4,10 +4,11 @@ use super::*;
 fn height_constraints_on_ancestors_keep_a_paragraph_in_plain_block_flow() {
     // The own height of the paragraph and the heights of its ancestors may be
     // constrained: moving its lines grows their boxes only as far as that
-    // allows, and a box that clips at a set height hides the lines moved past
-    // its edge, as in Chromium. Size containment, floats, absolute
-    // positioning and table layout place their content some other way. A flex container or a grid whose only item is the paragraph, or
-    // holds it, grows around the moved lines like a block.
+    // allows, and a box that clips at a set height hides the lines moved
+    // past its edge, as in Chromium. Size containment, floats, absolute
+    // positioning and table layout place their content some other way. A
+    // flex container or a grid whose only item is the paragraph, or holds
+    // it, grows around the moved lines like a block.
     let cases = [
         ("", "height:100px", true),
         ("", "min-height:125px", true),

@@ -476,6 +476,29 @@ fn lines_inside_a_clipping_parent_move_like_visible_ones() {
 }
 
 #[test]
+fn a_paragraph_moved_inside_a_clipping_parent_keeps_the_parent_clip() {
+    // The second paragraph keeps too few lines on the first page for its
+    // orphans and moves to the next one; the parent keeps its height, so its
+    // clip hides the last line there. Chromium prints the three lines above
+    // the clip and the block after the parent on the third page.
+    let (pages, tops) = glyph_tops(
+        "<div id='c' style='width:20px;height:200px;overflow:hidden'><p style='margin:0'>X X</p><p style='margin:0'>X X X X</p></div><div style='height:30px'>Z</div>",
+    );
+    assert_eq!(pages, 3);
+    assert_eq!(
+        tops,
+        [
+            (0, 'X', 5),
+            (0, 'X', 35),
+            (1, 'X', 5),
+            (1, 'X', 35),
+            (1, 'X', 65),
+            (2, 'Z', 5)
+        ]
+    );
+}
+
+#[test]
 fn lines_in_a_clip_margin_past_the_box_stay_in_place() {
     // The clip margin keeps the lines past the box visible, but they are
     // overflow of the box and do not move: in Chromium the fourth line stays

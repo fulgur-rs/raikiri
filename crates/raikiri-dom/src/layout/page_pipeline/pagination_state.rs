@@ -57,7 +57,7 @@ pub(super) struct FlowEnv<'a> {
     /// root that has one, in raw flow coordinates: the lines past it never
     /// move. It is the end of the clipping box when a clip margin reaches
     /// past that box; the lines in the margin stay visible where they are.
-    pub(super) clip_edges: &'a HashMap<usize, f32>,
+    pub(super) clip_edges: &'a HashMap<usize, super::candidates::LineClip>,
 }
 
 /// Why placing a candidate ends pagination instead of going on with the next
@@ -2220,33 +2220,21 @@ impl PaginationState {
             .or(blocks.flex_line.map(|(root, _)| (root, true)))
             .or(blocks.column_paragraph.map(|root| (root, true)))
             && self.checked_paragraphs.orphans_widows.insert(block_id)
-            && let Some(mut line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
+            && let Some(all_line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
-            // A clip hides the lines past its edge: they never move, and a
-            // page that the box ends on, at or above the edge, has no break
-            // inside the box for a line running over it. Chromium keeps no
-            // widows once lines run past the clip.
-            let mut widows = cascade.computed[block_id].widows;
-            if let Some(&edge) = clip_edges.get(&block_id) {
-                let visible = edge - candidate.raw_y;
-                if line_metrics
-                    .last()
-                    .is_some_and(|&(_, bottom)| bottom > visible + 0.001)
-                {
-                    widows = 1;
-                }
-                line_metrics
-                    .truncate(line_metrics.partition_point(|&(top, _)| top < visible - 0.001));
-                if let Some(&(top, bottom)) = line_metrics.last()
-                    && bottom > visible + 0.001
-                {
-                    let page = page_origins.page_index_for_y(text.effective_y + top);
-                    let page_end = page_origins.origin(page) + page_origins.step_at(page);
-                    if text.effective_y + visible <= page_end + 0.001 {
-                        line_metrics.pop();
-                    }
-                }
-            }
+            let clip = clip_edges.get(&block_id).copied();
+            let clipped = |document: &LayoutSession<'_>, effective_y: f32| {
+                clipped_line_metrics(
+                    document,
+                    page_origins,
+                    root_flow_offset,
+                    clip,
+                    effective_y,
+                    &all_line_metrics,
+                    cascade.computed[block_id].widows,
+                )
+            };
+            let (mut line_metrics, mut widows) = clipped(document, text.effective_y);
             if line_metrics.is_empty() {
                 return Ok(());
             }
@@ -2290,20 +2278,21 @@ impl PaginationState {
                         || lead + layout.border.top + layout.padding.top + lines + closing_edges
                             <= page_origins.step_at(self.current_page) + 0.001
                 };
-            let closing_edges_break = |page: u32, effective_y: f32| {
-                if avoided_whole {
-                    return None;
-                }
-                closing_edges_line_move(
-                    &line_metrics,
-                    closing_edges,
-                    effective_y,
-                    page,
-                    cascade.computed[block_id].orphans.max(1) as usize,
-                    widows.max(1) as usize,
-                    page_origins,
-                )
-            };
+            let closing_edges_break =
+                |line_metrics: &[(f32, f32)], widows: i32, page: u32, effective_y: f32| {
+                    if avoided_whole {
+                        return None;
+                    }
+                    closing_edges_line_move(
+                        line_metrics,
+                        closing_edges,
+                        effective_y,
+                        page,
+                        cascade.computed[block_id].orphans.max(1) as usize,
+                        widows.max(1) as usize,
+                        page_origins,
+                    )
+                };
             // Forced breaks between the lines come first. The lines they
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
@@ -2320,7 +2309,9 @@ impl PaginationState {
                 }
                 // The padding and border that close the blocks around the
                 // paragraph stay with its last lines.
-                if let Some(moved) = closing_edges_break(self.current_page, text.effective_y) {
+                if let Some(moved) =
+                    closing_edges_break(&line_metrics, widows, self.current_page, text.effective_y)
+                {
                     return self.move_lines(
                         document,
                         env,
@@ -2530,6 +2521,14 @@ impl PaginationState {
                             self.note_line_block_move(text, block_id, delta, consumed, page);
                         }
                         moved_whole = true;
+                        // A clip that stays where it was hides more of the
+                        // moved lines.
+                        if clip.is_some() {
+                            (line_metrics, widows) = clipped(document, text.effective_y);
+                            if line_metrics.is_empty() {
+                                break;
+                            }
+                        }
                     }
                     LineBreakFix::Keep => {
                         // A paragraph moved whole to a page it fits there may
@@ -2537,7 +2536,8 @@ impl PaginationState {
                         // around it behind its lines, as on the page it left.
                         if moved_whole
                             && lines_can_move
-                            && let Some(moved) = closing_edges_break(page, text.effective_y)
+                            && let Some(moved) =
+                                closing_edges_break(&line_metrics, widows, page, text.effective_y)
                         {
                             return self.move_lines(
                                 document,
@@ -2876,9 +2876,9 @@ impl PaginationState {
                 continue;
             };
             // A clip hides the lines past its edge, and they do not count.
-            let fresh_edge =
-                reflowed.then(|| super::positioned_flow::visible_end(document, env, root));
-            if let Some(edge) = fresh_edge.or_else(|| clip_edges.get(&root).copied()) {
+            let fresh_edge = reflowed
+                .then(|| super::positioned_flow::clip_bounds(document, env, root).lines_end);
+            if let Some(edge) = fresh_edge.or_else(|| clip_edges.get(&root).map(|clip| clip.edge)) {
                 let start = if reflowed {
                     positioned_text_start_y(document, text_lines, text, Some(root))
                 } else {
@@ -3239,4 +3239,50 @@ fn is_block_flow_box(
     !candidate.context.is_flex_item()
         && !candidate.context.is_grid_item()
         && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
+}
+
+/// The lines of `all_line_metrics`, relative to the text at `effective_y`,
+/// that pagination may move, with the widows they keep. A clip hides the lines past its edge: they never move, and a page
+/// that the box ends on, at or above the edge, has no break inside the box for
+/// a line running over it. Chromium keeps no widows once lines run past the
+/// clip. The edge moves with the box that clips, not with lines moved down
+/// inside that box.
+#[allow(clippy::too_many_arguments)]
+fn clipped_line_metrics(
+    document: &LayoutSession<'_>,
+    page_origins: &PageOrigins,
+    root_flow_offset: f32,
+    clip: Option<super::candidates::LineClip>,
+    effective_y: f32,
+    all_line_metrics: &[(f32, f32)],
+    widows: i32,
+) -> (Vec<(f32, f32)>, i32) {
+    let mut line_metrics = all_line_metrics.to_vec();
+    // Only a box in the flow holds the lines that pagination moves here.
+    let Some((edge, owner, owner_raw_y)) =
+        clip.and_then(|clip| clip.owner.map(|(owner, raw_y)| (clip.edge, owner, raw_y)))
+    else {
+        return (line_metrics, widows);
+    };
+    let visible =
+        edge + root_flow_offset + current_abs_y(document, owner) - owner_raw_y - effective_y;
+    let widows = if line_metrics
+        .last()
+        .is_some_and(|&(_, bottom)| bottom > visible + 0.001)
+    {
+        1
+    } else {
+        widows
+    };
+    line_metrics.truncate(line_metrics.partition_point(|&(top, _)| top < visible - 0.001));
+    if let Some(&(top, bottom)) = line_metrics.last()
+        && bottom > visible + 0.001
+    {
+        let page = page_origins.page_index_for_y(effective_y + top);
+        let page_end = page_origins.origin(page) + page_origins.step_at(page);
+        if effective_y + visible <= page_end + 0.001 {
+            line_metrics.pop();
+        }
+    }
+    (line_metrics, widows)
 }
