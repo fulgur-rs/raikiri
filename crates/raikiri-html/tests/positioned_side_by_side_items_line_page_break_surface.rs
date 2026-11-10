@@ -232,6 +232,10 @@ fn positioned_later_rows_and_lines_follow_the_row_end() {
                 (3, 'Z', 35),
             ],
         ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;left:40px;width:20px;display:flex;flex-wrap:wrap'><p style='margin:0;orphans:1;widows:1;width:20px;position:relative;left:-20px'>X X X</p><p style='margin:0;width:20px'>Z</p></div>",
+            &[(1, 'X', 55), (2, 'X', 5), (2, 'X', 35), (2, 'Z', 65)],
+        ),
     ]);
 }
 

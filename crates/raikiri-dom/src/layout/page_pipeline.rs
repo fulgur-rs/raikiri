@@ -11608,12 +11608,11 @@ fn items_on_line_of(
             // the paint of an item.
             let span = |id: usize| {
                 let layout = &document.nodes[id].layout;
-                let start = layout.location.x
-                    - layout_relative_offset(document, cascade, body_id, id).0
-                    - layout.margin.left;
+                let x =
+                    layout.location.x - layout_relative_offset(document, cascade, body_id, id).0;
                 (
-                    start,
-                    layout.location.x + layout.size.width + layout.margin.right,
+                    x - layout.margin.left,
+                    x + layout.size.width + layout.margin.right,
                 )
             };
             let mut line: Vec<usize> = Vec::new();
