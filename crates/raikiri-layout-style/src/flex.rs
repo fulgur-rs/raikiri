@@ -115,6 +115,15 @@ impl LayoutStyleView<'_> {
             D::Column | D::ColumnReverse
         )
     }
+    /// Whether the main axis of a flex container runs from its end edge to
+    /// its start edge, as `row-reverse` and `column-reverse` do.
+    #[inline]
+    pub fn flex_direction_is_reversed(&self) -> bool {
+        matches!(
+            self.prepared.values.flex_direction,
+            D::RowReverse | D::ColumnReverse
+        )
+    }
     /// Whether a flex container wraps its items onto more lines when they do
     /// not fit.
     #[inline]

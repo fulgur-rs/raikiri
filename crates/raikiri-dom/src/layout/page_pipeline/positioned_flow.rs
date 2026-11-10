@@ -861,8 +861,7 @@ fn static_position_at_block_start(
                 | AlignContentKeyword::FlexStart
                 | AlignContentKeyword::Stretch
         );
-        return distributed_from_start
-            && container.flex_direction() == taffy::FlexDirection::Column;
+        return distributed_from_start && !container.flex_direction_is_reversed();
     }
     let alignment = document
         .physical_style(node)
