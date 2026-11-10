@@ -1356,10 +1356,55 @@ fn a_wrapping_column_breaks_its_lines_in_its_content_box() {
 }
 
 #[test]
-fn a_wrapping_row_breaks_its_lines_in_its_content_box() {
-    // A row whose width is known breaks its lines at its content box, even
-    // where its own minimum width is larger than that box.
+fn a_wrapping_container_of_known_main_size_breaks_its_lines_in_its_content_box() {
+    // A container whose main size is known breaks its lines at its content
+    // box, even where its own minimum main size is larger than that box.
     assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-wrap:wrap;box-sizing:content-box;padding:7px 10px;border:3px solid;min-width:100px;max-width:110px;",
+            &[
+                ("flex:0 0 40px", "xx"),
+                ("flex:0 0 50px", "xx"),
+                ("flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 136.0, 40.0]),
+                ("i0", [13.0, 10.0, 40.0, 10.0]),
+                ("i1", [53.0, 10.0, 50.0, 10.0]),
+                ("i2", [13.0, 20.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "",
+            "display:flex;flex-direction:column;flex-wrap:wrap;box-sizing:border-box;padding:10px 7px;border:3px solid;height:100px;min-height:100px;",
+            &[
+                ("writing-mode:vertical-rl;flex:0 0 40px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 50px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 800.0, 100.0]),
+                ("i0", [10.0, 13.0, 260.0, 40.0]),
+                ("i1", [270.0, 13.0, 260.0, 50.0]),
+                ("i2", [530.0, 13.0, 260.0, 30.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;box-sizing:content-box;padding:10px 7px;border:3px solid;height:70px;min-height:90px;",
+            &[
+                ("writing-mode:vertical-rl;flex:0 0 40px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 50px", "xx"),
+                ("writing-mode:vertical-rl;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 40.0, 116.0]),
+                ("i0", [10.0, 13.0, 10.0, 40.0]),
+                ("i1", [10.0, 53.0, 10.0, 50.0]),
+                ("i2", [20.0, 13.0, 10.0, 30.0]),
+            ],
+        ),
         (
             "",
             "display:inline-flex;flex-wrap:wrap;box-sizing:border-box;padding:7px 10px;border:3px solid;min-width:100px;max-width:110px;",

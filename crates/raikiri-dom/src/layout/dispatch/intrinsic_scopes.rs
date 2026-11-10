@@ -580,20 +580,18 @@ pub(super) fn with_hypothetical_column_main_size(
     .size;
     let main = if vertical { size.width } else { size.height };
     let mut inputs = inputs;
-    let (known, known_is_definite) = if vertical {
-        (
-            &mut inputs.known_dimensions.width,
-            &mut inputs.known_dimensions_are_definite.width,
-        )
-    } else {
-        (
-            &mut inputs.known_dimensions.height,
-            &mut inputs.known_dimensions_are_definite.height,
-        )
-    };
-    *known = Some(main);
-    *known_is_definite = false;
+    *main_mut(&mut inputs.known_dimensions, vertical) = Some(main);
+    *main_mut(&mut inputs.known_dimensions_are_definite, vertical) = false;
     layout(tree, inputs)
+}
+
+/// The width of `size` where `horizontal` is set, and its height otherwise.
+fn main_mut<T>(size: &mut Size<T>, horizontal: bool) -> &mut T {
+    if horizontal {
+        &mut size.width
+    } else {
+        &mut size.height
+    }
 }
 
 /// Lay out the wrapping flex container `idx`, whose main size is known, with
@@ -657,11 +655,7 @@ fn with_line_minimum_in_content_box(
         return layout(tree, inputs);
     }
     let mut inputs = inputs;
-    if horizontal {
-        inputs.known_dimensions.width = Some(size);
-    } else {
-        inputs.known_dimensions.height = Some(size);
-    }
+    *main_mut(&mut inputs.known_dimensions, horizontal) = Some(size);
     let value = if content_box {
         (content - insets).max(0.0)
     } else {
@@ -828,11 +822,7 @@ fn wrapping_column_layout(
     let raised = min.is_some_and(|min| content <= min && min > 0.0);
     if inputs.run_mode == RunMode::ComputeSize && inputs.axis == main_axis {
         // A run that measures the main axis alone returns its size only.
-        if vertical {
-            measured.size.width = main;
-        } else {
-            measured.size.height = main;
-        }
+        *main_mut(&mut measured.size, vertical) = main;
         return measured;
     }
     let mut inputs = inputs;
