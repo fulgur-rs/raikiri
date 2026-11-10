@@ -56,7 +56,7 @@ fn extents(body: &str) -> Vec<Option<(f32, f32)>> {
         .collect()
 }
 
-/// The extent of `#o` on each page, as [`extents`] gives it.
+/// The extent of `#o` on each page, as `extents` gives it.
 type Extents<'a> = &'a [Option<(f32, f32)>];
 
 /// Checks each case: its label, its markup and the extents Chromium gives
