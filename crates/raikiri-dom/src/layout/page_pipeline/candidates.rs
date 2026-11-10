@@ -1096,17 +1096,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             None,
                         ),
                     };
+                    // Inline boxes do not clip, so every text of one inline
+                    // formatting context sees the same clip.
                     if let Some((root, _)) = ifc_root
                         && frame.lines_clip_end.is_finite()
                     {
-                        let clip = LineClip {
+                        self.clip_edges.entry(root).or_insert(LineClip {
                             edge: frame.lines_clip_end,
                             owner: frame.lines_clip_owner,
-                        };
-                        let edge = self.clip_edges.entry(root).or_insert(clip);
-                        if clip.edge < edge.edge {
-                            *edge = clip;
-                        }
+                        });
                     }
                     // Past a clipping ancestor's edge the text paints nowhere
                     // and gives the flow no page; a text running over the edge

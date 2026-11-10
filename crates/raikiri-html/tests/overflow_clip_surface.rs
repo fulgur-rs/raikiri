@@ -499,6 +499,18 @@ fn a_paragraph_moved_inside_a_clipping_parent_keeps_the_parent_clip() {
 }
 
 #[test]
+fn a_paragraph_moved_past_its_parent_clip_shows_no_lines() {
+    // The second paragraph moves to the next page for its orphans, and its
+    // padding pushes every line past the parent's clip there. Chromium prints
+    // only the first paragraph and the block after the parent.
+    let (pages, tops) = glyph_tops(
+        "<div id='c' style='width:20px;height:110px;overflow:hidden'><p style='margin:0'>Y</p><p style='margin:0;orphans:2;widows:2;padding-top:30px'>X X X X</p></div><div style='height:30px'>Z</div>",
+    );
+    assert_eq!(pages, 2);
+    assert_eq!(tops, [(0, 'Y', 5), (1, 'Z', 15)]);
+}
+
+#[test]
 fn lines_in_a_clip_margin_past_the_box_stay_in_place() {
     // The clip margin keeps the lines past the box visible, but they are
     // overflow of the box and do not move: in Chromium the fourth line stays
