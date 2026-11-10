@@ -412,7 +412,9 @@ pub(super) fn with_orthogonal_percentage_main_sizes<R>(
 /// given to the container, which lays the items out at their own flex factors
 /// within it. A wrapping container breaks its lines at its maximum while it
 /// finds that size, and then gets it as room and maximum, in which its lines
-/// break the same way.
+/// break the same way. A wrapping container with a negative margin among its
+/// items is left to the plain layout, since its lines need not break the same
+/// way in its own longest line.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#algo-main-container>
 pub(super) fn with_hypothetical_column_main_size(
@@ -474,6 +476,14 @@ pub(super) fn with_hypothetical_column_main_size(
                 .any(|width| side.resolve(Some(width)).is_some_and(|value| value < 0.0))
         })
     });
+    // A wrapping container breaks its lines where the running sum of the
+    // outer sizes passes its limit. A negative margin can make that sum fall
+    // inside a line, so the longest line can be shorter than a part of it, and
+    // a limit of that length would break the line again. Such a container
+    // keeps the lines and the size of the plain layout.
+    if wraps && negative_margin {
+        return layout(tree, inputs);
+    }
     // A percentage minimum or maximum main size of the container refers to
     // the size of its containing block, and has no effect where that is open.
     let bounded = negative_margin

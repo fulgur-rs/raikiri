@@ -1223,3 +1223,33 @@ fn a_vertical_wrapping_column_resolves_its_padding_against_the_parent_inline_siz
         ),
     ]);
 }
+
+#[test]
+fn a_negative_margin_does_not_break_a_wrapping_line_again() {
+    // The negative margin of the last item makes the line shorter than its
+    // first two items, which still fit the `max-height` together. The line
+    // stays one line, as Chromium lays it out.
+    let item = |extra: &str| {
+        (
+            format!("writing-mode:vertical-rl;flex:0 0 40px;min-height:0;{extra}"),
+            "xx",
+        )
+    };
+    for container in [
+        "display:inline-flex;flex-direction:column;flex-wrap:wrap;max-height:100px;",
+        "display:flex;width:max-content;flex-direction:column;flex-wrap:wrap;max-height:100px;",
+    ] {
+        let items = [item(""), item(""), item("margin-top:-60px")];
+        let items: Vec<(&str, &str)> = items.iter().map(|(s, t)| (s.as_str(), *t)).collect();
+        assert_cases(&[(
+            "",
+            container,
+            &items,
+            &[
+                ("i0", [0.0, 0.0, 10.0, 40.0]),
+                ("i1", [0.0, 40.0, 10.0, 40.0]),
+                ("i2", [0.0, 20.0, 10.0, 40.0]),
+            ],
+        )]);
+    }
+}
