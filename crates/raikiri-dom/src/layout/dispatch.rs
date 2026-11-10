@@ -4100,15 +4100,17 @@ fn with_open_wrapping_column_width(
     }
     // An absolutely positioned box that shrinks to fit, or one whose `width`
     // is an intrinsic keyword, has the width its content gives it however it
-    // is passed down.
+    // is passed down. A flex item whose width is the main size of its
+    // container is the exception: the container flexes the keyword's size
+    // into the width it assigns.
     let content_decided = !inputs.known_dimensions_are_definite.width
         || vertical_oof::has_content_decided_width(tree, idx)
-        || matches!(
+        || (matches!(
             tree.physical_style(idx).size().width.expand(),
             ExpandedDimension::MinContent
                 | ExpandedDimension::MaxContent
                 | ExpandedDimension::FitContent
-        );
+        ) && tree.flex_main_axis_is_width(idx) != Some(true));
     match inputs.known_dimensions.width {
         Some(width) if content_decided => {
             inputs.known_dimensions.width = None;

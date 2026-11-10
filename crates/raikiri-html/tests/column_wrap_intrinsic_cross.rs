@@ -1517,4 +1517,108 @@ fn vertical_wrapping_columns_find_their_width_from_their_lines_wherever_they_sit
             ),
         ],
     );
+    // A row flex container flexes the width it assigns its item, whatever
+    // keyword sizes the item.
+    assert_cases_in(
+        800.0,
+        "margin-top:50px;display:flex;width:400px",
+        &[
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;width:min-content",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 400.0, 10.0],
+                    [320.0, 50.0, 80.0, 30.0],
+                    [270.0, 50.0, 50.0, 30.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;max-width:90px;width:min-content",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 90.0, 40.0],
+                    [10.0, 50.0, 80.0, 30.0],
+                    [40.0, 80.0, 50.0, 20.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;width:max-content",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 400.0, 10.0],
+                    [320.0, 50.0, 80.0, 30.0],
+                    [270.0, 50.0, 50.0, 30.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;max-width:90px;width:max-content",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 90.0, 40.0],
+                    [10.0, 50.0, 80.0, 30.0],
+                    [40.0, 80.0, 50.0, 20.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;width:fit-content",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 400.0, 10.0],
+                    [320.0, 50.0, 80.0, 30.0],
+                    [270.0, 50.0, 50.0, 30.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;max-width:90px;width:fit-content",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 90.0, 40.0],
+                    [10.0, 50.0, 80.0, 30.0],
+                    [40.0, 80.0, 50.0, 20.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 400.0, 10.0],
+                    [320.0, 50.0, 80.0, 30.0],
+                    [270.0, 50.0, 50.0, 30.0],
+                ],
+            ),
+            (
+                "flex:1 0 auto;display:flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;max-width:90px;",
+                &[
+                    ("writing-mode:horizontal-tb;flex:0 0 80px", "xxxx xxxx xxxx"),
+                    ("writing-mode:horizontal-tb;flex:0 0 50px", "xx xx xx xx"),
+                ],
+                &[
+                    [0.0, 50.0, 90.0, 40.0],
+                    [10.0, 50.0, 80.0, 30.0],
+                    [40.0, 80.0, 50.0, 20.0],
+                ],
+            ),
+        ],
+    );
 }
