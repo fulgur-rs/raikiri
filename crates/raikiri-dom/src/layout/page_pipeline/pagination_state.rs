@@ -2448,12 +2448,13 @@ impl PaginationState {
                 // this page move it whatever its height: the page breaks
                 // before the block, not between its edges and its lines, even
                 // when they run over a page.
-                // The page already begins with the holder's leading edges.
-                // Keep a fitting first line instead of breaking before the
-                // first child again to satisfy orphans.
+                // The page already begins with the holder's leading edges,
+                // after nothing but empty boxes. Keep a fitting first line
+                // instead of breaking before the first child again to satisfy
+                // orphans.
                 let leading_page_lines = lines_can_move
                     && line_fit.lines_before_break > 0
-                    && self.child_positions.begins_page_below_leading_edges(
+                    && self.child_positions.gains_nothing_from_next_page(
                         document, cascade, body_id, block_id, page_start,
                     );
                 let retained_margin_opens_page = self
