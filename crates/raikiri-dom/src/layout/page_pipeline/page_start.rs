@@ -188,8 +188,8 @@ enum Before {
 /// at `page_start`. White space, boxes that generate nothing, out-of-flow
 /// boxes, and floats that start the page or lie on an earlier one are not
 /// content. With `past_empty_starts`, neither are block boxes of no height at
-/// the page start and elements without a box that hold nothing. The nearest of
-/// the others decides.
+/// the page start and elements without a box that hold nothing, when the
+/// child itself starts at the page start. The nearest of the others decides.
 fn before_child(
     document: &Document,
     cascade: &CascadeResult,
@@ -204,6 +204,11 @@ fn before_child(
     let Some(index) = child_index else {
         return Before::Other;
     };
+    // Empty boxes count as nothing only while the child starts right at the
+    // page start: a margin they leave above it is room a break there would
+    // truncate.
+    let skip_empty = past_empty_starts
+        && (current_abs_y(document, siblings[index]) - page_start).abs() <= EDGE_TOLERANCE;
     for &sibling in siblings[..index].iter().rev() {
         // Only boxes have a position to read.
         let span = || {
@@ -224,7 +229,7 @@ fn before_child(
             // An element without a box that holds nothing that renders is
             // as empty as a box of no height.
             FlowBox::Contents
-                if past_empty_starts
+                if skip_empty
                     && document.nodes[sibling]
                         .children
                         .iter()
@@ -236,7 +241,7 @@ fn before_child(
                     && !has_unusual_coordinates(document, sibling);
                 return if block_box {
                     let (top, bottom) = span();
-                    if past_empty_starts
+                    if skip_empty
                         && (top - page_start).abs() <= EDGE_TOLERANCE
                         && (bottom - page_start).abs() <= EDGE_TOLERANCE
                     {

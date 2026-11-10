@@ -97,6 +97,12 @@ fn a_box_starting_the_page_breaks_between_its_lines() {
             "<div style='height:0'></div><div style='width:20px;padding-top:15px;break-inside:avoid'>{p}</div>",
             &[(0, 'X', 20), (0, 'X', 50), (1, 'X', 5), (1, 'Z', 35)],
         ),
+        // An empty box whose margin puts the box below the page start leaves
+        // room a break there truncates: the box moves.
+        (
+            "<div style='height:0;display:flow-root;margin-bottom:10px'></div><div style='width:20px;padding-top:5px'>{p}</div>",
+            &[(1, 'X', 10), (1, 'X', 40), (1, 'X', 70), (2, 'Z', 5)],
+        ),
         // Content before the box: it moves to keep the orphans.
         (
             "<div style='height:10px'></div><div style='width:20px;padding:10px 0;border-top:5px solid'>{p}</div>",
