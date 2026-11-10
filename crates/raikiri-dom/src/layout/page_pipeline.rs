@@ -4446,6 +4446,7 @@ fn paginate_flow(
         avoided_breaks: &avoided_breaks,
         insets,
         page_box,
+        clip_edges: &clip_edges,
     };
     state.prepare_float_gaps(document, cascade, body_id, &candidates);
     normal_block_shifts::begin(document, cascade, body_id);
@@ -4501,9 +4502,7 @@ fn paginate_flow(
             &unpaginated_overflow,
         );
     }
-    if let Err(halt) =
-        state.keep_positioned_lines(document, &env, &clip_edges, &positioned_owner_heights)
-    {
+    if let Err(halt) = state.keep_positioned_lines(document, &env, &positioned_owner_heights) {
         halt.finish()?;
     }
 
@@ -10345,17 +10344,16 @@ fn lines_can_shift_inside(
     cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
-    box_leaves_lines_to_pagination(document, cascade, block_id)
-        && document
-            .ifc_layout_node(block_id)
-            .and_then(|node| node.ifc.as_ref())
-            .is_some_and(|ifc| {
-                ifc.multicol_fragments.is_none()
-                    && ifc.boxes.iter().all(|b| {
-                        b.kind == IfcBoxKind::OutOfFlow
-                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
-                    })
-            })
+    document
+        .ifc_layout_node(block_id)
+        .and_then(|node| node.ifc.as_ref())
+        .is_some_and(|ifc| {
+            ifc.multicol_fragments.is_none()
+                && ifc.boxes.iter().all(|b| {
+                    b.kind == IfcBoxKind::OutOfFlow
+                        && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                })
+        })
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
@@ -10402,24 +10400,23 @@ fn lines_can_shift_above_blocks(
     cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
-    box_leaves_lines_to_pagination(document, cascade, block_id)
-        && document
-            .ifc_layout_node(block_id)
-            .and_then(|node| node.ifc.as_ref())
-            .is_some_and(|ifc| {
-                ifc.multicol_fragments.is_none()
-                    && ifc.boxes.iter().all(|b| {
-                        b.kind == IfcBoxKind::Block
-                            || b.kind == IfcBoxKind::OutOfFlow
-                                && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
-                    })
-                    && ifc.lines.as_ref().is_some_and(|lines| {
-                        lines
-                            .block_line_starts
-                            .iter()
-                            .all(|&(_, after)| after >= lines.lines.len())
-                    })
-            })
+    document
+        .ifc_layout_node(block_id)
+        .and_then(|node| node.ifc.as_ref())
+        .is_some_and(|ifc| {
+            ifc.multicol_fragments.is_none()
+                && ifc.boxes.iter().all(|b| {
+                    b.kind == IfcBoxKind::Block
+                        || b.kind == IfcBoxKind::OutOfFlow
+                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                })
+                && ifc.lines.as_ref().is_some_and(|lines| {
+                    lines
+                        .block_line_starts
+                        .iter()
+                        .all(|&(_, after)| after >= lines.lines.len())
+                })
+        })
 }
 
 /// The lines of the paragraph `root` that lie between two of its block

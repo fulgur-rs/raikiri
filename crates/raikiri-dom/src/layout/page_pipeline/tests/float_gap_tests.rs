@@ -85,6 +85,7 @@ fn keep_after_a_float(
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let mut state = pagination_state_before_first_candidate(doc.nodes.len());
     let mut session = crate::layout::context::LayoutSession::resumed(&mut doc, cascade);

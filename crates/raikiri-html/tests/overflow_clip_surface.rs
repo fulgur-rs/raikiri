@@ -362,7 +362,9 @@ fn the_flow_after_a_clip_starts_where_the_clip_ends() {
 fn a_clip_pushed_down_by_the_flow_keeps_its_visible_lines() {
     let lines = "x<br>".repeat(30);
     // The avoiding box does not fit below the spacer, so it and the clip after
-    // it move down by a page break; the clip then crosses the next one.
+    // it move down by a page break; the clip then crosses the next one, and
+    // the line that would cross it starts the next page, where the clip shows
+    // only its top. Chromium prints the same lines.
     let result = laid_out(
         &format!(
             "<div style='height:60px'></div><div style='height:60px;break-inside:avoid'></div><div id='clip'>{lines}</div>"
@@ -371,7 +373,109 @@ fn a_clip_pushed_down_by_the_flow_keeps_its_visible_lines() {
     );
     assert_eq!(result.page_count(), 3);
     assert_eq!(visible_line_tops(&result, 1, "clip"), [60, 72, 84]);
-    assert_eq!(visible_line_tops(&result, 2, "clip"), [-4, 8]);
+    assert_eq!(visible_line_tops(&result, 2, "clip"), [0]);
+}
+
+/// A spacer, then a fixed-height paragraph of 20px `X` words in 30px lines
+/// that clips them, then a 30px block holding `Z`. Returns the page count and
+/// the painted glyph tops on each page, as `(page, glyph, top)`: an `X` line
+/// is listed only where the paragraph's clip shows part of it.
+fn clipped_paragraph_glyph_tops(
+    spacer: u32,
+    height: u32,
+    words: usize,
+    style: &str,
+) -> (u32, Vec<(u32, char, i32)>) {
+    let words = "X ".repeat(words);
+    let result = laid_out(
+        &format!(
+            "<div style='height:{spacer}px'></div><div id='c' style='width:20px;height:{height}px;overflow:hidden;{style}'>{words}</div><div style='height:30px'>Z</div>"
+        ),
+        "body{font:20px/30px Ahem}",
+    );
+    let mut tops = Vec::new();
+    for index in 0..result.page_count() {
+        let page = result.page(index).unwrap();
+        let window = page
+            .fragments()
+            .find(|fragment| page.dom().attr(fragment.node(), "id") == Some("c"))
+            .and_then(|fragment| fragment.overflow_clip())
+            .map(|clip| clip.rect);
+        for run in page.text_runs() {
+            let top = run.origin.1 - run.ascent;
+            let Some(glyph) = run.text.trim().chars().next() else {
+                continue;
+            };
+            if glyph == 'X'
+                && !window.is_some_and(|window| {
+                    top < window.y + window.height - 0.01 && top + 20.0 > window.y + 0.01
+                })
+            {
+                continue;
+            }
+            tops.push((index, glyph, top.round() as i32));
+        }
+    }
+    tops.sort_unstable();
+    (result.page_count(), tops)
+}
+
+#[test]
+fn lines_past_the_clip_of_a_fixed_height_paragraph_add_no_page() {
+    // The fourth line runs over the clip edge at the bottom of a box that ends
+    // on the first page, so it is no break point and the lines past it stay
+    // hidden: only the block after the box moves to the next page, as in
+    // Chromium.
+    for height in [90, 100] {
+        for style in ["", "orphans:2;widows:2", "orphans:1;widows:1"] {
+            assert_eq!(
+                clipped_paragraph_glyph_tops(0, height, 6, style),
+                (
+                    2,
+                    vec![(0, 'X', 5), (0, 'X', 35), (0, 'X', 65), (1, 'Z', 5)]
+                ),
+                "{height} {style}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_clipped_paragraph_crossing_the_page_keeps_no_widows() {
+    // The box crosses the page and clips its fifth line, so the fourth line
+    // moves to the next page alone: Chromium keeps no widows once lines run
+    // past the clip.
+    assert_eq!(
+        clipped_paragraph_glyph_tops(0, 130, 6, "orphans:2;widows:2"),
+        (
+            2,
+            vec![
+                (0, 'X', 5),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35)
+            ]
+        )
+    );
+    // A box ending past the page moves the line that crosses it, as when
+    // nothing is clipped.
+    assert_eq!(
+        clipped_paragraph_glyph_tops(30, 90, 6, "orphans:2;widows:2").1,
+        [(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 25)]
+    );
+}
+
+#[test]
+fn a_clip_above_the_first_line_bottom_leaves_the_line_in_place() {
+    // The clip shows only the top of the first line and the box ends on the
+    // first page: no line moves, and the block after the box starts the next
+    // page in Chromium.
+    for style in ["", "orphans:2;widows:2"] {
+        let (pages, tops) = clipped_paragraph_glyph_tops(80, 10, 3, style);
+        assert_eq!(pages, 2, "{style}");
+        assert_eq!(tops, [(0, 'X', 85), (1, 'Z', 5)], "{style}");
+    }
 }
 
 #[test]

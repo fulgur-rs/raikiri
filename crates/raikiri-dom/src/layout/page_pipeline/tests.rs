@@ -18154,6 +18154,7 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let node_count = doc.nodes.len();
     let new_state = || pagination_state_before_first_candidate(node_count);
@@ -18344,6 +18345,7 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         state.begin_candidate(&mut session, &env, candidate)
@@ -18419,6 +18421,7 @@ fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = PageCandidate {
         node_id: text,
@@ -18479,6 +18482,7 @@ fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = PageCandidate {
         node_id: root,
@@ -18566,6 +18570,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = |node_id, raw_y, page_name: Option<&str>| PageCandidate {
         node_id,
@@ -18670,6 +18675,7 @@ fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = PageCandidate {
         node_id: root,
@@ -18779,6 +18785,7 @@ fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
             avoided_breaks: &AvoidedBreaks::default(),
             insets,
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         state.finish_box(&mut session, &env, candidate, 90.0)
@@ -18882,6 +18889,7 @@ fn the_first_box_starts_on_the_first_page_and_a_later_one_where_its_break_puts_i
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = PageCandidate {
         node_id: root,
@@ -19017,6 +19025,7 @@ fn placement_halts_at_a_page_past_the_page_limit() {
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut state = pagination_state_before_first_candidate(node_count);
         state.saw_child = true;
@@ -19086,6 +19095,7 @@ fn footnotes_stack_at_the_bottom_of_their_anchor_page_and_leave_the_flow() {
                 avoided_breaks: &AvoidedBreaks::default(),
                 insets: PageContentInsets::default(),
                 page_box: page_box_800x600(),
+                clip_edges: &std::collections::HashMap::new(),
             };
             let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
             state.place_footnote(&mut session, &env, &note)
@@ -19189,6 +19199,7 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = |ifc_root| PageCandidate {
         node_id: text,
@@ -19287,6 +19298,7 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         avoided_breaks: &AvoidedBreaks::default(),
         insets: PageContentInsets::default(),
         page_box: page_box_800x600(),
+        clip_edges: &std::collections::HashMap::new(),
     };
     let candidate = |context| PageCandidate {
         node_id: text,
@@ -19400,6 +19412,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         let blocks = pagination_state::LineBlocks::find(
@@ -19486,6 +19499,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
                 avoided_breaks: &AvoidedBreaks::default(),
                 insets: PageContentInsets::default(),
                 page_box: page_box_800x600(),
+                clip_edges: &std::collections::HashMap::new(),
             };
             let mut session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
             let blocks = pagination_state::LineBlocks::find(
@@ -19629,6 +19643,7 @@ fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_ope
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut position = pagination_state::TextPosition {
@@ -19785,6 +19800,7 @@ fn a_box_meeting_a_page_transition_moves_to_the_top_of_the_next_page() {
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut position = pagination_state::BoxPosition {
@@ -19879,6 +19895,7 @@ fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut position = pagination_state::BoxPosition {
@@ -19968,6 +19985,7 @@ fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
             avoided_breaks: &AvoidedBreaks::default(),
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         let mut state = pagination_state_before_first_candidate(node_count);
         state.page_names.current = Some("z".to_string());

@@ -148,6 +148,7 @@ fn replayed_clip_bounds_start_at_the_candidate_flow_root() {
             avoided_breaks: &avoided,
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
+            clip_edges: &std::collections::HashMap::new(),
         };
         assert_eq!(
             super::super::positioned_flow::visible_end(&session, &env, owner),
