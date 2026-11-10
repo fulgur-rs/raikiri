@@ -119,6 +119,11 @@ fn a_paragraph_after_other_content_keeps_its_orphans() {
                 (2, 'X', 5),
             ],
         ),
+        // So does an empty box whose margin puts the paragraph lower.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:120px;width:20px'><div style='margin-bottom:20px'></div><p style='margin:0;orphans:3;widows:1'>X X X X</p></div>",
+            &[(2, 'X', 5), (2, 'X', 35), (2, 'X', 65), (3, 'X', 5)],
+        ),
         // So do the padding and border of a grid above its item.
         (
             "<div style='height:30px'></div><div style='position:absolute;top:140px;width:20px;display:grid;padding-top:10px'><div><p style='margin:0;orphans:3;widows:1'>X X X</p></div></div>",

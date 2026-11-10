@@ -431,12 +431,13 @@ pub(super) fn keep(
 
 /// Whether nothing in the flow of the absolute box `owner` comes before its
 /// descendant `root`: each box from `root` up to `owner` is the first in-flow
-/// box of its parent that takes up room or holds text, and no flex or grid
-/// container on the way has padding or border above its items.
+/// box of its parent that takes up room, has a margin or holds text, and no
+/// flex or grid container on the way has padding or border above its items.
 fn begins_owner_content(document: &Document, owner: usize, root: usize) -> bool {
     let mut child = root;
     document
-        .layout_ancestors(root)
+        .inclusive_ancestors(root)
+        .skip(1)
         .find_map(|parent| {
             let node = &document.nodes[parent];
             // A flex or grid container can break between its own padding and
@@ -454,8 +455,12 @@ fn begins_owner_content(document: &Document, owner: usize, root: usize) -> bool 
                                 document.nodes[sibling].position(),
                                 PositionValue::Absolute | PositionValue::Fixed
                             )
-                            && (document.nodes[sibling].kind() != NodeKind::Element
-                                || document.nodes[sibling].layout.size.height > 0.0)
+                            && (document.nodes[sibling].kind() != NodeKind::Element || {
+                                let layout = document.nodes[sibling].layout;
+                                layout.size.height > 0.0
+                                    || layout.margin.top != 0.0
+                                    || layout.margin.bottom != 0.0
+                            })
                     });
             child = parent;
             (content_before || parent == owner).then_some(!content_before)
@@ -475,11 +480,13 @@ fn sole_item(document: &super::super::context::LayoutSession<'_>, node: usize) -
         .copied()
         .filter(|_| horizontal_container)
         .find(|&child| {
-            if display.is_flex_container() {
-                is_in_flow_flex_child_for_pagination(document, node, child)
-            } else {
-                is_in_flow_grid_item_for_pagination(document, child)
-            }
+            // A `display: contents` child may hold several items.
+            document.nodes[child].display() != DisplayValue::Contents
+                && if display.is_flex_container() {
+                    is_in_flow_flex_child_for_pagination(document, node, child)
+                } else {
+                    is_in_flow_grid_item_for_pagination(document, child)
+                }
         })
         .filter(|&item| has_no_other_item(document, node, item))
 }
@@ -562,10 +569,10 @@ fn keep_run(
         // fall before the box itself, where its fragment starts: a first line
         // that fits stays, and the box breaks between its lines.
         let prefix = if first_top > env.page_origins.origin(page) + 0.001
-            && (fit.lines_before_break == 0 || !begins_owner_content(document, owner, root))
             && (fit.leaves_too_few_orphans()
                 || avoids && whole_fits && fit.lines_before_break < metrics.len())
             && metrics[0].1 - metrics[0].0 <= env.page_origins.step_at(next) + 0.001
+            && (fit.lines_before_break == 0 || !begins_owner_content(document, owner, root))
         {
             // The ordinary paragraph splitter assumes its first line fits.
             page = next;
