@@ -187,7 +187,7 @@ fn finite_basis(style: &LayoutStyleView<'_>, vertical: bool) -> Option<(f32, f32
 }
 
 /// Keep every changed box's cache separate, including the probe root.
-fn scoped<R>(
+pub(super) fn scoped<R>(
     tree: &mut LayoutSession<'_>,
     root: usize,
     entries: Vec<(usize, O)>,

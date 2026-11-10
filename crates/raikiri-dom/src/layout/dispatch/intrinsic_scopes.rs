@@ -855,10 +855,73 @@ fn wrapping_column_layout(
                 .expect("container main minimum"),
         ));
     }
+    // The size the minimum gives is definite for line breaking only: the
+    // percentages of the items stay unresolved as they were in the probe.
+    let items = if raised {
+        unresolved_item_percentages(tree, idx, vertical)
+    } else {
+        Vec::new()
+    };
     with_saved_probe_caches(tree, 0, |tree, _| {
         tree.push_local_overrides(entries);
-        layout(tree, inputs)
+        super::column_main_limits::scoped(tree, idx, items, inputs.run_mode, |tree| {
+            layout(tree, inputs)
+        })
     })
+}
+
+/// Read every percentage main size of the in-flow items of the container
+/// `idx` as `auto`, which is what a percentage of an indefinite size is.
+fn unresolved_item_percentages(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    vertical: bool,
+) -> Vec<(usize, O)> {
+    let properties = if vertical {
+        [P::FlexBasis, P::Width, P::MinWidth, P::MaxWidth]
+    } else {
+        [P::FlexBasis, P::Height, P::MinHeight, P::MaxHeight]
+    };
+    let mut entries = Vec::new();
+    for child in tree.child_ids(NodeId::from(idx)) {
+        let child = usize::from(child);
+        let style = tree.physical_style(child);
+        if style.position() == Position::Absolute
+            || style.box_generation_mode() == BoxGenerationMode::None
+        {
+            continue;
+        }
+        let basis = style.flex_basis();
+        let (size, min, max) = (style.size(), style.min_size(), style.max_size());
+        let (size, min, max) = if vertical {
+            (size.width, min.width, max.width)
+        } else {
+            (size.height, min.height, max.height)
+        };
+        let unresolved = [
+            !basis.is_auto() && basis.maybe_resolve(None::<f32>).is_none(),
+            !size.is_auto() && size.maybe_resolve(None::<f32>).is_none(),
+            !min.is_auto() && min.maybe_resolve(None::<f32>).is_none(),
+            !max.is_auto() && max.maybe_resolve(None::<f32>).is_none(),
+        ];
+        for (property, unresolved) in properties.into_iter().zip(unresolved) {
+            if unresolved {
+                // An unresolved basis is `content`, which no override spells:
+                // the max-content block size is the content size of a column
+                // item.
+                let value = if property == P::FlexBasis {
+                    L::MaxContent
+                } else {
+                    L::Auto
+                };
+                entries.push((
+                    child,
+                    O::length(property, value, false).expect("unresolved item percentage"),
+                ));
+            }
+        }
+    }
+    entries
 }
 
 /// Run `probe`, which measures the content height of the flex container
