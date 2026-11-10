@@ -35,6 +35,8 @@ pub(super) struct ClipBounds {
     pub(super) end: f32,
     pub(super) fixed_end: f32,
     pub(super) absolute_end: f32,
+    /// `end`, but ending at the box of a clip whose margin reaches past it.
+    pub(super) lines_end: f32,
 }
 
 impl ClipBounds {
@@ -43,6 +45,7 @@ impl ClipBounds {
             end: f32::INFINITY,
             fixed_end: f32::INFINITY,
             absolute_end: f32::INFINITY,
+            lines_end: f32::INFINITY,
         }
     }
 
@@ -70,7 +73,11 @@ impl ClipBounds {
             PositionValue::Absolute | PositionValue::Fixed => (f32::INFINITY, f32::INFINITY),
             _ => (self.end, self.fixed_end),
         };
-        let (clip_end, fixed_clip_end) =
+        let inherited_lines = match document.nodes[node_id].position() {
+            PositionValue::Absolute | PositionValue::Fixed => inherited,
+            _ => self.lines_end,
+        };
+        let (clip_end, fixed_clip_end, lines_end) =
             if !is_body && super::element_clips_overflow(document, cascade, node_id) {
                 let own = super::clip_block_end(document, cascade, node_id, raw_y);
                 // A clip on a box whose height follows its content grows
@@ -80,9 +87,16 @@ impl ClipBounds {
                 } else {
                     own
                 };
-                (inherited.min(own), inherited_fixed.min(own_fixed))
+                // Lines past the end of the box itself stay where they are,
+                // even when a clip margin keeps them visible.
+                let own_lines = own.min(raw_y + document.nodes[node_id].layout.size.height);
+                (
+                    inherited.min(own),
+                    inherited_fixed.min(own_fixed),
+                    inherited_lines.min(own_lines),
+                )
             } else {
-                (inherited, inherited_fixed)
+                (inherited, inherited_fixed, inherited_lines)
             };
         let absolute_clip_end = if clip_end != self.absolute_end
             && crate::layout::fixed::establishes_absolute_containing_block(
@@ -98,6 +112,7 @@ impl ClipBounds {
             end: clip_end,
             fixed_end: fixed_clip_end,
             absolute_end: absolute_clip_end,
+            lines_end,
         }
     }
 }
@@ -610,6 +625,9 @@ struct CandidateFrame<'name> {
     /// that hide it, or infinity when none does. The clips of the boxes
     /// between the child and its containing block do not reach it.
     absolute_clip_end: f32,
+    /// The edge past which the lines under the nearest clips stay where they
+    /// are; see [`ClipBounds::lines_end`].
+    lines_clip_end: f32,
     /// The block size of the bottom padding and border of the ancestors that
     /// end with the node: it is the last box in the flow of each of them, and
     /// their heights follow their content.
@@ -710,6 +728,7 @@ impl CandidateFrame<'_> {
             clip_end: f32::INFINITY,
             fixed_clip_end: f32::INFINITY,
             absolute_clip_end: f32::INFINITY,
+            lines_clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
             column_break_before: false,
@@ -808,7 +827,8 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     out: &'a mut Vec<PageCandidate>,
     text_lines: &'a mut TextLineIndex,
     /// For the paragraphs whose text a clip cuts, by paragraph root: the edge
-    /// of the clip, in the coordinates of the candidates.
+    /// of the clip, or the end of the clipping box when the clip's margin
+    /// reaches past it, in the coordinates of the candidates.
     clip_edges: HashMap<usize, f32>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
@@ -1054,10 +1074,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         ),
                     };
                     if let Some((root, _)) = ifc_root
-                        && frame.clip_end.is_finite()
+                        && frame.lines_clip_end.is_finite()
                     {
-                        let edge = self.clip_edges.entry(root).or_insert(frame.clip_end);
-                        *edge = edge.min(frame.clip_end);
+                        let edge = self.clip_edges.entry(root).or_insert(frame.lines_clip_end);
+                        *edge = edge.min(frame.lines_clip_end);
                     }
                     // Past a clipping ancestor's edge the text paints nowhere
                     // and gives the flow no page; a text running over the edge
@@ -1850,10 +1870,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     end: frame.clip_end,
                     fixed_end: frame.fixed_clip_end,
                     absolute_end: frame.absolute_clip_end,
+                    lines_end: frame.lines_clip_end,
                 }
                 .descend(document, cascade, node_id, raw_y, is_body);
-                let (clip_end, fixed_clip_end, absolute_clip_end) =
-                    (clip.end, clip.fixed_end, clip.absolute_end);
+                let (clip_end, fixed_clip_end, absolute_clip_end, lines_clip_end) =
+                    (clip.end, clip.fixed_end, clip.absolute_end, clip.lines_end);
                 let child_order = pagination_child_order(document, cascade, node_id);
                 // The closing edges of this block, and of the blocks that it
                 // ends in turn, follow its last box in the flow: a float after
@@ -2204,6 +2225,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             clip_end,
                             fixed_clip_end,
                             absolute_clip_end,
+                            lines_clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
                             column_break_before: child_column_break,

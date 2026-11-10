@@ -3421,18 +3421,20 @@ fn a_fixed_height_section_moves_with_its_moved_paragraph() {
 }
 
 #[test]
-fn a_section_that_clips_at_a_set_height_keeps_its_paragraph_split() {
-    // A set-height box that clips its block-axis overflow hides the lines
-    // past its end and adds no page for them, so its paragraph is not moved
-    // out of it as a plain-flow paragraph would be: the section stays at 15.
+fn a_section_that_clips_at_a_set_height_moves_with_its_moved_paragraph() {
+    // The clip hides nothing of the three lines, which move together for
+    // their orphans; the section starts page 1 with them, as the one that
+    // does not clip does (Chromium: the lines at 40, 50 and 60, the block
+    // after the section at 70).
     let laid_out = paragraph_after_a_spacer(
         Some("height:30px;overflow:hidden"),
         15.0,
         "orphans:3;widows:2",
         40.0,
     );
-    assert_eq!(laid_out.fragments[0].0, 0);
-    assert_eq!(laid_out.section, (15.0, 30.0));
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section, (40.0, 30.0));
+    assert_eq!(laid_out.after_top, 70.0);
 }
 
 #[test]

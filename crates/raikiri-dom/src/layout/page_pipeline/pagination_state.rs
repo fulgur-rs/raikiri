@@ -54,8 +54,9 @@ pub(super) struct FlowEnv<'a> {
     pub(super) insets: PageContentInsets,
     pub(super) page_box: PageBox,
     /// The edge of the nearest clip around the lines of each inline layout
-    /// root that has one, in raw flow coordinates: the lines past it are
-    /// never painted.
+    /// root that has one, in raw flow coordinates: the lines past it never
+    /// move. It is the end of the clipping box when a clip margin reaches
+    /// past that box; the lines in the margin stay visible where they are.
     pub(super) clip_edges: &'a HashMap<usize, f32>,
 }
 

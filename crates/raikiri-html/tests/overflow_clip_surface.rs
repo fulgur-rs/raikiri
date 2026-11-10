@@ -387,12 +387,16 @@ fn clipped_paragraph_glyph_tops(
     style: &str,
 ) -> (u32, Vec<(u32, char, i32)>) {
     let words = "X ".repeat(words);
-    let result = laid_out(
-        &format!(
-            "<div style='height:{spacer}px'></div><div id='c' style='width:20px;height:{height}px;overflow:hidden;{style}'>{words}</div><div style='height:30px'>Z</div>"
-        ),
-        "body{font:20px/30px Ahem}",
-    );
+    glyph_tops(&format!(
+        "<div style='height:{spacer}px'></div><div id='c' style='width:20px;height:{height}px;overflow:hidden;{style}'>{words}</div><div style='height:30px'>Z</div>"
+    ))
+}
+
+/// The page count of `body`, laid out in 20px `X` words with 30px lines, and
+/// its painted glyph tops, as `(page, glyph, top)`: an `X` line is listed only
+/// where the clip of the box `c` shows part of it.
+fn glyph_tops(body: &str) -> (u32, Vec<(u32, char, i32)>) {
+    let result = laid_out(body, "body{font:20px/30px Ahem}");
     let mut tops = Vec::new();
     for index in 0..result.page_count() {
         let page = result.page(index).unwrap();
@@ -418,6 +422,78 @@ fn clipped_paragraph_glyph_tops(
     }
     tops.sort_unstable();
     (result.page_count(), tops)
+}
+
+/// A spacer, then a box of `parent_style` that clips at `height` and holds
+/// a paragraph of six `X` words with `paragraph_style`, then a 30px block
+/// holding `Z`.
+fn clipped_parent_glyph_tops(
+    spacer: u32,
+    height: u32,
+    parent_style: &str,
+    paragraph_style: &str,
+) -> (u32, Vec<(u32, char, i32)>) {
+    glyph_tops(&format!(
+        "<div style='height:{spacer}px'></div><div id='c' style='width:20px;height:{height}px;{parent_style}'><p style='margin:0;{paragraph_style}'>X X X X X X</p></div><div style='height:30px'>Z</div>"
+    ))
+}
+
+#[test]
+fn lines_inside_a_clipping_parent_move_like_visible_ones() {
+    // The lines that the parent's clip shows move across the page end as
+    // they would in a box that does not clip, and the ones that the move
+    // pushes past the clip are hidden; Chromium prints the same lines.
+    for parent in [
+        "overflow:hidden",
+        "overflow:clip",
+        "overflow:hidden;display:flex;flex-direction:column",
+        "overflow:hidden;display:flex",
+    ] {
+        assert_eq!(
+            clipped_parent_glyph_tops(30, 90, parent, "orphans:1;widows:1").1,
+            [(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 25)],
+            "{parent}"
+        );
+        assert_eq!(
+            clipped_parent_glyph_tops(0, 130, parent, "orphans:2;widows:2").1,
+            [
+                (0, 'X', 5),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35)
+            ],
+            "{parent}"
+        );
+        // Too few lines fit below the spacer for the orphans: the paragraph
+        // and the parent move to the next page together.
+        assert_eq!(
+            clipped_parent_glyph_tops(70, 90, parent, "orphans:2;widows:2").1,
+            [(1, 'X', 5), (1, 'X', 35), (1, 'X', 65), (2, 'Z', 5)],
+            "{parent}"
+        );
+    }
+}
+
+#[test]
+fn lines_in_a_clip_margin_past_the_box_stay_in_place() {
+    // The clip margin keeps the lines past the box visible, but they are
+    // overflow of the box and do not move: in Chromium the fourth line stays
+    // across the page end and the block after the box takes the next page.
+    let (pages, tops) = clipped_parent_glyph_tops(
+        0,
+        90,
+        "overflow:clip;overflow-clip-margin:40px",
+        "orphans:1;widows:1",
+    );
+    assert_eq!(pages, 2);
+    assert_eq!(
+        tops.iter()
+            .filter(|&&(page, glyph, _)| page == 0 || glyph == 'Z')
+            .copied()
+            .collect::<Vec<_>>(),
+        [(0, 'X', 5), (0, 'X', 35), (0, 'X', 65), (1, 'Z', 5)]
+    );
 }
 
 #[test]
