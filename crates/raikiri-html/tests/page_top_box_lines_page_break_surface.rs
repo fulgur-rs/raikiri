@@ -79,6 +79,10 @@ fn a_box_starting_the_page_breaks_between_its_lines() {
             "<div></div><div style='width:20px;padding-top:15px'>{p}</div>",
             &[(0, 'X', 20), (0, 'X', 50), (1, 'X', 5), (1, 'Z', 35)],
         ),
+        (
+            "<div style='display:contents'></div><div style='width:20px;padding-top:15px'>{p}</div>",
+            &[(0, 'X', 20), (0, 'X', 50), (1, 'X', 5), (1, 'Z', 35)],
+        ),
         // A page the flow reaches, and one a forced break opens.
         (
             "<div style='height:100px'></div><div style='height:0'></div><div style='width:20px;padding-top:15px'>{p}</div>",
